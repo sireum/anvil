@@ -9,9 +9,9 @@ import org.sireum.ops.StringOps
 * Contains all contextual values (values determined at runtime after parsing but but stage execution) and operations
 * used in Anvil.
 *
-*     ApplicationContext = SandboxContext | CompileContext
+*     ApplicationContext = SandboxInstallationContext | (ToolchainContext * HardwareContext * ExecutionContext)
 *       SandboxInstallationContext // - A limited context used to create sandboxes. Allows full access to installer workspace.
-*       CompileContext = ToolchainContext * HardwareContext * ExecutionContext
+*       ToolchainContext * HardwareContext * ExecutionContext
 *         ToolchainContext // Conventions, defaults, and assumptions about Xilinx tools. For example: output file
 *                             formats, version numbers, executables, etc.
 *         HardwareContext  // Constants and derived values that vary by target hardware. For example: part_number,
@@ -27,15 +27,7 @@ import org.sireum.ops.StringOps
 */
 object Context {
 
-  @sig trait LocalContext {
-
-    def runProc(path: Os.Path, proc: ISZ[String]): Os.Proc.Result = {
-      val prefix: ISZ[String] = if (Os.kind == Os.Kind.Win) ISZ("cmd", "/c") else ISZ[String]()
-      return Os.proc(prefix ++ proc).at(path).console.runCheck()
-    }
-  }
-
-  @sig trait SandboxContextBase extends LocalContext {
+  @sig trait SandboxContextBase {
     def port: String // ssh port
     def hostname: String
     def username: String
@@ -82,12 +74,6 @@ object Context {
     }
   }
 
-  @sig trait CompileContext extends LocalContext {
-    def toolchainContext: ToolchainContext
-    def hardwareContext: HardwareContext
-    def executionContext: ExecutionContext
-  }
-
   @sig trait HardwareContext {
 
     def template_project_part_number: String
@@ -101,20 +87,11 @@ object Context {
   @sig trait ToolchainContext {
 
     // all functions which accept the entire workspace to be as flexible as possible for different tool versions
-    def driverName(context: CompileContext): String
-    def driverBaseFileName(context: CompileContext): String
-    def versionedDriverName(context: CompileContext): String
-    def hlsDriverImplDirectory(context: CompileContext): Os.Path
+    def driverName(hc: HardwareContext, ec: ExecutionContext): String
+    def driverBaseFileName(hc: HardwareContext, ec: ExecutionContext): String
+    def versionedDriverName(hc: HardwareContext, ec: ExecutionContext): String
+    def hlsDriverImplDirectory(hc: HardwareContext, ec: ExecutionContext): Os.Path
     // consider adding helper method "isValidNamingConvention" to check user input against Xilinx tools
-
-//    def runProc(proc: ISZ[String]): Os.Proc.Result = {
-//      if (Os.kind == Os.Kind.Win) {
-//        val windowsPrefix: ISZ[String] = ISZ("cmd", "/c")
-//        Os.proc(windowsPrefix ++ proc).console.run()
-//      } else {
-//        Os.proc(proc).console.run()
-//      }
-//    }
   }
 
   /**
@@ -124,29 +101,29 @@ object Context {
   */
   @datatype class DefaultToolchainContext() extends ToolchainContext {
 
-    override def driverName(context: CompileContext): String = {
-      return context.executionContext.projectContext.template_project_hls_sources
+    override def driverName(hc: HardwareContext, ec: ExecutionContext): String = {
+      return ec.projectContext.template_project_hls_sources
     }
 
-    override def driverBaseFileName(context: CompileContext): String = {
-      return StringOps(driverName(context)).toLower
+    override def driverBaseFileName(hc: HardwareContext, ec: ExecutionContext): String = {
+      return StringOps(driverName(hc, ec)).toLower
     }
 
-    override def versionedDriverName(context: CompileContext): String = {
-      return st"${driverName(context)}_v1_0".render
+    override def versionedDriverName(hc: HardwareContext, ec: ExecutionContext): String = {
+      return st"${driverName(hc, ec)}_v1_0".render
     }
 
-    override def hlsDriverImplDirectory(context: CompileContext): Os.Path = {
-      val driverDirectory: String = versionedDriverName(context)
-      val hlsSolutionName = context.executionContext.projectContext.template_project_hls_solution
-      val projectWorkspace = context.executionContext.projectContext.projectWorkspace
+    override def hlsDriverImplDirectory(hc: HardwareContext, ec: ExecutionContext): Os.Path = {
+      val driverDirectory: String = versionedDriverName(hc, ec)
+      val hlsSolutionName = ec.projectContext.template_project_hls_solution
+      val projectWorkspace = ec.projectContext.projectWorkspace
       projectWorkspace.hls / hlsSolutionName / "impl" / "misc" / "drivers" / driverDirectory / "src";
     }
   }
 
   @sig trait ProjectContext {
     def projectWorkspace: ProjectWorkspace
-    def apps: ISZ[String]
+    def transpilerArgs: TranspilersCOptionMirror
     def template_project_top_function: String
     def template_project_hls_solution: String
     def template_project_vivado_project: String
@@ -161,6 +138,44 @@ object Context {
     'Os
   }
 
+  // mirror of Cli.SireumSlangTranspilersCAnvilExecutionPass
+  @enum object TranspilersCAnvilExecutionPassMirror {
+    'None
+    'First
+    'Second
+  }
+
+  // mirror of Cli.SireumSlangTranspilersCOption
+  @datatype class TranspilersCOptionMirror(
+                                          val help: String,
+                                          val args: ISZ[String],
+                                          val sourcepath: ISZ[String],
+                                          val strictAliasing: B,
+                                          val output: Option[String],
+                                          val verbose: B,
+                                          val apps: ISZ[String],
+                                          val bitWidth: Z,
+                                          val projectName: Option[String],
+                                          val stackSize: Option[String],
+                                          val customArraySizes: ISZ[String],
+                                          val maxArraySize: Z,
+                                          val maxStringSize: Z,
+                                          val cmakeIncludes: ISZ[String],
+                                          val exts: ISZ[String],
+                                          val libOnly: B,
+                                          val excludeBuild: ISZ[String],
+                                          val plugins: ISZ[String],
+                                          val fingerprint: Z,
+                                          val stableTypeId: B,
+                                          val unroll: B,
+                                          val save: Option[String],
+                                          val load: Option[String],
+                                          val customConstants: ISZ[String],
+                                          val forwarding: ISZ[String],
+                                          val anvilTranspilerPass: TranspilersCAnvilExecutionPassMirror.Type,
+                                          val anvilTranspilerContext: ISZ[String]
+                                        )
+
   @sig trait ExecutionContext {
     def projectContext: ProjectContext
     def sandbox: Option[SandboxContext]
@@ -170,6 +185,11 @@ object Context {
   @enum object ScpDirection {
     'LocalToSandbox
     'SandboxToLocal
+  }
+
+  def runProc(path: Os.Path, proc: ISZ[String]): Os.Proc.Result = {
+    val prefix: ISZ[String] = if (Os.kind == Os.Kind.Win) ISZ("cmd", "/c") else ISZ[String]()
+    return Os.proc(prefix ++ proc).at(path).console.runCheck()
   }
 
   @sig trait SandboxContext extends SandboxContextBase {
@@ -245,17 +265,13 @@ object Context {
 
   @datatype class SimpleProjectContext(val projectWorkspace: ProjectWorkspace,
                                        val simpleMethodName: String,
-                                       val apps: ISZ[String]) extends ProjectContext {
+                                       val transpilerArgs: TranspilersCOptionMirror) extends ProjectContext {
     val template_project_top_function: String = simpleMethodName
     val template_project_hls_solution: String = "generatedSolution"
     val template_project_vivado_project: String = "generatedProject"
     val template_project_vivado_design: String = "generatedDesign"
     val template_project_hls_sources: String = simpleMethodName
   }
-
-  @datatype class DefaultCompileContext(val hardwareContext: HardwareContext,
-                                        val toolchainContext: ToolchainContext,
-                                        val executionContext: ExecutionContext) extends CompileContext {}
 
   @sig trait SimpleSSH extends SandboxContextBase {
 
@@ -347,11 +363,6 @@ object Context {
 
       return official
     }
-  }
-
-  // temp
-  def seqToSet[T](seq: ISZ[T]): Set[T] = {
-    return Set.empty[T] ++ seq
   }
 
   @sig trait XilinxUnifiedInstaller_v2020_1 extends SandboxInstallationContext {
