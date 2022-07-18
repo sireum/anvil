@@ -38,6 +38,19 @@ object Workspace {
 
 }
 
+/*
+ * ProjectWorkspace
+ * └── root (Os.Path)
+ *     └── project
+ *         ├── hls
+ *         ├── hw
+ *         ├── os
+ *         └── sw
+ *             ├── original
+ *             ├── driver-calls
+ *             ├── transpiled
+ *             └── modified-transpiled
+ */
 @datatype class ProjectWorkspace(val root: Os.Path) {
   val project:            Os.Path = mkdir(root / "project")
   val hls:                Os.Path = mkdir(project / "hls")
@@ -50,6 +63,18 @@ object Workspace {
   val os:                 Os.Path = mkdir(project / "os")
 }
 
+/*
+ * InstallerWorkspace
+ * └── root (Os.Path)
+ *     ├── downloads
+ *     └── provision
+ *         └── scripts
+ *             └── fix_dash.sh
+ *                 ├── install_petalinux.sh
+ *                 ├── install_vivado.sh
+ *                 ├── install_dependencies.sh
+ *                 └── install_kekinian.sh
+ */
 @datatype class InstallerWorkspace(val root: Os.Path) {
   val provision:                 Os.Path = mkdir(root / "provision")
   val downloads:                 Os.Path = mkdir(root / "downloads")
@@ -61,6 +86,25 @@ object Workspace {
   val installSireumScript:       Os.Path = file(scripts / "install_kekinian.sh")
 }
 
+/*
+ * SandboxWorkspace
+ * ├── local (Os.Path)
+ * │   └── path
+ * │       └── to
+ * │           └── sandbox
+ * └── root (ISZ[String])   // string representation of (absolute) workspace paths in the sandbox
+ *     └── home
+ *         └── vagrant
+ *             └── project
+ *                 ├── hls
+ *                 ├── hw
+ *                 ├── os
+ *                 └── sw
+ *                     ├── original
+ *                     ├── driver-calls
+ *                     ├── transpiled
+ *                     └── modified-transpiled
+ */
 @datatype class SandboxWorkspace(val local: Os.Path) {
   // when building in sandbox, use strings to represent paths in the vm
   val root:               ISZ[String] = ISZ("", "home", "vagrant")
