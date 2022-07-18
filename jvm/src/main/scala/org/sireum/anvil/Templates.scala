@@ -1369,6 +1369,58 @@ write_hw_platform -fixed -force -include_bit -file ${"$script_folder"}/$template
 """
   }
 
-  
+  @pure def zedboard_petalinux_2020_1_createSystemUserDtsi(hc: HardwareContext, tc: ToolchainContext, ec: ExecutionContext): String = {
+    val scFile: String = "project-spec/meta-user/recipes-bsp/device-tree/files/system-user.dtsi"
+    ops.StringOps(scFile).replaceAllLiterally("\r", "")
+
+    val pc = ec.projectContext
+
+    val tab = """$'\t'""" // tab literal in bash
+
+    // todo currently assuming use of default values which could be looked up in project files instead
+    return s"""
+${"APP_SC_FILE"}=$scFile
+echo '/include/ "system-conf.dtsi"' > ${"$APP_SC_FILE"}
+echo '/ {' >> ${"$APP_SC_FILE"}
+echo '};' >> ${"$APP_SC_FILE"}
+echo '' >> ${"$APP_SC_FILE"}
+echo '/ {' >> ${"$APP_SC_FILE"}
+echo ${tab}'model = "Zynq Zed Development Board";' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}'compatible = "xlnx,zynq-zed", "xlnx,zynq-7000";' >> ${"$APP_SC_FILE"}
+echo '' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}'usb_phy0: phy0@e0002000 {' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}'compatible = "ulpi-phy";' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}'#phy-cells = <0>;' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}'reg = <0xe0002000 0x1000>;' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}'view-port = <0x0170>;' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}'drv-vbus;' >> ${"$APP_SC_FILE"}
+echo ${tab}'};' >> ${"$APP_SC_FILE"}
+echo '};' >> ${"$APP_SC_FILE"}
+echo '' >> ${"$APP_SC_FILE"}
+echo '&clkc {' >> ${"$APP_SC_FILE"}
+echo ${tab}'ps-clk-frequency = <33333333>;' >> ${"$APP_SC_FILE"}
+echo '};' >> ${"$APP_SC_FILE"}
+echo '' >> ${"$APP_SC_FILE"}
+echo '/ {' >> ${"$APP_SC_FILE"}
+echo '' >> ${"$APP_SC_FILE"}
+echo ${tab}'chosen {' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}'bootargs = "console=ttyPS0,115200 earlyprintk uio_pdrv_genirq.of_id=generic-uio";' >> ${"$APP_SC_FILE"}
+echo ${tab}'};' >> ${"$APP_SC_FILE"}
+echo '' >> ${"$APP_SC_FILE"}
+echo ${tab}'amba_pl: amba_pl {' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}'${pc.template_project_top_function}_0: ${pc.template_project_top_function}@43c00000 {' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}${tab}'compatible = "generic-uio";' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}${tab}'interrupt-parent = <&intc>;' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}${tab}'interrupts = <0 29 1>;' >> ${"$APP_SC_FILE"}
+echo ${tab}${tab}'};' >> ${"$APP_SC_FILE"}
+echo ${tab}'};' >> ${"$APP_SC_FILE"}
+echo '};' >> ${"$APP_SC_FILE"}
+echo '' >> ${"$APP_SC_FILE"}
+echo '&usb0 {' >> ${"$APP_SC_FILE"}
+echo ${tab}'dr_mode = "host";' >> ${"$APP_SC_FILE"}
+echo ${tab}'usb-phy = <&usb_phy0>;' >> ${"$APP_SC_FILE"}
+echo '};' >> ${"$APP_SC_FILE"}
+"""
+  }
 
 }
