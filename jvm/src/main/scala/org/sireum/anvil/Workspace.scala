@@ -20,6 +20,22 @@ object Workspace {
     }
     return path
   }
+
+  def writeOver(path: Os.Path, content: String): Os.Path = {
+    if (path.exists) {
+      assert(path.isFile)
+    } else {
+      path.writeOver(content)
+    }
+    return path
+  }
+
+  def writeOverScript(path: Os.Path, content: String): Os.Path = {
+    val file = writeOver(path, content)
+    file.chmod("+x")
+    return file
+  }
+
 }
 
 @datatype class ProjectWorkspace(val root: Os.Path) {
