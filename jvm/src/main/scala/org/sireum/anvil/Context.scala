@@ -6,24 +6,28 @@ import org.sireum._
 import org.sireum.ops.StringOps
 
 /**
-* Contains all contextual values (values determined at runtime after parsing but but stage execution) and operations
+* Contains all contextual values (values determined at runtime after parsing but before stage execution) and operations
 * used in Anvil.
 *
-*     ApplicationContext = SandboxInstallationContext | (ToolchainContext * HardwareContext * ExecutionContext)
-*       SandboxInstallationContext // - A limited context used to create sandboxes. Allows full access to installer workspace.
-*       ToolchainContext * HardwareContext * ExecutionContext
-*         ToolchainContext // Conventions, defaults, and assumptions about Xilinx tools. For example: output file
-*                             formats, version numbers, executables, etc.
-*         HardwareContext  // Constants and derived values that vary by target hardware. For example: part_number,
-*                             address_layouts, etc.
-*         ExecutionContext = ProjectContext * (SandboxContext | Null) // Contains values that vary per-execution. Such
-*                                                                        as arguments passed by the user or means to
-*                                                                        determine which stages have already been run.
-*           ProjectContext        // Names, variables, and settings which may vary between projects but not stages.
-*                                    E.g. "bus name" "solution name" "top function" etc.
-*           Option[SandboxContext]
-*             None // Indicates that no SandboxContext was passed
-*             Some[SandboxContext]
+* sandbox mode
+* └── SandboxInstallationContext -------------- // A limited context used to create sandboxes. Allows full access to
+*                                                  installer workspace.
+* compile mode
+* ├── ToolchainContext ------------------------ // Conventions, defaults, and assumptions about Xilinx tools.
+* │                                                For example: output file formats, version numbers, executables, etc.
+* ├── HardwareContext ------------------------- // Constants and derived values that vary by target hardware.
+* │                                                For example: part_number, address_layouts, etc.
+* └── ExecutionContext ------------------------ // Contains values that vary per-execution.
+*     │                                            Such as arguments passed by the user or means to determine which
+*     │                                            stages have already been run.
+*     ├── ProjectContext ---------------------- // Names, variables, and settings which may vary between projects but
+*     │                                            not stages. E.g. "bus name" "solution name" "top function" etc.
+*     └── Option[SandboxCompilationContext] --- // Optional context present when Anvil's compiler is passed a sandbox
+*         │                                        build delegate.
+*         ├── None ---------------------------- // Indicates the "--sandbox /path/to/sandbox" flag was unused.
+*         └── Some[SandboxCompilationContext] - // Indicates usage of "--sandbox /path/to/sandbox" flag.
+*             └── SandboxCompilationContext --- // Provides operations to enable sandbox build delegation.
+*                                                  Push, pull, clean, ssh, etc. Basically the sandbox controller.
 */
 object Context {
 
