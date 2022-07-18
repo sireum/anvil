@@ -39,15 +39,13 @@ object Workspace {
 }
 
 @datatype class ProjectWorkspace(val root: Os.Path) {
-  val downloads:          Os.Path = mkdir(root / "downloads")
-  val sources:            Os.Path = mkdir(root / "sources")
-  val original:           Os.Path = mkdir(sources / "original") // original (slang) sources before transpiling
-  val transpiled:         Os.Path = mkdir(sources / "transpiled") // result of transpiling, needed for HLS to create drivers.
   val project:            Os.Path = mkdir(root / "project")
   val hls:                Os.Path = mkdir(project / "hls")
   val hw:                 Os.Path = mkdir(project / "hw")
   val sw:                 Os.Path = mkdir(project / "sw")
+  val original:           Os.Path = mkdir(sw / "original") // original (slang) sources before transpiling
   val driverCalls:        Os.Path = mkdir(sw / "driver-calls")
+  val transpiled:         Os.Path = mkdir(sw / "transpiled") // result of transpiling, needed for HLS to create drivers.
   val modifiedTranspiled: Os.Path = mkdir(sw / "modified-transpiled")
   val os:                 Os.Path = mkdir(project / "os")
 }
@@ -66,9 +64,13 @@ object Workspace {
 @datatype class SandboxWorkspace(val local: Os.Path) {
   // when building in sandbox, use strings to represent paths in the vm
   val root:               ISZ[String] = ISZ("", "home", "vagrant")
-  val project:            ISZ[String] = root ++ ISZ("project")
-  val hls:                ISZ[String] = project ++ ISZ("hls")
-  val hw:                 ISZ[String] = project ++ ISZ("hw")
-  val sw:                 ISZ[String] = project ++ ISZ("sw")
-  val os:                 ISZ[String] = project ++ ISZ("os")
+  val project:            ISZ[String] = root :+ "project"
+  val hls:                ISZ[String] = project :+ "hls"
+  val hw:                 ISZ[String] = project :+ "hw"
+  val sw:                 ISZ[String] = project :+ "sw"
+  val original:           ISZ[String] = sw :+ "original"
+  val driverCalls:        ISZ[String] = sw :+ "driver-calls"
+  val transpiled:         ISZ[String] = sw :+ "transpiled"
+  val modifiedTranspiled: ISZ[String] = sw :+ "modified-transpiled"
+  val os:                 ISZ[String] = project :+ "os"
 }
