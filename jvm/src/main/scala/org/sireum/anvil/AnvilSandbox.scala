@@ -251,7 +251,7 @@ object AnvilSandbox {
                    |yes | $remoteInstallerDir/$installerFileName --platform arm --dir $remoteTargetDir
                    |
                    |# load env on reboot
-                   |echo 'alias petalinuxenv="source $remoteTargetDir/${(context.petalinuxSourceScriptRelativePath, "/")}"' >> ${"$"}HOME/.bashrc
+                   |echo 'alias petalinuxenv="source ${(context.petalinuxSourceScriptPath, "/")}"' >> ${"$"}HOME/.bashrc
                    |
                    |# CLEAN TEMPORARY FILES
                    |# cleanup
@@ -291,7 +291,7 @@ object AnvilSandbox {
                    |
                    |# CREATE ENV SHORTCUT
                    |echo "creating vivadoenv shortcut..."
-                   |echo 'alias vivadoenv="source $remoteTargetDir/${(context.xilinxUnifiedSourceScriptRelativePath, "/")}"' >> ${"$"}HOME/.bashrc
+                   |echo 'alias vivadoenv="source ${(context.vivadoSourceScriptPath, "/")}"' >> ${"$"}HOME/.bashrc
                    |echo "DONE"
                    |
                    |# CLEAN TEMPORARY FILES

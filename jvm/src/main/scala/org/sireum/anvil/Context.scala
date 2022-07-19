@@ -87,31 +87,27 @@ object Context {
   }
 
   @sig trait SandboxInstallationContext extends SandboxContext {
+
     def workspace: InstallerWorkspace
+
     def installSireum: B
+
     def petalinuxInstallerPath: Option[Os.Path]
+
     def xilinxUnifiedPath: Option[Os.Path]
 
-    /*
-     * Location of petalinux source script relative to the installation folder.
-     */
-    def petalinuxSourceScriptRelativePath: ISZ[String]
-    /*
-     * Location of xilinx source script relative to the installation folder.
-     */
-    def xilinxUnifiedSourceScriptRelativePath: ISZ[String]
-
-    /*
-     * List of dependencies required by petalinux via apt-get. These are available in the user guide for each petalinux version.
-     */
-    def petalinuxDependencies: ISZ[String]
-
     def vmName(): String
+
     def numCPUs(): String
+
     def vramSize(): String
+
     def memorySizeMB(): String
+
     def enableGUI(): String
+
     def disksize(): String
+
     def graphicsController(): String
 
     override def localSandboxProc(proc: ISZ[String]): Os.Proc.Result = {
@@ -392,10 +388,10 @@ object Context {
     }
   }
 
-  @sig trait PetalinuxInstaller_v2020_1 extends SandboxInstallationContext {
+  @sig trait Petalinux_v2020_1 extends SandboxContext {
 
-    override def petalinuxSourceScriptRelativePath: ISZ[String] = {
-      return ISZ("settings.sh")
+    override def petalinuxSourceScriptPath: ISZ[String] = {
+      return petalinuxPath :+ "settings.sh"
     }
 
     /*
@@ -414,13 +410,21 @@ object Context {
     }
   }
 
-  @sig trait XilinxUnifiedInstaller_v2020_1 extends SandboxInstallationContext {
-    override def xilinxUnifiedSourceScriptRelativePath: ISZ[String] = {
-      return ISZ("Vivado", "2020.1", "settings64.sh")
+  @sig trait XilinxUnified_v2020_1 extends SandboxContext {
+    override def vivadoVersion: String = {
+      return "2020.1"
+    }
+
+    override def vivadoSourceScriptPath: ISZ[String] = {
+      return vivadoPath ++ ISZ("Vivado", vivadoVersion, "settings64.sh")
     }
   }
 
-  @datatype class SimpleSandboxContext(val workspace: SandboxWorkspace) extends SandboxCompilationContext with SimpleSSH {}
+  @datatype class SimpleSandboxCompilationContext(val workspace: SandboxWorkspace)
+    extends SandboxCompilationContext
+    with Petalinux_v2020_1
+    with XilinxUnified_v2020_1
+    with SimpleSSH {}
 
   @datatype class SimpleExecutionContext(val projectContext: ProjectContext,
                                          val sandbox: Option[SandboxCompilationContext],
@@ -433,6 +437,6 @@ object Context {
     extends SandboxInstallationContext
       with SimpleSSH
       with SimpleInstall
-      with PetalinuxInstaller_v2020_1
-      with XilinxUnifiedInstaller_v2020_1 {}
+      with XilinxUnified_v2020_1
+      with Petalinux_v2020_1 {}
 }
