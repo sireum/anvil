@@ -315,46 +315,93 @@ object Context {
     }
 
     def ssh(proc: ISZ[String]): Os.Proc.Result = {
-      return localSandboxProc(ISZ("vagrant", "ssh", "-c", st"'${(proc, " ")}'".render))
+      // prepare commands
+      val and: ISZ[String] = ISZ("&&")
+      val cd_and: ISZ[String] = ISZ("cd", st"${(workspace.project, "/")}".render, "&&")
+      val venv_and_opt: ISZ[String] = ISZ("source", st"${(vivadoSourceScriptPath, "/")}".render, "||", "true")
+      val penv_and_opt: ISZ[String] = ISZ("source", st"${(petalinuxSourceScriptPath, "/")}".render, "||", "true")
+
+      // order of "venv", "penv", and "cd" do not technically matter, but ordering "cd" last is a measure against
+      // unintended directory overrides from smuggled in with "venv" / "penv"
+      val modifiedProc: ISZ[String] = venv_and_opt ++ and ++ penv_and_opt ++ and ++ cd_and ++ proc
+
+      if (contains(petalinuxDependencies, string"xterm")) {
+        localSandboxProc(ISZ("vagrant", "ssh", "-c", st"TERM=xterm /bin/bash -c \"${(modifiedProc, " ")}\"".render))
+      } else {
+        localSandboxProc(ISZ("vagrant", "ssh", "-c", st"/bin/bash -c \"${(modifiedProc, " ")}\"".render))
+      }
     }
 
     def scp(dir: ScpDirection.Type, localPath: Os.Path, remotePath: ISZ[String]): Os.Proc.Result = {
+      assert(localPath.exists)
+      assert(remotePath.nonEmpty)
+
       val tool: ISZ[String] = ISZ("scp")
       val fileFlag: ISZ[String] = if (localPath.isDir) ISZ("-r") else ISZ()
+      val nonStrictHostKeyCheckingFlag: ISZ[String] = ISZ("-o", "StrictHostKeyChecking=no")
       val portFlag: ISZ[String] = ISZ("-P", port)
-      val remotePathST: ST = pathSeqToST(remotePath)
-      val remote: String = st"$username@$hostname:$remotePathST".render // should be /home/vagrant/project
-      val local: String = localPath.string
+
       val files: ISZ[String] = dir match {
-        case ScpDirection.LocalToSandbox => ISZ(local, remote)
-        case ScpDirection.SandboxToLocal => ISZ(remote, local)
+        case ScpDirection.LocalToSandbox => {
+          val local = localPath.canon.abs.string
+          val remoteParent = st"$username@127.0.0.1:${(ops.ISZOps(remotePath).dropRight(z"1"), "/")}".render
+          ISZ(local, remoteParent)
+        }
+        case ScpDirection.SandboxToLocal => {
+          val localParent = localPath.up.canon.abs.string
+          val remote = st"$username@127.0.0.1:${(remotePath, "/")}".render
+          ISZ(remote, localParent)
+        }
       }
-      return localSandboxProc(tool ++ fileFlag ++ portFlag ++ files)
+      return localSandboxProc(tool ++ fileFlag ++ nonStrictHostKeyCheckingFlag ++ portFlag ++ files)
     }
 
     def upload(localPath: Os.Path, remotePath: ISZ[String]): Os.Proc.Result = {
-      val ws: String = workspace.local.string
-      val source: String = localPath.string
-      val destination: ST = pathSeqToST(remotePath)
-      return localSandboxProc(ISZ(st"cd $ws && vagrant upload $source $destination".render))
+      val source: String = localPath.canon.string
+      val destination: String = st"${(for (file <- remotePath) yield st"$file", "/")}".render
+      return localSandboxProc(ISZ(st"vagrant upload $source $destination".render))
     }
 
-    def pathSeqToST(path: ISZ[String]): ST = {
-      return st"${(for (file <- path) yield st"$file", "/")}"
-    }
+    def clearDirectory(remotePath: ISZ[String]): Os.Proc.Result = {
+      // TODO current implementation does not clear files/dirs being used by another app (e.g. opened in vivado hls)
+      {
+        assert(remotePath.size >= workspace.project.size)
+        var pathEscapeCounter = z"0"
+        for (i <- z"0" until remotePath.size) {
+          if (i < workspace.project.size) {
+            assert(remotePath(i) == workspace.project(i))
+          }
+          remotePath(i) match {
+            case "" => assert(i == z"0")
+            case "." => assert(i != z"0")
+            case ".." => pathEscapeCounter = pathEscapeCounter - z"1"
+            case _ => pathEscapeCounter = pathEscapeCounter + z"1"
+          }
+          assert(pathEscapeCounter >= z"0")
+        }
+      }
 
-    def clearProjectDir(remotePath: ISZ[String]): Os.Proc.Result = {
       val path: String = st"${(remotePath, "/")}".render
-      val rm: ISZ[String] = ISZ("rm", "-rf")
+      val rm: ISZ[String] = ISZ("rm", "-rf", path, "||", "true")
       val and: ISZ[String] = ISZ("&&")
-      val mkdir: ISZ[String] = ISZ("mkdir", "-p", path)
+      val mkdir: ISZ[String] = ISZ("mkdir", "-p", path, "||", "true")
       return ssh(mkdir ++ and ++ rm ++ and ++ mkdir)
     }
 
+    /*
+     * Upload a local file (or directory) into the remote sandbox.
+     *   - File uploads overwrite existing sandbox files.
+     *   - Directory uploads are recursive.
+     */
     def push(localPath: Os.Path, remotePath: ISZ[String]): Os.Proc.Result = {
       return scp(ScpDirection.LocalToSandbox, localPath, remotePath)
     }
 
+    /*
+     * Download a remote sandbox file (or directory) into the local filesystem.
+     *   - File downloads overwrite existing local files.
+     *   - Directory downloads are recursive.
+     */
     def pull(localPath: Os.Path, remotePath: ISZ[String]): Os.Proc.Result = {
       return scp(ScpDirection.SandboxToLocal, localPath, remotePath)
     }
