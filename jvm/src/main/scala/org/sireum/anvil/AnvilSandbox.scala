@@ -131,7 +131,7 @@ object AnvilSandbox {
             ("memory", context.memorySizeMB()))
           val modifyvm: ISZ[(String, String)] = ISZ(
             ("graphicscontroller", context.graphicsController()),
-            ("accelerate3d", "on"),
+            ("accelerate3d", "off"),
             ("vram", context.vramSize()),
             ("usb", "off"),
             ("usbxhci", "off"),

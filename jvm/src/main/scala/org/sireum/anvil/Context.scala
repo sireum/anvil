@@ -477,11 +477,8 @@ object Context {
     }
 
     override def graphicsController(): String = {
-      if (Os.isWin) {
-        return "vmsvga"
-      } else {
-        return "VBoxSVGA"
-      }
+      // apparently vmsvga is standard but "accelerate3d" must be set to "off"
+      return "vmsvga"
     }
 
     override def disksize(): String = {
@@ -491,15 +488,15 @@ object Context {
 
       // default extremely rough estimates. Should be part of config
       val gb: Z = toolsBOM match {
-        // (sireum? petalinux? xilinx?) <---- tuple order
-        case (F, F, F) => 64  // CASE #1: environment + dependencies, but no tools preinstalled. sUse little and let users adjust if needed.
-        case (F, F, T) => 128 // CASE #2: big with huge installer
-        case (F, T, F) => 128 // CASE #3: smaller with potentially huge sstate cache
-        case (F, T, T) => 256 // CASE #4: (too small?) big installer + sstate + apps. Can probably lower if run then delete installer before petalinux install.
-        case (T, F, F) => 64  // CASE #5: sireum tools don't require too much memory, but hint that development may occur on the box.
-        case (T, F, T) => 128 // CASE #6:
-        case (T, T, F) => 128 // CASE #7:
-        case (T, T, T) => 256 // CASE #8: (too small?)
+        // (isSireum isPetalinux isXilinx) <---- tuple of 3 booleans matching
+        case (F, F, F) => z"64"  // CASE #1: environment + dependencies, but no tools preinstalled. sUse little and let users adjust if needed.
+        case (F, F, T) => z"128" // CASE #2: big with huge installer
+        case (F, T, F) => z"128" // CASE #3: smaller with potentially huge sstate cache
+        case (F, T, T) => z"256" // CASE #4: (too small?) big installer + sstate + apps. Can probably lower if run then delete installer before petalinux install.
+        case (T, F, F) => z"64"  // CASE #5: sireum tools don't require too much memory, but hint that development may occur on the box.
+        case (T, F, T) => z"128" // CASE #6:
+        case (T, T, F) => z"128" // CASE #7:
+        case (T, T, T) => z"256" // CASE #8: (too small?)
       }
       return st"${gb}GB".render
     }
@@ -523,7 +520,10 @@ object Context {
         "xz-utils", "debianutils", "iputils-ping", "libegl1-mesa", "libsdl1.2-dev", "pylint3", "cpio"
       )
 
-      return official
+      val gui = ISZ[String]("xfce4", "gnome-terminal")
+
+      // launch gui by running 'startx' inside guest. (otherwise headless)
+      return gui ++ official
     }
   }
 
