@@ -243,6 +243,26 @@ object AnvilCompiler {
 
     def writeHlsTemplate(): Unit = {
 
+      def createHlsTemplate(): String = {
+        return string""
+      }
+
+      @pure def createHlsShellScript(): String = {
+        return string""
+      }
+
+      @pure def createHlsBatScript(): String = {
+        return string""
+      }
+
+      // tcl file (automatically invoked by Anvil)
+      Workspace.writeOver(workspace.project / hlsTclFilename, createHlsTemplate())
+
+      // bash script that reruns hls sub-step part 2/2 without first Anvil codegen (manually invoked by mac/linux users)
+      Workspace.writeOverScript(workspace.project / hlsTclBash, createHlsShellScript())
+
+      // batch script that reruns hls sub-step part 2/2 without first Anvil codegen (manually invoked by windows users)
+      Workspace.writeOverScript(workspace.project / hlsTclBat, createHlsBatScript())
     }
 
     // run
