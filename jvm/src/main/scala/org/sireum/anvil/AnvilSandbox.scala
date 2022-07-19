@@ -231,7 +231,7 @@ object AnvilSandbox {
       def installPetalinuxScript(installerFileName: String): ST = {
         val installer: ST = st"/${context.username}/${workspace.root.relativize(workspace.downloads).value}/$installerFileName"
         val remoteInstallerDir: ST = st"/home/${context.username}/Downloads"
-        val remoteTargetDir: ST = st"/opt/pkg/petalinux"
+        val remoteTargetDir: ST = st"${(context.petalinuxPath, "/")}"
         return st"""
                    |# SETUP DIRECTORIES
                    |sudo rm -rf $remoteTargetDir
@@ -271,7 +271,7 @@ object AnvilSandbox {
         val sharedZipped: ST = st"/${context.username}/${workspace.root.relativize(workspace.downloads).value}/$zippedInstallerFileName"
         val unzippedInstallerFileName: String = removeExtension(zippedInstallerFileName, "tar.gz")
         val remoteInstallerDir: ST = st"/home/${context.username}/Downloads"
-        val remoteTargetDir: ST = st"/opt/pkg/vivado"
+        val remoteTargetDir: ST = st"${(context.vivadoPath, "/")}"
         return st"""
                    |# SETUP DIRECTORIES
                    |sudo rm -rf $remoteTargetDir
@@ -330,7 +330,7 @@ object AnvilSandbox {
        * see: https://github.com/sireum/kekinian#git-source-distribution
        */
       def installSireumScript(): ST = {
-        val remoteTargetDir: ST = st"/opt/pkg/sireum"
+        val remoteTargetDir: ST = st"${(context.sireumPath, "/")}"
         return st"""
                    |# SETUP DIRECTORIES
                    |sudo rm -rf $remoteTargetDir
