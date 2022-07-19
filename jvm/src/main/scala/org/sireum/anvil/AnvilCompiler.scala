@@ -550,7 +550,44 @@ object AnvilCompiler {
       val projectName: String = workspace.os.canon.name
 
       @pure def bitbakeTemplateString(): String = {
-        error(string"stub", string"")
+        val apps = ec.projectContext.transpilerArgs.apps
+        val bbFile = s"project-spec/meta-user/recipes-apps/$appName/$appName.bb"
+
+        // note: seems to leave carriage returns:
+        //${st"${(args.apps.map((app: String) => s"echo '    install -m 755 ${"${WORKDIR}"}/build/$app ${"${D}${bindir}"}' >> ${"$APP_BB_FILE"}"), "\n")}".render}
+        //${StringOps(st"${(context.apps.map((app: String) => s"echo '    install -m 755 ${"${WORKDIR}"}/build/$app ${"${D}${bindir}"}' >> ${"$APP_BB_FILE"}"), "\n")}".render).replaceAllLiterally("\r","")}
+
+        def formatAppNameToBitbake(app: String): String = {
+          val lastDotSeparatorIndex: Z = ops.StringOps(app).lastIndexOf(c".")
+          if (lastDotSeparatorIndex != z"-1" && lastDotSeparatorIndex != app.size - z"1") {
+            val r: String = ops.StringOps(app).substring(lastDotSeparatorIndex + z"1", app.size)
+            println(s"WARNING: renaming $app to $r for bitbake compatibility") // todo consider eprintln
+            return r
+          } else {
+            return app
+          }
+        }
+
+        return s"""
+APP_BB_FILE=$bbFile
+echo '' > ${"$APP_BB_FILE"}
+echo 'SUMMARY = "Generated ${ec.projectContext.template_project_top_function} application."' >> ${"$APP_BB_FILE"}
+echo 'SECTION = "PETALINUX/apps"' >> ${"$APP_BB_FILE"}
+echo 'LICENSE = "CLOSED"' >> ${"$APP_BB_FILE"}
+echo 'PR = "r0"' >> ${"$APP_BB_FILE"}
+echo '' >> ${"$APP_BB_FILE"}
+echo 'SRC_URI = "${"file://*"}"' >> ${"$APP_BB_FILE"}
+echo 'S = "${"${WORKDIR}"}"' >> ${"$APP_BB_FILE"}
+echo '' >> ${"$APP_BB_FILE"}
+echo 'inherit cmake' >> ${"$APP_BB_FILE"}
+echo '' >> ${"$APP_BB_FILE"}
+echo 'do_install() {' >> ${"$APP_BB_FILE"}
+echo '${"    install -d ${D}/${bindir}"}' >> ${"$APP_BB_FILE"}
+${ops.StringOps(st"${(apps.map((app: String) => s"echo '    install -m 755 ${"${WORKDIR}"}/build/${formatAppNameToBitbake(app)} ${"${D}${bindir}"}' >> ${"$APP_BB_FILE"}"), "\n")}".render).replaceAllLiterally("\r","")}
+echo '}' >> ${"$APP_BB_FILE"}
+echo '' >> ${"$APP_BB_FILE"}
+echo 'EXTRA_OECMAKE = ""' >> ${"$APP_BB_FILE"}
+"""
       }
 
       @pure def createSystemUserDtsi(): String = {
