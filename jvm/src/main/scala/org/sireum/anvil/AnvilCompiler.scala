@@ -413,7 +413,86 @@ object AnvilCompiler {
     def writeSwTemplate(): Unit = {
 
       def generateDriverCall(baseDriverH: String, args: ISZ[AnvilDriverParser.Arg]): String = {
-        return error(string"todo stub", string"")
+        val returnArgName = "return"
+        assert(ISZOps(args.map((arg: AnvilDriverParser.Arg) => arg.name)).contains(returnArgName), s"cannot generate driver call without a return type: $args")
+
+        val retTypeString = ISZOps(args.filter((arg: AnvilDriverParser.Arg) => arg.name == returnArgName)).first.tipe
+        val topFn = ec.projectContext.template_project_top_function
+        val params = args.filter((arg: AnvilDriverParser.Arg) => arg.name != returnArgName)
+        assert(ISZOps(params).forall((arg: AnvilDriverParser.Arg) => arg.kind != AnvilDriverParser.Direction.Out), "params should only contain input args")
+
+        val out: AnvilDriverParser.Arg = {
+          val outs = args.filter((arg: AnvilDriverParser.Arg) => arg.name == returnArgName)
+          assert(outs.size == z"1", "there must be exactly one output parameter")
+          assert(ISZOps(outs).first.kind == AnvilDriverParser.Direction.Out, "return arg must strictly be an out type")
+          ISZOps(outs).first
+        }
+
+        val paramsST: ST = st"${(for (param <- params) yield st"${param.tipe} ${param.name}", ", ")}"
+        val ptrName: String = s"X${StringOps(tc.driverBaseFileName(hc, ec)).firstToUpper}"
+
+        // string template of all arg's setters. Mapped to correct function based on in or out
+        @pure def toFnName(param: AnvilDriverParser.Arg): ST = {
+          val callerArgs: ST = if (param.isArray) st"(&ptr, 0, (char *) ${param.name}, sizeof((char *) ${param.name}))" else st"(&ptr, ${param.name})"
+          val r: ST = param.kind match {
+            case AnvilDriverParser.Direction.In => {
+              st"${ptrName}_${if (param.isArray) st"Write" else st"Set"}_${param.name}${callerArgs};"
+            }
+            case AnvilDriverParser.Direction.Out => {
+              st"${ptrName}_${if (param.isArray) st"Read" else st"Get"}_${param.name}${callerArgs};"
+            }
+            case AnvilDriverParser.Direction.InOut => {
+              // same as in case // TODO watch for HLS Read/Write permission expansion optimize (disabled)
+              st"${ptrName}_${if (param.isArray) st"Write" else st"Set"}_${param.name}${callerArgs};"
+            }
+          }
+          return r
+        }
+
+        val setters: ST = st"${(params.map((param: AnvilDriverParser.Arg) => toFnName(param)), "\n")}"
+        val getter: ST = st"${toFnName(out)}"
+        val instanceName = "foo" // todo instance per call? (or per thread/bridge). Probably develop strategies based on HAMR use cases
+        val driverProxyPrefix = ec.projectContext.methodDriverProxyPrefix
+
+        // todo drivers currently initialize EVERY CALL for debugging. To fix, simply move Initialize and Release logic outside function (or make static?)
+        val r: String =
+          st"""
+              |#include <all.h>
+              |//#include <ext.h>
+              |
+              |//#include "../drivers/${baseDriverH}"
+              |#include <${baseDriverH}>
+              |
+              |// note: currently supports single output via function return only (otherwise must hand-modify)
+              |${retTypeString} ${driverProxyPrefix}${topFn}(${paramsST}) {
+              |    ${ptrName} ptr;
+              |
+              |    printf("About to init\n");
+              |    int status = ${ptrName}_Initialize(&ptr, "${instanceName}");
+              |    if (status != XST_SUCCESS) {
+              |        printf("Error initializing acceleration: %d\n", status);
+              |        //exit(EXIT_FAILURE);
+              |        return 0;
+              |    }
+              |    printf("About to run\n");
+              |    while (!${ptrName}_IsReady(&ptr)); // indicate when it is ready to accept new inputs
+              |    ${setters}
+              |    ${ptrName}_Start(&ptr); // indicate when block can start processing data
+              |    while (!${ptrName}_IsDone(&ptr));
+              |    ${retTypeString} result = ${ptrName}_Get_return(&ptr);
+              |    /*
+              |     * unneeded, same as return
+              |     * getter: ${getter}
+              |     */
+              |
+              |    if ((status = ${ptrName}_Release(&ptr)) != XST_SUCCESS) {
+              |        printf("Error releasing: status\n");
+              |        exit(EXIT_FAILURE);
+              |    }
+              |
+              |    return result;
+              |}""".render
+        return r
       }
 
       // precondition
