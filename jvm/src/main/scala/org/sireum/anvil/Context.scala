@@ -136,7 +136,17 @@ object Context {
     def driverBaseFileName(hc: HardwareContext, ec: ExecutionContext): String
     def versionedDriverName(hc: HardwareContext, ec: ExecutionContext): String
     def hlsDriverImplDirectory(hc: HardwareContext, ec: ExecutionContext): Os.Path
-    // consider adding helper method "isValidNamingConvention" to check user input against Xilinx tools
+
+    def baseDriverHFileName(hc: HardwareContext, ec: ExecutionContext): String
+    def baseDriverCFileName(hc: HardwareContext, ec: ExecutionContext): String
+    def hwDriverHFileName(hc: HardwareContext, ec: ExecutionContext): String
+    def linuxDriverCFileName(hc: HardwareContext, ec: ExecutionContext): String
+
+    // given a line of source code from a driver file, return zero to many lines to replace it
+    // note: driver source is intercepted in SW stage. Vivado HLS project files are never modified (to respect caches)
+    def applyDriverSourceCodeLineHooks(hc: HardwareContext, ec: ExecutionContext, driverFileName: String, sourceLine: String): ISZ[String]
+
+    // todo consider adding helper method "isValidNamingConvention" to check user input against Xilinx tools
   }
 
   /**
@@ -164,6 +174,39 @@ object Context {
       val projectWorkspace = ec.projectContext.projectWorkspace
       projectWorkspace.hls / hlsSolutionName / "impl" / "misc" / "drivers" / driverDirectory / "src";
     }
+
+    override def baseDriverHFileName(hc: HardwareContext, ec: ExecutionContext): String = {
+      val baseName = driverBaseFileName(hc, ec)
+      return s"x$baseName.h"
+    }
+
+    override def baseDriverCFileName(hc: HardwareContext, ec: ExecutionContext): String = {
+      val baseName = driverBaseFileName(hc, ec)
+      return s"x$baseName.c"
+    }
+
+    override def hwDriverHFileName(hc: HardwareContext, ec: ExecutionContext): String = {
+      val baseName = driverBaseFileName(hc, ec)
+      return s"x${baseName}_hw.h"
+    }
+
+    override def linuxDriverCFileName(hc: HardwareContext, ec: ExecutionContext): String = {
+      val baseName = driverBaseFileName(hc, ec)
+      return s"x${baseName}_linux.c"
+    }
+
+    override def applyDriverSourceCodeLineHooks(hc: HardwareContext, ec: ExecutionContext, driverFileName: String, sourceLine: String): ISZ[String] = {
+      val dh = baseDriverHFileName(hc, ec) // for intercepting typedefs in driver header file
+      if (driverFileName == dh) {
+        val sl = StringOps(sourceLine).trim
+        sl match {
+          case "typedef uint32_t u32;" => return ISZ(sl, "typedef uint64_t u64;") // add u64 // todo also add F64?
+          case _ => return ISZ(sourceLine) // do not modify (pass through)
+        }
+      }
+      return ISZ(sourceLine) // do not modify (pass through)
+    }
+
   }
 
   @sig trait ProjectContext {
