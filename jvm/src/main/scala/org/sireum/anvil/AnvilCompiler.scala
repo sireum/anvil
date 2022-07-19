@@ -20,6 +20,10 @@ object AnvilCompiler {
 
   val plScriptFilename: String = "run-petalinux.sh"
 
+  @pure def checkpoint(): Unit = {
+    unit()
+  }
+
   def compile(hc: HardwareContext, tc: ToolchainContext, ec: ExecutionContext, tm: TranspilerMirror): Z = {
     @pure def shouldRunStage(stage: CompileStage.Type): B = {
       return ec.stages.contains(stage)
@@ -106,11 +110,14 @@ object AnvilCompiler {
     }
 
     var status: Z = z"0"
+    checkpoint()
+
     if (shouldRunStage(CompileStage.Hls)) {
       status = invokeTranspilerPass1()
       if (status != z"0") {
         return status
       }
+      checkpoint()
 
       assert(ws().transpiled.list.nonEmpty, "Transpiler should have generated some output")
 
@@ -120,6 +127,7 @@ object AnvilCompiler {
       if (status != z"0") {
         return status
       }
+      checkpoint()
     }
 
     if (shouldRunStage(CompileStage.Hw)) {
@@ -129,6 +137,7 @@ object AnvilCompiler {
       if (status != z"0") {
         return status
       }
+      checkpoint()
     }
 
     if (shouldRunStage(CompileStage.Sw)) {
@@ -139,6 +148,7 @@ object AnvilCompiler {
       if (status != z"0") {
         return status
       }
+      checkpoint()
 
       // re-run the c transpiler with all hw-accelerated functions now calling a unique new extension method
       // generate driver calls inside those new ext methods
@@ -146,6 +156,7 @@ object AnvilCompiler {
       if (status != z"0") {
         return status
       }
+      checkpoint()
     }
 
     if (shouldRunStage(CompileStage.Os)) {
@@ -155,7 +166,9 @@ object AnvilCompiler {
       if (status != z"0") {
         return status
       }
+      checkpoint()
     }
+    checkpoint()
 
     return z"0"
   }
