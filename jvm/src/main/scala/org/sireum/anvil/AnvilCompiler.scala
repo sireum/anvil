@@ -357,6 +357,54 @@ object AnvilCompiler {
   }
 
   def runHW(hc: HardwareContext, tc: ToolchainContext, ec: ExecutionContext): Z = {
+    val workspace = ec.projectContext.projectWorkspace
+
+    def writeHwTemplate(): Unit = {
+
+      def tclFile(): String = {
+        // TODO need template-selection process in Context (ask for advice)
+        return Templates.zedboard_vivado_2020_1(hc, tc, ec)
+      }
+
+      @pure def shellScript(): String = {
+        val command = st"#!/bin/bash\nvivado -mode batch -source $hwTclFilename"
+        val source: ST = ec.sandbox match {
+          case Some(sb) => st"source ${(sb.vivadoSourceScriptPath, string"/")}"
+          case _ => st"echo 'WARNING: custom environment detected! Please source vivado settings64.sh before running this script'"
+        }
+        val lines = ISZ(st"#!/bin/bash", source, command)
+        val result = st"${(lines, "\n")}"
+        return result.render
+      }
+
+      @pure def batchScript(): String = {
+        return st"vivado -mode batch -source $hwTclBat".render
+      }
+
+      Workspace.writeOver(workspace.project / hwTclFilename, tclFile())
+      Workspace.writeOverScript(workspace.project / hwTclBash, shellScript())
+      Workspace.writeOverScript(workspace.project / hwTclBat, batchScript())
+    }
+
+    writeHwTemplate()
+    ec.sandbox match {
+      case Some(sb) => {
+        // clear dirs
+        sb.clearDirectory(sb.workspace.hw)
+
+        // push
+        sb.push(workspace.project / hwTclBat, sb.workspace.project :+ hwTclBat)
+        sb.push(workspace.project / hwTclBash, sb.workspace.project :+ hwTclBash)
+        sb.push(workspace.project / hwTclFilename, sb.workspace.project :+ hwTclFilename)
+
+        // run vivado hls
+        sb.ssh(ISZ(string"vivado", "-mode", "batch", "-source", hwTclFilename))
+
+        // pull
+        sb.pull(workspace.hw, sb.workspace.hw)
+      }
+      case _ => runProc(workspace.project, ISZ("vivado", "-mode", "batch", "-source", hwTclFilename))
+    }
     return z"0"
   }
 
