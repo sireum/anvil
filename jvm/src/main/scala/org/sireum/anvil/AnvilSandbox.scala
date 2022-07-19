@@ -198,8 +198,7 @@ object AnvilSandbox {
                      |${configureVagrant()}
                      |"""
 
-      val vagrantFile = mkdirSafe(workspace.root / "Vagrantfile")
-      vagrantFile.writeOver(text.render)
+      Workspace.writeOver(workspace.root / "Vagrantfile", text.render)
     }
 
     def createScripts(): Unit = {
@@ -263,6 +262,12 @@ object AnvilSandbox {
        * Installs Vivado and Vivado HLS.
        */
       def installVivadoScript(zippedInstallerFileName: String): ST = {
+
+        @pure def removeExtension(s: String, ext: String): String = {
+          val extSize = StringOps(st".$ext".render).size
+          return StringOps(s).substring(z"0", s.size - extSize);
+        }
+
         val sharedZipped: ST = st"/${context.username}/${workspace.root.relativize(workspace.downloads).value}/$zippedInstallerFileName"
         val unzippedInstallerFileName: String = removeExtension(zippedInstallerFileName, "tar.gz")
         val remoteInstallerDir: ST = st"/home/${context.username}/Downloads"
@@ -343,24 +348,29 @@ object AnvilSandbox {
                    |"""
       }
 
-      // write scripts
-      writeOverSafe(workspace.fixDashScript, fixDashScript().render)
-      writeOverSafe(workspace.installDependenciesScript, installDependenciesScript().render)
+      // write script to replace dash with bash (fixes installer bug)
+      Workspace.writeOver(workspace.fixDashScript, fixDashScript().render)
 
+      // write script to install apt-get dependencies from Context
+      Workspace.writeOver(workspace.installDependenciesScript, installDependenciesScript().render)
+
+      // write install petalinux script (for Vagrant) and copy the petalinux installer (for copied script)
       context.petalinuxInstallerPath.foreach((p: Os.Path) => {
         val petalinuxInstallerFilename: String = p.name
         p.copyOverTo(workspace.downloads / petalinuxInstallerFilename)
-        writeOverSafe(workspace.installPetalinuxScript, installPetalinuxScript(petalinuxInstallerFilename).render)
+        Workspace.writeOver(workspace.installPetalinuxScript, installPetalinuxScript(petalinuxInstallerFilename).render)
       })
 
       context.xilinxUnifiedPath.foreach((p: Os.Path) => {
         val xilinxUnifiedTarballFilename: String = p.name
         p.copyOverTo(workspace.downloads / xilinxUnifiedTarballFilename)
-        writeOverSafe(workspace.installVivadoScript, installVivadoScript(xilinxUnifiedTarballFilename).render)
+        // write vivado install script
+        Workspace.writeOver(workspace.installVivadoScript, installVivadoScript(xilinxUnifiedTarballFilename).render)
       })
 
       if (context.installSireum) {
-        writeOverSafe(workspace.installSireumScript, installSireumScript().render)
+        // write sireum install script
+        Workspace.writeOver(workspace.installSireumScript, installSireumScript().render)
       }
     }
 
@@ -370,23 +380,6 @@ object AnvilSandbox {
 
     // VAGRANT FILE CREATION
     return context.localSandboxProc(ISZ("vagrant", "up")).exitCode
-  }
-
-  def mkdirSafe(file: Os.Path): Os.Path = {
-    if (!file.exists) {
-      file.mkdirAll()
-    }
-    return file
-  }
-
-  def writeOverSafe(file: Os.Path, content: String): Os.Path = {
-    mkdirSafe(file).writeOver(content)
-    return file
-  }
-
-  def removeExtension(s: String, ext: String): String = {
-    val extSize = StringOps(st".$ext".render).size
-    return StringOps(s).substring(z"0", s.size - extSize);
   }
 
 }
