@@ -164,7 +164,10 @@ object AnvilCompiler {
       val p = Os.path(st"${(sp, "/")}".render)
       p.copyOverTo(ws().original)
       ec.sandbox match {
-        case Some(sb) => sb.clearDirectory(sb.workspace.original)
+        case Some(sb) => {
+          sb.clearDirectory(sb.workspace.original)
+          sb.push(ws().original, sb.workspace.original)
+        }
         case _ => unit()
       }
       return z"0"
@@ -178,6 +181,7 @@ object AnvilCompiler {
       }
       checkpoint()
 
+      // run Anvil's first transpiler pass to produce hls-compatible C code
       status = invokeTranspilerPass1()
       if (status != z"0") {
         return status
