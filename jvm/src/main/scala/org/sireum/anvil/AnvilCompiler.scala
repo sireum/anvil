@@ -143,7 +143,17 @@ object AnvilCompiler {
         anvilTranspilerContext = ec.projectContext.methodDescriptor // <-- changed
       )
 
-      return tm(modified) // invoke the CTranspiler
+      val result = tm(modified) // invoke the CTranspiler
+      ec.sandbox match {
+        case Some(sb) => {
+          // Transpiler passes are always run locally.
+          // Read comments in invokeTranspilerPass1() for a longer explanation.
+          sb.clearDirectory(sb.workspace.modifiedTranspiled)
+          sb.push(ec.projectContext.projectWorkspace.modifiedTranspiled, sb.workspace.modifiedTranspiled)
+        }
+        case _ => unit()
+      }
+      return result
     }
 
     var status: Z = z"0"
