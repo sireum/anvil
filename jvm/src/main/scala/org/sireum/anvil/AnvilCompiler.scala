@@ -87,6 +87,22 @@ object AnvilCompiler {
 
       // todo modify c transpiler call to accept extra c-make-includes when creating blank driver files
       val result = tm(modified) // invoke the CTranspiler
+
+      ec.sandbox match {
+        case Some(sb) => {
+          // Transpiler passes are always run locally.
+          // If a sandbox is specified, it will simply receive a copy of the result.
+          //
+          // By default, the "sireum anvil sandbox" cli command will install kekinian in the sandbox.
+          // Users wanting to run transpiler-pass-1 or transpiler-pass-2 from inside the sandbox can open
+          // a shell or vm (via Vagrant or VirtualBox) and run the desired "sireum anvil --stage hls ..." command from
+          // within (no --sandbox-path <path> needed).
+          // todo consider adding this capability to anvil directly as a flag, e.g. --fully-isolated-build or something
+          sb.clearDirectory(sb.workspace.transpiled)
+          sb.push(ec.projectContext.projectWorkspace.transpiled, sb.workspace.transpiled)
+        }
+        case _ => unit()
+      }
       return result
     }
 
