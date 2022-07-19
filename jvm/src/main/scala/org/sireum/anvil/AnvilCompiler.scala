@@ -248,7 +248,14 @@ object AnvilCompiler {
       }
 
       @pure def createHlsShellScript(): String = {
-        return string""
+        val vivadoScriptCmd = st"${(ISZ(st"vivado_hls", st"-f", st"$hlsTclFilename"), " ")}"
+        val vivadoSource: ST = ec.sandbox match {
+          case Some(sb) => st"source ${(sb.vivadoSourceScriptPath, string"/")}"
+          case _ => st"echo 'WARNING: custom environment detected! Please source vivado settings64.sh before running this script'"
+        }
+        val lines = ISZ(st"#!/bin/bash", vivadoSource, vivadoScriptCmd)
+        val result = st"${(lines, "\n")}"
+        return result.render
       }
 
       @pure def createHlsBatScript(): String = {
