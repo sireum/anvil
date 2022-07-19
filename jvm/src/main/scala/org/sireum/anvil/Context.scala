@@ -31,7 +31,7 @@ import org.sireum.ops.StringOps
 */
 object Context {
 
-  @sig trait SandboxContextBase {
+  @sig trait SandboxContext {
     def port: String // ssh port
     def hostname: String
     def username: String
@@ -41,7 +41,7 @@ object Context {
     def localSandboxProc(proc: ISZ[String]): Os.Proc.Result
   }
 
-  @sig trait SandboxInstallationContext extends SandboxContextBase {
+  @sig trait SandboxInstallationContext extends SandboxContext {
     def workspace: InstallerWorkspace
     def installSireum: B
     def petalinuxInstallerPath: Option[Os.Path]
@@ -182,7 +182,7 @@ object Context {
 
   @sig trait ExecutionContext {
     def projectContext: ProjectContext
-    def sandbox: Option[SandboxContext]
+    def sandbox: Option[SandboxCompilationContext]
     def stages: Set[CompileStage.Type]
   }
 
@@ -196,7 +196,7 @@ object Context {
     return Os.proc(prefix ++ proc).at(path).console.runCheck()
   }
 
-  @sig trait SandboxContext extends SandboxContextBase {
+  @sig trait SandboxCompilationContext extends SandboxContext {
 
     def workspace: SandboxWorkspace
 
@@ -277,7 +277,7 @@ object Context {
     val template_project_hls_sources: String = simpleMethodName
   }
 
-  @sig trait SimpleSSH extends SandboxContextBase {
+  @sig trait SimpleSSH extends SandboxContext {
 
     override def port: String = {
       return "2222"
@@ -375,10 +375,10 @@ object Context {
     }
   }
 
-  @datatype class SimpleSandboxContext(val workspace: SandboxWorkspace) extends SandboxContext with SimpleSSH {}
+  @datatype class SimpleSandboxContext(val workspace: SandboxWorkspace) extends SandboxCompilationContext with SimpleSSH {}
 
   @datatype class SimpleExecutionContext(val projectContext: ProjectContext,
-                                         val sandbox: Option[SandboxContext],
+                                         val sandbox: Option[SandboxCompilationContext],
                                          val stages: Set[CompileStage.Type]) extends ExecutionContext {}
 
   @datatype class SimpleSandboxInstallationContext_v2020_1(val workspace: InstallerWorkspace,
