@@ -409,6 +409,20 @@ object AnvilCompiler {
   }
 
   def runSW(hc: HardwareContext, tc: ToolchainContext, ec: ExecutionContext): Z = {
+
+    def writeSwTemplate(): Unit = {
+
+    }
+
+    writeSwTemplate()
+    ec.sandbox match {
+      case Some(sb) => {
+        sb.clearDirectory(sb.workspace.driverCalls)
+        sb.push(ec.projectContext.projectWorkspace.driverCalls, sb.workspace.driverCalls)
+      }
+      case _ => unit()
+    }
+
     return z"0"
   }
 
