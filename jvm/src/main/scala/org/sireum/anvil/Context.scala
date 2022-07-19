@@ -123,10 +123,10 @@ object Context {
 
     def template_project_part_number: String
 
-    // todo double-check we enforce this renamed bundle in hls!
     def template_project_bus: String = {
       return "AXILiteS"
     }
+
   }
 
   @sig trait ToolchainContext {
