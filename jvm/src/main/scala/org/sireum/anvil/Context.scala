@@ -293,6 +293,16 @@ object Context {
     }
   }
 
+  def error[T](msg: String, unused: T): T = {
+    eprintln(msg)
+    Os.exit(z"-1")
+    return unused
+  }
+
+  @pure def unit(): Unit = {
+    // no op
+  }
+
   @pure def contains[T](xs: ISZ[T], x: T): B = {
     return set(xs).contains(x)
   }
