@@ -425,7 +425,7 @@ object AnvilCompiler {
       val baseDriverC = tc.baseDriverCFileName(hc, ec)
       val hwDriverH = tc.hwDriverHFileName(hc, ec)
       val linuxDriverC = tc.linuxDriverCFileName(hc, ec)
-      val args: ISZ[AnvilDriverParser.Arg] = error("todo parse args stub", ISZ())
+      val args: ISZ[AnvilDriverParser.Arg] = AnvilDriverParser.readTypes(driverName, drivers / baseDriverH)
 
       val workspace = ec.projectContext.projectWorkspace
 
