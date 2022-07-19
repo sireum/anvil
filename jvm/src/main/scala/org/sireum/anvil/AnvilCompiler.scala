@@ -252,7 +252,7 @@ object AnvilCompiler {
       }
 
       @pure def createHlsBatScript(): String = {
-        return string""
+        return st"vivado_hls -f $hlsTclFilename".render
       }
 
       // tcl file (automatically invoked by Anvil)
