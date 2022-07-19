@@ -9,6 +9,16 @@ object AnvilCompiler {
 
   type TranspilerMirror = TranspilersCOptionMirror => Z
 
+  val hlsTclFilename: String = "run-hls.tcl"
+  val hlsTclBash: String = "run-hls.sh"
+  val hlsTclBat: String = "run-hls.bat"
+
+  val hwTclFilename: String = string"run-hw.tcl"
+  val hwTclBash: String = string"run-hw.sh"
+  val hwTclBat: String = string"run-hw.bat"
+
+  val plScriptFilename: String = "run-petalinux.sh"
+
   def compile(hc: HardwareContext, tc: ToolchainContext, ec: ExecutionContext, tm: TranspilerMirror): Z = {
     @pure def shouldRunStage(stage: CompileStage.Type): B = {
       return ec.stages.contains(stage)
