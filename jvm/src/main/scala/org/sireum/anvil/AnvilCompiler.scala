@@ -542,6 +542,33 @@ object AnvilCompiler {
   }
 
   def runOS(hc: HardwareContext, tc: ToolchainContext, ec: ExecutionContext): Z = {
+    val workspace: ProjectWorkspace = ec.projectContext.projectWorkspace
+
+    @pure def createPetalinuxScript(): String = {
+      return error(string"stub", string"")
+    }
+
+    // write petalinux script
+
+    Workspace.writeOverScript(workspace.project / plScriptFilename, createPetalinuxScript())
+    ec.sandbox match {
+      case Some(sb) => {
+        // clear dirs
+        sb.clearDirectory(sb.workspace.os)
+
+        // push
+        sb.push(workspace.project / plScriptFilename, sb.workspace.project :+ plScriptFilename)
+
+        // run petalinux
+        val absPath = st"${(sb.workspace.project :+ plScriptFilename, "/")}".render
+        sb.ssh(ISZ(absPath))
+
+        // pull (images only)
+        sb.pull(Workspace.mkdir(workspace.os / "images"), sb.workspace.os :+ "images") // way to big to pull the whole thing
+      }
+      case _ => runProc(workspace.project, ISZ("/bin/bash", "-c", plScriptFilename))
+    }
+
     return z"0"
   }
 
