@@ -112,7 +112,25 @@ object AnvilCompiler {
     var status: Z = z"0"
     checkpoint()
 
+    def copySources(): Z = {
+      val sp = ec.projectContext.transpilerArgs.sourcepath
+      val p = Os.path(st"${(sp, "/")}".render)
+      p.copyOverTo(ws().original)
+      ec.sandbox match {
+        case Some(sb) => sb.clearDirectory(sb.workspace.original)
+        case _ => unit()
+      }
+      return z"0"
+    }
+
     if (shouldRunStage(CompileStage.Hls)) {
+      // copy source files into Anvil's workspace
+      status = copySources()
+      if (status != z"0") {
+        return status
+      }
+      checkpoint()
+
       status = invokeTranspilerPass1()
       if (status != z"0") {
         return status
