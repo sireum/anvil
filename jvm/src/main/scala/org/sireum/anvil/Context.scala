@@ -37,8 +37,53 @@ object Context {
     def username: String
     def password: String
 
+    /*
+     * Run vagrant up with flags appropriate for the given context.
+     *
+     * For example: calling up() during install *may* allow for provisions, while calling up() during sandbox proxy
+     *              build *may* only resume a halted machine.
+     */
     def up(): Os.Proc.Result
+
     def localSandboxProc(proc: ISZ[String]): Os.Proc.Result
+
+    /**
+     * Absolute path.
+     * For example: represent Os.path("/Users/joe/Desktop") becomes ISZ("", "Users", "joe", "Desktop")
+     */
+    def installationPath: ISZ[String] = {
+      return ISZ("", "opt", "pkg")
+    }
+
+    def vivadoVersion: String
+
+    def vivadoPath: ISZ[String] = {
+      return installationPath :+ "vivado"
+    }
+
+    def petalinuxPath: ISZ[String] = {
+      return installationPath :+ "petalinux"
+    }
+
+    def sireumPath: ISZ[String] = {
+      return installationPath :+ "sireum"
+    }
+
+    /*
+     * Location of petalinux source script relative to the installation folder.
+     */
+    def petalinuxSourceScriptPath: ISZ[String]
+
+    /*
+     * Location of vivado source script relative to the installation folder.
+     */
+    def vivadoSourceScriptPath: ISZ[String]
+
+    /*
+     * List of dependencies required by petalinux via apt-get.
+     * These are available in the user guide for each individual petalinux version.
+     */
+    def petalinuxDependencies: ISZ[String]
   }
 
   @sig trait SandboxInstallationContext extends SandboxContext {
