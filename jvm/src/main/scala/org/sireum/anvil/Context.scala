@@ -284,6 +284,24 @@ object Context {
     return Os.proc(prefix ++ proc).at(path).console.runCheck()
   }
 
+  // todo move to Utils file?
+  def expect(requirement: B, message: ST): Unit = {
+    if (!requirement) {
+      val rendered = message.render
+      eprintln(rendered)
+      halt(rendered)
+    }
+  }
+
+  @pure def contains[T](xs: ISZ[T], x: T): B = {
+    return set(xs).contains(x)
+  }
+
+  @pure def set[T](xs: ISZ[T]): Set[T] = {
+    return Set.empty[T] ++ xs
+  }
+
+
   @sig trait SandboxCompilationContext extends SandboxContext {
 
     def workspace: SandboxWorkspace
