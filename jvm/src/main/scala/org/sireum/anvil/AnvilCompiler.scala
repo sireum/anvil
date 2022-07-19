@@ -478,6 +478,96 @@ object AnvilCompiler {
       // empty body
     }
 
+    // uses the generatedDrivers create a mapping of ArgName -> ArgType
+    def readTypes(driverName: String, driverHeader: Os.Path): ISZ[Arg] = {
+
+      // TODO technically contextual... but how to add to Context without leaking the impl(s)? Include xml reader too
+      val prefix: org.sireum.String = s"X${StringOps(driverName).firstToUpper}_"
+      val matchWords: ISZOps[String] = ISZOps(ISZ(s" ${prefix}Get_", s" ${prefix}Set_", s" ${prefix}Write_", s" ${prefix}Read_"))
+      val skipWords: ISZOps[String] = ISZOps(ISZ("BaseAddress", "HighAddress", "TotalAddress", "BitWidth", "Depth"))
+      var result: ISZ[Arg] = ISZ[Arg]()
+
+      val filteredLines = driverHeader.readLines
+        // retain only driver arg functions
+        .filter((line: String) => matchWords.exists((matcher: String) => StringOps(line).contains(matcher)))
+        // discard all driver arg helper functions
+        .filter((line: String) => !skipWords.exists((matcher: String) => StringOps(line).contains(matcher)))
+
+      @pure def splitThenTrim(c: C, s: String): ISZ[String] = {
+        return StringOps(s).split((cc: C) => cc == c).map((ss: String) => StringOps(ss).trim)
+      }
+
+      @pure def getPortName(signature: String, qualifiedPrefix: String, portOpQualifier: String): String = {
+
+        @pure def trailIfMissing(s: String, trail: String): String = {
+          if (StringOps(s).endsWith(trail)) {
+            return s
+          } else {
+            return st"$s$trail".render
+          }
+        }
+
+        val actualPrefix = trailIfMissing(s"$qualifiedPrefix$portOpQualifier", "_")
+        val endIndexExclusive = StringOps(signature).indexOf(c"(")
+        val beginIndexInclusive = StringOps(signature).stringIndexOf(actualPrefix) + actualPrefix.size
+        return StringOps(signature).substring(beginIndexInclusive, endIndexExclusive)
+      }
+
+      for (line <- filteredLines) {
+        val fnName = StringOps(StringOps(line).substring(splitThenTrim(c" ", line)(z"0").size, splitThenTrim(c"(", line)(z"0").size)).trim
+        val argDirectionName: String = StringOps(StringOps(fnName).substring(prefix.size, StringOps(fnName).indexOfFrom(c"_", prefix.size))).trim
+        val argName: String = getPortName(line, prefix, argDirectionName)
+        val dir: Direction.Type = argDirectionName match {
+          case string"Get" => Direction.Out
+          case string"Read" => Direction.Out
+          case string"Set" => Direction.In
+          case string"Write" => Direction.In
+          case _ => error(s"Unable to determine if $argDirectionName's direction from: $argDirectionName", Direction.InOut)
+        }
+        val isArray: B = argDirectionName match {
+          case string"Get" => F
+          case string"Set" => F
+          case string"Read" => T
+          case string"Write" => T
+          case _ => error(s"Unable to determine if $argDirectionName is an array or value from: $dir", T)
+        }
+        val argType: org.sireum.String = isArray match {
+          case T => string"char *data"
+          case F => {
+            val space: C = c" "
+            val words = StringOps(line).split((c: C) => c  == space)
+            dir match {
+              case Direction.In => words(words.lastIndex.decrease)
+              case Direction.Out => words(z"0")
+              case Direction.InOut => error("InOut dir is determined later", "unused")
+            }
+          }
+        }
+
+        @strictpure def checkArgName(arg: Arg): B = arg.name == argName
+
+        @strictpure def argNameMatcher(o: Option[Arg], arg: Arg): Option[Arg] = if (checkArgName(arg)) Some(arg) else o
+
+        if (ISZOps(result).exists(checkArgName _)) {
+          val matchingArg: Option[Arg] = ISZOps(result).foldLeft[Option[Arg]](argNameMatcher _, None())
+          matchingArg match {
+            // - Remove the old matching arg (expected to contain either Direction.In or Direction.Out) in preparation
+            //   for replacing its direction with Direction.InOut instead.
+            // - This assumption is safe because only args containing Direction.InOut may have duplicate occurrences.
+            // TODO Still, consider adding a sanity check that both arg directions are opposite neither are InOut such as:
+            //      (arg.direction is In|Out) AND (match.direction is In|Out) AND (arg.direction is NOT match.direction)
+            case Some(matchArg) => result = result - matchArg // remove the old matching arg (which should be In r, we will add InOut instead... // todo check that this dir is opposite of match?
+            case None() => error("A matching Arg was expected based on if-statement above.", unit())
+          }
+          result = result :+ Arg(argName, argType, Direction.InOut, isArray, fnName)
+        } else {
+          result = result :+ Arg(argName, argType, dir, isArray, fnName)
+        }
+      }
+
+      return result
+    }
+
   }
 
 }
