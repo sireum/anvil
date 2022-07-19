@@ -591,7 +591,9 @@ echo 'EXTRA_OECMAKE = ""' >> ${"$APP_BB_FILE"}
       }
 
       @pure def createSystemUserDtsi(): String = {
-        error(string"stub", string"")
+        // todo best way to select template (context selector function is ideal, but more trouble than its worth for now)
+        // TODO should be part of Context? (deciding)
+        return Templates.zedboard_petalinux_2020_1_createSystemUserDtsi(hc, tc, ec)
       }
 
       return s"""
