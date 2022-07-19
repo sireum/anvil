@@ -545,7 +545,87 @@ object AnvilCompiler {
     val workspace: ProjectWorkspace = ec.projectContext.projectWorkspace
 
     @pure def createPetalinuxScript(): String = {
-      return error(string"stub", string"")
+
+      val appName: String = "anvil"
+      val projectName: String = workspace.os.canon.name
+
+      @pure def bitbakeTemplateString(): String = {
+        error(string"stub", string"")
+      }
+
+      @pure def createSystemUserDtsi(): String = {
+        error(string"stub", string"")
+      }
+
+      return s"""
+petalinux-util --webtalk off
+petalinux-create --force --type project --template zynq --name $projectName
+cd $projectName
+
+echo 'setup the hardware'
+petalinux-config --silentconfig --get-hw-description=../../project/${workspace.hw.name}
+
+# setup configuration before setting anything else up
+echo 'autoconfigs are currently turned on'
+sed -i 's/# CONFIG_SUBSYSTEM_AUTOCONFIG_KERNEL is not set/CONFIG_SUBSYSTEM_AUTOCONFIG_KERNEL=y/' project-spec/configs/config
+sed -i 's/# CONFIG_SUBSYSTEM_AUTOCONFIG_U__BOOT is not set/CONFIG_SUBSYSTEM_AUTOCONFIG_U__BOOT=y/' project-spec/configs/config
+sed -i 's/# CONFIG_UIO is not set/CONFIG_UIO=y/' project-spec/configs/config
+sed -i 's/# CONFIG_UIO_PDRV_GENIRQ is not set/CONFIG_UIO_PDRV_GENIRQ=y/' project-spec/configs/config
+
+echo 'create app and set up its files'
+petalinux-create --force -t apps -n $appName --enable
+rm -rf project-spec/meta-user/recipes-apps/$appName/files/*
+cp -rL /home/vagrant/project/sw/modified-transpiled/* project-spec/meta-user/recipes-apps/$appName/files
+${bitbakeTemplateString()}
+
+# create system-user.dtsi
+petalinux-config -c kernel --silentconfig
+
+# petalinux-config -c u-boot
+# petalinux-config -c u-boot --silentconfig
+
+echo 'copy device tree into system-user.dtsi'
+${createSystemUserDtsi()}
+
+### echo "ANVIL OS - building anvil"
+### # petalinux-build -c $appName -x distclean
+### petalinux-build -c $appName
+###
+### echo "ANVIL OS - building u-boot-xlnx"
+### petalinux-build -c u-boot-xlnx
+###
+### echo "ANVIL OS - building device-tree"
+### # petalinux-build -c device-tree -x cleansstate
+### petalinux-build -c device-tree
+###
+### echo "ANVIL OS - building fsbl"
+### petalinux-build -c fsbl
+###
+### echo "ANVIL OS - building linux-xlnx"
+### petalinux-build -c linux-xlnx
+###
+### echo "ANVIL OS - building kernel"
+### petalinux-build -c kernel
+###
+### petalinux-build
+### petalinux-package --force --boot --u-boot
+
+# some steps intentionally "out of order" while testing
+petalinux-build -c anvil -x distclean
+petalinux-build -c anvil
+petalinux-build -c rootfs
+petalinux-build -c device-tree -x cleansstate
+petalinux-build -c device-tree
+# kernel MUST be build from top level of os project
+petalinux-build -c kernel -x distclean
+petalinux-build -c kernel
+echo "again clear all caches"
+# petalinux-build -c u-boot -x distclean
+# petalinux-build -c u-boot
+petalinux-build -x mrproper # for build caches sanity check
+petalinux-build
+petalinux-package --boot --u-boot
+"""
     }
 
     // write petalinux script
