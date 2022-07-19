@@ -157,7 +157,7 @@ object Context {
   @datatype class DefaultToolchainContext() extends ToolchainContext {
 
     override def driverName(hc: HardwareContext, ec: ExecutionContext): String = {
-      return ec.projectContext.template_project_hls_sources
+      return ec.projectContext.template_project_top_function
     }
 
     override def driverBaseFileName(hc: HardwareContext, ec: ExecutionContext): String = {
@@ -212,6 +212,10 @@ object Context {
   @sig trait ProjectContext {
     def projectWorkspace: ProjectWorkspace
     def transpilerArgs: TranspilersCOptionMirror
+    def methodDescriptor: ISZ[String]
+    def methodDriverProxyPrefix: String
+    def simpleMethodName: String
+    def mangledMethodName: String
     def template_project_top_function: String
     def template_project_hls_solution: String
     def template_project_vivado_project: String
@@ -352,13 +356,18 @@ object Context {
   }
 
   @datatype class SimpleProjectContext(val projectWorkspace: ProjectWorkspace,
-                                       val simpleMethodName: String,
+                                       val methodDescriptor: ISZ[String], // e.g. ISZ("org", "sireum", "Math", "add")
+                                       val simpleMethodName: String,      // e.g. "add"
+                                       val mangledMethodName: String,     // e.g. "org_sireum_Math_add"
+                                                                          // see: "org.sireum.lang.ast.Util.mangleName"
                                        val transpilerArgs: TranspilersCOptionMirror) extends ProjectContext {
-    val template_project_top_function: String = simpleMethodName
+//    val methodDriverProxyPrefix: String = string"ANVIL_X"
+    val methodDriverProxyPrefix: String = string"" // TODO empty string is a hack to remove method call proxy. Remove?
+    val template_project_top_function: String = mangledMethodName
     val template_project_hls_solution: String = "generatedSolution"
     val template_project_vivado_project: String = "generatedProject"
     val template_project_vivado_design: String = "generatedDesign"
-    val template_project_hls_sources: String = simpleMethodName
+    val template_project_hls_sources: String = mangledMethodName
   }
 
   @sig trait SimpleSSH extends SandboxContext {
