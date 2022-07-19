@@ -191,8 +191,7 @@ object AnvilCompiler {
       assert(ws().transpiled.list.nonEmpty, "Transpiler should have generated some output")
 
       // run Anvil's HLS stage to generate the function IP and driver files
-      val hls = halt("COMPILER LINK (AnvilStageHLS)") // anvil.AnvilStageHLS(context, workspace, transpilerContext)
-//      status = hls.run()
+      status = runHLS(hc, tc, ec)
       if (status != z"0") {
         return status
       }
@@ -201,8 +200,7 @@ object AnvilCompiler {
 
     if (shouldRunStage(CompileStage.Hw)) {
       // run Anvil's HW stage to place the IP into the overall block design, then generate a hardware bitstream file
-      val hw = halt("COMPILER LINK (AnvilStageHW)") // anvil.AnvilStageHW(context, workspace)
-//      status = hw.run()
+      status = runHW(hc, tc, ec)
       if (status != z"0") {
         return status
       }
@@ -211,9 +209,7 @@ object AnvilCompiler {
 
     if (shouldRunStage(CompileStage.Sw)) {
       // run Anvil's SW stage to: generate code to call the drivers created in the HLS stage.
-      println("HERE 2!")
-      val sw = halt("COMPILER LINK (AnvilStageSW)") // anvil.AnvilStageSW(context, workspace)
-//      status = sw.run()
+      status = runSW(hc, tc, ec)
       if (status != z"0") {
         return status
       }
@@ -230,8 +226,7 @@ object AnvilCompiler {
 
     if (shouldRunStage(CompileStage.Os)) {
       // run Anvil's OS stage to place
-      val os = halt("COMPILER LINK (AnvilStageOS)") // anvil.AnvilStageOS(context, workspace)
-//      status = os.run()
+      status = runOS(hc, tc, ec)
       if (status != z"0") {
         return status
       }
@@ -239,6 +234,22 @@ object AnvilCompiler {
     }
     checkpoint()
 
+    return z"0"
+  }
+
+  def runHLS(hc: HardwareContext, tc: ToolchainContext, ec: ExecutionContext): Z = {
+    return z"0"
+  }
+
+  def runHW(hc: HardwareContext, tc: ToolchainContext, ec: ExecutionContext): Z = {
+    return z"0"
+  }
+
+  def runSW(hc: HardwareContext, tc: ToolchainContext, ec: ExecutionContext): Z = {
+    return z"0"
+  }
+
+  def runOS(hc: HardwareContext, tc: ToolchainContext, ec: ExecutionContext): Z = {
     return z"0"
   }
 
