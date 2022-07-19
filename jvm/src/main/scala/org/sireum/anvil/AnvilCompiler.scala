@@ -33,29 +33,46 @@ object AnvilCompiler {
       return ec.projectContext.projectWorkspace
     }
 
+    // if unmodified.sourcepath contains a single .slang file, return it wrapped in a singleton sequence.
+    // otherwise, return an empty sequence (EXPERIMENTAL)
+    @pure def tryAltArgs(unmodified: TranspilersCOptionMirror): ISZ[String] = {
+      val sp = unmodified.sourcepath
+
+      if (sp.size == z"1") {
+        val file = Os.path(sp(z"0"))
+        if (file.ext == "slang" && file.exists && file.isFile) {
+          return ISZ(file.canon.abs.string)
+        }
+      }
+
+      return ISZ()
+    }
+
     def invokeTranspilerPass1(): Z = {
       val unmodified: TranspilersCOptionMirror = ec.projectContext.transpilerArgs
-      // todo check if excludeBuild needed still
-      val excludeBuild: ISZ[String] = unmodified.excludeBuild ++ unmodified.apps
+
+      // experimental: sourcepaths containing a single .slang file are converted into a form recognized by CTranspiler
+      val a: ISZ[String] = tryAltArgs(unmodified)
+      val sp: ISZ[String] = if (a.isEmpty) unmodified.sourcepath else ISZ()
 
       val modified = TranspilersCOptionMirror(
         help = unmodified.help,
-        args = unmodified.args,
-        sourcepath = unmodified.sourcepath,
+        args = a, // <-- changed
+        sourcepath = sp, // <-- changed
         strictAliasing = unmodified.strictAliasing,
-        output = Some(ws().transpiled.abs.string), // <-- changed! (was output = o.output)
+        output = Some(ws().transpiled.abs.string), // <-- changed
         verbose = unmodified.verbose,
-        apps = unmodified.apps, // we can avoid copying these later because app names are exact aliases
+        apps = unmodified.apps,
         bitWidth = unmodified.bitWidth,
         projectName = unmodified.projectName,
         stackSize = unmodified.stackSize,
-        customArraySizes = unmodified.customArraySizes, // this is also called "sequence size"
+        customArraySizes = unmodified.customArraySizes,
         maxArraySize = unmodified.maxArraySize,
         maxStringSize = unmodified.maxStringSize,
         cmakeIncludes = unmodified.cmakeIncludes,
-        exts = unmodified.exts, // prevents ext files from being written
+        exts = unmodified.exts,
         libOnly = unmodified.libOnly,
-        excludeBuild = unmodified.excludeBuild,//unmodified.excludeBuild,
+        excludeBuild = unmodified.excludeBuild,
         plugins = unmodified.plugins,
         fingerprint = unmodified.fingerprint,
         stableTypeId = unmodified.stableTypeId,
@@ -64,12 +81,13 @@ object AnvilCompiler {
         load = unmodified.load,
         customConstants = unmodified.customConstants,
         forwarding = unmodified.forwarding,
-        anvilTranspilerPass = TranspilersCAnvilExecutionPassMirror.First, // changed
-        anvilTranspilerContext = unmodified.anvilTranspilerContext
+        anvilTranspilerPass = TranspilersCAnvilExecutionPassMirror.First, // <-- changed
+        anvilTranspilerContext = ec.projectContext.methodDescriptor // <-- changed
       )
 
       // todo modify c transpiler call to accept extra c-make-includes when creating blank driver files
-      return tm(modified) // invoke the CTranspiler
+      val result = tm(modified) // invoke the CTranspiler
+      return result
     }
 
     def invokeTranspilerPass2(): Z = {
