@@ -555,7 +555,7 @@ object AnvilCompiler {
 
         // note: seems to leave carriage returns:
         //${st"${(args.apps.map((app: String) => s"echo '    install -m 755 ${"${WORKDIR}"}/build/$app ${"${D}${bindir}"}' >> ${"$APP_BB_FILE"}"), "\n")}".render}
-        //${StringOps(st"${(context.apps.map((app: String) => s"echo '    install -m 755 ${"${WORKDIR}"}/build/$app ${"${D}${bindir}"}' >> ${"$APP_BB_FILE"}"), "\n")}".render).replaceAllLiterally("\r","")}
+        //${StringOps(st"${(ec.projectContext.apps.map((app: String) => s"echo '    install -m 755 ${"${WORKDIR}"}/build/$app ${"${D}${bindir}"}' >> ${"$APP_BB_FILE"}"), "\n")}".render).replaceAllLiterally("\r","")}
 
         def formatAppNameToBitbake(app: String): String = {
           val lastDotSeparatorIndex: Z = ops.StringOps(app).lastIndexOf(c".")
