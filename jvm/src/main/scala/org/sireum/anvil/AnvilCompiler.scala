@@ -140,7 +140,7 @@ object AnvilCompiler {
         customConstants = unmodified.customConstants,
         forwarding = unmodified.forwarding,
         anvilTranspilerPass = TranspilersCAnvilExecutionPassMirror.Second, // <-- changed
-        anvilTranspilerContext = ec.projectContext.methodDescriptor
+        anvilTranspilerContext = ec.projectContext.methodDescriptor // <-- changed
       )
 
       return tm(modified) // invoke the CTranspiler
