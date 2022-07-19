@@ -238,6 +238,39 @@ object AnvilCompiler {
   }
 
   def runHLS(hc: HardwareContext, tc: ToolchainContext, ec: ExecutionContext): Z = {
+    val context = ec.projectContext
+    val workspace = context.projectWorkspace
+
+    def writeHlsTemplate(): Unit = {
+
+    }
+
+    // run
+    writeHlsTemplate()
+    ec.sandbox match {
+      case Some(sb) => {
+        // TODO remove symlinks? test window symlinks with vagrant ssh
+        // TODO warn user that the sandbox must be up (check status with vagrant status)
+
+        // clear dirs (in sandbox)
+        sb.clearDirectory(sb.workspace.hls)
+
+        // push scripts
+        sb.push(workspace.project / hlsTclBat, sb.workspace.project :+ hlsTclBat)
+        sb.push(workspace.project / hlsTclBash, sb.workspace.project :+ hlsTclBash)
+        sb.push(workspace.project / hlsTclFilename, sb.workspace.project :+ hlsTclFilename)
+
+        // run vivado hls (in sandbox)
+        sb.ssh(ISZ("vivado_hls", "-f", hlsTclFilename))
+
+        // pull result
+        sb.pull(workspace.hls, sb.workspace.hls)
+      }
+      case _ => {
+        // run vivado hls locally
+        runProc(workspace.project, ISZ("vivado_hls", "-f", hlsTclFilename))
+      }
+    }
     return z"0"
   }
 
