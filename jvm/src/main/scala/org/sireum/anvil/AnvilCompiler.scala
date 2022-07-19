@@ -3,7 +3,8 @@
 package org.sireum.anvil
 
 import org.sireum._
-import org.sireum.anvil.Context.{CompileStage, ExecutionContext, HardwareContext, ToolchainContext, TranspilersCAnvilExecutionPassMirror, TranspilersCOptionMirror}
+import org.sireum.anvil.Context._
+import org.sireum.ops.{ISZOps, StringOps}
 
 object AnvilCompiler {
 
