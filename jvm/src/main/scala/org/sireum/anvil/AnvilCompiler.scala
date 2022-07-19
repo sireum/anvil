@@ -110,12 +110,15 @@ object AnvilCompiler {
       val unmodified: TranspilersCOptionMirror = ec.projectContext.transpilerArgs
       val driverExts: ISZ[String] = ws().driverCalls.list.map((p: Os.Path) => p.value)
 
+      val a: ISZ[String] = tryAltArgs(unmodified)
+      val sp: ISZ[String] = if (a.isEmpty) unmodified.sourcepath else ISZ()
+
       val modified = TranspilersCOptionMirror(
         help = unmodified.help,
-        args = unmodified.args,
-        sourcepath = unmodified.sourcepath,
+        args = a, // <-- changed
+        sourcepath = sp, // <-- changed
         strictAliasing = unmodified.strictAliasing,
-        output = Some(ws().modifiedTranspiled.abs.string), // <-- changed! (was output = o.output)
+        output = Some(ws().modifiedTranspiled.abs.string), // <-- changed
         verbose = unmodified.verbose,
         apps = unmodified.apps, // we can avoid copying these later because app names are exact aliases
         bitWidth = unmodified.bitWidth,
@@ -125,9 +128,9 @@ object AnvilCompiler {
         maxArraySize = unmodified.maxArraySize,
         maxStringSize = unmodified.maxStringSize,
         cmakeIncludes = unmodified.cmakeIncludes,
-        exts = unmodified.exts ++ driverExts, // prevents ext files from being written
+        exts = unmodified.exts ++ driverExts, // <-- changed to prevent ext files from being written
         libOnly = unmodified.libOnly,
-        excludeBuild = unmodified.excludeBuild,//unmodified.excludeBuild,
+        excludeBuild = unmodified.excludeBuild,
         plugins = unmodified.plugins,
         fingerprint = unmodified.fingerprint,
         stableTypeId = unmodified.stableTypeId,
@@ -136,8 +139,8 @@ object AnvilCompiler {
         load = unmodified.load,
         customConstants = unmodified.customConstants,
         forwarding = unmodified.forwarding,
-        anvilTranspilerPass = TranspilersCAnvilExecutionPassMirror.Second, // changed
-        anvilTranspilerContext = unmodified.anvilTranspilerContext
+        anvilTranspilerPass = TranspilersCAnvilExecutionPassMirror.Second, // <-- changed
+        anvilTranspilerContext = ec.projectContext.methodDescriptor
       )
 
       return tm(modified) // invoke the CTranspiler
