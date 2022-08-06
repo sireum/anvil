@@ -1329,11 +1329,11 @@ proc create_root_design { parentCell } {
  assign_bd_address -offset 0x43C00000 -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs ${s"$template_project_top_function"}_0/s_axi_$template_project_bus/Reg] -force
 
 
-  # Restore current instance
-  current_bd_instance ${"$oldCurInst"}
+# Restore current instance
+current_bd_instance ${"$oldCurInst"}
 
-  validate_bd_design
-  save_bd_design
+validate_bd_design
+save_bd_design
 }
 # End of create_root_design()
 
@@ -1354,12 +1354,13 @@ update_compile_order -fileset sources_1
 
 # (Vivado) Synthesis, Implementation, Bitstream Generation
 
-# launch_runs synth_1 -jobs 6
-launch_runs synth_1 -jobs 2
+# num jobs is tricky. some steps have max values which can vary per platform (usually 8). todo add in context
+# (todo server config)
+launch_runs synth_1 -jobs 8
 wait_on_run synth_1
 
-# launch_runs impl_1 -to_step write_bitstream -jobs 6
-launch_runs impl_1 -to_step write_bitstream -jobs 2
+# (todo server config)
+launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
 
 # Export hardware with bitstream

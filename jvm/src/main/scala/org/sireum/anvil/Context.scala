@@ -471,24 +471,24 @@ object Context {
     }
 
     override def numCPUs(): String = {
-      return "4"
+      return "12" // (server config)
     }
 
     override def vramSize(): String = {
-      return "64"
+      return "48" // (server config)
     }
 
     override def memorySizeMB(): String = {
-      return "8192"
+      return "49152" // (server config)
     }
 
     override def enableGUI(): String = {
-      return "true"
+      return "false" // (server config)
     }
 
     override def graphicsController(): String = {
       // apparently vmsvga is standard but "accelerate3d" must be set to "off"
-      return "vmsvga"
+      return "vmsvga" // (server config)
     }
 
     override def disksize(): String = {
@@ -496,6 +496,13 @@ object Context {
       val installXilinx: B = xilinxUnifiedPath.nonEmpty
       val toolsBOM: (B, B, B) = (installSireum, installPetalinux, installXilinx)
 
+
+      val gb: Z = z"512" // (server config) (intended for multiproject sandbox)
+      return st"${gb}GB".render 
+
+      /*
+       * too confusing for now
+       *
       // default extremely rough estimates. Should be part of config
       val gb: Z = toolsBOM match {
         // (isSireum isPetalinux isXilinx) <---- tuple of 3 booleans matching
@@ -509,6 +516,7 @@ object Context {
         case (T, T, T) => z"256" // CASE #8: (too small?)
       }
       return st"${gb}GB".render
+      */
     }
   }
 
@@ -530,10 +538,11 @@ object Context {
         "xz-utils", "debianutils", "iputils-ping", "libegl1-mesa", "libsdl1.2-dev", "pylint3", "cpio"
       )
 
-      val gui = ISZ[String]("xfce4", "gnome-terminal")
+      // val gui = ISZ[String]("xfce4", "gnome-terminal")
 
       // launch gui by running 'startx' inside guest. (otherwise headless)
-      return gui ++ official
+      // return gui ++ official
+      return official
     }
   }
 
