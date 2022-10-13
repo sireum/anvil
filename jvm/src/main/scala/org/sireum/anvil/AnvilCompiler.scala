@@ -282,17 +282,15 @@ object AnvilCompiler {
 
         // TODO NOTE: data_pack inPort optimization directives only apply to arrays or array-containing structs
         // todo how to make this context pluggable across versions? Potentially needs template.
-        // todo re-added -fno-builtin flag to add_files (for manual testing, will remove)
-        // todo re-added -reset flag to open_project (for testing, may remove)
+ 
         return st"""
-                   |open_project -reset ${context.projectWorkspace.hls.name}
+                   |open_project ${context.projectWorkspace.hls.name}
                    |set_top ${context.template_project_top_function}
-                   |${st"${(for (s <- srcs) yield st"add_files $s -cflags ${"\""}-std=c99 -fno-builtin ${(for (d <- dirs) yield st"-I$d -L$d", " ")}${"\""}", "\n")}".render}
+                   |${st"${(for (s <- srcs) yield st"add_files $s -cflags ${"\""}-std=c99 ${(for (d <- dirs) yield st"-I$d -L$d", " ")}${"\""}", "\n")}".render}
                    |open_solution "${context.template_project_hls_solution}"
                    |set_part {${hc.template_project_part_number}}
                    |create_clock -period 10 -name default
                    |config_export -format ip_catalog -rtl verilog
-                   |config_interface -m_axi_addr64
                    |set_directive_inline -region -recursive ${"\""}${context.template_project_top_function}${"\""}
                    |${st"${(for (p <- ports) yield st"set_directive_interface -mode s_axilite ${"\""}${context.template_project_top_function}${"\""} $p", "\n")}".render}
                    |${st"${(for (in <- inPorts) yield st"set_directive_data_pack -byte_pad field_level ${"\""}${context.template_project_top_function}${"\""} $in", "\n")}".render}

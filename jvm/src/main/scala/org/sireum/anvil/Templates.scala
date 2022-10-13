@@ -68,8 +68,7 @@ if { [string first ${"$scripts_vivado_version"} ${"$current_vivado_version]"} ==
 set list_projs [get_projects -quiet]
 if { ${"$list_projs"} eq "" } {
   create_project $template_project_vivado_project $template_project_vivado_directory -part $template_project_part_number
-  # todo make customizable (or just drop the part number thing?)
-  set_property BOARD_PART em.avnet.com:zed:part0:1.4 [current_project]
+  set_property BOARD_PART digilentinc.com:zedboard:part0:1.0 [current_project]
 }
 
 
@@ -746,7 +745,7 @@ if { [string first ${"$scripts_vivado_version"} ${"$current_vivado_version]"} ==
 set list_projs [get_projects -quiet]
 if { ${"$list_projs"} eq "" } {
    create_project $template_project_vivado_project $template_project_vivado_directory -part $template_project_part_number
-   set_property BOARD_PART em.avnet.com:zed:part0:1.4 [current_project]
+   set_property BOARD_PART digilentinc.com:zedboard:part0:1.0 [current_project]
 }
 
 
