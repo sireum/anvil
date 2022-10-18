@@ -449,7 +449,7 @@ object AnvilCompiler {
 
         val setters: ST = st"${(params.map((param: AnvilDriverParser.Arg) => toFnName(param)), "\n")}"
         val getter: ST = st"${toFnName(out)}"
-        val instanceName = "foo" // todo instance per call? (or per thread/bridge). Probably develop strategies based on HAMR use cases
+        val instanceName = ec.projectContext.mangledMethodName
         val driverProxyPrefix = ec.projectContext.methodDriverProxyPrefix
 
         // todo drivers currently initialize EVERY CALL for debugging. To fix, simply move Initialize and Release logic outside function (or make static?)
