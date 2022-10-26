@@ -341,7 +341,7 @@ object AnvilCompiler {
         sb.push(workspace.project / hlsTclFilename, sb.workspace.project :+ hlsTclFilename)
 
         // run vivado hls (in sandbox)
-        sb.ssh(ISZ("vivado_hls", "-f", hlsTclFilename))
+        sb.ssh(ISZ("vivado_hls", "-f", hlsTclFilename), T, F)
 
         // pull result
         sb.pull(workspace.hls, sb.workspace.hls)
@@ -396,7 +396,7 @@ object AnvilCompiler {
         sb.push(workspace.project / hwTclFilename, sb.workspace.project :+ hwTclFilename)
 
         // run vivado hls
-        sb.ssh(ISZ(string"vivado", "-mode", "batch", "-source", hwTclFilename))
+        sb.ssh(ISZ(string"vivado", "-mode", "batch", "-source", hwTclFilename), T, F)
 
         // pull
         sb.pull(workspace.hw, sb.workspace.hw)
@@ -678,7 +678,7 @@ petalinux-package --boot --u-boot
 
         // run petalinux
         val absPath = st"${(sb.workspace.project :+ plScriptFilename, "/")}".render
-        sb.ssh(ISZ(absPath))
+        sb.ssh(ISZ(absPath), F, T)
 
         // pull (images only)
         sb.pull(Workspace.mkdir(workspace.os / "images"), sb.workspace.os :+ "images") // way to big to pull the whole thing

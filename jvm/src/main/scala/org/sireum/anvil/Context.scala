@@ -324,16 +324,43 @@ object Context {
       return localSandboxProc(ISZ("vagrant", "up", "--no-provision"))
     }
 
-    def ssh(proc: ISZ[String]): Os.Proc.Result = {
+    def ssh(proc: ISZ[String], vivadoEnv: B, petalinuxEnv: B): Os.Proc.Result = {
       // prepare commands
-      val and: ISZ[String] = ISZ("&&")
       val cd_and: ISZ[String] = ISZ("cd", st"${(workspace.project, "/")}".render, "&&")
-      val venv_and_opt: ISZ[String] = ISZ("source", st"${(vivadoSourceScriptPath, "/")}".render, "||", "true")
-      val penv_and_opt: ISZ[String] = ISZ("source", st"${(petalinuxSourceScriptPath, "/")}".render, "||", "true")
+      val venv_and_opt_and: ISZ[String] = if (vivadoEnv) ISZ("source", st"${(vivadoSourceScriptPath, "/")}".render, "||", "true", "&&") else ISZ()
+      val penv_and_opt_and: ISZ[String] = if (petalinuxEnv) ISZ("source", st"${(petalinuxSourceScriptPath, "/")}".render, "||", "true", "&&") else ISZ()
+      val env: ISZ[String] = ISZ("/usr/bin/env")
 
       // order of "venv", "penv", and "cd" do not technically matter, but ordering "cd" last is a measure against
       // unintended directory overrides from smuggled in with "venv" / "penv"
-      val modifiedProc: ISZ[String] = venv_and_opt ++ and ++ penv_and_opt ++ and ++ cd_and ++ proc
+      val modifiedProc: ISZ[String] = ISZ(
+        string"/usr/bin/env",
+        string"-i",
+        string"TERM=\"linux\"",
+        string"SHELL=\"/bin/bash\"",
+        st"PROJECT_HOME=\"${(workspace.project, "/")}\"".render,
+        st"SIREUM_HOME=\"${(sireumPath, "/")}/kekinian\"".render,
+        st"VIVADO_HOME=\"${(ops.ISZOps(vivadoSourceScriptPath).dropRight(z"1"), "/")}\"".render,
+        st"VITIS_HOME=\"${(ops.ISZOps(vivadoSourceScriptPath).dropRight(z"1"), "/")}\"".render,
+        st"PETALINUX_HOME=\"${(petalinuxPath, "/")}\"".render,
+        string"USER=\"$$USER\"",
+        string"PWD=\"$$PWD\"",
+        string"LANG=\"$$LANG\"",
+        string"HOME=\"$$HOME\"",
+        string"SHLVL=\"$$SHLVL\"",
+        string"LANGUAGE=\"$$LANGUAGE\"",
+        string"SSH_CLIENT=\"$$SSH_CLIENT\"",
+        string"SSH_TTY=\"$$SSH_TTY\"",
+        string"SSH_CONNECTION=\"$$SSH_CONNECTION\"",
+        string"DISPLAY=\"$$DISPLAY\"",
+        string"LESSOPEN=\"$$LESSOPEN\"",
+        string"LESSCLOSE=\"$$LESSCLOSE\"",
+        string"LOGNAME=\"$$LOGNAME\"",
+        string"MAIL=\"$$MAIL\"",
+        string"/bin/bash",
+        string"-c",
+        st"'${(cd_and ++ venv_and_opt_and ++ cd_and ++ penv_and_opt_and ++ cd_and ++ env ++ cd_and ++ proc, " ")}\"'".render
+      )
 
       if (contains(petalinuxDependencies, string"xterm")) {
         localSandboxProc(ISZ("vagrant", "ssh", "-c", st"TERM=xterm /bin/bash -c \"${(modifiedProc, " ")}\"".render))
@@ -395,7 +422,7 @@ object Context {
       val rm: ISZ[String] = ISZ("rm", "-rf", path, "||", "true")
       val and: ISZ[String] = ISZ("&&")
       val mkdir: ISZ[String] = ISZ("mkdir", "-p", path, "||", "true")
-      return ssh(mkdir ++ and ++ rm ++ and ++ mkdir)
+      return ssh(mkdir ++ and ++ rm ++ and ++ mkdir, F, F)
     }
 
     /*
