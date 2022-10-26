@@ -284,6 +284,17 @@ object AnvilSandbox {
           val remoteTargetFullPatchPath = remoteTargetSourceContainingDir ++ remoteRelativePatchPath
           st"${(remoteTargetFullPatchPath, "/")}"
         }
+        val y2k22Patch: ST = st"""[ -f "$sharedPatch" ] && echo "applying y2k22 patch..." && cp $sharedPatch $remotePatchPath"""
+        val digilentBoardFilesPatch: ST = {
+          val preCloneCheck: ST = st"""[ -d "${(context.vivadoPath, "/")}" ] && echo "downloading Digilent boardfiles...""""
+          val clone: ST = st"""git clone --recurse-submodules https://github.com/Digilent/vivado-boards ${(context.installationPath, "/")}"""
+          val postCloneCheck: ST = st"""[ -f "${(context.installationPath :+ "vivado-boards", "/")}" ] && echo "applying boardfiles patch...""""
+          val patch: ST = st""" && sed -i 's/user_parameter name="CONFIG.PCW_CRYSTAL_PERIPHERAL_FREQMHZ" value="50.000000"/user_parameter name="CONFIG.PCW_CRYSTAL_PERIPHERAL_FREQMHZ" value="33.333333"/' "${(context.installationPath ++ ISZ("vivado-boards", "new", "board_files", "zedboard", "1.3", "preset.xml"), "/")}""""
+          val vivadoBoardsPath: ISZ[String] = ops.ISZOps(context.vivadoSourceScriptPath).dropRight(z"1") ++ ISZ("data", "boards")
+          val vivadoBoardFilesPath: ST = st"""${(vivadoBoardsPath :+ "board_files", "/")}"""
+          val replace: ST = st"""zip -r9 $vivadoBoardFilesPath.zip $vivadoBoardFilesPath && rm -rf $vivadoBoardFilesPath && cp -r ${(context.installationPath ++ ISZ("vivado-boards", "new", "board_files"), "/")} $vivadoBoardsPath"""
+          st"""$preCloneCheck && $clone && $postCloneCheck && $patch && $replace"""
+        }
         return st"""
                    |# SETUP DIRECTORIES
                    |sudo rm -rf $remoteTargetDir
@@ -305,7 +316,8 @@ object AnvilSandbox {
                    |# RUN INSTALLER
                    |echo "running vivado installer..."
                    |$remoteInstallerDir/$unzippedInstallerFileName/xsetup --agree XilinxEULA,3rdPartyEULA,WebTalkTerms --batch Install --edition "Vivado HL WebPACK" --location "$remoteTargetDir" --product "Vivado"
-                   |[ -f "$sharedPatch" ] && echo "applying y2k22 patch..." && cp $sharedPatch $remotePatchPath
+                   |$y2k22Patch
+                   |$digilentBoardFilesPatch
                    |echo "DONE"
                    |
                    |# CREATE ENV SHORTCUT
