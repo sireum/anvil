@@ -545,7 +545,6 @@ object AnvilCompiler {
     @pure def createPetalinuxScript(): String = {
 
       val appName: String = "anvil"
-      val projectName: String = workspace.os.canon.name
 
       @pure def bitbakeTemplateString(): String = {
         val apps = ec.projectContext.transpilerArgs.apps
@@ -594,74 +593,154 @@ echo 'EXTRA_OECMAKE = ""' >> ${"$APP_BB_FILE"}
         return Templates.zedboard_petalinux_2020_1_createSystemUserDtsi(hc, tc, ec)
       }
 
+      val hwPath: String = ec.sandbox match {
+        case Some(sb) => st"${(sb.workspace.hw, "/")}".render
+        case None() => ec.projectContext.projectWorkspace.hw.abs.string
+      }
+      val osPath: String = ec.sandbox match {
+        case Some(sb) => st"${(sb.workspace.os, "/")}".render
+        case None() => ec.projectContext.projectWorkspace.os.abs.string
+      }
+      val swPath: String = ec.sandbox match {
+        case Some(sb) => st"${(sb.workspace.sw, "/")}".render
+        case None() => ec.projectContext.projectWorkspace.sw.abs.string
+      }
+
       return s"""
+rm -rf /tmp/tmp.*
 petalinux-util --webtalk off
-petalinux-create --force --type project --template zynq --name $projectName
-cd $projectName
 
-echo 'setup the hardware'
-petalinux-config --silentconfig --get-hw-description=../../project/${workspace.hw.name}
+echo 'PETALINUX-CREATE PROJECT'
+petalinux-create --force --type project --template zynq --name ${workspace.os.canon.name}
 
-# setup configuration before setting anything else up
-echo 'autoconfigs are currently turned on'
-sed -i 's/# CONFIG_SUBSYSTEM_AUTOCONFIG_KERNEL is not set/CONFIG_SUBSYSTEM_AUTOCONFIG_KERNEL=y/' project-spec/configs/config
-sed -i 's/# CONFIG_SUBSYSTEM_AUTOCONFIG_U__BOOT is not set/CONFIG_SUBSYSTEM_AUTOCONFIG_U__BOOT=y/' project-spec/configs/config
-sed -i 's/# CONFIG_UIO is not set/CONFIG_UIO=y/' project-spec/configs/config
-sed -i 's/# CONFIG_UIO_PDRV_GENIRQ is not set/CONFIG_UIO_PDRV_GENIRQ=y/' project-spec/configs/config
+# Absolute
+# cp  $hwPath/${ec.projectContext.template_project_vivado_design}_wrapper.bit $osPath/${ec.projectContext.template_project_vivado_design}_wrapper.bit
+# cp  $hwPath/${ec.projectContext.template_project_vivado_design}_wrapper.xsa $osPath/${ec.projectContext.template_project_vivado_design}_wrapper.xsa
 
-echo 'create app and set up its files'
-petalinux-create --force -t apps -n $appName --enable
+# Relative
+cp  ${workspace.hw.canon.name}/${ec.projectContext.template_project_vivado_design}_wrapper.bit ${workspace.os.canon.name}/${ec.projectContext.template_project_vivado_design}_wrapper.bit
+cp  ${workspace.hw.canon.name}/${ec.projectContext.template_project_vivado_design}_wrapper.xsa ${workspace.os.canon.name}/${ec.projectContext.template_project_vivado_design}_wrapper.xsa
+
+cd ${workspace.os.canon.name}
+
+mkdir -p project-spec/configs
+
+CONFIG_FILE=project-spec/configs/CONFIG.old
+CONFIG_FILE_ALT=project-spec/configs/config.old
+
+touch $$CONFIG_FILE
+
+# We can either enable auto-config and let files be auto updated every time we call petalinux-config (top-level).
+# or we can disable this and let files be updated by calling petalinux-config -c <target> for each.
+#
+# Disable autoconfigs prevents accidently overwriting changes throughout the build.
+# However we must now manually build with petalinux-config (build?) -c <target> -x finish
+
+echo 'CONFIG_SUBSYSTEM_AUTOCONFIG_DTS=n' >> $$CONFIG_FILE
+echo 'CONFIG_SUBSYSTEM_AUTOCONFIG_PMUFW=n' >> $$CONFIG_FILE
+
+# $${ANVIL_PROJECT}/os/project-spec/configs/linux-xlnx/plnx_kernel.cfg
+echo 'CONFIG_SUBSYSTEM_AUTOCONFIG_KERNEL=y' >> $$CONFIG_FILE
+
+# $${ANVIL_PROJECT}/os/project-spec/configs/u-boot-xlnx/config:cfg/platform-auto.h
+# NOTE: directory config:cfg does NOT need Microblaze-only file "config.mk"
+echo 'CONFIG_SUBSYSTEM_AUTOCONFIG_U__BOOT=y' >> $$CONFIG_FILE
+
+# $${ANVIL_PROJECT}/os/components/plnx_workspace/device-tree/device-tree
+echo 'CONFIG_SUBSYSTEM_AUTOCONFIG_DEVICE__TREE=y' >> $$CONFIG_FILE
+
+echo 'CONFIG_SUBSYSTEM_HARDWARE_AUTO=y' >> $$CONFIG_FILE
+echo 'CONFIG_SUBSYSTEM_DEVICE__TREE=y' >> $$CONFIG_FILE
+
+# FPGA_MANAGER overrides many CONFIG_SUBSYSTEM options, so disable it
+echo 'CONFIG_SUBSYSTEM_FPGA_MANAGER=n' >> $$CONFIG_FILE
+
+# These options are overwritten if FPGA_MANAGER is enabled
+echo 'CONFIG_SUBSYSTEM_DTB_OVERLAY=y' >> $$CONFIG_FILE
+echo 'CONFIG_SUBSYSTEM_REMOVE_PL_DTB=n' >> $$CONFIG_FILE
+
+#  Userspace IO Drivers
+echo 'CONFIG_UIO=y' >> $$CONFIG_FILE
+echo 'CONFIG_UIO_PDRV_GENIRQ=y' >> $$CONFIG_FILE
+# echo 'CONFIG_UIO_DMEM_GENIRQ=y' >> $$CONFIG_FILE
+
+# For offline builds using local feeds
+#echo 'CONFIG_YOCTO_BB_NO_NETWORK=y' >> $$CONFIG_FILE
+#echo 'CONFIG_YOCTO_LOCAL_SSTATE_FEEDS=y' >> $$CONFIG_FILE
+#echo 'CONFIG_YOCTO_NETWORK_SSTATE_FEEDS=n' >> $$CONFIG_FILE
+#echo 'CONFIG_YOCTO_LOCAL_SSTATE_FEEDS_URL="file:///home/vagrant/sswreleases/rel-v2020/arm/sstate-cache"' >> $$CONFIG_FILE
+#echo 'CONFIG_YOCTO_NETWORK_SSTATE_FEEDS_URL="file:///home/vagrant/sswreleases/rel-v2020/arm/sstate-cache"' >> $$CONFIG_FILE
+#echo 'CONFIG_YOCTO_SSTATE_FEEDS_URL="file:///home/vagrant/sswreleases/rel-v2020/arm/sstate-cache"' >> $$CONFIG_FILE
+#echo 'CONFIG_PRE_MIRROR_URL="file:///home/vagrant/sswreleases/rel-v2020/downloads"' >> $$CONFIG_FILE
+
+# Expected to be set automatically by petalinux before make (example values)
+#export ARCH=arm
+#export DEVICE_TREE=zynq-zed
+#export CROSS_COMPILE=arm-linux-gnueabihf-
+
+# Manually set bootargs to handle uio driver
+echo 'CONFIG_SUBSYSTEM_BOOTARGS_AUTO=n' >> $$CONFIG_FILE
+echo 'CONFIG_SUBSYSTEM_BOOTARGS="console=ttyPS0,115200 earlyprintk uio_pdrv_genirq.of_id=\"generic-uio\""' >> $$CONFIG_FILE
+echo 'CONFIG_SUBSYSTEM_BOOTARGS_GENERATED="console=ttyPS0,115200 earlyprintk uio_pdrv_genirq.of_id=\"generic-uio\""' >> $$CONFIG_FILE
+
+# Set machine name to "template" (despite not using a BSP for petalinux-config --get-hw-description=...)
+echo 'CONFIG_DTG_MACHINE_NAME="template"' >> $$CONFIG_FILE
+
+# Copy CONFIG.old as config.old to ensure non-interactive config across all versions
+cp $$CONFIG_FILE $$CONFIG_FILE_ALT
+
+echo 'PETALINUX-CONFIG (HW-DESCRIPTION)'
+# Searches for hardware description in top-level folder of petalinux project
+petalinux-config --get-hw-description --silentconfig -v || exit 1
+
+mkdir -p images/linux/
+
+echo 'PETALINUX-CONFIG'
+petalinux-config --silentconfig -v || exit 1
+
+echo 'PETALINUX-CREATE ANVIL APP'
+petalinux-create -t apps -n $appName --enable || exit 1
 rm -rf project-spec/meta-user/recipes-apps/$appName/files/*
-cp -rL /home/vagrant/project/sw/modified-transpiled/* project-spec/meta-user/recipes-apps/$appName/files
+rm -rf project-spec/meta-user/recipes-apps/$appName/files/.*
+# cp -rL $swPath/modified-transpiled/* project-spec/meta-user/recipes-apps/$appName/files
+cp -rL ../${workspace.sw.canon.name}/modified-transpiled/* project-spec/meta-user/recipes-apps/$appName/files
+
 ${bitbakeTemplateString()}
 
 # create system-user.dtsi
-petalinux-config -c kernel --silentconfig
+echo 'PETALINUX-CONFIG KERNEL'
+petalinux-config -c kernel --silentconfig -v
 
-# petalinux-config -c u-boot
-# petalinux-config -c u-boot --silentconfig
-
-echo 'copy device tree into system-user.dtsi'
 ${createSystemUserDtsi()}
 
-### echo "ANVIL OS - building anvil"
-### # petalinux-build -c $appName -x distclean
-### petalinux-build -c $appName
-###
-### echo "ANVIL OS - building u-boot-xlnx"
-### petalinux-build -c u-boot-xlnx
-###
-### echo "ANVIL OS - building device-tree"
-### # petalinux-build -c device-tree -x cleansstate
-### petalinux-build -c device-tree
-###
-### echo "ANVIL OS - building fsbl"
-### petalinux-build -c fsbl
-###
-### echo "ANVIL OS - building linux-xlnx"
-### petalinux-build -c linux-xlnx
-###
-### echo "ANVIL OS - building kernel"
-### petalinux-build -c kernel
-###
-### petalinux-build
-### petalinux-package --force --boot --u-boot
+echo 'PETALINUX-CONFIG U-BOOT'
+petalinux-config -c u-boot --silentconfig -v
 
-# some steps intentionally "out of order" while testing
-petalinux-build -c anvil -x distclean
-petalinux-build -c anvil
-petalinux-build -c rootfs
-petalinux-build -c device-tree -x cleansstate
-petalinux-build -c device-tree
-# kernel MUST be build from top level of os project
-petalinux-build -c kernel -x distclean
-petalinux-build -c kernel
-echo "again clear all caches"
-# petalinux-build -c u-boot -x distclean
-# petalinux-build -c u-boot
-petalinux-build -x mrproper # for build caches sanity check
-petalinux-build
-petalinux-package --boot --u-boot
+echo 'PETALINUX-CONFIG ROOTFS'
+petalinux-config -c rootfs --silentconfig -v
+
+# pre-kernel (but post app)
+echo 'PETALINUX-BUILD FINISH anvil app'
+petalinux-build -c anvil       -x finish -v || petalinux-build -c anvil        -v
+echo 'PETALINUX-BUILD FINISH u-boot-xlnx'
+petalinux-build -c u-boot-xlnx -x finish -v || petalinux-build -c u-boot-xlnx  -v
+echo 'PETALINUX-BUILD FINISH device-tree'
+petalinux-build -c device-tree -x finish -v || petalinux-build -c device-tree  -v
+echo 'PETALINUX-BUILD FINISH fsbl'
+petalinux-build -c fsbl        -x finish -v || petalinux-build -c fsbl         -v
+echo 'PETALINUX-BUILD FINISH linux-xlnx'
+petalinux-build -c linux-xlnx  -x finish -v || petalinux-build -c linux-xlnx   -v
+echo 'PETALINUX-BUILD FINISH kernel'
+petalinux-build -c kernel      -x finish -v || petalinux-build -c kernel       -v
+echo 'PETALINUX-BUILD FINISH u-boot'
+petalinux-build -c u-boot      -x finish -v || petalinux-build -c u-boot       -v
+echo 'PETALINUX-BUILD FINISH rootfs'
+petalinux-build -c rootfs      -x finish -v || petalinux-build -c rootfs       -v
+echo 'PETALINUX-BUILD'
+petalinux-build -v
+
+echo 'PETALINUX-PACKAGE'
+petalinux-package --boot --fsbl images/linux/zynq_fsbl.elf --fpga images/linux/system.bit --u-boot
 """
     }
 
