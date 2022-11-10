@@ -329,49 +329,45 @@ object Context {
       val cd_and: ISZ[String] = ISZ("cd", st"${(workspace.project, "/")}".render, "&&")
       val venv_and_opt_and: ISZ[String] = if (vivadoEnv) ISZ("source", st"${(vivadoSourceScriptPath, "/")}".render, "||", "true", "&&") else ISZ()
       val penv_and_opt_and: ISZ[String] = if (petalinuxEnv) ISZ("source", st"${(petalinuxSourceScriptPath, "/")}".render, "||", "true", "&&") else ISZ()
-      val env: ISZ[String] = ISZ("/usr/bin/env")
 
       // order of "venv", "penv", and "cd" do not technically matter, but ordering "cd" last is a measure against
       // unintended directory overrides from smuggled in with "venv" / "penv"
       val modifiedProc: ISZ[String] = ISZ(
         string"/usr/bin/env",
         string"-i",
-        st"""TERM="linux"""".render,
-        st"""SHELL="/bin/bash"""".render,
-        st"PROJECT_HOME=\"${(workspace.project, "/")}\"".render,
-        st"SIREUM_HOME=\"${(sireumPath, "/")}/kekinian\"".render,
-        st"VIVADO_HOME=\"${(ops.ISZOps(vivadoSourceScriptPath).dropRight(z"1"), "/")}\"".render,
-        st"VITIS_HOME=\"${(ops.ISZOps(vivadoSourceScriptPath).dropRight(z"1"), "/")}\"".render,
-        st"PETALINUX_HOME=\"${(petalinuxPath, "/")}\"".render,
-        st"""USER="$$USER"""".render,
-        st"""PWD="$$PWD"""".render,
-        st"""LANG="$$LANG"""".render,
-        st"""HOME="$$HOME"""".render,
-        st"""SHLVL="$$SHLVL"""".render,
-        st"""LANGUAGE="$$LANGUAGE"""".render,
-        st"""SSH_CLIENT="$$SSH_CLIENT"""".render,
-        st"""SSH_TTY="$$SSH_TTY"""".render,
-        st"""SSH_CONNECTION="$$SSH_CONNECTION"""".render,
-        st"""DISPLAY="$$DISPLAY"""".render,
-        st"""LESSOPEN="$$LESSOPEN"""".render,
-        st"""LESSCLOSE="$$LESSCLOSE"""".render,
-        st"""LOGNAME="$$LOGNAME"""".render,
-        st"""MAIL="$$MAIL"""".render,
+        st"""TERM='"linux"'""".render,
+        st"""SHELL='"/bin/bash"'""".render,
+        st"""USER='"$$USER"'""".render,
+        st"""PWD='"$$PWD"'""".render,
+        st"""LANG='"$$LANG"'""".render,
+        st"""HOME='"$$HOME"'""".render,
+        st"""SHLVL='"$$SHLVL"'""".render,
+        st"""DISPLAY='"$$DISPLAY"'""".render,
+        st"""LOGNAME='"$$LOGNAME"'""".render,
+        st"PROJECT_HOME='\"${(workspace.project, "/")}\"'".render,
+        st"SIREUM_HOME='\"${(sireumPath, "/")}/kekinian\"'".render,
+        st"VIVADO_HOME='\"${(ops.ISZOps(vivadoSourceScriptPath).dropRight(z"1"), "/")}\"'".render,
+        st"VITIS_HOME='\"${(ops.ISZOps(vivadoSourceScriptPath).dropRight(z"1"), "/")}\"'".render,
+        st"PETALINUX_HOME='\"${(petalinuxPath, "/")}\"'".render,
         string"/bin/bash",
+        string"-v",
         string"-c",
-        st"'${(cd_and ++ venv_and_opt_and ++ cd_and ++ penv_and_opt_and ++ cd_and ++ env ++ cd_and ++ proc, " ")}'".render
+        st"'${(cd_and ++ venv_and_opt_and ++ cd_and ++ penv_and_opt_and ++ cd_and ++ proc, " ")}'".render
       )
 
       if (contains(petalinuxDependencies, string"xterm")) {
-        localSandboxProc(ISZ("vagrant", "ssh", "-c", st"TERM=xterm /bin/bash -c \"${(modifiedProc, " ")}\"".render))
+        localSandboxProc(ISZ("vagrant", "ssh", "-c", st"TERM=xterm /bin/bash -v -c \"${(modifiedProc, " ")}\"".render))
       } else {
-        localSandboxProc(ISZ("vagrant", "ssh", "-c", st"/bin/bash -c \"${(modifiedProc, " ")}\"".render))
+        localSandboxProc(ISZ("vagrant", "ssh", "-c", st"/bin/bash -v -c \"${(modifiedProc, " ")}\"".render))
       }
     }
 
     def scp(dir: ScpDirection.Type, localPath: Os.Path, remotePath: ISZ[String]): Os.Proc.Result = {
       assert(localPath.exists)
       assert(remotePath.nonEmpty)
+
+      // ensure empty directory exists for scp -r
+      if (localPath.isDir) clearDirectory(remotePath) // todo fail-fast, or compose with returned Os.Proc.Result
 
       val tool: ISZ[String] = ISZ("scp")
       val fileFlag: ISZ[String] = if (localPath.isDir) ISZ("-r") else ISZ()
@@ -525,7 +521,7 @@ object Context {
 
 
       val gb: Z = z"512" // (server config) (intended for multiproject sandbox)
-      return st"${gb}GB".render 
+      return st"${gb}GB".render
 
       /*
        * too confusing for now
@@ -603,3 +599,4 @@ object Context {
       with XilinxUnified_v2020_1
       with Petalinux_v2020_1 {}
 }
+
