@@ -366,8 +366,18 @@ object Context {
       assert(localPath.exists)
       assert(remotePath.nonEmpty)
 
-      // ensure empty directory exists for scp -r
-      if (localPath.isDir) clearDirectory(remotePath) // todo fail-fast, or compose with returned Os.Proc.Result
+      // Prepare an empty destination folder for copying a directory with scp.
+      if (localPath.isDir) {
+        dir match {
+          case ScpDirection.LocalToSandbox => {
+            clearDirectory(remotePath)
+          }
+          case ScpDirection.SandboxToLocal => {
+            localPath.removeAll()
+            localPath.mkdirAll()
+          }
+        }
+      }
 
       val tool: ISZ[String] = ISZ("scp")
       val fileFlag: ISZ[String] = if (localPath.isDir) ISZ("-r") else ISZ()
