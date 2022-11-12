@@ -451,46 +451,80 @@ object AnvilCompiler {
         val getter: ST = st"${toFnName(out)}"
         val instanceName = ec.projectContext.mangledMethodName
         val driverProxyPrefix = ec.projectContext.methodDriverProxyPrefix
-
-        // todo drivers currently initialize EVERY CALL for debugging. To fix, simply move Initialize and Release logic outside function (or make static?)
-        val r: String =
+        val debugPrint: ST =
+          st"""
+              |printf("interrupt status: %lu \r\n", ${ptrName}_InterruptGetStatus(&ptr));
+              |printf("interrupt enabled? %lu \r\n", ${ptrName}_InterruptGetEnabled(&ptr));
+              |printf("ready? %lu \r\n", ${ptrName}_IsReady(&ptr));
+              |printf("idle? %lu \r\n", ${ptrName}_IsIdle(&ptr));
+              |printf("done? %lu \r\n", ${ptrName}_IsDone(&ptr));
+              """
+        val template: ST =
           st"""
               |#include <all.h>
-              |//#include <ext.h>
               |
-              |//#include "../drivers/${baseDriverH}"
               |#include <${baseDriverH}>
               |
-              |// note: currently supports single output via function return only (otherwise must hand-modify)
               |${retTypeString} ${driverProxyPrefix}${topFn}(${paramsST}) {
-              |    ${ptrName} ptr;
+              |    static int initialized = 0;
+              |    static int shouldRelease = 0; // unused
+              |    static ${ptrName} ptr;
               |
-              |    printf("About to init\n");
-              |    int status = ${ptrName}_Initialize(&ptr, "${instanceName}");
-              |    if (status != XST_SUCCESS) {
-              |        printf("Error initializing acceleration: %d\n", status);
-              |        //exit(EXIT_FAILURE);
-              |        return 0;
+              |    if (initialized != 0) {
+              |        printf("About to init...\r\n");
+              |        int status = ${ptrName}_Initialize(&ptr, "$instanceName");
+              |        if (status != XST_SUCCESS) {
+              |            printf("Error initializing acceleration: %d\r\n", status);
+              |            exit(EXIT_FAILURE);
+              |        }
+              |        initialized = 1;
+              |        printf("Successful init! Fetching status...\r\n");
               |    }
-              |    printf("About to run\n");
-              |    while (!${ptrName}_IsReady(&ptr)); // indicate when it is ready to accept new inputs
-              |    ${setters}
+              |
+              |    $debugPrint
+              |
+              |    printf("About to run\r\n");
+              |    while (!${ptrName}_IsReady(&ptr)) {
+              |        printf("Device not ready! Looping...\r\n");
+              |        $debugPrint
+              |    }
+              |    $debugPrint
+              |    $setters
               |    ${ptrName}_Start(&ptr); // indicate when block can start processing data
-              |    while (!${ptrName}_IsDone(&ptr));
-              |    ${retTypeString} result = ${ptrName}_Get_return(&ptr);
-              |    /*
-              |     * unneeded, same as return
-              |     * getter: ${getter}
-              |     */
-              |
-              |    if ((status = ${ptrName}_Release(&ptr)) != XST_SUCCESS) {
-              |        printf("Error releasing: status\n");
-              |        exit(EXIT_FAILURE);
+              |    while (!${ptrName}_IsDone(&ptr)) {
+              |        printf("Device not done! Looping...\r\n");
+              |        $debugPrint
               |    }
+              |
+              |    printf("getting result...\r\n");
+              |    ${retTypeString} result;
+              |    result = ${ptrName}_Get_return(&ptr);
+              |
+              |    printf("running sanity check..."); // newline intentionally omitted
+              |    ${retTypeString} result2;
+              |    result2 = $getter;
+              |
+              |    if (result == result2) {
+              |        printf("SUCCESS!"\r\n);
+              |    } else {
+              |        printf("FAILURE!"\r\n);
+              |    }
+              |
+              |    if (shouldRelease != 0) {
+              |        printf("Releasing device...\r\n");
+              |        if ((status = ${ptrName}_Release(&ptr)) != XST_SUCCESS) {
+              |            printf("Error releasing: status\r\n");
+              |            exit(EXIT_FAILURE);
+              |        }
+              |        printf("Device released!\r\n");
+              |    }
+              |
+              |    printf("Returning!\r\n");
               |
               |    return result;
-              |}""".render
-        return r
+              |}"""
+
+        return template.render
       }
 
       // precondition
@@ -873,5 +907,3 @@ petalinux-package --boot --fsbl images/linux/zynq_fsbl.elf --fpga images/linux/s
   }
 
 }
-
-
