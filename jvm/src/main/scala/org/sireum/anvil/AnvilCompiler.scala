@@ -470,7 +470,7 @@ object AnvilCompiler {
               |    static int shouldRelease = 0; // unused
               |    static ${ptrName} ptr;
               |
-              |    if (initialized != 0) {
+              |    if (initialized == 0) {
               |        printf("About to init...\r\n");
               |        int status = ${ptrName}_Initialize(&ptr, "$instanceName");
               |        if (status != XST_SUCCESS) {
