@@ -282,7 +282,7 @@ object AnvilCompiler {
 
         // TODO NOTE: data_pack inPort optimization directives only apply to arrays or array-containing structs
         // todo how to make this context pluggable across versions? Potentially needs template.
- 
+
         return st"""
                    |open_project ${context.projectWorkspace.hls.name}
                    |set_top ${context.template_project_top_function}
@@ -431,33 +431,36 @@ object AnvilCompiler {
 
         // string template of all arg's setters. Mapped to correct function based on in or out
         @pure def toFnName(param: AnvilDriverParser.Arg): ST = {
-          val callerArgs: ST = if (param.isArray) st"(&ptr, 0, (char *) ${param.name}, sizeof((char *) ${param.name}))" else st"(&ptr, ${param.name})"
           val r: ST = param.kind match {
             case AnvilDriverParser.Direction.In => {
-              st"${ptrName}_${if (param.isArray) st"Write" else st"Set"}_${param.name}${callerArgs};"
+              val setterArgs: ST = if (param.isArray) st"(&ptr, 0, (u32 *) ${param.name}, sizeof((u32 *) ${param.name}))" else st"(&ptr, *((u32*)&${param.name}))"
+              st"${ptrName}_${if (param.isArray) st"Write" else st"Set"}_${param.name}${setterArgs};"
             }
             case AnvilDriverParser.Direction.Out => {
-              st"${ptrName}_${if (param.isArray) st"Read" else st"Get"}_${param.name}${callerArgs};"
+              val getterArgs: ST = if (param.isArray) st"(&ptr, 0, (u32 *) ${param.name}, sizeof((u32 *) ${param.name}))" else st"(&ptr)"
+              st"${ptrName}_${if (param.isArray) st"Read" else st"Get"}_${param.name}${getterArgs};"
             }
             case AnvilDriverParser.Direction.InOut => {
-              // same as in case // TODO watch for HLS Read/Write permission expansion optimize (disabled)
-              st"${ptrName}_${if (param.isArray) st"Write" else st"Set"}_${param.name}${callerArgs};"
+              val setterArgs: ST = if (param.isArray) st"(&ptr, 0, (u32 *) ${param.name}, sizeof((u32 *) ${param.name}))" else st"(&ptr, *((u32*)&${param.name}))"
+              st"${ptrName}_${if (param.isArray) st"Write" else st"Set"}_${param.name}${setterArgs};"
             }
           }
           return r
         }
 
-        val setters: ST = st"${(params.map((param: AnvilDriverParser.Arg) => toFnName(param)), "\n")}"
+        val setters: ST = st"${(params.map((param: AnvilDriverParser.Arg) => toFnName(param)), "\r\n")}"
         val getter: ST = st"${toFnName(out)}"
         val instanceName = ec.projectContext.mangledMethodName
         val driverProxyPrefix = ec.projectContext.methodDriverProxyPrefix
         val debugPrint: ST =
           st"""
-              |printf("interrupt status: %u\r\n", ${ptrName}_InterruptGetStatus(&ptr));
-              |printf("interrupt enabled? %u\r\n", ${ptrName}_InterruptGetEnabled(&ptr));
-              |printf("ready? %u\r\n", ${ptrName}_IsReady(&ptr));
-              |printf("idle? %u\r\n", ${ptrName}_IsIdle(&ptr));
-              |printf("done? %u\r\n", ${ptrName}_IsDone(&ptr));
+              |if (isDebug) printf("===============================================\r\n");
+              |if (isDebug) printf("  interrupt status? %u\r\n", ${ptrName}_InterruptGetStatus(&ptr));
+              |if (isDebug) printf("  interrupt enabled? %u\r\n", ${ptrName}_InterruptGetEnabled(&ptr));
+              |if (isDebug) printf("  ready? %u\r\n", ${ptrName}_IsReady(&ptr));
+              |if (isDebug) printf("  idle? %u\r\n", ${ptrName}_IsIdle(&ptr));
+              |if (isDebug) printf("  done? %u\r\n", ${ptrName}_IsDone(&ptr));
+              |if (isDebug) printf("===============================================\r\n");
               """
         val template: ST =
           st"""
@@ -466,61 +469,88 @@ object AnvilCompiler {
               |#include <${baseDriverH}>
               |
               |${retTypeString} ${driverProxyPrefix}${topFn}(${paramsST}) {
-              |    static int initialized = 0;
-              |    static int shouldRelease = 0; // unused
+              |    const u32 disableAllInterrupts = 1;
+              |    const u32 shouldRelease = 1;
+              |    const u32 isDebug = 1;
+              |
+              |    static u32 initialized = 0;
               |    static ${ptrName} ptr;
               |
-              |    if (initialized == 0) {
-              |        printf("About to init...\r\n");
-              |        int status = ${ptrName}_Initialize(&ptr, "$instanceName");
+              |    // overview
+              |    // (STEP 1) initialize (if not already)
+              |    // (STEP 2) set interrupts up (?)
+              |    // (STEP 3) use setters
+              |    // (STEP 4) use Start to set start = 1. Note start is self-clearing and suspends after each transaction
+              |    // (STEP 5) wait for block (busy spin). Handle interrupts generated during this time (not necessary now)
+              |    // (STEP 6) read output. If necessary check that result's valid (vld) bit equals 1
+              |
+              |    if (!initialized) {
+              |        if (isDebug) printf("About to init...\r\n");
+              |        // (STEP 1)
+              |        u32 status = ${ptrName}_Initialize(&ptr, "$instanceName");
               |        if (status != XST_SUCCESS) {
               |            printf("Error initializing acceleration: %d\r\n", status);
               |            exit(EXIT_FAILURE);
               |        }
               |        initialized = 1;
-              |        printf("Successful init! Fetching status...\r\n");
+              |        if (isDebug) printf("Successful init! Fetching status...\r\n");
               |    }
+              |
+              |
               |
               |    $debugPrint
               |
-              |    printf("About to run\r\n");
+              |    // (STEP 2)
+              |    // no changes needed for anvil, but example method calls are:
+              | // if (disableAllInterrupts) {
+              | //     ${ptrName}_InterruptGlobalDisable(&ptr);
+              | //     ${ptrName}_InterruptDisable(&ptr, 0x0);
+              | // } else {
+              | //     ${ptrName}_InterruptGlobalEnable(&ptr);
+              | //     ${ptrName}_InterruptEnable(&ptr, 0x0);
+              | // }
+              |
+              |    // (STEP 3)
               |    while (!${ptrName}_IsReady(&ptr)) {
-              |        printf("Device not ready! Looping...\r\n");
+              |        if (isDebug) printf("Device not ready! Polling...\r\n");
               |        $debugPrint
               |    }
+              |    if (isDebug) printf("Device is ready!\r\n");
               |    $debugPrint
+              |
+              |    // (STEP 3)
+              |    if (isDebug) printf("Setting inputs...\r\n");
               |    $setters
+              |
+              |    // (STEP 4)
+              |    if (isDebug) printf("Start block processing data...\r\n");
               |    ${ptrName}_Start(&ptr); // indicate when block can start processing data
-              |    while (!${ptrName}_IsDone(&ptr)) {
-              |        printf("Device not done! Looping...\r\n");
+              |
+              |    // (STEP 5)
+              |    while (!${ptrName}_IsIdle(&ptr)) {
+              |        if (isDebug) printf("Device still processing! Looping...\r\n");
               |        $debugPrint
               |    }
               |
-              |    printf("getting result...\r\n");
+              |    // ensure consistency for float types *((u32*)&data)
+              |    // see https://docs.xilinx.com/r/en-US/ug1399-vitis-hls/C-Driver-Files-and-Float-Types
+              |    u32 uresult;
               |    ${retTypeString} result;
-              |    result = ${ptrName}_Get_return(&ptr);
-              |
-              |    printf("running sanity check..."); // newline intentionally omitted
-              |    // ${retTypeString} result2;
-              |    // result2 = $getter;
-              |
-              |   // if (result == result2) {
-              |   //     printf("SUCCESS!\r\n");
-              |   // } else {
-              |   //     printf("FAILURE!\r\n");
-              |   // }
+              |    if (isDebug) printf("Getting result...\r\n");
+              |    uresult = ${ptrName}_Get_return(&ptr);
+              |    result = *((${retTypeString}*)&uresult);
               |
               |    if (shouldRelease != 0) {
-              |        printf("Releasing device...\r\n");
-              |        int status = ${ptrName}_Release(&ptr);
+              |        if (isDebug) printf("Releasing device...\r\n");
+              |        u32 status = ${ptrName}_Release(&ptr);
               |        if (status != XST_SUCCESS) {
-              |            printf("Error releasing: status\r\n");
+              |            printf("Error releasing: %u\r\n", status);
               |            exit(EXIT_FAILURE);
               |        }
-              |        printf("Device released!\r\n");
+              |        initialized = 0;
+              |        if (isDebug) printf("Device released!\r\n");
               |    }
-              |
-              |    printf("Returning!\r\n");
+              |    if (isDebug) printf("Returning!\r\n");
               |
               |    return result;
               |}"""
@@ -869,7 +899,7 @@ petalinux-package --boot --fsbl images/linux/zynq_fsbl.elf --fpga images/linux/s
           case _ => error(s"Unable to determine if $argDirectionName is an array or value from: $dir", T)
         }
         val argType: org.sireum.String = isArray match {
-          case T => string"char *data"
+          case T => string"u32 *data"
           case F => {
             val space: C = c" "
             val words = StringOps(line).split((c: C) => c  == space)
