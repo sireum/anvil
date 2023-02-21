@@ -356,9 +356,9 @@ object Context {
       )
 
       if (contains(petalinuxDependencies, string"xterm")) {
-        localSandboxProc(ISZ("vagrant", "ssh", "-c", st"TERM=xterm /bin/bash -v -c \"${(modifiedProc, " ")}\"".render))
+        return localSandboxProc(ISZ("vagrant", "ssh", "-c", st"TERM=xterm /bin/bash -v -c \"${(modifiedProc, " ")}\"".render))
       } else {
-        localSandboxProc(ISZ("vagrant", "ssh", "-c", st"/bin/bash -v -c \"${(modifiedProc, " ")}\"".render))
+        return localSandboxProc(ISZ("vagrant", "ssh", "-c", st"/bin/bash -v -c \"${(modifiedProc, " ")}\"".render))
       }
     }
 
