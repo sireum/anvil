@@ -172,7 +172,7 @@ object Context {
       val driverDirectory: String = versionedDriverName(hc, ec)
       val hlsSolutionName = ec.projectContext.template_project_hls_solution
       val projectWorkspace = ec.projectContext.projectWorkspace
-      projectWorkspace.hls / hlsSolutionName / "impl" / "misc" / "drivers" / driverDirectory / "src";
+      return projectWorkspace.hls / hlsSolutionName / "impl" / "misc" / "drivers" / driverDirectory / "src";
     }
 
     override def baseDriverHFileName(hc: HardwareContext, ec: ExecutionContext): String = {
