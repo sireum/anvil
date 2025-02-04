@@ -26,25 +26,9 @@
 package org.sireum.anvil
 
 import org.sireum._
-import org.sireum.alir.TypeSpecializer
-import org.sireum.lang.symbol.Resolver.QName
-import org.sireum.lang.tipe.TypeHierarchy
-import org.sireum.message.Reporter
 
-object Anvil {
-
-  def synthesize(th: TypeHierarchy, owner: QName, id: String, forwarding: HashMap[QName, QName], reporter: Reporter): Unit = {
-    val tsr = TypeSpecializer.specialize(th, ISZ(TypeSpecializer.EntryPoint.Method(owner :+ id)), forwarding, reporter)
-    if (reporter.hasError) {
-      return
-    }
-    val irt = lang.IRTranslator(threeAddressCode = T, undeclare = T, mergeDecls = T, th = tsr.typeHierarchy)
-    val m = tsr.methods.get(owner).get.elements(0)
-    var p = irt.translateMethod(None(), m.info.owner, m.info.ast)
-    p = lang.IRTranslator.BlockDeclPreamble().transformIRProcedure(p).getOrElse(p)
-    p = p(body = irt.toBasic(p.body.asInstanceOf[lang.ast.IR.Body.Block], p.pos))
-    val program = lang.ast.IR.Program(ISZ(), ISZ(p), ISZ())
-    println(HdlPrinter.printProgram(program).render)
-    println()
+object HdlPrinter {
+  def printProgram(o: lang.ast.IR.Program): ST = {
+    return o.prettyST
   }
 }
