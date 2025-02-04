@@ -30,6 +30,7 @@ import org.sireum.test._
 class AnvilTest extends SireumRcSpec {
 
   val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
+  val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result"
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
     val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith(".sc") }
@@ -48,7 +49,11 @@ class AnvilTest extends SireumRcSpec {
             case _ =>
           }
         }
-        Anvil.synthesize(th2, ISZ(), lastMethod, HashMap.empty, reporter)
+        for (p <- Anvil.synthesize(th2, ISZ(), lastMethod, Anvil.Config(HashMap.empty), reporter).entries) {
+          val f = dir /+ ISZ(path.map(String(_)): _*) /+ p._1
+          f.up.mkdirAll()
+          f.writeOver(p._2.render)
+        }
         T
       case _ => return F
     }

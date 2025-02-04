@@ -33,18 +33,24 @@ import org.sireum.message.Reporter
 
 object Anvil {
 
-  def synthesize(th: TypeHierarchy, owner: QName, id: String, forwarding: HashMap[QName, QName], reporter: Reporter): Unit = {
-    val tsr = TypeSpecializer.specialize(th, ISZ(TypeSpecializer.EntryPoint.Method(owner :+ id)), forwarding, reporter)
+  @datatype class Config(val forwarding: HashMap[QName, QName])
+
+  def synthesize(th: TypeHierarchy, owner: QName, id: String, config: Config, reporter: Reporter): HashSMap[ISZ[String], ST] = {
+    val tsr = TypeSpecializer.specialize(th, ISZ(TypeSpecializer.EntryPoint.Method(owner :+ id)), config.forwarding,
+      reporter)
     if (reporter.hasError) {
-      return
+      return HashSMap.empty
     }
     val irt = lang.IRTranslator(threeAddressCode = T, undeclare = T, mergeDecls = T, th = tsr.typeHierarchy)
     val m = tsr.methods.get(owner).get.elements(0)
     var p = irt.translateMethod(None(), m.info.owner, m.info.ast)
     p = lang.IRTranslator.BlockDeclPreamble().transformIRProcedure(p).getOrElse(p)
+    var r = HashSMap.empty[ISZ[String], ST]
+    r = r + ISZ("ir", "procedure.sir") ~> p.prettyST
     p = p(body = irt.toBasic(p.body.asInstanceOf[lang.ast.IR.Body.Block], p.pos))
+    r = r + ISZ("ir", "procedure-basicblock.sir") ~> p.prettyST
     val program = lang.ast.IR.Program(ISZ(), ISZ(p), ISZ())
-    println(HdlPrinter.printProgram(program).render)
-    println()
+    r = r ++ HdlPrinter.printProgram(th, config, program, owner, id).entries
+    return r
   }
 }
