@@ -30,6 +30,15 @@ import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.TypeHierarchy
 
 object HwSynthesizer {
+  /*
+    Notes/links:
+    * Slang IR: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/IR.scala
+      * Slang Typed data structure: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/Typed.scala
+    * Slang TypeHierarchy: https://github.com/sireum/slang/blob/88c6873c8cb5d5a33686772f0607eac88fee9c9b/tipe/shared/src/main/scala/org/sireum/lang/tipe/TypeHierarchy.scala#L563
+      * contains typeMap that maps a type fully qualified name to TypeInfo
+      * TypeInfo: https://github.com/sireum/slang/blob/88c6873c8cb5d5a33686772f0607eac88fee9c9b/tipe/shared/src/main/scala/org/sireum/lang/symbol/Info.scala#L851
+      * examples of Typed/TypeHierarchy API usage: https://github.com/sireum/slang/blob/88c6873c8cb5d5a33686772f0607eac88fee9c9b/frontend/shared/src/main/scala/org/sireum/lang/IRTranslator.scala#L419-L456
+   */
   def printProgram(th: TypeHierarchy, config: Anvil.Config, o: lang.ast.IR.Program, owner: QName, id: String): HashSMap[ISZ[String], ST] = {
     var r = HashSMap.empty[ISZ[String], ST]
     r = r + ISZ("program.scala") ~> o.prettyST
