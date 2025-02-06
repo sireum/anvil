@@ -29,7 +29,7 @@ import org.sireum._
 import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.TypeHierarchy
 
-object HdlPrinter {
+object HwSynthesizer {
   def printProgram(th: TypeHierarchy, config: Anvil.Config, o: lang.ast.IR.Program, owner: QName, id: String): HashSMap[ISZ[String], ST] = {
     var r = HashSMap.empty[ISZ[String], ST]
     r = r + ISZ("program.scala") ~> o.prettyST

@@ -33,7 +33,19 @@ import org.sireum.message.Reporter
 
 object Anvil {
 
-  @datatype class Config(val forwarding: HashMap[QName, QName])
+  @datatype class Config(val projectName: String,
+                         val defaultBitWidth: Z,
+                         val maxStringSize: Z,
+                         val maxArraySize: Z,
+                         val customArraySizes: HashMap[lang.ast.Typed, Z],
+                         val customConstants: HashMap[QName, lang.ast.Exp],
+                         val excludedNames: HashSet[QName],
+                         val forwarding: HashMap[QName, QName])
+
+  object Config {
+    @strictpure def empty(projectName: String): Config =
+      Config(projectName, 64, 100, 100, HashMap.empty, HashMap.empty, HashSet.empty, HashMap.empty)
+  }
 
   def synthesize(th: TypeHierarchy, owner: QName, id: String, config: Config, reporter: Reporter): HashSMap[ISZ[String], ST] = {
     val tsr = TypeSpecializer.specialize(th, ISZ(TypeSpecializer.EntryPoint.Method(owner :+ id)), config.forwarding,
@@ -50,7 +62,7 @@ object Anvil {
     p = p(body = irt.toBasic(p.body.asInstanceOf[lang.ast.IR.Body.Block], p.pos))
     r = r + ISZ("ir", "procedure-basicblock.sir") ~> p.prettyST
     val program = lang.ast.IR.Program(ISZ(), ISZ(p), ISZ())
-    r = r ++ HdlPrinter.printProgram(th, config, program, owner, id).entries
+    r = r ++ HwSynthesizer.printProgram(th, config, program, owner, id).entries
     return r
   }
 }

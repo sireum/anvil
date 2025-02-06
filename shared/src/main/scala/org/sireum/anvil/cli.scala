@@ -36,7 +36,7 @@ object cli {
     command = "anvil",
     description = "High-level hardware synthesizer",
     header = "Anvil HLS",
-    usage = "<option>* <fully-qualified-method-name>",
+    usage = "<option>* <fully-qualified-method-name> [ <slang-file.sc> ]",
     usageDescOpt = None(),
     opts = ISZ(
       Opt(name = "sourcepath", longKey = "sourcepath", shortKey = Some('s'),
@@ -70,11 +70,6 @@ object cli {
         Opt(name = "maxStringSize", longKey = "string-size", shortKey = None(),
           tpe = Type.Num(None(), 100, None(), None()),
           description = "Maximum string size")
-      )),
-      OptGroup(name = "Extensibility", opts = ISZ(
-        Opt(name = "plugins", longKey = "plugins", shortKey = Some('p'),
-          tpe = Type.Str(Some(','), None()),
-          description = "Plugin fully qualified names")
       )),
       OptGroup(name = "Persistence", opts = ISZ(
         Opt(name = "save", longKey = "save", shortKey = None(), tpe = Type.Path(F, None()),
