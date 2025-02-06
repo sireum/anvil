@@ -62,7 +62,7 @@ object Anvil {
     p = p(body = irt.toBasic(p.body.asInstanceOf[lang.ast.IR.Body.Block], p.pos))
     r = r + ISZ("ir", "procedure-basicblock.sir") ~> p.prettyST
     val program = lang.ast.IR.Program(ISZ(), ISZ(p), ISZ())
-    r = r ++ HwSynthesizer.printProgram(th, config, program, owner, id).entries
+    r = r ++ HwSynthesizer(th, config, owner, id).printProgram(program).entries
     return r
   }
 }
