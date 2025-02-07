@@ -5,10 +5,11 @@ import org.sireum._
 
 import I0_5._
 
-def foo(seq: MS[I0_5, U64]): Unit = {
+def square(seq: MS[I0_5, U64]): Unit = {
   var i = i0_5"0"
-  while (i <= i0_5"5") {
+  while (i < i0_5"5") {
     seq(i) = seq(i) * seq(i)
     i = i + i0_5"1"
   }
+  seq(i0_5"5") = seq(i0_5"5") * seq(i0_5"5")
 }
