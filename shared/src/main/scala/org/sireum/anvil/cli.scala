@@ -80,10 +80,7 @@ object cli {
       OptGroup(name = "Substitutions", opts = ISZ(
         Opt(name = "customConstants", longKey = "constants", shortKey = Some('c'),
           tpe = Type.Str(Some(';'), None()),
-          description = "Custom constant for object variables, each in the form of <name>=<lit>, where <name> is a qualified name of an object var and <lit> is a Slang literal expression"),
-        Opt(name = "forwarding", longKey = "forward", shortKey = Some('w'),
-          tpe = Type.Str(Some(','), None()),
-          description = "Object forwarding, each in form of <name>=<name>, where <name> is a fully qualified name of an object"),
+          description = "Custom constant for object variables, each in the form of <name>=<lit>, where <name> is a qualified name of an object var and <lit> is a Slang literal expression")
       ))
     )
   )
