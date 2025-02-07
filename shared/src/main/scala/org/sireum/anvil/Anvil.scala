@@ -54,14 +54,20 @@ object Anvil {
       return HashSMap.empty
     }
     val threeAddressCode = T
-    val irt = lang.IRTranslator(threeAddressCode = threeAddressCode, mergeDecls = T, th = tsr.typeHierarchy)
-    val m = tsr.methods.get(owner).get.elements(0)
-    var p = irt.translateMethod(None(), m.info.owner, m.info.ast)
+
+    val irt = lang.IRTranslator(threeAddressCode = threeAddressCode, th = tsr.typeHierarchy)
+
+    var procedures = ISZ[lang.ast.IR.Procedure]()
+
+    for (ms <- tsr.methods.values; m <- ms.elements) {
+      val p = irt.translateMethod(None(), m.info.owner, m.info.ast)
+      procedures = procedures :+ p(body = irt.toBasic(p.body.asInstanceOf[lang.ast.IR.Body.Block], p.pos))
+    }
+
     var r = HashSMap.empty[ISZ[String], ST]
-    r = r + ISZ("ir", "procedure.sir") ~> p.prettyST
-    p = p(body = irt.toBasic(p.body.asInstanceOf[lang.ast.IR.Body.Block], p.pos))
-    r = r + ISZ("ir", "procedure-basicblock.sir") ~> p.prettyST
-    val program = lang.ast.IR.Program(threeAddressCode, ISZ(), ISZ(p))
+
+    val program = lang.ast.IR.Program(threeAddressCode, ISZ(), procedures)
+    r = r + ISZ("ir", "program.sir") ~> program.prettyST
     r = r ++ HwSynthesizer(th, config, owner, id).printProgram(program).entries
     return r
   }
