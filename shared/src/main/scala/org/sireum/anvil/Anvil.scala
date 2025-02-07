@@ -53,15 +53,15 @@ object Anvil {
     if (reporter.hasError) {
       return HashSMap.empty
     }
-    val irt = lang.IRTranslator(threeAddressCode = T, undeclare = T, mergeDecls = T, th = tsr.typeHierarchy)
+    val threeAddressCode = T
+    val irt = lang.IRTranslator(threeAddressCode = threeAddressCode, mergeDecls = T, th = tsr.typeHierarchy)
     val m = tsr.methods.get(owner).get.elements(0)
     var p = irt.translateMethod(None(), m.info.owner, m.info.ast)
-    p = lang.IRTranslator.BlockDeclPreamble().transformIRProcedure(p).getOrElse(p)
     var r = HashSMap.empty[ISZ[String], ST]
     r = r + ISZ("ir", "procedure.sir") ~> p.prettyST
     p = p(body = irt.toBasic(p.body.asInstanceOf[lang.ast.IR.Body.Block], p.pos))
     r = r + ISZ("ir", "procedure-basicblock.sir") ~> p.prettyST
-    val program = lang.ast.IR.Program(ISZ(), ISZ(p), ISZ())
+    val program = lang.ast.IR.Program(threeAddressCode, ISZ(), ISZ(p))
     r = r ++ HwSynthesizer(th, config, owner, id).printProgram(program).entries
     return r
   }
