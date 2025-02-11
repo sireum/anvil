@@ -55,18 +55,19 @@ object Anvil {
     }
   }
 
-  @record class GroundOffsetTransformer(val m: HashMap[String, Z]) extends AST.MIRTransformer {
+  @record class GroundOffsetTransformer(val localOffsetMap: HashMap[String, Z],
+                                        var tempExpMap: HashMap[Z, AST.IR.Exp]) extends AST.MIRTransformer {
     override def postIRExpLocalVarRef(o: AST.IR.Exp.LocalVarRef): MOption[AST.IR.Exp] = {
-      val offset = m.get(o.id).get
+      val offset = localOffsetMap.get(o.id).get
       return MSome(AST.IR.Exp.Intrinsic(Intrinsic.LocalOffset(o.isVal, offset, o.context, o.id, o.tipe, o.pos)))
     }
 
-    override def postIRStmtGround(o: AST.IR.Stmt.Ground): MOption[AST.IR.Stmt.Ground] = {
-      o match {
-        case o: AST.IR.Stmt.Assign.Local =>
-          val offset = m.get(o.lhs).get
-          return MSome(AST.IR.Stmt.Intrinsic(Intrinsic.LocalOffsetAssign(o.copy, offset, o.context, o.lhs, o.rhs, o.pos)))
-        case _ => return MNone()
+    override def postIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
+      tempExpMap.get(o.n) match {
+        case Some(e) =>
+          tempExpMap = tempExpMap -- ISZ(o.n)
+          return MSome(e)
+        case _ => halt(s"Infeasible: ${o.n}, $tempExpMap")
       }
     }
   }
@@ -193,8 +194,7 @@ import Anvil._
     }
     r = r + ISZ("ir", "4-program-merged.sir") ~> program.prettyST
 
-    val hws = HwSynthesizer(th, config, owner, id)
-    r = r ++ hws.printProgram(program).entries
+    r = r ++ HwSynthesizer(this).printProgram(program).entries
 
     return r
   }
@@ -373,15 +373,17 @@ import Anvil._
     var blockLocalOffsetMap = HashMap.empty[Z, (Z, HashMap[String, Z])]
     var maxOffset: Z = typeByteSize(cpType) + typeByteSize(spType)
     var callResultIdOffsetMap = HashMap.empty[String, Z]
+    var tempExpMap = HashMap.empty[Z, AST.IR.Exp]
     if (proc.context.owner == owner && proc.context.id == id) {
       maxOffset = maxOffset + typeByteSize(proc.tipe.ret)
-    };
+    }
     {
       var m = HashMap.empty[String, Z]
       var offset: Z = maxOffset
       for (param <- ops.ISZOps(proc.paramNames).zip(proc.tipe.args)) {
-        m = m + param._1 ~> offset
-        offset = offset + typeByteSize(param._2)
+        val (id, t) = param
+        m = m + id ~> offset
+        offset = offset + (if (isScalar(t)) typeByteSize(t) else typeByteSize(spType))
       }
       blockLocalOffsetMap = blockLocalOffsetMap + blocks(0).label ~> (offset, m)
       maxOffset = offset
@@ -402,7 +404,7 @@ import Anvil._
                 } else {
                   m = m + l.id ~> offset
                 }
-                offset = offset + typeByteSize(l.tipe) * mult
+                offset = offset + (typeByteSize(l.tipe) + (if (isScalar(l.tipe)) z"0" else typeByteSize(spType))) * mult
               }
               if (maxOffset < offset) {
                 maxOffset = offset
@@ -410,19 +412,65 @@ import Anvil._
               grounds = grounds :+ g
             case _ =>
               g match {
+                case AST.IR.Stmt.Assign.Temp(n, rhs, pos) =>
+                  def rest(): Unit = {
+                    val got = GroundOffsetTransformer(m, tempExpMap)
+                    val newRhs = got.transformIRExp(rhs).getOrElse(rhs)
+                    tempExpMap = got.tempExpMap
+                    val temp = tempExpMap.size
+                    tempExpMap = tempExpMap + n ~> AST.IR.Exp.Temp(temp, rhs.tipe, pos)
+                    grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, newRhs, pos)
+                  }
+                  rhs match {
+                    case rhs: AST.IR.Exp.Int => tempExpMap = tempExpMap + n ~> AST.IR.Exp.Intrinsic(
+                      Intrinsic.Int(typeByteSize(rhs.tipe), isIntSigned(rhs.tipe), rhs.value, rhs.tipe, pos))
+                    case rhs: AST.IR.Exp.Bool => tempExpMap = tempExpMap + n ~> rhs
+                    case rhs: AST.IR.Exp.F32 => tempExpMap = tempExpMap + n ~> rhs
+                    case rhs: AST.IR.Exp.F64 => tempExpMap = tempExpMap + n ~> rhs
+                    case rhs: AST.IR.Exp.R => tempExpMap = tempExpMap + n ~> rhs
+                    case rhs: AST.IR.Exp.String => tempExpMap = tempExpMap + n ~> rhs
+                    case rhs: AST.IR.Exp.EnumElementRef => halt(s"TODO: $rhs")
+                    case rhs: AST.IR.Exp.Temp =>
+                      tempExpMap = tempExpMap + n ~> tempExpMap.get(rhs.n).get
+                      tempExpMap = tempExpMap -- ISZ(rhs.n)
+                    case _: AST.IR.Exp.If => halt(s"Infeasible: $rhs")
+                    case _: AST.IR.Exp.Intrinsic => halt(s"Infeasible: $rhs")
+                    case _: AST.IR.Exp.Apply => rest()
+                    case _: AST.IR.Exp.Binary => rest()
+                    case _: AST.IR.Exp.Construct => rest()
+                    case _: AST.IR.Exp.FieldVarRef => rest()
+                    case _: AST.IR.Exp.GlobalVarRef => rest()
+                    case _: AST.IR.Exp.Indexing => rest()
+                    case _: AST.IR.Exp.LocalVarRef => rest()
+                    case _: AST.IR.Exp.Select => rest()
+                    case _: AST.IR.Exp.Type => rest()
+                    case _: AST.IR.Exp.Unary => rest()
+                  }
+                case _ =>
+                  val got = GroundOffsetTransformer(m, tempExpMap)
+                  grounds = grounds :+ got.transformIRStmtGround(g).getOrElse(g)
+                  tempExpMap = got.tempExpMap
+              }
+              g match {
                 case g: AST.IR.Stmt.Expr if g.exp.methodType.ret != AST.Typed.unit =>
                   val id = callResultId(g.exp.id, g.exp.pos)
                   callResultIdOffsetMap = callResultIdOffsetMap + id ~> m.get(id).get
+                  tempExpMap = tempExpMap -- (for (arg <- g.exp.args) yield arg.asInstanceOf[AST.IR.Exp.Temp].n)
                 case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Apply] =>
                   val e = g.rhs.asInstanceOf[AST.IR.Exp.Apply]
                   val id = callResultId(e.id, e.pos)
                   callResultIdOffsetMap = callResultIdOffsetMap + id ~> m.get(id).get
                 case _ =>
               }
-              grounds = grounds :+ GroundOffsetTransformer(m).transformIRStmtGround(g).getOrElse(g)
           }
         }
-        blockMap = blockMap + b.label ~> b(grounds = grounds)
+        val jump: AST.IR.Jump = {
+          val got = GroundOffsetTransformer(m, tempExpMap)
+          val j = got.transformIRJump(b.jump).getOrElse(b.jump)
+          tempExpMap = got.tempExpMap
+          j
+        }
+        blockMap = blockMap + b.label ~> b(grounds = grounds, jump = jump)
         for (target <- b.jump.targets) {
           blockLocalOffsetMap.get(target) match {
             case Some((po, pm)) =>
@@ -620,6 +668,14 @@ import Anvil._
       case _ => return isSubZ(t)
     }
     return T
+  }
+
+  @memoize def isIntSigned(t: AST.Typed): B = {
+    t match {
+      case AST.Typed.c => return F
+      case AST.Typed.z => return T
+      case _ => return subZOpt(t).get.ast.isSigned
+    }
   }
 
   @memoize def shouldCopy(t: AST.Typed): B = {

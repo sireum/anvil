@@ -31,6 +31,32 @@ import org.sireum.message.Position
 
 object Intrinsic {
 
+  @datatype class Int(val bytes: Z, val signed: B, val value: Z, val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
+    @strictpure def prettyST: ST = st"$value [$tipe]"
+    @strictpure def numOfTemps: Z = 0
+  }
+
+  @datatype class Load(val temp: Z,
+                       val offset: AST.IR.Exp,
+                       val bytes: Z,
+                       val comment: String,
+                       val tipe: AST.Typed,
+                       val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def prettyST: ST = st"$$$temp = ${offset.prettyST} [$tipe, $bytes] // $comment"
+    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps + 1)
+  }
+
+  @datatype class Store(val offset: AST.IR.Exp,
+                        val bytes: Z,
+                        val isScalar: B,
+                        val exp: AST.IR.Exp,
+                        val comment: String,
+                        val tipe: AST.Typed,
+                        val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def prettyST: ST = st"${offset.prettyST} ${if (isScalar) "=" else ":="} ${exp.prettyST} [$tipe, $bytes] // $comment"
+    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps + 1)
+  }
+
   // Replaces AST.IR.Exp.LocalVarRef
   @datatype class LocalOffset(val isVal: B,
                               val offset: Z,

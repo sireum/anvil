@@ -31,10 +31,7 @@ import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.symbol.TypeInfo
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 
-@datatype class HwSynthesizer(val th: TypeHierarchy,
-                              val config: Anvil.Config,
-                              val owner: QName,
-                              val id: String) {
+@datatype class HwSynthesizer(val anvil: Anvil) {
   /*
     Notes/links:
     * Slang IR: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/IR.scala
