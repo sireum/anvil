@@ -32,6 +32,7 @@ import org.sireum.lang.symbol.{Info, TypeInfo}
 import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
+import org.sireum.U32._
 
 object Anvil {
 
@@ -47,7 +48,14 @@ object Anvil {
       Config(projectName, 64, 100, 100, HashMap.empty, HashMap.empty)
   }
 
-  @record class GroundOffsetTransformer(m: HashMap[String, Z]) extends AST.MIRTransformer {
+  @record class TempCollector(var r: HashSSet[Z]) extends AST.MIRTransformer {
+    override def postIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
+      r = r + o.n
+      return MNone()
+    }
+  }
+
+  @record class GroundOffsetTransformer(val m: HashMap[String, Z]) extends AST.MIRTransformer {
     override def postIRExpLocalVarRef(o: AST.IR.Exp.LocalVarRef): MOption[AST.IR.Exp] = {
       val offset = m.get(o.id).get
       return MSome(AST.IR.Exp.Intrinsic(Intrinsic.LocalOffset(o.isVal, offset, o.context, o.id, o.tipe, o.pos)))
@@ -66,10 +74,8 @@ object Anvil {
   val kind: String = "Anvil"
   val returnLocalId: String = "$ret"
   val resultLocalId: String = "$res"
-  val cpType: AST.Typed = AST.Typed.z
-  val spType: AST.Typed = AST.Typed.z
 
-  def synthesize(th: TypeHierarchy, owner: QName, id: String, config: Config, reporter: Reporter): HashSMap[ISZ[String], ST] = {
+  def synthesize(fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, owner: QName, id: String, config: Config, reporter: Reporter): HashSMap[ISZ[String], ST] = {
     val tsr = TypeSpecializer.specialize(th, ISZ(TypeSpecializer.EntryPoint.Method(owner :+ id)), HashMap.empty,
       reporter)
     if (tsr.extMethods.nonEmpty) {
@@ -78,238 +84,359 @@ object Anvil {
     if (reporter.hasError) {
       return HashSMap.empty
     }
-    return Anvil(th, tsr, owner, id, config).synthesize(reporter)
+    return Anvil(th, tsr, owner, id, config).synthesize(fresh, reporter)
   }
 }
 
 import Anvil._
 
-@datatype class Anvil(val th: TypeHierarchy, val tsr: TypeSpecializer.Result, val owner: QName, val id: String, val config: Config) {
+@datatype class Anvil(val th: TypeHierarchy,
+                      val tsr: TypeSpecializer.Result,
+                      val owner: QName,
+                      val id: String,
+                      val config: Config) {
 
-  def synthesize(reporter: Reporter): HashSMap[ISZ[String], ST] = {
+  val spType: AST.Typed =
+    if (config.defaultBitWidth == 8) {
+      AST.Typed.s8
+    } else if (config.defaultBitWidth == 16) {
+      AST.Typed.s16
+    } else if (config.defaultBitWidth == 32) {
+      AST.Typed.s32
+    } else if (config.defaultBitWidth == 64) {
+      AST.Typed.s64
+    } else {
+      halt(s"Infeasible: ${config.defaultBitWidth}")
+    }
+  val cpType: AST.Typed = AST.Typed.u64
+
+  def synthesize(fresh: lang.IRTranslator.Fresh, reporter: Reporter): HashSMap[ISZ[String], ST] = {
     val threeAddressCode = T
 
-    val irt = lang.IRTranslator(threeAddressCode = threeAddressCode, th = tsr.typeHierarchy)
+    val irt = lang.IRTranslator(threeAddressCode = T, th = tsr.typeHierarchy, fresh = fresh)
 
-    var globals = ISZ[AST.IR.Global]()
-    var procedureMap = HashSMap.empty[AST.IR.MethodContext, AST.IR.Procedure]
-    val hws = HwSynthesizer(th, config, owner, id)
+    val mp: (AST.IR.MethodContext, AST.IR.Program) = {
+      var globals = ISZ[AST.IR.Global]()
+      var procedures = ISZ[AST.IR.Procedure]()
 
-    for (vs <- tsr.objectVars.entries) {
-      val (owner, ids) = vs
-      var objPosOpt: Option[message.Position] = th.nameMap.get(owner) match {
-        case Some(info: Info.Object) => Some(info.posOpt.get)
-        case _ => None()
-      }
-      globals = globals :+ AST.IR.Global(AST.Typed.b, owner, objPosOpt.get)
-      var stmts = ISZ[AST.Stmt]()
-      for (id <- ids.elements) {
-        val name = owner :+ id
-        val v = th.nameMap.get(name).get.asInstanceOf[Info.Var]
-        globals = globals :+ AST.IR.Global(v.typedOpt.get, name, v.posOpt.get)
-        if (objPosOpt.isEmpty) {
-          objPosOpt = v.posOpt
+      for (vs <- tsr.objectVars.entries) {
+        val (owner, ids) = vs
+        var objPosOpt: Option[message.Position] = th.nameMap.get(owner) match {
+          case Some(info: Info.Object) => Some(info.posOpt.get)
+          case _ => None()
         }
-        stmts = stmts :+ AST.Stmt.Assign(AST.Exp.Ident(v.ast.id, AST.ResolvedAttr(v.posOpt, v.resOpt, v.typedOpt)),
-          v.ast.initOpt.get, AST.Attr(v.posOpt))
-      }
-      val pos = objPosOpt.get
-      val objInitId = "<objinit>"
-      val name = owner :+ objInitId
-      val objInit = irt.translateMethodH(F, None(), owner, objInitId, ISZ(), ISZ(),
-        AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), pos, Some(AST.Body(stmts, ISZ())))
-      var body = objInit.body.asInstanceOf[AST.IR.Body.Block]
-      body = body(block = body.block(stmts = AST.IR.Stmt.Block(ISZ(
-        AST.IR.Stmt.If(AST.IR.Exp.GlobalVarRef(name, AST.Typed.b, pos),
-          AST.IR.Stmt.Block(ISZ(AST.IR.Stmt.Return(None(), pos)), pos),
-          AST.IR.Stmt.Block(ISZ(), pos), pos),
-        AST.IR.Stmt.Assign.Global(F, name, AST.IR.Exp.Bool(T, pos), pos)
-      ), pos) +: body.block.stmts))
-      val p = objInit(body = irt.toBasic(body, objInit.pos))
-      procedureMap = procedureMap + p.context ~> p
-    }
-
-    def transformOffset(proc: AST.IR.Procedure): (Z, AST.IR.Procedure) = {
-      val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
-      val blocks = body.blocks
-      var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- blocks) yield (b.label, b))
-      var blockLocalOffsetMap = HashMap.empty[Z, (Z, HashMap[String, Z])]
-      var maxOffset: Z = typeByteSize(cpType) + typeByteSize(spType)
-      if (proc.context.owner == owner && proc.context.id == id) {
-        maxOffset = maxOffset + typeByteSize(proc.tipe.ret)
-      };
-      {
-        var m = HashMap.empty[String, Z]
-        var offset: Z = maxOffset
-        for (param <- ops.ISZOps(proc.paramNames).zip(proc.tipe.args)) {
-          m = m + param._1 ~> offset
-          offset = offset + typeByteSize(param._2)
-        }
-        blockLocalOffsetMap = blockLocalOffsetMap + blocks(0).label ~> (offset, m)
-        maxOffset = offset
-      }
-      var work = ISZ(blocks(0))
-      while (work.nonEmpty) {
-        var next = ISZ[AST.IR.BasicBlock]()
-        for (b <- work) {
-          var (offset, m) = blockLocalOffsetMap.get(b.label).get
-          var grounds = ISZ[AST.IR.Stmt.Ground]()
-          for (g <- b.grounds) {
-            g match {
-              case g: AST.IR.Stmt.Decl =>
-                val mult: Z = if (g.undecl) -1 else 1
-                for (l <- g.locals) {
-                  if (g.undecl) {
-                    m = m -- ISZ(l.id)
-                  } else {
-                    m = m + l.id ~> offset
-                  }
-                  offset = offset + typeByteSize(l.tipe) * mult
-                }
-                if (maxOffset < offset) {
-                  maxOffset = offset
-                }
-                grounds = grounds :+ g
-              case _ =>
-                grounds = grounds :+ GroundOffsetTransformer(m).transformIRStmtGround(g).getOrElse(g)
-            }
+        globals = globals :+ AST.IR.Global(AST.Typed.b, owner, objPosOpt.get)
+        var stmts = ISZ[AST.Stmt]()
+        for (id <- ids.elements) {
+          val name = owner :+ id
+          val v = th.nameMap.get(name).get.asInstanceOf[Info.Var]
+          globals = globals :+ AST.IR.Global(v.typedOpt.get, name, v.posOpt.get)
+          if (objPosOpt.isEmpty) {
+            objPosOpt = v.posOpt
           }
-          blockMap = blockMap + b.label ~> b(grounds = grounds)
-          for (target <- b.jump.targets) {
-            blockLocalOffsetMap.get(target) match {
-              case Some((po, pm)) =>
-                assert(offset == po && m == pm, s"$target: offset = $offset, po = $po, m = $m, pm = $pm")
-              case _ =>
-                blockLocalOffsetMap = blockLocalOffsetMap + target ~> (offset, m)
-                next = next :+ blockMap.get(target).get
-            }
-          }
+          stmts = stmts :+ AST.Stmt.Assign(AST.Exp.Ident(v.ast.id, AST.ResolvedAttr(v.posOpt, v.resOpt, v.typedOpt)),
+            v.ast.initOpt.get, AST.Attr(v.posOpt))
         }
-        work = next
+        val pos = objPosOpt.get
+        val objInitId = "<objinit>"
+        val name = owner :+ objInitId
+        val objInit = irt.translateMethodH(F, None(), owner, objInitId, ISZ(), ISZ(),
+          AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), pos, Some(AST.Body(stmts, ISZ())))
+        var body = objInit.body.asInstanceOf[AST.IR.Body.Block]
+        body = body(block = body.block(stmts = AST.IR.Stmt.Block(ISZ(
+          AST.IR.Stmt.If(AST.IR.Exp.GlobalVarRef(name, AST.Typed.b, pos),
+            AST.IR.Stmt.Block(ISZ(AST.IR.Stmt.Return(None(), pos)), pos),
+            AST.IR.Stmt.Block(ISZ(), pos), pos),
+          AST.IR.Stmt.Assign.Global(F, name, AST.IR.Exp.Bool(T, pos), pos)
+        ), pos) +: body.block.stmts))
+        val p = objInit(body = irt.toBasic(body, objInit.pos))
+        procedures = procedures :+ p
       }
-      return (maxOffset, proc(body = body(blocks = blockMap.values)))
-    }
-
-    var procedureSizeMap = HashMap.empty[AST.IR.MethodContext, Z]
-    val main: AST.IR.Procedure = {
       var mainOpt = Option.none[AST.IR.Procedure]()
       for (ms <- tsr.methods.values; m <- ms.elements) {
-        var p = irt.translateMethod(T, None(), m.info.owner, m.info.ast)
-        val (maxOffset, p2) = transformOffset(p)
-        p = p2
-        procedureSizeMap = procedureSizeMap + p.context ~> maxOffset
-        procedureMap = procedureMap + p.context ~> p
+        val p = irt.translateMethod(T, None(), m.info.owner, m.info.ast)
+        procedures = procedures :+ p
         if (m.info.owner == owner && m.info.ast.sig.id.value == id) {
           mainOpt = Some(p)
         }
       }
-      mainOpt.get
+      (mainOpt.get.context, AST.IR.Program(threeAddressCode, globals, procedures))
     }
 
-    def mergeProcedures(): ISZ[AST.IR.BasicBlock] = {
-      var seen = HashSet.empty[AST.IR.MethodContext]
-      var work = ISZ[AST.IR.Procedure](main)
-      var mergedBlocks = ISZ[AST.IR.BasicBlock]()
-      while (work.nonEmpty) {
-        var next = ISZ[AST.IR.Procedure]()
-        for (p <- work) {
-          seen = seen + p.context
-          var addBeginningMap = HashSMap.empty[Z, ISZ[AST.IR.Stmt.Ground]]
-          var blocks = ISZ[AST.IR.BasicBlock]()
-          for (b <- p.body.asInstanceOf[AST.IR.Body.Basic].blocks) {
-            def processInvoke(g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, label: Z): Unit = {
-              val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
-              val called = procedureMap.get(mc).get
-              if (!seen.contains(mc)) {
-                next = next :+ called
-              }
-              val spAdd = procedureSizeMap.get(p.context).get
-              var grounds = ISZ[AST.IR.Stmt.Ground](
-                AST.IR.Stmt.Intrinsic(Intrinsic.StackPointer(spAdd, e.pos))
-              )
-              var locals = ISZ[AST.IR.Stmt.Decl.Local](
-                AST.IR.Stmt.Decl.Local(returnLocalId, cpType)
-              )
-              if (p.tipe.ret != AST.Typed.unit) {
-                AST.IR.Stmt.Decl.Local(resultLocalId, spType)
-              }
-              for (param <- ops.ISZOps(called.paramNames).zip(called.tipe.args)) {
-                locals = locals :+ AST.IR.Stmt.Decl.Local(param._1, param._2)
-              }
-              grounds = grounds :+ AST.IR.Stmt.Decl(F, T, called.context, locals, e.pos)
-              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.LocalOffsetAssign(F, 0, p.context, returnLocalId,
-                AST.IR.Exp.Int(cpType, label, e.pos), e.pos))
-              var paramOffset: Z = typeByteSize(cpType) + typeByteSize(spType)
-              for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(mc.t.args)).zip(AST.IR.Exp.Int(cpType, label, e.pos) +: e.args)) {
-                grounds = grounds :+ AST.IR.Stmt.Intrinsic(
-                  Intrinsic.LocalOffsetAssign(F, paramOffset, mc, param._1._1, param._2, e.pos))
-                paramOffset = paramOffset + typeByteSize(param._1._2)
-              }
-              var bgrounds = ISZ[AST.IR.Stmt.Ground](
-                AST.IR.Stmt.Decl(T, T, called.context, for (i <- locals.size - 1 to 0 by -1) yield locals(i), e.pos),
-                AST.IR.Stmt.Intrinsic(Intrinsic.StackPointer(-spAdd, e.pos))
-              )
-              lhsOpt match {
-                case Some(lhs) => bgrounds = AST.IR.Stmt.Assign.Temp(lhs, AST.IR.Exp.Intrinsic(
-                  Intrinsic.LocalOffset(F, 0, mc, returnLocalId, cpType, e.pos)), e.pos) +: bgrounds
-                case _ =>
-              }
-              addBeginningMap = addBeginningMap + label ~> bgrounds
-              blocks = blocks :+ b(grounds = grounds,
-                jump = AST.IR.Jump.Goto(called.body.asInstanceOf[AST.IR.Body.Basic].blocks(0).label, e.pos))
-            }
-
-            b.jump match {
-              case j: AST.IR.Jump.Goto if b.grounds.size == 1 =>
-                b.grounds(0) match {
-                  case g: AST.IR.Stmt.Expr => processInvoke(g, None(), g.exp, j.label)
-                  case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Apply] =>
-                    processInvoke(g, Some(g.lhs), g.rhs.asInstanceOf[AST.IR.Exp.Apply], j.label)
-                  case _ =>
-                }
-              case j: AST.IR.Jump.Return =>
-                var addGrounds = ISZ[AST.IR.Stmt.Ground]()
-                j.expOpt match {
-                  case Some(exp) =>
-                    addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(
-                      Intrinsic.LocalOffsetAssign(irt.shouldCopy(exp.tipe), typeByteSize(cpType), p.context,
-                        resultLocalId, exp, exp.pos))
-                  case _ =>
-                }
-                blocks = blocks :+ b(grounds = b.grounds ++ addGrounds,
-                  jump = AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(0, p.context, returnLocalId, j.pos)))
-              case _ => blocks = blocks :+ b
-            }
-          }
-          for (b <- blocks) {
-            addBeginningMap.get(b.label) match {
-              case Some(grounds) => mergedBlocks = mergedBlocks :+ b(grounds = grounds ++ b.grounds)
-              case _ => mergedBlocks = mergedBlocks :+ b
-            }
-          }
-        }
-        work = next
-      }
-      val last: AST.IR.BasicBlock = {
-        val expOpt: Option[AST.IR.Exp] =
-          if (main.tipe.ret == AST.Typed.unit) None()
-          else Some(AST.IR.Exp.Intrinsic(
-            Intrinsic.LocalOffset(F, typeByteSize(cpType), main.context, resultLocalId, main.tipe.ret, main.pos)))
-        AST.IR.BasicBlock(0, ISZ(), AST.IR.Jump.Return(expOpt, main.pos))
-      }
-      return mergedBlocks :+ last
-    }
-
-    val program = AST.IR.Program(threeAddressCode, globals,
-      ISZ(main(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks = mergeProcedures()))))
+    val mainContext = mp._1
+    var program = mp._2
 
     var r = HashSMap.empty[ISZ[String], ST]
-    r = r + ISZ("ir", "program.sir") ~> program(procedures = procedureMap.values).prettyST
-    r = r + ISZ("ir", "program-merged.sir") ~> program.prettyST
+    r = r + ISZ("ir", "1-program.sir") ~> program.prettyST
+
+    program = transformProgram(irt.fresh, program)
+    r = r + ISZ("ir", "2-program-transformed.sir") ~> program.prettyST
+
+    var procedureMap = HashSMap.empty[AST.IR.MethodContext, AST.IR.Procedure]
+    var procedureSizeMap = HashMap.empty[AST.IR.MethodContext, Z]
+    var callResultOffsetMap = HashMap.empty[String, Z]
+    program = {
+      for (p <- program.procedures) {
+        val (maxOffset, p2, m) = transformOffset(p)
+        callResultOffsetMap = callResultOffsetMap ++ m.entries
+        procedureMap = procedureMap + p2.context ~> p2
+        procedureSizeMap = procedureSizeMap + p2.context ~> maxOffset
+      }
+      program(procedures = procedureMap.values)
+    }
+    r = r + ISZ("ir", "3-program-offset.sir") ~> program.prettyST
+
+    program = {
+      val main = procedureMap.get(mainContext).get
+      program(procedures = ISZ(main(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
+        mergeProcedures(main, procedureMap, procedureSizeMap, callResultOffsetMap)))))
+    }
+    r = r + ISZ("ir", "4-program-merged.sir") ~> program.prettyST
+
+    val hws = HwSynthesizer(th, config, owner, id)
     r = r ++ hws.printProgram(program).entries
+
     return r
   }
 
+  def transformApplyResult(p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+
+    var m = HashMap.empty[Z, AST.IR.Stmt.Ground]
+    var bm = HashMap.empty[Z, AST.IR.Stmt.Ground]
+    var em = HashMap.empty[Z, AST.IR.Stmt.Ground]
+    for (b <- body.blocks; g <- b.grounds) {
+      g match {
+        case g: AST.IR.Stmt.Expr if g.exp.methodType.ret != AST.Typed.unit =>
+          em = em + b.label ~> AST.IR.Stmt.Decl(F, T, p.context, ISZ(
+            AST.IR.Stmt.Decl.Local(callResultId(g.exp.id, g.exp.pos), g.exp.tipe)), g.pos)
+          bm = bm + b.jump.asInstanceOf[AST.IR.Jump.Goto].label ~> AST.IR.Stmt.Decl(T, T, p.context, ISZ(
+            AST.IR.Stmt.Decl.Local(callResultId(g.exp.id, g.exp.pos), g.exp.tipe)), g.pos)
+        case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Apply] =>
+          val e = g.rhs.asInstanceOf[AST.IR.Exp.Apply]
+          em = em + b.label ~> AST.IR.Stmt.Decl(F, T, p.context, ISZ(
+            AST.IR.Stmt.Decl.Local(callResultId(e.id, e.pos), e.tipe)), g.pos)
+          m = m + g.lhs ~> AST.IR.Stmt.Decl(T, T, p.context, ISZ(
+            AST.IR.Stmt.Decl.Local(callResultId(e.id, e.pos), e.tipe)), g.pos)
+        case _ =>
+      }
+    }
+    var newBlocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      var newGrounds = ISZ[AST.IR.Stmt.Ground]()
+      bm.get(b.label) match {
+        case Some(g) => newGrounds = newGrounds :+ g
+        case _ =>
+      }
+      for (g <- b.grounds) {
+        newGrounds = newGrounds :+ g
+        val tc = TempCollector(HashSSet.empty)
+        tc.transformIRStmtGround(g)
+        for (n <- tc.r.elements) {
+          m.get(n) match {
+            case Some(g) => newGrounds = newGrounds :+ g
+            case _ =>
+          }
+        }
+      }
+      b.jump match {
+        case j: AST.IR.Jump.Goto =>
+          em.get(j.label) match {
+            case Some(g) => newGrounds = newGrounds :+ g
+            case _ =>
+          }
+        case _ =>
+      }
+      newBlocks = newBlocks :+ b(grounds = newGrounds)
+    }
+    return p(body = body(blocks = newBlocks))
+  }
+
+  def transformProgram(fresh: lang.IRTranslator.Fresh, program: AST.IR.Program): AST.IR.Program = {
+    @pure def transform(p: AST.IR.Procedure): AST.IR.Procedure = {
+      var r = transformApplyResult(p)
+      return r
+    }
+    return program(procedures = ops.ISZOps(program.procedures).mParMap(transform _))
+  }
+
+  @memoize def callResultId(id: String, pos: message.Position): String = {
+    return s"$id$resultLocalId@[${pos.beginLine},${pos.endLine}].${sha3(pos.string)}"
+  }
+
+  def mergeProcedures(main: AST.IR.Procedure,
+                      procedureMap: HashSMap[AST.IR.MethodContext, AST.IR.Procedure],
+                      procedureSizeMap: HashMap[AST.IR.MethodContext, Z],
+                      callResultOffsetMap: HashMap[String, Z]): ISZ[AST.IR.BasicBlock] = {
+    var seen = HashSet.empty[AST.IR.MethodContext]
+    var work = ISZ[AST.IR.Procedure](main)
+    var mergedBlocks = ISZ[AST.IR.BasicBlock]()
+    while (work.nonEmpty) {
+      var next = ISZ[AST.IR.Procedure]()
+      for (p <- work) {
+        seen = seen + p.context
+        var addBeginningMap = HashSMap.empty[Z, ISZ[AST.IR.Stmt.Ground]]
+        var blocks = ISZ[AST.IR.BasicBlock]()
+        for (b <- p.body.asInstanceOf[AST.IR.Body.Basic].blocks) {
+          def processInvoke(g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, label: Z): Unit = {
+            val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
+            val called = procedureMap.get(mc).get
+            if (!seen.contains(mc)) {
+              next = next :+ called
+            }
+            val spAdd = procedureSizeMap.get(p.context).get
+            var grounds = ISZ[AST.IR.Stmt.Ground](
+              AST.IR.Stmt.Intrinsic(Intrinsic.StackPointer(spAdd, e.pos))
+            )
+            var locals = ISZ[AST.IR.Stmt.Decl.Local](
+              AST.IR.Stmt.Decl.Local(returnLocalId, cpType)
+            )
+            if (p.tipe.ret != AST.Typed.unit) {
+              locals = locals :+ AST.IR.Stmt.Decl.Local(resultLocalId, spType)
+            }
+            for (param <- ops.ISZOps(called.paramNames).zip(called.tipe.args)) {
+              locals = locals :+ AST.IR.Stmt.Decl.Local(param._1, param._2)
+            }
+            grounds = grounds :+ AST.IR.Stmt.Decl(F, T, called.context, locals, e.pos)
+            grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.LocalOffsetAssign(F, 0, p.context, returnLocalId,
+              AST.IR.Exp.Int(cpType, label, e.pos), e.pos))
+            if (p.tipe.ret != AST.Typed.unit) {
+              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.LocalOffsetAssign(F, typeByteSize(cpType), p.context,
+                resultLocalId, AST.IR.Exp.Int(spType, callResultOffsetMap.get(callResultId(e.id, e.pos)).get - spAdd,
+                  e.pos), e.pos))
+            }
+            var paramOffset: Z = typeByteSize(cpType) + typeByteSize(spType)
+            for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(mc.t.args)).zip(AST.IR.Exp.Int(cpType, label, e.pos) +: e.args)) {
+              grounds = grounds :+ AST.IR.Stmt.Intrinsic(
+                Intrinsic.LocalOffsetAssign(F, paramOffset, mc, param._1._1, param._2, e.pos))
+              paramOffset = paramOffset + typeByteSize(param._1._2)
+            }
+            var bgrounds = ISZ[AST.IR.Stmt.Ground](
+              AST.IR.Stmt.Decl(T, T, called.context, for (i <- locals.size - 1 to 0 by -1) yield locals(i), e.pos),
+              AST.IR.Stmt.Intrinsic(Intrinsic.StackPointer(-spAdd, e.pos))
+            )
+            lhsOpt match {
+              case Some(lhs) => bgrounds = AST.IR.Stmt.Assign.Temp(lhs, AST.IR.Exp.Intrinsic(
+                Intrinsic.LocalOffset(F, 0, mc, returnLocalId, cpType, e.pos)), e.pos) +: bgrounds
+              case _ =>
+            }
+            addBeginningMap = addBeginningMap + label ~> bgrounds
+            blocks = blocks :+ b(grounds = grounds,
+              jump = AST.IR.Jump.Goto(called.body.asInstanceOf[AST.IR.Body.Basic].blocks(0).label, e.pos))
+          }
+
+          b.jump match {
+            case j: AST.IR.Jump.Goto if b.grounds.size == 1 =>
+              b.grounds(0) match {
+                case g: AST.IR.Stmt.Expr => processInvoke(g, None(), g.exp, j.label)
+                case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Apply] =>
+                  processInvoke(g, Some(g.lhs), g.rhs.asInstanceOf[AST.IR.Exp.Apply], j.label)
+                case _ =>
+              }
+            case j: AST.IR.Jump.Return =>
+              var addGrounds = ISZ[AST.IR.Stmt.Ground]()
+              j.expOpt match {
+                case Some(exp) =>
+                  addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(
+                    Intrinsic.LocalOffsetAssign(shouldCopy(exp.tipe), typeByteSize(cpType), p.context,
+                      resultLocalId, exp, exp.pos))
+                case _ =>
+              }
+              blocks = blocks :+ b(grounds = b.grounds ++ addGrounds,
+                jump = AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(0, p.context, returnLocalId, j.pos)))
+            case _ => blocks = blocks :+ b
+          }
+        }
+        for (b <- blocks) {
+          addBeginningMap.get(b.label) match {
+            case Some(grounds) => mergedBlocks = mergedBlocks :+ b(grounds = grounds ++ b.grounds)
+            case _ => mergedBlocks = mergedBlocks :+ b
+          }
+        }
+      }
+      work = next
+    }
+    val last: AST.IR.BasicBlock = {
+      val expOpt: Option[AST.IR.Exp] =
+        if (main.tipe.ret == AST.Typed.unit) None()
+        else Some(AST.IR.Exp.Intrinsic(
+          Intrinsic.LocalOffset(F, typeByteSize(cpType), main.context, resultLocalId, main.tipe.ret, main.pos)))
+      AST.IR.BasicBlock(0, ISZ(), AST.IR.Jump.Return(expOpt, main.pos))
+    }
+    return mergedBlocks :+ last
+  }
+
+  def transformOffset(proc: AST.IR.Procedure): (Z, AST.IR.Procedure, HashMap[String, Z]) = {
+    val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
+    val blocks = body.blocks
+    var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- blocks) yield (b.label, b))
+    var blockLocalOffsetMap = HashMap.empty[Z, (Z, HashMap[String, Z])]
+    var maxOffset: Z = typeByteSize(cpType) + typeByteSize(spType)
+    var callResultIdOffsetMap = HashMap.empty[String, Z]
+    if (proc.context.owner == owner && proc.context.id == id) {
+      maxOffset = maxOffset + typeByteSize(proc.tipe.ret)
+    };
+    {
+      var m = HashMap.empty[String, Z]
+      var offset: Z = maxOffset
+      for (param <- ops.ISZOps(proc.paramNames).zip(proc.tipe.args)) {
+        m = m + param._1 ~> offset
+        offset = offset + typeByteSize(param._2)
+      }
+      blockLocalOffsetMap = blockLocalOffsetMap + blocks(0).label ~> (offset, m)
+      maxOffset = offset
+    }
+    var work = ISZ(blocks(0))
+    while (work.nonEmpty) {
+      var next = ISZ[AST.IR.BasicBlock]()
+      for (b <- work) {
+        var (offset, m) = blockLocalOffsetMap.get(b.label).get
+        var grounds = ISZ[AST.IR.Stmt.Ground]()
+        for (g <- b.grounds) {
+          g match {
+            case g: AST.IR.Stmt.Decl =>
+              val mult: Z = if (g.undecl) -1 else 1
+              for (l <- g.locals) {
+                if (g.undecl) {
+                  m = m -- ISZ(l.id)
+                } else {
+                  m = m + l.id ~> offset
+                }
+                offset = offset + typeByteSize(l.tipe) * mult
+              }
+              if (maxOffset < offset) {
+                maxOffset = offset
+              }
+              grounds = grounds :+ g
+            case _ =>
+              g match {
+                case g: AST.IR.Stmt.Expr if g.exp.methodType.ret != AST.Typed.unit =>
+                  val id = callResultId(g.exp.id, g.exp.pos)
+                  callResultIdOffsetMap = callResultIdOffsetMap + id ~> m.get(id).get
+                case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Apply] =>
+                  val e = g.rhs.asInstanceOf[AST.IR.Exp.Apply]
+                  val id = callResultId(e.id, e.pos)
+                  callResultIdOffsetMap = callResultIdOffsetMap + id ~> m.get(id).get
+                case _ =>
+              }
+              grounds = grounds :+ GroundOffsetTransformer(m).transformIRStmtGround(g).getOrElse(g)
+          }
+        }
+        blockMap = blockMap + b.label ~> b(grounds = grounds)
+        for (target <- b.jump.targets) {
+          blockLocalOffsetMap.get(target) match {
+            case Some((po, pm)) =>
+              assert(offset == po && m == pm, s"$target: offset = $offset, po = $po, m = $m, pm = $pm")
+            case _ =>
+              blockLocalOffsetMap = blockLocalOffsetMap + target ~> (offset, m)
+              next = next :+ blockMap.get(target).get
+          }
+        }
+      }
+      work = next
+    }
+    return (maxOffset, proc(body = body(blocks = blockMap.values)), callResultIdOffsetMap)
+  }
 
   @memoize def subZOpt(t: AST.Typed): Option[TypeInfo.SubZ] = {
     t match {
@@ -460,5 +587,59 @@ import Anvil._
         return r
       case t => halt(s"Infeasible: $t")
     }
+  }
+
+  @memoize def isSubZ(t: AST.Typed): B = {
+    t match {
+      case t: AST.Typed.Name if t.args.isEmpty =>
+        th.typeMap.get(t.ids) match {
+          case Some(_: TypeInfo.SubZ) => return T
+          case _ =>
+        }
+      case _ =>
+    }
+    return F
+  }
+
+  def sha3(s: String): U32 = {
+    val sha = crypto.SHA3.init512
+    sha.update(conversions.String.toU8is(s))
+    val bs = sha.finalise()
+    return conversions.U8.toU32(bs(0)) << u32"24" | conversions.U8.toU32(bs(1)) << u32"16" |
+      conversions.U8.toU32(bs(2)) << u32"8" | conversions.U8.toU32(bs(3))
+  }
+
+  @memoize def isScalar(t: AST.Typed): B = {
+    t match {
+      case AST.Typed.b =>
+      case AST.Typed.c =>
+      case AST.Typed.z =>
+      case AST.Typed.f32 =>
+      case AST.Typed.f64 =>
+      case AST.Typed.r =>
+      case _ => return isSubZ(t)
+    }
+    return T
+  }
+
+  @memoize def shouldCopy(t: AST.Typed): B = {
+    if (isScalar(t)) {
+      return F
+    }
+    t match {
+      case t: AST.Typed.Name =>
+        t.ids match {
+          case AST.Typed.msName => return T
+          case AST.Typed.isName =>
+          case _ =>
+        }
+        th.typeMap.get(t.ids) match {
+          case Some(info: TypeInfo.Adt) => return !info.ast.isDatatype
+          case Some(info: TypeInfo.Sig) => return !info.ast.isImmutable
+          case _ =>
+        }
+      case _ =>
+    }
+    return F
   }
 }

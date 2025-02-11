@@ -49,7 +49,7 @@ class AnvilTest extends SireumRcSpec {
             case _ =>
           }
         }
-        for (p <- Anvil.synthesize(th2, ISZ(), lastMethod, Anvil.Config.empty(path.mkString("/")), reporter).entries) {
+        for (p <- Anvil.synthesize(lang.IRTranslator.createFresh, th2, ISZ(), lastMethod, Anvil.Config.empty(path.mkString("/")), reporter).entries) {
           val f = dir /+ ISZ(path.map(String(_)): _*) /+ p._1
           f.up.mkdirAll()
           f.writeOver(p._2.render)
