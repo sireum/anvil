@@ -28,9 +28,9 @@ package org.sireum.anvil
 import org.sireum._
 import org.sireum.alir.TypeSpecializer
 import org.sireum.lang.{ast => AST}
-import org.sireum.lang.symbol.Info
+import org.sireum.lang.symbol.{Info, TypeInfo}
 import org.sireum.lang.symbol.Resolver.QName
-import org.sireum.lang.tipe.TypeHierarchy
+import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
 
 object Anvil {
@@ -65,7 +65,9 @@ object Anvil {
 
   val kind: String = "Anvil"
   val returnLocalId: String = "$ret"
+  val resultLocalId: String = "$res"
   val cpType: AST.Typed = AST.Typed.z
+  val spType: AST.Typed = AST.Typed.z
 
   def synthesize(th: TypeHierarchy, owner: QName, id: String, config: Config, reporter: Reporter): HashSMap[ISZ[String], ST] = {
     val tsr = TypeSpecializer.specialize(th, ISZ(TypeSpecializer.EntryPoint.Method(owner :+ id)), HashMap.empty,
@@ -76,14 +78,23 @@ object Anvil {
     if (reporter.hasError) {
       return HashSMap.empty
     }
+    return Anvil(th, tsr, owner, id, config).synthesize(reporter)
+  }
+}
+
+import Anvil._
+
+@datatype class Anvil(val th: TypeHierarchy, val tsr: TypeSpecializer.Result, val owner: QName, val id: String, val config: Config) {
+
+  def synthesize(reporter: Reporter): HashSMap[ISZ[String], ST] = {
     val threeAddressCode = T
 
     val irt = lang.IRTranslator(threeAddressCode = threeAddressCode, th = tsr.typeHierarchy)
 
     var globals = ISZ[AST.IR.Global]()
     var procedureMap = HashSMap.empty[AST.IR.MethodContext, AST.IR.Procedure]
-    val hws = HwSynthesizer(th, config, tsr.typeImpl, owner, id)
-    
+    val hws = HwSynthesizer(th, config, owner, id)
+
     for (vs <- tsr.objectVars.entries) {
       val (owner, ids) = vs
       var objPosOpt: Option[message.Position] = th.nameMap.get(owner) match {
@@ -123,13 +134,16 @@ object Anvil {
       val blocks = body.blocks
       var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- blocks) yield (b.label, b))
       var blockLocalOffsetMap = HashMap.empty[Z, (Z, HashMap[String, Z])]
-      var maxOffset: Z = 0
-      ;{
+      var maxOffset: Z = typeByteSize(cpType) + typeByteSize(spType)
+      if (proc.context.owner == owner && proc.context.id == id) {
+        maxOffset = maxOffset + typeByteSize(proc.tipe.ret)
+      };
+      {
         var m = HashMap.empty[String, Z]
-        var offset: Z = 0
+        var offset: Z = maxOffset
         for (param <- ops.ISZOps(proc.paramNames).zip(proc.tipe.args)) {
           m = m + param._1 ~> offset
-          offset = offset + hws.typeByteSize(param._2)
+          offset = offset + typeByteSize(param._2)
         }
         blockLocalOffsetMap = blockLocalOffsetMap + blocks(0).label ~> (offset, m)
         maxOffset = offset
@@ -150,7 +164,7 @@ object Anvil {
                   } else {
                     m = m + l.id ~> offset
                   }
-                  offset = offset + hws.typeByteSize(l.tipe) * mult
+                  offset = offset + typeByteSize(l.tipe) * mult
                 }
                 if (maxOffset < offset) {
                   maxOffset = offset
@@ -181,7 +195,6 @@ object Anvil {
       var mainOpt = Option.none[AST.IR.Procedure]()
       for (ms <- tsr.methods.values; m <- ms.elements) {
         var p = irt.translateMethod(T, None(), m.info.owner, m.info.ast)
-        p = p(paramNames = returnLocalId +: p.paramNames, tipe = p.tipe(args = cpType +: p.tipe.args))
         val (maxOffset, p2) = transformOffset(p)
         p = p2
         procedureSizeMap = procedureSizeMap + p.context ~> maxOffset
@@ -205,7 +218,7 @@ object Anvil {
           var blocks = ISZ[AST.IR.BasicBlock]()
           for (b <- p.body.asInstanceOf[AST.IR.Body.Basic].blocks) {
             def processInvoke(g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, label: Z): Unit = {
-              val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType(args = cpType +: e.methodType.args))
+              val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
               val called = procedureMap.get(mc).get
               if (!seen.contains(mc)) {
                 next = next :+ called
@@ -214,16 +227,23 @@ object Anvil {
               var grounds = ISZ[AST.IR.Stmt.Ground](
                 AST.IR.Stmt.Intrinsic(Intrinsic.StackPointer(spAdd, e.pos))
               )
-              var locals = ISZ[AST.IR.Stmt.Decl.Local]()
+              var locals = ISZ[AST.IR.Stmt.Decl.Local](
+                AST.IR.Stmt.Decl.Local(returnLocalId, cpType)
+              )
+              if (p.tipe.ret != AST.Typed.unit) {
+                AST.IR.Stmt.Decl.Local(resultLocalId, spType)
+              }
               for (param <- ops.ISZOps(called.paramNames).zip(called.tipe.args)) {
                 locals = locals :+ AST.IR.Stmt.Decl.Local(param._1, param._2)
               }
               grounds = grounds :+ AST.IR.Stmt.Decl(F, T, called.context, locals, e.pos)
-              var paramOffset: Z = 0
-              for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(mc.t.args)).zip(AST.IR.Exp.Int(cpType, 0, label, e.pos) +: e.args)) {
+              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.LocalOffsetAssign(F, 0, p.context, returnLocalId,
+                AST.IR.Exp.Int(cpType, label, e.pos), e.pos))
+              var paramOffset: Z = typeByteSize(cpType) + typeByteSize(spType)
+              for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(mc.t.args)).zip(AST.IR.Exp.Int(cpType, label, e.pos) +: e.args)) {
                 grounds = grounds :+ AST.IR.Stmt.Intrinsic(
                   Intrinsic.LocalOffsetAssign(F, paramOffset, mc, param._1._1, param._2, e.pos))
-                paramOffset = paramOffset + hws.typeByteSize(param._1._2)
+                paramOffset = paramOffset + typeByteSize(param._1._2)
               }
               var bgrounds = ISZ[AST.IR.Stmt.Ground](
                 AST.IR.Stmt.Decl(T, T, called.context, for (i <- locals.size - 1 to 0 by -1) yield locals(i), e.pos),
@@ -238,6 +258,7 @@ object Anvil {
               blocks = blocks :+ b(grounds = grounds,
                 jump = AST.IR.Jump.Goto(called.body.asInstanceOf[AST.IR.Body.Basic].blocks(0).label, e.pos))
             }
+
             b.jump match {
               case j: AST.IR.Jump.Goto if b.grounds.size == 1 =>
                 b.grounds(0) match {
@@ -246,8 +267,17 @@ object Anvil {
                     processInvoke(g, Some(g.lhs), g.rhs.asInstanceOf[AST.IR.Exp.Apply], j.label)
                   case _ =>
                 }
-              case j: AST.IR.Jump.Return if p.context != main.context =>
-                blocks = blocks :+ b(jump = AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(0, p.context, returnLocalId, j.pos)))
+              case j: AST.IR.Jump.Return =>
+                var addGrounds = ISZ[AST.IR.Stmt.Ground]()
+                j.expOpt match {
+                  case Some(exp) =>
+                    addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(
+                      Intrinsic.LocalOffsetAssign(irt.shouldCopy(exp.tipe), typeByteSize(cpType), p.context,
+                        resultLocalId, exp, exp.pos))
+                  case _ =>
+                }
+                blocks = blocks :+ b(grounds = b.grounds ++ addGrounds,
+                  jump = AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(0, p.context, returnLocalId, j.pos)))
               case _ => blocks = blocks :+ b
             }
           }
@@ -260,7 +290,14 @@ object Anvil {
         }
         work = next
       }
-      return mergedBlocks
+      val last: AST.IR.BasicBlock = {
+        val expOpt: Option[AST.IR.Exp] =
+          if (main.tipe.ret == AST.Typed.unit) None()
+          else Some(AST.IR.Exp.Intrinsic(
+            Intrinsic.LocalOffset(F, typeByteSize(cpType), main.context, resultLocalId, main.tipe.ret, main.pos)))
+        AST.IR.BasicBlock(0, ISZ(), AST.IR.Jump.Return(expOpt, main.pos))
+      }
+      return mergedBlocks :+ last
     }
 
     val program = AST.IR.Program(threeAddressCode, globals,
@@ -271,5 +308,157 @@ object Anvil {
     r = r + ISZ("ir", "program-merged.sir") ~> program.prettyST
     r = r ++ hws.printProgram(program).entries
     return r
+  }
+
+
+  @memoize def subZOpt(t: AST.Typed): Option[TypeInfo.SubZ] = {
+    t match {
+      case t: AST.Typed.Name =>
+        th.typeMap.get(t.ids).get match {
+          case ti: TypeInfo.SubZ => return Some(ti)
+          case _ =>
+        }
+      case _ =>
+    }
+    return None()
+  }
+
+  @memoize def getClassFields(t: AST.Typed.Name): HashSMap[String, AST.Typed] = {
+    val info = th.typeMap.get(t.ids).get.asInstanceOf[TypeInfo.Adt]
+    val sm = TypeChecker.buildTypeSubstMap(t.ids, None(), info.ast.typeParams, t.args, message.Reporter.create).get
+    var r = HashSMap.empty[String, AST.Typed]
+    for (v <- info.vars.values) {
+      r = r + v.ast.id.value ~> v.typedOpt.get.subst(sm)
+    }
+    return r
+  }
+
+  @memoize def getMaxArraySize(t: AST.Typed.Name): Z = {
+    assert(t.ids == AST.Typed.isName || t.ids == AST.Typed.msName)
+    config.customArraySizes.get(t) match {
+      case Some(n) => return n
+      case _ =>
+    }
+    subZOpt(t.args(0)) match {
+      case Some(subz) =>
+        if (subz.ast.hasMax && subz.ast.hasMin) {
+          val size = subz.ast.max - subz.ast.min + 1
+          if (size < config.maxArraySize) {
+            return size
+          }
+        }
+      case _ =>
+    }
+    return config.maxArraySize
+  }
+
+  @memoize def typeByteSize(t: AST.Typed): Z = {
+    def typeImplMaxSize(c: AST.Typed.Name): Z = {
+      var r: Z = 0
+      for (c <- tsr.typeImpl.childrenOf(c).elements) {
+        val cSize = typeByteSize(c)
+        if (r < cSize) {
+          r = cSize
+        }
+      }
+      return r
+    }
+
+    @strictpure def numOfBytes(bitWidth: Z): Z = bitWidth / 8 + (if (bitWidth % 8 == 0) 0 else 1)
+
+    @strictpure def rangeNumOfBytes(signed: B, min: Z, max: Z): Z =
+      if (signed) {
+        if (min >= S8.Min.toZ && max <= S8.Max.toZ) {
+          1
+        } else if (min >= S16.Min.toZ && max <= S16.Max.toZ) {
+          2
+        } else if (min >= S32.Min.toZ && max <= S32.Max.toZ) {
+          4
+        } else if (min >= S64.Min.toZ && max <= S64.Max.toZ) {
+          8
+        } else {
+          halt(s"Infeasible: $signed, $min, $max")
+        }
+      } else {
+        if (min >= U8.Min.toZ && max <= U8.Max.toZ) {
+          1
+        } else if (min >= U16.Min.toZ && max <= U16.Max.toZ) {
+          2
+        } else if (min >= U32.Min.toZ && max <= U32.Max.toZ) {
+          4
+        } else if (min >= U64.Min.toZ && max <= U64.Max.toZ) {
+          8
+        } else {
+          halt(s"Infeasible: $signed, $min, $max")
+        }
+      }
+
+    @strictpure def is1Bit(tpe: AST.Typed): B = if (tpe == AST.Typed.b) {
+      T
+    } else {
+      subZOpt(tpe) match {
+        case Some(info) => info.ast.isBitVector && info.ast.bitWidth == 1
+        case _ => F
+      }
+    }
+
+    t match {
+      case AST.Typed.b => return 1
+      case AST.Typed.c => return 4
+      case AST.Typed.z => return numOfBytes(config.defaultBitWidth)
+      case AST.Typed.f32 => return 4
+      case AST.Typed.f64 => return 8
+      case AST.Typed.r => return 8
+      case AST.Typed.string =>
+        var r: Z = 4 // type sha
+        r = r + 4 // size
+        r = r + config.maxStringSize
+        return r
+      case AST.Typed.unit => return 0
+      case AST.Typed.nothing => return 0
+      case t: AST.Typed.Name =>
+        if (t.ids == AST.Typed.isName || t.ids == AST.Typed.msName) {
+          var r: Z = 4 // type sha
+          r = r + 4 // .size
+          val et = t.args(1)
+          if (et == AST.Typed.b) {
+
+          } else {
+            r = r + getMaxArraySize(t) * typeByteSize(t.args(1)) // elements
+          }
+          return r
+        } else {
+          th.typeMap.get(t.ids).get match {
+            case info: TypeInfo.Adt =>
+              if (info.ast.isRoot) {
+                return typeImplMaxSize(t)
+              } else {
+                var r: Z = 4 // type sha
+                for (ft <- getClassFields(t).values) {
+                  r = r + typeByteSize(ft)
+                }
+                return r
+              }
+            case _: TypeInfo.Sig => return typeImplMaxSize(t)
+            case info: TypeInfo.Enum => return rangeNumOfBytes(F, 0, info.elements.size - 1)
+            case info: TypeInfo.SubZ =>
+              if (info.ast.isBitVector) {
+                return numOfBytes(info.ast.bitWidth)
+              } else if (info.ast.hasMax && info.ast.hasMin) {
+                return rangeNumOfBytes(info.ast.isSigned, info.ast.min, info.ast.max)
+              } else {
+                return numOfBytes(config.defaultBitWidth)
+              }
+            case _ => halt(s"Infeasible: $t")
+          }
+        }
+      case t: AST.Typed.Tuple =>
+        var r: Z = 4 // type sha
+        for (arg <- t.args) {
+          r = r + typeByteSize(arg)
+        }
+        return r
+      case t => halt(s"Infeasible: $t")
+    }
   }
 }

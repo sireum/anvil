@@ -30,6 +30,8 @@ import org.sireum.lang.{ast => AST}
 import org.sireum.message.Position
 
 object Intrinsic {
+
+  // Replaces AST.IR.Exp.LocalVarRef
   @datatype class LocalOffset(val isVal: B,
                               val offset: Z,
                               val context: AST.IR.MethodContext,
@@ -40,6 +42,7 @@ object Intrinsic {
     @strictpure def numOfTemps: Z = 0
   }
 
+  // Replaces AST.IR.Stmt.Assign.Local
   @datatype class LocalOffsetAssign(val copy: B,
                                     val offset: Z,
                                     val context: AST.IR.MethodContext,
@@ -55,11 +58,12 @@ object Intrinsic {
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
   }
 
+  // Replaces AST.IR.Jump.Return
   @datatype class GotoLocal(val offset: Z,
                             val context: AST.IR.MethodContext,
                             val id: String,
                             val pos: Position) extends AST.IR.Jump.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"goto $id"
+    @strictpure def prettyST: ST = st"goto $id@$offset"
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
     @strictpure def targets: ISZ[Z] = ISZ()
   }
