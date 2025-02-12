@@ -33,6 +33,8 @@ import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
 import org.sireum.U32._
+import org.sireum.lang.ast.IR
+import org.sireum.lang.ast.IR.Exp
 
 object Anvil {
 
@@ -55,7 +57,8 @@ object Anvil {
     }
   }
 
-  @record class GroundOffsetTransformer(val localOffsetMap: HashMap[String, Z],
+  @record class GroundOffsetTransformer(val anvil: Anvil,
+                                        val localOffsetMap: HashMap[String, Z],
                                         var tempExpMap: HashMap[Z, AST.IR.Exp]) extends AST.MIRTransformer {
     override def postIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
       tempExpMap.get(o.n) match {
@@ -70,6 +73,7 @@ object Anvil {
   val kind: String = "Anvil"
   val returnLocalId: String = "$ret"
   val resultLocalId: String = "$res"
+  val typeShaSize: Z = 4
 
   def synthesize(fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, owner: QName, id: String, config: Config, reporter: Reporter): HashSMap[ISZ[String], ST] = {
     val tsr = TypeSpecializer.specialize(th, ISZ(TypeSpecializer.EntryPoint.Method(owner :+ id)), HashMap.empty,
@@ -173,7 +177,7 @@ import Anvil._
     var callResultOffsetMap = HashMap.empty[String, Z]
     program = {
       for (p <- program.procedures) {
-        val (maxOffset, p2, m) = transformOffset(p)
+        val (maxOffset, p2, m) = transformOffset(fresh, p)
         callResultOffsetMap = callResultOffsetMap ++ m.entries
         procedureMap = procedureMap + p2.context ~> p2
         procedureSizeMap = procedureSizeMap + p2.context ~> maxOffset
@@ -381,12 +385,12 @@ import Anvil._
     return mergedBlocks :+ last
   }
 
-  def transformOffset(proc: AST.IR.Procedure): (Z, AST.IR.Procedure, HashMap[String, Z]) = {
+  def transformOffset(fresh: lang.IRTranslator.Fresh, proc: AST.IR.Procedure): (Z, AST.IR.Procedure, HashMap[String, Z]) = {
     val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
     val blocks = body.blocks
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- blocks) yield (b.label, b))
     var blockLocalOffsetMap = HashMap.empty[Z, (Z, HashMap[String, Z])]
-    var maxOffset: Z = typeByteSize(cpType) + typeByteSize(spType)
+    var maxOffset: Z = typeByteSize(cpType)
     var callResultIdOffsetMap = HashMap.empty[String, Z]
     var tempExpMap = HashMap.empty[Z, AST.IR.Exp]
     val isMain = proc.context.owner == owner && proc.context.id == id
@@ -429,21 +433,24 @@ import Anvil._
             case _ =>
               g match {
                 case AST.IR.Stmt.Assign.Local(copy, _, lhs, t, rhs, pos) =>
+                  val got = GroundOffsetTransformer(this, m, tempExpMap)
+                  val newRhs = got.transformIRExp(rhs).getOrElse(rhs)
+                  tempExpMap = got.tempExpMap
                   val localOffset = m.get(lhs).get
                   if (copy) {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(
-                      AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.StackPointer(spType, rhs.pos)),
-                        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, rhs.pos), rhs.pos),
-                      typeByteSize(t), typeByteSize(rhs.tipe), rhs, st"$lhs = ${rhs.prettyST}", t, rhs.tipe, pos))
+                      AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.StackPointer(spType, newRhs.pos)),
+                        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, newRhs.pos), newRhs.pos),
+                      typeByteSize(t), typeByteSize(newRhs.tipe), newRhs, st"$lhs = ${newRhs.prettyST}", t, newRhs.tipe, pos))
                   } else {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
-                      AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.StackPointer(spType, rhs.pos)),
-                        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, rhs.pos), rhs.pos),
-                      T, typeByteSize(t), rhs, st"$lhs = ${rhs.prettyST}", t, pos))
+                      AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.StackPointer(spType, newRhs.pos)),
+                        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, newRhs.pos), newRhs.pos),
+                      T, typeByteSize(t), newRhs, st"$lhs = ${newRhs.prettyST}", t, pos))
                   }
                 case AST.IR.Stmt.Assign.Temp(n, rhs, pos) =>
                   def rest(): Unit = {
-                    val got = GroundOffsetTransformer(m, tempExpMap)
+                    val got = GroundOffsetTransformer(this, m, tempExpMap)
                     val newRhs = got.transformIRExp(rhs).getOrElse(rhs)
                     tempExpMap = got.tempExpMap
                     val temp = tempExpMap.size
@@ -469,8 +476,19 @@ import Anvil._
                       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Load(temp,
                         AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.StackPointer(spType, rhs.pos)),
                           AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, rhs.pos), rhs.pos),
-                        isSigned(t), typeByteSize(t), rhs.prettyST, t, rhs.pos))
-                    case _: AST.IR.Exp.FieldVarRef => rest()
+                        isSigned(t), typeByteSize(t), g.prettyST, t, rhs.pos))
+                    case rhs: AST.IR.Exp.FieldVarRef =>
+                      if (isSeq(rhs.receiver.tipe)) {
+                        assert(rhs.id == "size")
+                        val temp = tempExpMap.size
+                        tempExpMap = tempExpMap + n ~> AST.IR.Exp.Temp(temp, rhs.tipe, pos)
+                        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Load(
+                          temp, AST.IR.Exp.Binary(spType, rhs.receiver,
+                            AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeShaSize, rhs.pos), rhs.pos),
+                          T, typeByteSize(rhs.tipe), g.prettyST, rhs.tipe, rhs.pos))
+                      } else {
+                        halt(s"TODO: $rhs")
+                      }
                     case _: AST.IR.Exp.GlobalVarRef => rest()
                     case _: AST.IR.Exp.Indexing => rest()
                     case _: AST.IR.Exp.Select => rest()
@@ -480,7 +498,7 @@ import Anvil._
                       val constructOffset = offset
                       val rhsSize = typeByteSize(rhs.tipe)
                       offset = offset + rhsSize
-                      val got = GroundOffsetTransformer(m, tempExpMap)
+                      val got = GroundOffsetTransformer(this, m, tempExpMap)
                       val newRhs = got.transformIRExp(rhs).getOrElse(rhs)
                       tempExpMap = got.tempExpMap
                       val temp = tempExpMap.size
@@ -493,7 +511,7 @@ import Anvil._
                     case _: AST.IR.Exp.Intrinsic => halt(s"Infeasible: $rhs")
                   }
                 case _ =>
-                  val got = GroundOffsetTransformer(m, tempExpMap)
+                  val got = GroundOffsetTransformer(this, m, tempExpMap)
                   grounds = grounds :+ got.transformIRStmtGround(g).getOrElse(g)
                   tempExpMap = got.tempExpMap
               }
@@ -511,7 +529,7 @@ import Anvil._
           }
         }
         val jump: AST.IR.Jump = {
-          val got = GroundOffsetTransformer(m, tempExpMap)
+          val got = GroundOffsetTransformer(this, m, tempExpMap)
           val j = got.transformIRJump(b.jump).getOrElse(b.jump)
           tempExpMap = got.tempExpMap
           j
@@ -728,22 +746,9 @@ import Anvil._
     }
   }
 
-  @memoize def shouldCopy(t: AST.Typed): B = {
-    if (isScalar(t)) {
-      return F
-    }
+  @memoize def isSeq(t: AST.Typed): B = {
     t match {
-      case t: AST.Typed.Name =>
-        t.ids match {
-          case AST.Typed.msName => return T
-          case AST.Typed.isName =>
-          case _ =>
-        }
-        th.typeMap.get(t.ids) match {
-          case Some(info: TypeInfo.Adt) => return !info.ast.isDatatype
-          case Some(info: TypeInfo.Sig) => return !info.ast.isImmutable
-          case _ =>
-        }
+      case t: AST.Typed.Name => return t.ids == AST.Typed.isName || t.ids == AST.Typed.msName
       case _ =>
     }
     return F
