@@ -37,7 +37,7 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
     * Slang IR: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/IR.scala
     * Anvil IR Intrinsic: https://github.com/sireum/anvil/blob/master/shared/src/main/scala/org/sireum/anvil/Intrinsic.scala
    */
-  def printProgram(o: AST.IR.Program): HashSMap[ISZ[String], ST] = {
+  def printProgram(o: AST.IR.Program, globalSize: Z, globalMap: HashSMap[ISZ[String], Anvil.GlobalInfo], maxRegisters: Z): HashSMap[ISZ[String], ST] = {
     var r = HashSMap.empty[ISZ[String], ST]
     r = r + ISZ("program.scala") ~> o.prettyST
     return r

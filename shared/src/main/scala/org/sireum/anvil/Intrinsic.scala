@@ -71,6 +71,7 @@ object Intrinsic {
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps + 1)
   }
 
+  // Replaces AST.IR.Stmt.Decl
   @datatype class Decl(val undecl: B, val slots: ISZ[Decl.Slot], val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
     @strictpure def prettyST: ST = st"${if (undecl) "un" else ""}decl ${(for (slot <- slots) yield slot.prettyST, ", ")}"
@@ -104,7 +105,7 @@ object Intrinsic {
                             val context: AST.IR.MethodContext,
                             val id: String,
                             val pos: Position) extends AST.IR.Jump.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"goto $id@$offset"
+    @strictpure def prettyST: ST = st"goto $id@SP"
 
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
 

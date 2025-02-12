@@ -33,12 +33,11 @@ import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
 import org.sireum.U32._
-import org.sireum.lang.ast.IR
-import org.sireum.lang.ast.IR.Exp
 
 object Anvil {
 
   @datatype class Config(val projectName: String,
+                         val memory: Z,
                          val defaultBitWidth: Z,
                          val maxStringSize: Z,
                          val maxArraySize: Z,
@@ -47,7 +46,7 @@ object Anvil {
 
   object Config {
     @strictpure def empty(projectName: String): Config =
-      Config(projectName, 64, 100, 100, HashMap.empty, HashMap.empty)
+      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty)
   }
 
   @record class TempCollector(var r: HashSSet[Z]) extends AST.MIRTransformer {
@@ -55,7 +54,38 @@ object Anvil {
       r = r + o.n
       return MNone()
     }
+
+    override def postIRExpIntrinsicType(o: AST.IR.Exp.Intrinsic.Type): MOption[AST.IR.Exp.Intrinsic.Type] = {
+      o match {
+        case _: Intrinsic.StackPointer =>
+        case _ =>
+      }
+      return MNone()
+    }
+
+    override def postIRStmtIntrinsicType(o: AST.IR.Stmt.Intrinsic.Type): MOption[AST.IR.Stmt.Intrinsic.Type] = {
+      o match {
+        case o: Intrinsic.Copy =>
+          transformIRExp(o.lhsOffset)
+          transformIRExp(o.rhs)
+        case o: Intrinsic.StoreScalar =>
+          transformIRExp(o.lhsOffset)
+          transformIRExp(o.rhs)
+        case o: Intrinsic.Load =>
+          transformIRExp(o.rhsOffset)
+        case _: Intrinsic.Decl =>
+        case _: Intrinsic.StackPointerInc =>
+      }
+      return MNone()
+    }
   }
+
+  @datatype class GlobalInfo(val isScalar: B,
+                             val offset: Z,
+                             val size: Z,
+                             val dataSize: Z,
+                             val tipe: AST.Typed,
+                             val pos: message.Position)
 
   @record class GroundOffsetTransformer(val anvil: Anvil,
                                         val localOffsetMap: HashMap[String, Z],
@@ -115,9 +145,10 @@ import Anvil._
 
     val irt = lang.IRTranslator(threeAddressCode = T, th = tsr.typeHierarchy, fresh = fresh)
 
-    val mp: (AST.IR.MethodContext, AST.IR.Program) = {
+    val mq: (AST.IR.MethodContext, AST.IR.Program, Z, HashSMap[ISZ[String], GlobalInfo]) = {
       var globals = ISZ[AST.IR.Global]()
       var procedures = ISZ[AST.IR.Procedure]()
+      var globalSize: Z = 0
 
       for (vs <- tsr.objectVars.entries) {
         val (owner, ids) = vs
@@ -160,11 +191,25 @@ import Anvil._
           mainOpt = Some(p)
         }
       }
-      (mainOpt.get.context, AST.IR.Program(threeAddressCode, globals, procedures))
+      var globalMap = HashSMap.empty[ISZ[String], GlobalInfo]
+      val spSize = typeByteSize(spType)
+      for (g <- globals) {
+        val size = typeByteSize(g.tipe)
+        if (!isScalar(g.tipe)) {
+          globalMap = globalMap + g.name ~> GlobalInfo(F, globalSize, spSize, size, g.tipe, g.pos)
+          globalSize = globalSize + spSize
+        } else {
+          globalMap = globalMap + g.name ~> GlobalInfo(T, globalSize, size, 0, g.tipe, g.pos)
+        }
+        globalSize = globalSize + size
+      }
+      (mainOpt.get.context, AST.IR.Program(threeAddressCode, globals, procedures), globalSize, globalMap)
     }
 
-    val mainContext = mp._1
-    var program = mp._2
+    val mainContext = mq._1
+    var program = mq._2
+    val globalSize = mq._3
+    val globalMap = mq._4
 
     var r = HashSMap.empty[ISZ[String], ST]
     r = r + ISZ("ir", "1-program.sir") ~> program.prettyST
@@ -186,14 +231,31 @@ import Anvil._
     }
     r = r + ISZ("ir", "3-program-offset.sir") ~> program.prettyST
 
+    val main = procedureMap.get(mainContext).get
     program = {
-      val main = procedureMap.get(mainContext).get
       program(procedures = ISZ(main(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
         mergeProcedures(main, procedureMap, procedureSizeMap, callResultOffsetMap)))))
     }
-    r = r + ISZ("ir", "4-program-merged.sir") ~> program.prettyST
+    val (resType, resDataSize): (AST.Typed, Z) = if (isScalar(main.tipe.ret)) (main.tipe.ret, 0) else (spType, typeByteSize(main.tipe.ret))
+    val maxRegisters: Z = {
+      val tc = TempCollector(HashSSet.empty)
+      tc.transformIRProgram(program)
+      tc.r.elements.size
+    }
+    r = r + ISZ("ir", "4-program-merged.sir") ~>
+      st"""/*
+          |   Note that initially:
+          |   * register SP (stack pointer) = $globalSize (signed, byte size = ${typeByteSize(spType)})
+          |   * register CP (code pointer) = 1 (unsigned, byte size = ${typeByteSize(cpType)})
+          |   * max registers (beside SP and CP) = $maxRegisters
+          |   * $$ret@SP = 0 (signed, byte size = ${typeByteSize(cpType)})
+          |   * $$res@(SP + ${typeByteSize(cpType)}) = (signed, size = ${typeByteSize(resType)}, data-size = $resDataSize)
+          |   * globalMap = $globalMap
+          | */
+          |${program.prettyST}"""
 
-    r = r ++ HwSynthesizer(this).printProgram(program).entries
+
+    r = r ++ HwSynthesizer(this).printProgram(program, globalSize, globalMap, maxRegisters).entries
 
     return r
   }
@@ -396,6 +458,9 @@ import Anvil._
     val isMain = proc.context.owner == owner && proc.context.id == id
     if (isMain) {
       maxOffset = maxOffset + typeByteSize(proc.tipe.ret)
+      if (!isScalar(proc.tipe.ret)) {
+        maxOffset = maxOffset + typeByteSize(spType)
+      }
     }
     {
       var m = HashMap.empty[String, Z]
