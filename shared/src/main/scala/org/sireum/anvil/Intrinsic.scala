@@ -31,56 +31,55 @@ import org.sireum.message.Position
 
 object Intrinsic {
 
-  @datatype class Int(val bytes: Z, val signed: B, val value: Z, val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"$value [$tipe]"
-    @strictpure def numOfTemps: Z = 0
-  }
-
+  // Replaces AST.IR.Exp.LocalVarRef, AST.IR.Exp.GlobalVarRef, AST.IR.Exp.Field, AST.IR.Exp.Index
   @datatype class Load(val temp: Z,
-                       val offset: AST.IR.Exp,
+                       val rhsOffset: AST.IR.Exp,
+                       val isSigned: B,
                        val bytes: Z,
-                       val comment: String,
+                       val comment: ST,
                        val tipe: AST.Typed,
                        val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"$$$temp = ${offset.prettyST} [$tipe, $bytes] // $comment"
+    @strictpure def prettyST: ST = st"$$$temp = *${rhsOffset.prettyST} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
+
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps + 1)
   }
 
-  @datatype class Store(val offset: AST.IR.Exp,
-                        val bytes: Z,
-                        val isScalar: B,
-                        val exp: AST.IR.Exp,
-                        val comment: String,
-                        val tipe: AST.Typed,
-                        val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"${offset.prettyST} ${if (isScalar) "=" else ":="} ${exp.prettyST} [$tipe, $bytes] // $comment"
-    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps + 1)
-  }
-
-  // Replaces AST.IR.Exp.LocalVarRef
-  @datatype class LocalOffset(val isVal: B,
-                              val offset: Z,
-                              val context: AST.IR.MethodContext,
-                              val id: org.sireum.String,
+  // Replaces AST.IR.Stmt.Assign.Local, AST.IR.Stmt.Assign.Field, AST.IR.Stmt.Assign.Global, AST.IR.Stmt.Assign.Index
+  @datatype class StoreScalar(val lhsOffset: AST.IR.Exp,
+                              val isSigned: B,
+                              val bytes: Z,
+                              val rhs: AST.IR.Exp,
+                              val comment: ST,
                               val tipe: AST.Typed,
-                              val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"$id@$offset"
-    @strictpure def numOfTemps: Z = 0
-  }
+                              val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def prettyST: ST = st"*${lhsOffset.prettyST} = ${rhs.prettyST} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
 
-  // Replaces AST.IR.Stmt.Assign.Local
-  @datatype class LocalOffsetAssign(val copy: B,
-                                    val offset: Z,
-                                    val context: AST.IR.MethodContext,
-                                    val lhs: String,
-                                    val rhs: AST.IR.Exp,
-                                    val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"$lhs@$offset ${if (copy) ":=" else "="} ${rhs.prettyST}"
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps - rhs.numOfTemps)
   }
 
-  @datatype class StackPointer(val add: Z, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"SP($add)"
+  // Replaces AST.IR.Stmt.Assign.Local, AST.IR.Stmt.Assign.Field, AST.IR.Stmt.Assign.Global, AST.IR.Stmt.Assign.Index
+  @datatype class Copy(val lhsOffset: AST.IR.Exp,
+                       val lhsBytes: Z,
+                       val rhsBytes: Z,
+                       val rhs: AST.IR.Exp,
+                       val comment: ST,
+                       val tipe: AST.Typed,
+                       val rhsTipe: AST.Typed,
+                       val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def prettyST: ST = st"${lhsOffset.prettyST} [$tipe, $lhsBytes]  <-  ${rhs.prettyST} [$rhsTipe, $rhsBytes]  // $comment"
+
+    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps + 1)
+  }
+
+  @datatype class StackPointer(val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
+    @strictpure def prettyST: ST = st"SP"
+
+    @strictpure def numOfTemps: Z = 0
+  }
+
+  @datatype class StackPointerInc(val inc: Z, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def prettyST: ST = if (inc < 0) st"SP = SP - ${-inc}" else st"SP = SP + $inc"
+
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
   }
 
@@ -90,7 +89,9 @@ object Intrinsic {
                             val id: String,
                             val pos: Position) extends AST.IR.Jump.Intrinsic.Type {
     @strictpure def prettyST: ST = st"goto $id@$offset"
+
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
+
     @strictpure def targets: ISZ[Z] = ISZ()
   }
 }
