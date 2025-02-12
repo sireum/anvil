@@ -71,6 +71,22 @@ object Intrinsic {
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps + 1)
   }
 
+  @datatype class Decl(val undecl: B, val slots: ISZ[Decl.Slot], val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
+    @strictpure def prettyST: ST = st"${if (undecl) "un" else ""}decl ${(for (slot <- slots) yield slot.prettyST, ", ")}"
+  }
+  object Decl {
+    @datatype trait Slot {
+      @pure def prettyST: ST
+    }
+    @datatype class Local(val offset: Z, val size: Z, val id: String, val tipe: AST.Typed) extends Slot {
+      @strictpure def prettyST: ST = st"$id: $tipe [@$offset, $size]"
+    }
+    @datatype class Construct(val offset: Z, val size: Z, val construct: AST.IR.Exp.Construct) extends Slot {
+      @strictpure def prettyST: ST = st"[@$offset, $size, ${construct.prettyST}]"
+    }
+  }
+
   @datatype class StackPointer(val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
     @strictpure def prettyST: ST = st"SP"
 

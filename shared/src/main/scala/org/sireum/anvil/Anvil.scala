@@ -417,19 +417,23 @@ import Anvil._
         for (g <- b.grounds) {
           g match {
             case g: AST.IR.Stmt.Decl =>
+              var slots = ISZ[Intrinsic.Decl.Slot]()
               val mult: Z = if (g.undecl) -1 else 1
               for (l <- g.locals) {
+                val size: Z = if (isScalar(l.tipe)) typeByteSize(l.tipe) else typeByteSize(spType)
                 if (g.undecl) {
+                  slots = slots :+ Intrinsic.Decl.Local(m.get(l.id).get, size, l.id, l.tipe)
                   m = m -- ISZ(l.id)
                 } else {
                   m = m + l.id ~> offset
+                  slots = slots :+ Intrinsic.Decl.Local(offset, size, l.id, l.tipe)
                 }
                 offset = offset + (if (isScalar(l.tipe)) typeByteSize(l.tipe) else typeByteSize(spType)) * mult
               }
               if (maxOffset < offset) {
                 maxOffset = offset
               }
-              grounds = grounds :+ g
+              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(g.undecl, slots, g.pos))
             case _ =>
               g match {
                 case AST.IR.Stmt.Assign.Local(copy, _, lhs, t, rhs, pos) =>
