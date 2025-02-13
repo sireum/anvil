@@ -33,8 +33,8 @@ import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
 import org.sireum.U32._
-import org.sireum.lang.ast.IR.Stmt
-import org.sireum.lang.ast.IR.Stmt.Assign
+import org.sireum.lang.ast.IR
+import org.sireum.lang.ast.IR.Exp
 
 object Anvil {
 
@@ -108,12 +108,24 @@ object Anvil {
       }
     }
 
-    override def postIRStmtAssignTemp(o: Assign.Temp): MOption[Stmt.Assign] = {
+    override def postIRStmtAssignTemp(o: AST.IR.Stmt.Assign.Temp): MOption[AST.IR.Stmt.Assign] = {
       map.get(o.lhs) match {
         case Some(n) => return MSome(o(lhs = n))
         case _ =>
           halt(s"Infeasible: ${o.lhs}, $map")
       }
+    }
+  }
+
+  @record class ReadVarCollector(var reads: HashSet[QName]) extends AST.MIRTransformer {
+    override def postIRExpLocalVarRef(o: Exp.LocalVarRef): MOption[IR.Exp] = {
+      reads = reads + (o.context.owner :+ o.context.id :+ o.id)
+      return MNone()
+    }
+
+    override def postIRExpGlobalVarRef(o: Exp.GlobalVarRef): MOption[Exp] = {
+      reads = reads + o.name
+      return MNone()
     }
   }
 
@@ -308,6 +320,93 @@ import Anvil._
     return r
   }
 
+  def transformSplit(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    val blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+    var tempSubstMap = HashMap.empty[Z, HashMap[Z, AST.IR.Exp]] + body.blocks(0).label ~> HashMap.empty
+    var work = ISZ[AST.IR.BasicBlock](body.blocks(0))
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    while (work.nonEmpty) {
+      var next = ISZ[AST.IR.BasicBlock]()
+      for (b <- work) {
+        var reads = HashSet.empty[QName]
+        var writes = HashSet.empty[QName]
+        var grounds = ISZ[AST.IR.Stmt.Ground]()
+        var substMap = tempSubstMap.get(b.label).get
+        var block = b
+        def introBlock(pos: message.Position): Unit = {
+          val n = fresh.label()
+          blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.Goto(n, pos))
+          grounds = ISZ()
+          reads = HashSet.empty[QName]
+          writes = HashSet.empty[QName]
+          block = AST.IR.BasicBlock(n, grounds, block.jump)
+          tempSubstMap = tempSubstMap + n ~> substMap
+        }
+        def computeWrites(g: AST.IR.Stmt.Ground): Unit = {
+          g match {
+            case g: AST.IR.Stmt.Assign.Temp =>
+              substMap = substMap + g.lhs ~> TempExpSubstitutor(substMap).transformIRExp(g.rhs).getOrElse(g.rhs)
+            case g: AST.IR.Stmt.Assign.Local => writes = writes + (g.context.owner :+ g.context.id :+ g.lhs)
+            case g: AST.IR.Stmt.Assign.Field => addWriteRoot(g.receiver)
+            case g: AST.IR.Stmt.Assign.Index => addWriteRoot(g.receiver)
+            case g: AST.IR.Stmt.Assign.Global => writes = writes + g.name
+            case _ =>
+          }
+        }
+        def computeReads(g: AST.IR.Stmt.Ground): Unit = {
+          val rc = ReadVarCollector(reads)
+          rc.transformIRStmtGround(g)
+          reads = rc.reads
+        }
+        def addWriteRoot(e: AST.IR.Exp): Unit = {
+          e match {
+            case e: AST.IR.Exp.FieldVarRef => addWriteRoot(e.receiver)
+            case e: AST.IR.Exp.Indexing => addWriteRoot(e.exp)
+            case e: AST.IR.Exp.LocalVarRef => writes = writes + (e.context.owner :+ e.context.id :+ e.id)
+            case e: AST.IR.Exp.GlobalVarRef => writes = writes + e.name
+            case _ => halt(s"Infeasible: $e")
+          }
+        }
+        for (ground <- b.grounds) {
+          val g = TempExpSubstitutor(substMap).transformIRStmtGround(ground).getOrElse(ground)
+          computeWrites(g)
+          computeReads(g)
+          if (reads.intersect(writes).nonEmpty) {
+            introBlock(g.pos)
+            computeWrites(g)
+            if (writes.isEmpty) {
+              computeReads(g)
+            }
+          }
+          grounds = grounds :+ ground
+        }
+        block.jump match {
+          case j: AST.IR.Jump.If =>
+            val rc = ReadVarCollector(reads)
+            rc.transformIRExp(j.cond)
+            reads = rc.reads
+            if (reads.intersect(writes).nonEmpty) {
+              introBlock(j.pos)
+            }
+            blocks = blocks :+ block(grounds = grounds, jump = j)
+          case _ =>
+            blocks = blocks :+ block(grounds = grounds)
+        }
+        for (target <- block.jump.targets) {
+          tempSubstMap.get(target) match {
+            case Some(_) =>
+            case _ =>
+              next = next :+ blockMap.get(target).get
+              tempSubstMap = tempSubstMap + target ~> substMap
+          }
+        }
+      }
+      work = next
+    }
+    return p(body = body(blocks = blocks))
+  }
+
   def transformApplyResult(p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
 
@@ -366,6 +465,7 @@ import Anvil._
       var r = p
       r = transformTemp(r)
       r = transformTempCompress(r)
+      r = transformSplit(fresh, r)
       r = transformApplyResult(r)
       return r
     }
