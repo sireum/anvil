@@ -72,12 +72,12 @@ object Intrinsic {
   }
 
   // Replaces AST.IR.Stmt.Decl
-  @datatype class Decl(val undecl: B, val slots: ISZ[Decl.Local], val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+  @datatype class Decl(val undecl: B, val isAlloc: B, val slots: ISZ[Decl.Local], val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
-    @strictpure def prettyST: ST = st"${if (undecl) "un" else ""}decl ${(for (slot <- slots) yield slot.prettyST, ", ")}"
+    @strictpure def prettyST: ST = st"${if (isAlloc) if (undecl) "unalloc" else "alloc" else if (undecl) "undecl" else "decl"} ${(for (slot <- slots) yield slot.prettyST, ", ")}"
   }
   object Decl {
-    @datatype class Local(val offset: Z, val size: Z, val id: String, val tipe: AST.Typed) {
+    @datatype class Local(val offset: Z, val size: Z, val dataSize: Z, val id: String, val tipe: AST.Typed) {
       @strictpure def prettyST: ST = st"$id: $tipe [@$offset, $size]"
     }
   }

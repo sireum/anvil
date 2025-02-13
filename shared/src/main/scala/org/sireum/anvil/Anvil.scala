@@ -401,8 +401,7 @@ import Anvil._
             val n = fresh.label()
             val m = fresh.label()
             blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.Goto(n, g.pos))
-            grounds = ISZ(g)
-            blocks = blocks :+ AST.IR.BasicBlock(n, grounds, AST.IR.Jump.Goto(m, g.pos))
+            blocks = blocks :+ AST.IR.BasicBlock(n, ISZ(g), AST.IR.Jump.Goto(m, g.pos))
             grounds = ISZ()
             block = AST.IR.BasicBlock(m, grounds, block.jump)
           }
@@ -565,14 +564,14 @@ import Anvil._
       for (g <- b.grounds) {
         g match {
           case g: AST.IR.Stmt.Expr if g.exp.methodType.ret != AST.Typed.unit =>
-            val decl = AST.IR.Stmt.Decl(F, T, p.context, ISZ(
+            val decl = AST.IR.Stmt.Decl(F, T, T, p.context, ISZ(
               AST.IR.Stmt.Decl.Local(callResultId(g.exp.id, g.exp.pos), g.exp.tipe)), g.pos)
             grounds = grounds :+ decl
             grounds = grounds :+ g
             grounds = grounds :+ decl.undeclare
           case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Apply] =>
             val e = g.rhs.asInstanceOf[AST.IR.Exp.Apply]
-            val decl = AST.IR.Stmt.Decl(F, T, p.context, ISZ(
+            val decl = AST.IR.Stmt.Decl(F, T, T, p.context, ISZ(
               AST.IR.Stmt.Decl.Local(callResultId(e.id, e.pos), e.tipe)), g.pos)
             grounds = grounds :+ decl
             grounds = grounds :+ g
@@ -659,7 +658,7 @@ import Anvil._
             for (param <- ops.ISZOps(called.paramNames).zip(called.tipe.args)) {
               locals = locals :+ AST.IR.Stmt.Decl.Local(param._1, param._2)
             }
-            grounds = grounds :+ AST.IR.Stmt.Decl(F, T, called.context, locals, e.pos)
+            grounds = grounds :+ AST.IR.Stmt.Decl(F, T, F, called.context, locals, e.pos)
             grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
               AST.IR.Exp.Intrinsic(Intrinsic.StackPointer(spType, e.pos)),
               T, typeByteSize(cpType), AST.IR.Exp.Int(cpType, label, e.pos), st"$returnLocalId@0 = $label", cpType, e.pos
@@ -695,7 +694,7 @@ import Anvil._
               }
             }
             var bgrounds = ISZ[AST.IR.Stmt.Ground](
-              AST.IR.Stmt.Decl(T, T, called.context, for (i <- locals.size - 1 to 0 by -1) yield locals(i), e.pos),
+              AST.IR.Stmt.Decl(T, T, F, called.context, for (i <- locals.size - 1 to 0 by -1) yield locals(i), e.pos),
               AST.IR.Stmt.Intrinsic(Intrinsic.StackPointerInc(-spAdd, e.pos))
             )
             lhsOpt match {
@@ -867,20 +866,23 @@ import Anvil._
               var locals = ISZ[Intrinsic.Decl.Local]()
               val mult: Z = if (g.undecl) -1 else 1
               for (l <- g.locals) {
-                val size: Z = if (isScalar(l.tipe)) typeByteSize(l.tipe) else typeByteSize(spType)
+                val (size, dataSize): (Z, Z) =
+                  if (isScalar(l.tipe)) (typeByteSize(l.tipe), 0)
+                  else (typeByteSize(spType), if (g.isAlloc) typeByteSize(l.tipe) else 0)
                 if (g.undecl) {
-                  locals = locals :+ Intrinsic.Decl.Local(m.get(l.id).get, size, l.id, l.tipe)
+                  locals = locals :+ Intrinsic.Decl.Local(m.get(l.id).get, size, dataSize, l.id, l.tipe)
                   m = m -- ISZ(l.id)
                 } else {
                   m = m + l.id ~> offset
-                  locals = locals :+ Intrinsic.Decl.Local(offset, size, l.id, l.tipe)
+                  locals = locals :+ Intrinsic.Decl.Local(offset, size, dataSize, l.id, l.tipe)
                 }
-                offset = offset + (if (isScalar(l.tipe)) typeByteSize(l.tipe) else typeByteSize(spType)) * mult
+                offset = offset + (if (isScalar(l.tipe)) typeByteSize(l.tipe) else typeByteSize(spType) +
+                  (if (g.isAlloc) typeByteSize(l.tipe) else 0)) * mult
               }
               if (maxOffset < offset) {
                 maxOffset = offset
               }
-              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(g.undecl, locals, g.pos))
+              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(g.undecl, g.isAlloc, locals, g.pos))
             case _ =>
               g match {
                 case AST.IR.Stmt.Assign.Global(_, name, tipe, rhs, pos) =>
