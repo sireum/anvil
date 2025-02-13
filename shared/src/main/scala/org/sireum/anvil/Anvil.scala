@@ -33,8 +33,6 @@ import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
 import org.sireum.U32._
-import org.sireum.lang.ast.IR
-import org.sireum.lang.ast.IR.Exp
 
 object Anvil {
 
@@ -118,13 +116,36 @@ object Anvil {
   }
 
   @record class ReadVarCollector(var reads: HashSet[QName]) extends AST.MIRTransformer {
-    override def postIRExpLocalVarRef(o: Exp.LocalVarRef): MOption[IR.Exp] = {
+    override def postIRExpLocalVarRef(o: AST.IR.Exp.LocalVarRef): MOption[AST.IR.Exp] = {
       reads = reads + (o.context.owner :+ o.context.id :+ o.id)
       return MNone()
     }
 
-    override def postIRExpGlobalVarRef(o: Exp.GlobalVarRef): MOption[Exp] = {
+    override def postIRExpGlobalVarRef(o: AST.IR.Exp.GlobalVarRef): MOption[AST.IR.Exp] = {
       reads = reads + o.name
+      return MNone()
+    }
+  }
+
+  @record class CPSubstitutor(var cpSubstMap: HashMap[Z, Z]) extends AST.MIRTransformer {
+    override def postIRBasicBlock(o: AST.IR.BasicBlock): MOption[AST.IR.BasicBlock] = {
+      return MSome(o(label = cpSubstMap.get(o.label).get))
+    }
+
+    override def postIRJumpIf(o: AST.IR.Jump.If): MOption[AST.IR.Jump] = {
+      return MSome(o(thenLabel = cpSubstMap.get(o.thenLabel).get, elseLabel = cpSubstMap.get(o.elseLabel).get))
+    }
+
+    override def postIRJumpGoto(o: AST.IR.Jump.Goto): MOption[AST.IR.Jump] = {
+      return MSome(o(label = cpSubstMap.get(o.label).get))
+    }
+
+    override def postIRStmtIntrinsic(o: AST.IR.Stmt.Intrinsic): MOption[AST.IR.Stmt.Ground] = {
+      o.intrinsic match {
+        case in@Intrinsic.StoreScalar(AST.IR.Exp.Intrinsic(_: Intrinsic.StackPointer), _, _, i@AST.IR.Exp.Int(_, cp, _), _, _, _) =>
+          return MSome(o(intrinsic = in(rhs = i(value = cpSubstMap.get(cp).get))))
+        case _ =>
+      }
       return MNone()
     }
   }
@@ -262,15 +283,25 @@ import Anvil._
 
     val main = procedureMap.get(mainContext).get
     program = {
-      program(procedures = ISZ(main(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
-        mergeProcedures(main, procedureMap, procedureSizeMap, callResultOffsetMap)))))
+      val p = main(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
+        mergeProcedures(main, procedureMap, procedureSizeMap, callResultOffsetMap)))
+      program(procedures = ISZ(p))
     }
+    r = r + ISZ("ir", "4-program-merged.sir") ~> program.prettyST
+
+    program = {
+      var p = program.procedures(0)
+      p = transformSplitSPinc(fresh, p)
+      p = transformCP(p)
+      program(procedures = ISZ(p))
+    }
+
     val maxRegisters: Z = {
       val tc = TempCollector(HashSSet.empty)
       tc.transformIRProgram(program)
       tc.r.elements.size
     }
-    {
+    val header: ST = {
       var offset: Z = typeByteSize(cpType)
       val resOpt: Option[ST] =
         if (main.tipe.ret != AST.Typed.unit) {
@@ -289,38 +320,109 @@ import Anvil._
           offset = offset + typeByteSize(param._2)
         }
       }
-      val header: ST =
-        st"""/*
-            |   Note that globalSize = $globalSize, and initially:
-            |   - register SP (stack pointer) = $globalSize (signed, byte size = ${typeByteSize(spType)})
-            |   - register CP (code pointer) = 1 (unsigned, byte size = ${typeByteSize(cpType)})
-            |   - max registers (beside SP and CP) = $maxRegisters
-            |   - $$ret (*SP) = 0 (signed, byte size = ${typeByteSize(cpType)})
-            |   $resOpt
-            |   ${(paramsST, "\n")}
-            |
-            |   Also note that IS/MS bytearray consists of:
-            |   * the first 4 bytes of the IS/MS type string SHA3 encoding
-            |     (e.g., for "org.sireum.MS[Z, U8]", it is 0xEF2BFABD)
-            |   * 8 bytes for .size
-            |   * IS/MS element bytes
-            |
-            |   A @datatype/@record class bytearray consists of:
-            |   * the first 4 bytes of the class type string SHA3 encoding
-            |   * the class field bytes
-            | */"""
-      r = r + ISZ("ir", "4-program-merged.sir") ~>
-        st"""$header
-            |${program.prettyST}"""
+      st"""/*
+          |   Note that globalSize = $globalSize, and initially:
+          |   - register SP (stack pointer) = $globalSize (signed, byte size = ${typeByteSize(spType)})
+          |   - register CP (code pointer) = 1 (unsigned, byte size = ${typeByteSize(cpType)})
+          |   - max registers (beside SP and CP) = $maxRegisters
+          |   - $$ret (*SP) = 0 (signed, byte size = ${typeByteSize(cpType)})
+          |   $resOpt
+          |   ${(paramsST, "\n")}
+          |
+          |   Also note that IS/MS bytearray consists of:
+          |   * the first 4 bytes of the IS/MS type string SHA3 encoding
+          |     (e.g., for "org.sireum.MS[Z, U8]", it is 0xEF2BFABD)
+          |   * 8 bytes for .size
+          |   * IS/MS element bytes
+          |
+          |   A @datatype/@record class bytearray consists of:
+          |   * the first 4 bytes of the class type string SHA3 encoding
+          |   * the class field bytes
+          | */"""
+
     }
 
+    r = r + ISZ("ir", "5-program-relabeled.sir") ~>
+      st"""$header
+          |${program.prettyST}"""
 
     r = r ++ HwSynthesizer(this).printProcedure(id, program.procedures(0), globalSize, maxRegisters).entries
 
     return r
   }
 
-  def transformSplit(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+  def transformEmptyBlock(p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+    for (b <- body.blocks) {
+      var map = HashMap.empty[Z, Z]
+      for (target <- b.jump.targets) {
+        val b2 = blockMap.get(target).get
+        if (b2.grounds.isEmpty) {
+          b2.jump match {
+            case j: AST.IR.Jump.Goto => map = map + target ~> j.label
+            case _ =>
+          }
+        }
+      }
+      if (map.nonEmpty) {
+        blockMap = blockMap -- map.keys
+        val jump: AST.IR.Jump = b.jump match {
+          case j: AST.IR.Jump.If => j(thenLabel = map.get(j.thenLabel).getOrElse(j.thenLabel),
+            elseLabel = map.get(j.elseLabel).getOrElse(j.elseLabel))
+          case j: AST.IR.Jump.Goto => j(label = map.get(j.label).get)
+          case j => j
+        }
+        blockMap = blockMap + b.label ~> b(jump = jump)
+      }
+    }
+    return p(body = body(blocks = blockMap.values))
+  }
+
+  def transformSplitSPinc(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      var block = b
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      for (g <- b.grounds) {
+        g match {
+          case g: AST.IR.Stmt.Intrinsic if g.intrinsic.isInstanceOf[Intrinsic.StackPointerInc] =>
+            if (grounds.isEmpty) {
+              val n = fresh.label()
+              blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.Goto(n, g.pos))
+              grounds = ISZ()
+              block = AST.IR.BasicBlock(n, grounds, block.jump)
+            } else {
+              val n = fresh.label()
+              val m = fresh.label()
+              blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.Goto(n, g.pos))
+              grounds = ISZ(g)
+              blocks = blocks :+ AST.IR.BasicBlock(n, grounds, AST.IR.Jump.Goto(m, g.pos))
+              grounds = ISZ()
+              block = AST.IR.BasicBlock(m, grounds, block.jump)
+            }
+          case _ =>
+            grounds = grounds :+ g
+        }
+      }
+      blocks = blocks :+ block(grounds = grounds)
+    }
+    return transformEmptyBlock(p(body = body(blocks = blocks)))
+  }
+
+  def transformCP(p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var cpSubstMap = HashMap.empty[Z, Z] + 0 ~> 0 + 1 ~> 1
+    for (b <- body.blocks) {
+      if (b.label >= 2) {
+        cpSubstMap = cpSubstMap + b.label ~> cpSubstMap.size
+      }
+    }
+    return CPSubstitutor(cpSubstMap).transformIRProcedure(p).getOrElse(p)
+  }
+
+  def transformSplitReadWrite(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     val blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
     var tempSubstMap = HashMap.empty[Z, HashMap[Z, AST.IR.Exp]] + body.blocks(0).label ~> HashMap.empty
@@ -334,7 +436,11 @@ import Anvil._
         var grounds = ISZ[AST.IR.Stmt.Ground]()
         var substMap = tempSubstMap.get(b.label).get
         var block = b
+
         def introBlock(pos: message.Position): Unit = {
+          if (grounds.isEmpty) {
+            return
+          }
           val n = fresh.label()
           blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.Goto(n, pos))
           grounds = ISZ()
@@ -343,6 +449,7 @@ import Anvil._
           block = AST.IR.BasicBlock(n, grounds, block.jump)
           tempSubstMap = tempSubstMap + n ~> substMap
         }
+
         def computeWrites(g: AST.IR.Stmt.Ground): Unit = {
           g match {
             case g: AST.IR.Stmt.Assign.Temp =>
@@ -354,11 +461,17 @@ import Anvil._
             case _ =>
           }
         }
+
         def computeReads(g: AST.IR.Stmt.Ground): Unit = {
           val rc = ReadVarCollector(reads)
-          rc.transformIRStmtGround(g)
+          g match {
+            case _: AST.IR.Stmt.Assign.Temp =>
+            case g: AST.IR.Stmt.Assign => rc.transformIRExp(g.rhs)
+            case _ => rc.transformIRStmtGround(g)
+          }
           reads = rc.reads
         }
+
         def addWriteRoot(e: AST.IR.Exp): Unit = {
           e match {
             case e: AST.IR.Exp.FieldVarRef => addWriteRoot(e.receiver)
@@ -368,20 +481,30 @@ import Anvil._
             case _ => halt(s"Infeasible: $e")
           }
         }
-        for (ground <- b.grounds) {
+
+        var i = 0
+        while (i < b.grounds.size) {
+          val ground = b.grounds(i)
           val g = TempExpSubstitutor(substMap).transformIRStmtGround(ground).getOrElse(ground)
           computeWrites(g)
           computeReads(g)
           if (reads.intersect(writes).nonEmpty) {
             introBlock(g.pos)
             computeWrites(g)
-            if (writes.isEmpty) {
-              computeReads(g)
+            computeReads(g)
+            if (reads.intersect(writes).nonEmpty) {
+              grounds = grounds :+ ground
+              introBlock(g.pos)
+              i = i + 1
             }
+            reads = HashSet.empty[QName]
+            writes = HashSet.empty[QName]
+          } else {
+            grounds = grounds :+ ground
+            i = i + 1
           }
-          grounds = grounds :+ ground
         }
-        block.jump match {
+        b.jump match {
           case j: AST.IR.Jump.If =>
             val rc = ReadVarCollector(reads)
             rc.transformIRExp(j.cond)
@@ -391,7 +514,7 @@ import Anvil._
             }
             blocks = blocks :+ block(grounds = grounds, jump = j)
           case _ =>
-            blocks = blocks :+ block(grounds = grounds)
+            blocks = blocks :+ block(grounds = grounds, jump = b.jump)
         }
         for (target <- block.jump.targets) {
           tempSubstMap.get(target) match {
@@ -463,12 +586,21 @@ import Anvil._
   def transformProgram(fresh: lang.IRTranslator.Fresh, program: AST.IR.Program): AST.IR.Program = {
     @pure def transform(p: AST.IR.Procedure): AST.IR.Procedure = {
       var r = p
+      r = transformEmptyBlock(r)
       r = transformTemp(r)
-      r = transformTempCompress(r)
-      r = transformSplit(fresh, r)
+      r = transformTempCompress(r);
+      {
+        var cont = T
+        while (cont) {
+          val r2 = transformEmptyBlock(transformSplitReadWrite(fresh, r))
+          cont = r2.body.asInstanceOf[AST.IR.Body.Basic].blocks.size != r.body.asInstanceOf[AST.IR.Body.Basic].blocks.size
+          r = r2
+        }
+      }
       r = transformApplyResult(r)
       return r
     }
+
     return program(procedures = ops.ISZOps(program.procedures).mParMap(transform _))
   }
 
@@ -562,7 +694,7 @@ import Anvil._
                 case g: AST.IR.Stmt.Expr => processInvoke(g, None(), g.exp, j.label)
                 case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Apply] =>
                   processInvoke(g, Some(g.lhs), g.rhs.asInstanceOf[AST.IR.Exp.Apply], j.label)
-                case _ =>
+                case _ => blocks = blocks :+ b
               }
             case j: AST.IR.Jump.Return =>
               var addGrounds = ISZ[AST.IR.Stmt.Ground]()
@@ -620,6 +752,7 @@ import Anvil._
           def rest(): Unit = {
             grounds = grounds :+ TempExpSubstitutor(substMap).transformIRStmtGround(g).getOrElse(g)
           }
+
           g match {
             case g: AST.IR.Stmt.Assign.Temp =>
               g.rhs match {
