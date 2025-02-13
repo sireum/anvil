@@ -236,26 +236,55 @@ import Anvil._
       program(procedures = ISZ(main(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
         mergeProcedures(main, procedureMap, procedureSizeMap, callResultOffsetMap)))))
     }
-    val (resType, resDataSize): (AST.Typed, Z) = if (isScalar(main.tipe.ret)) (main.tipe.ret, 0) else (spType, typeByteSize(main.tipe.ret))
     val maxRegisters: Z = {
       val tc = TempCollector(HashSSet.empty)
       tc.transformIRProgram(program)
       tc.r.elements.size
     }
-    r = r + ISZ("ir", "4-program-merged.sir") ~>
-      st"""/*
-          |   Note that initially:
-          |   * register SP (stack pointer) = $globalSize (signed, byte size = ${typeByteSize(spType)})
-          |   * register CP (code pointer) = 1 (unsigned, byte size = ${typeByteSize(cpType)})
-          |   * max registers (beside SP and CP) = $maxRegisters
-          |   * $$ret@SP = 0 (signed, byte size = ${typeByteSize(cpType)})
-          |   * $$res@(SP + ${typeByteSize(cpType)}) = (signed, size = ${typeByteSize(resType)}, data-size = $resDataSize)
-          |   * globalMap = $globalMap
-          | */
-          |${program.prettyST}"""
+    {
+      var offset: Z = typeByteSize(cpType)
+      val resOpt: Option[ST] =
+        if (main.tipe.ret != AST.Typed.unit) {
+          offset = offset + typeByteSize(spType) + typeByteSize(main.tipe.ret)
+          Some(
+            st"- $$res (*(SP + ${typeByteSize(cpType)})) = ${globalSize + typeByteSize(cpType) + typeByteSize(spType)} (signed, size = ${typeByteSize(spType)}, data-size = ${typeByteSize(main.tipe.ret)})")
+        } else {
+          None()
+        }
+      var paramsST = ISZ[ST]()
+      for (param <- ops.ISZOps(main.paramNames).zip(main.tipe.args)) {
+        if (!isScalar(param._2)) {
+          paramsST = paramsST :+ st"- for parameter ${param._1}: *(SP + $offset) = ${globalSize + offset + typeByteSize(spType)} (signed, size = ${typeByteSize(spType)}, data-size = ${typeByteSize(param._2)})"
+          offset = offset + typeByteSize(spType) + typeByteSize(param._2)
+        } else {
+          offset = offset + typeByteSize(param._2)
+        }
+      }
+      r = r + ISZ("ir", "4-program-merged.sir") ~>
+        st"""/*
+            |   Note that globalSize = $globalSize, and initially:
+            |   - register SP (stack pointer) = $globalSize (signed, byte size = ${typeByteSize(spType)})
+            |   - register CP (code pointer) = 1 (unsigned, byte size = ${typeByteSize(cpType)})
+            |   - max registers (beside SP and CP) = $maxRegisters
+            |   - $$ret (*SP) = 0 (signed, byte size = ${typeByteSize(cpType)})
+            |   $resOpt
+            |   ${(paramsST, "\n")}
+            |
+            |   Also note that IS/MS bytearray consists of:
+            |   * the first 4 bytes of the IS/MS type string SHA3 encoding
+            |     (e.g., for "org.sireum.MS[Z, U8]", it is 0xEF2BFABD)
+            |   * 8 bytes for .size
+            |   * IS/MS element bytes
+            |
+            |   A @datatype/@record class bytearray consists of:
+            |   * the first 4 bytes of the class type string SHA3 encoding
+            |   * the class field bytes
+            | */
+            |${program.prettyST}"""
+    }
 
 
-    r = r ++ HwSynthesizer(this).printProgram(program, globalSize, globalMap, maxRegisters).entries
+    r = r ++ HwSynthesizer(this).printProgram(program, globalSize, maxRegisters).entries
 
     return r
   }
@@ -374,6 +403,10 @@ import Anvil._
                 st"$resultLocalId@${typeByteSize(cpType)} = $n", spType, e.pos))
             }
             var paramOffset: Z = typeByteSize(cpType) + typeByteSize(spType)
+            val isMain = p.owner == owner && p.id == id
+            if (isMain) {
+              paramOffset = paramOffset + typeByteSize(p.tipe.ret)
+            }
             for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(mc.t.args)).zip(e.args)) {
               val ((pid, pt), parg) = param
               val t: AST.Typed = if (isScalar(pt)) pt else spType
@@ -381,7 +414,10 @@ import Anvil._
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.StackPointer(spType, e.pos)),
                   AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, paramOffset, e.pos), e.pos),
                 T, typeByteSize(t), parg, st"$pid = ${parg.prettyST}", t, parg.pos))
-              paramOffset = paramOffset + typeByteSize(pt)
+              paramOffset = paramOffset + typeByteSize(t)
+              if (isMain && !isScalar(pt)) {
+                paramOffset = paramOffset + typeByteSize(pt)
+              }
             }
             var bgrounds = ISZ[AST.IR.Stmt.Ground](
               AST.IR.Stmt.Decl(T, T, called.context, for (i <- locals.size - 1 to 0 by -1) yield locals(i), e.pos),
@@ -453,15 +489,15 @@ import Anvil._
     val blocks = body.blocks
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- blocks) yield (b.label, b))
     var blockLocalOffsetMap = HashMap.empty[Z, (Z, HashMap[String, Z])]
-    var maxOffset: Z = typeByteSize(cpType)
     var callResultIdOffsetMap = HashMap.empty[String, Z]
     var tempExpMap = HashMap.empty[Z, AST.IR.Exp]
     val isMain = proc.context.owner == owner && proc.context.id == id
+    var maxOffset: Z = typeByteSize(cpType)
+    if (proc.tipe.ret != AST.Typed.unit) {
+      maxOffset = maxOffset + typeByteSize(spType)
+    }
     if (isMain) {
       maxOffset = maxOffset + typeByteSize(proc.tipe.ret)
-      if (!isScalar(proc.tipe.ret)) {
-        maxOffset = maxOffset + typeByteSize(spType)
-      }
     }
     {
       var m = HashMap.empty[String, Z]
@@ -584,6 +620,19 @@ import Anvil._
                     case rhs: AST.IR.Exp.Temp =>
                       tempExpMap = tempExpMap + n ~> tempExpMap.get(rhs.n).get
                       tempExpMap = tempExpMap -- ISZ(rhs.n)
+                    case rhs: AST.IR.Exp.Unary =>
+                      val got = GroundOffsetTransformer(this, m, tempExpMap)
+                      val e = got.transformIRExp(rhs.exp).getOrElse(rhs.exp)
+                      tempExpMap = got.tempExpMap + n ~> rhs(exp = e)
+                    case rhs: AST.IR.Exp.Binary =>
+                      val got = GroundOffsetTransformer(this, m, tempExpMap)
+                      val left = got.transformIRExp(rhs.left).getOrElse(rhs.left)
+                      val right = got.transformIRExp(rhs.right).getOrElse(rhs.right)
+                      tempExpMap = got.tempExpMap + n ~> rhs(left = left, right = right)
+                    case rhs: AST.IR.Exp.Type =>
+                      val got = GroundOffsetTransformer(this, m, tempExpMap)
+                      val e = got.transformIRExp(rhs.exp).getOrElse(rhs.exp)
+                      tempExpMap = got.tempExpMap + n ~> rhs(exp = e)
                     case rhs: AST.IR.Exp.LocalVarRef =>
                       val localOffset = m.get(rhs.id).get
                       val temp = tempExpMap.size
@@ -594,12 +643,15 @@ import Anvil._
                           AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, rhs.pos), rhs.pos),
                         isSigned(t), typeByteSize(t), g.prettyST, rhs.tipe, rhs.pos))
                     case rhs: AST.IR.Exp.FieldVarRef =>
-                      if (isSeq(rhs.receiver.tipe)) {
+                      val got = GroundOffsetTransformer(this, m, tempExpMap)
+                      val receiver = got.transformIRExp(rhs.receiver).getOrElse(rhs.receiver)
+                      tempExpMap = got.tempExpMap
+                      if (isSeq(receiver.tipe)) {
                         assert(rhs.id == "size")
                         val temp = tempExpMap.size
                         tempExpMap = tempExpMap + n ~> AST.IR.Exp.Temp(temp, rhs.tipe, pos)
                         grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Load(
-                          temp, AST.IR.Exp.Binary(spType, rhs.receiver,
+                          temp, AST.IR.Exp.Binary(spType, receiver,
                             AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeShaSize, rhs.pos), rhs.pos),
                           T, typeByteSize(rhs.tipe), g.prettyST, rhs.tipe, rhs.pos))
                       } else {
@@ -650,7 +702,6 @@ import Anvil._
                         grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, globalOffset, rhs.pos)
                       }
                     case _: AST.IR.Exp.Apply => rest()
-                    case _: AST.IR.Exp.Binary => rest()
                     case rhs: AST.IR.Exp.Construct =>
                       val constructOffset = offset
                       val rhsSize = typeByteSize(rhs.tipe)
@@ -662,8 +713,6 @@ import Anvil._
                       tempExpMap = tempExpMap + n ~> AST.IR.Exp.Temp(temp, rhs.tipe, pos)
                       grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, newRhs, pos)
                       halt("TODO")
-                    case _: AST.IR.Exp.Type => rest()
-                    case _: AST.IR.Exp.Unary => rest()
                     case _: AST.IR.Exp.If => halt(s"Infeasible: $rhs")
                     case _: AST.IR.Exp.Intrinsic => halt(s"Infeasible: $rhs")
                   }
@@ -815,7 +864,7 @@ import Anvil._
       case t: AST.Typed.Name =>
         if (t.ids == AST.Typed.isName || t.ids == AST.Typed.msName) {
           var r: Z = 4 // type sha
-          r = r + 4 // .size
+          r = r + typeByteSize(AST.Typed.z) // .size
           val et = t.args(1)
           if (et == AST.Typed.b) {
 
