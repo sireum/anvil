@@ -394,7 +394,7 @@ import Anvil._
         if (test(g)) {
           if (grounds.isEmpty) {
             val n = fresh.label()
-            blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.Goto(n, g.pos))
+            blocks = blocks :+ AST.IR.BasicBlock(block.label, ISZ(g), AST.IR.Jump.Goto(n, g.pos))
             grounds = ISZ()
             block = AST.IR.BasicBlock(n, grounds, block.jump)
           } else {
@@ -664,7 +664,7 @@ import Anvil._
               AST.IR.Exp.Intrinsic(Intrinsic.StackPointer(spType, e.pos)),
               T, typeByteSize(cpType), AST.IR.Exp.Int(cpType, label, e.pos), st"$returnLocalId@0 = $label", cpType, e.pos
             ))
-            if (p.tipe.ret != AST.Typed.unit) {
+            if (called.tipe.ret != AST.Typed.unit) {
               val n = callResultOffsetMap.get(callResultId(e.id, e.pos)).get - spAdd
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.StackPointer(spType, e.pos)),
@@ -674,10 +674,13 @@ import Anvil._
                   AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, n, e.pos), e.pos),
                 st"$resultLocalId@${typeByteSize(cpType)} = $n", spType, e.pos))
             }
-            var paramOffset: Z = typeByteSize(cpType) + typeByteSize(spType)
-            val isMain = p.owner == owner && p.id == id
-            if (isMain) {
-              paramOffset = paramOffset + typeByteSize(p.tipe.ret)
+            var paramOffset: Z = typeByteSize(cpType)
+            val isMain = called.owner == owner && called.id == id
+            if (called.tipe.ret != AST.Typed.unit) {
+              paramOffset = paramOffset + typeByteSize(spType)
+              if (isMain) {
+                paramOffset = paramOffset + typeByteSize(p.tipe.ret)
+              }
             }
             for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(mc.t.args)).zip(e.args)) {
               val ((pid, pt), parg) = param
