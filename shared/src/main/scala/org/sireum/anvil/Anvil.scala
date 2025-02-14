@@ -33,7 +33,6 @@ import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
 import org.sireum.U32._
-import org.sireum.lang.ast.{IR, MIRTransformer}
 
 object Anvil {
 
@@ -88,12 +87,16 @@ object Anvil {
                              val tipe: AST.Typed,
                              val pos: message.Position)
 
-  @record class TempExpSubstitutor(val substMap: HashMap[Z, AST.IR.Exp]) extends AST.MIRTransformer {
+  @record class TempExpSubstitutor(val substMap: HashMap[Z, AST.IR.Exp], val haltOnNoMapping: B) extends AST.MIRTransformer {
     override def postIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
       substMap.get(o.n) match {
         case Some(e) => return MSome(e)
         case _ =>
-          halt(s"Infeasible: ${o.n}, $substMap")
+          if (haltOnNoMapping) {
+            halt(s"Infeasible: ${o.n}, $substMap")
+          } else {
+            return MNone()
+          }
       }
     }
   }
@@ -102,22 +105,32 @@ object Anvil {
     override def postIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
       map.get(o.n) match {
         case Some(n) => return MSome(o(n = n))
-        case _ =>
-          halt(s"Infeasible: ${o.n}, $map")
+        case _ => halt(s"Infeasible: ${o.n}, $map")
       }
     }
 
     override def postIRStmtAssignTemp(o: AST.IR.Stmt.Assign.Temp): MOption[AST.IR.Stmt.Assign] = {
       map.get(o.lhs) match {
         case Some(n) => return MSome(o(lhs = n))
-        case _ =>
-          halt(s"Infeasible: ${o.lhs}, $map")
+        case _ => halt(s"Infeasible: ${o.lhs}, $map")
       }
+    }
+
+    override def postIRStmtIntrinsic(o: AST.IR.Stmt.Intrinsic): MOption[AST.IR.Stmt.Ground] = {
+      o.intrinsic match {
+        case in: Intrinsic.Load =>
+          map.get(in.temp) match {
+            case Some(n) => return MSome(o(intrinsic = in(temp = n)))
+            case _ => halt(s"Infeasible: ${in.temp}, $map")
+          }
+        case _ =>
+      }
+      return MNone()
     }
   }
 
   @record class AccessPathCollector(var accessPaths: HashSet[ISZ[String]]) extends AST.MIRTransformer {
-    override def preIRExp(o: IR.Exp): AST.MIRTransformer.PreResult[IR.Exp] = {
+    override def preIRExp(o: AST.IR.Exp): AST.MIRTransformer.PreResult[AST.IR.Exp] = {
       accessPaths = accessPaths ++ AccessPathCollector.computeAccessPathsExp(o).elements
       return AST.MIRTransformer.PreResult(continu = F, resultOpt = MNone())
     }
@@ -322,7 +335,10 @@ import Anvil._
       for (p <- program.procedures) {
         val (maxOffset, p2, m) = transformOffset(globalMap, p)
         callResultOffsetMap = callResultOffsetMap ++ m.entries
-        procedureMap = procedureMap + p2.context ~> p2
+        val proc = p2
+//        proc = transformReduceTemp(proc)
+//        proc = transformTempCompress(proc)
+        procedureMap = procedureMap + proc.context ~> proc
         procedureSizeMap = procedureSizeMap + p2.context ~> maxOffset
       }
       program(procedures = procedureMap.values)
@@ -546,7 +562,7 @@ import Anvil._
         def computeWrites(g: AST.IR.Stmt.Ground): Unit = {
           g match {
             case g: AST.IR.Stmt.Assign.Temp =>
-              substMap = substMap + g.lhs ~> TempExpSubstitutor(substMap).transformIRExp(g.rhs).getOrElse(g.rhs)
+              substMap = substMap + g.lhs ~> TempExpSubstitutor(substMap, T).transformIRExp(g.rhs).getOrElse(g.rhs)
             case g: AST.IR.Stmt.Assign.Local => writeAccessPaths = writeAccessPaths +
               ISZ(st"${(g.context.owner :+ g.context.id :+ g.lhs, ".")}".render)
             case g: AST.IR.Stmt.Assign.Field =>
@@ -571,31 +587,24 @@ import Anvil._
         var i = 0
         while (i < b.grounds.size) {
           val ground = b.grounds(i)
-          val g = TempExpSubstitutor(substMap).transformIRStmtGround(ground).getOrElse(ground)
+          val g = TempExpSubstitutor(substMap, T).transformIRStmtGround(ground).getOrElse(ground)
+          grounds = grounds :+ ground
           computeWrites(g)
-          computeReads(g)
-          if (areReadWritePathsDisallowed(readAccessPaths, writeAccessPaths)) {
-            introBlock(g.pos)
-            computeWrites(g)
+          if (writeAccessPaths.nonEmpty) {
             computeReads(g)
             if (areReadWritePathsDisallowed(readAccessPaths, writeAccessPaths)) {
-              grounds = grounds :+ ground
               introBlock(g.pos)
-              i = i + 1
+              computeWrites(g)
             }
-            readAccessPaths = HashSet.empty[ISZ[String]]
-            writeAccessPaths = HashSet.empty[ISZ[String]]
-          } else {
-            grounds = grounds :+ ground
-            i = i + 1
           }
+          i = i + 1
         }
         b.jump match {
           case j: AST.IR.Jump.If =>
             val rc = AccessPathCollector(readAccessPaths)
-            rc.transformIRExp(TempExpSubstitutor(substMap).transformIRExp(j.cond).getOrElse(j.cond))
+            rc.transformIRExp(TempExpSubstitutor(substMap, T).transformIRExp(j.cond).getOrElse(j.cond))
             readAccessPaths = rc.accessPaths
-            if (readAccessPaths.intersect(writeAccessPaths).nonEmpty) {
+            if (areReadWritePathsDisallowed(readAccessPaths, writeAccessPaths)) {
               introBlock(j.pos)
             }
             blocks = blocks :+ block(grounds = grounds, jump = j)
@@ -668,15 +677,8 @@ import Anvil._
       r = transformApplyResult(fresh, r)
       r = transformEmptyBlock(r)
       r = transformTemp(r)
-      r = transformTempCompress(r);
-      {
-        var cont = T
-        while (cont) {
-          val r2 = transformEmptyBlock(transformSplitReadWrite(fresh, r))
-          cont = r2.body.asInstanceOf[AST.IR.Body.Basic].blocks.size != r.body.asInstanceOf[AST.IR.Body.Basic].blocks.size
-          r = r2
-        }
-      }
+      r = transformTempCompress(r)
+      r = transformEmptyBlock(transformSplitReadWrite(fresh, r))
       return r
     }
 
@@ -819,6 +821,30 @@ import Anvil._
     return mergedBlocks :+ last
   }
 
+  def transformReduceTemp(proc: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      val tc = TempCollector(HashSSet.empty)
+      tc.transformIRBasicBlock(b)
+      var m = HashMap.empty[Z, AST.IR.Exp]
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      for (g <- b.grounds) {
+        g match {
+          case AST.IR.Stmt.Intrinsic(in: Intrinsic.Load) if tc.r.contains(in.temp) =>
+            m = m + in.temp ~> TempExpSubstitutor(m, F).transformIRExp(in.rhsOffset).getOrElse(in.rhsOffset)
+          case g: AST.IR.Stmt.Assign.Temp if tc.r.contains(g.lhs) =>
+            m = m + g.lhs ~> TempExpSubstitutor(m, F).transformIRExp(g.rhs).getOrElse(g.rhs)
+          case _ =>
+            grounds = grounds :+ TempExpSubstitutor(m, F).transformIRStmtGround(g).getOrElse(g)
+        }
+      }
+      val jump = TempExpSubstitutor(m, F).transformIRJump(b.jump).getOrElse(b.jump)
+      blocks = blocks :+ b(grounds = grounds, jump = jump)
+    }
+    return proc(body = body(blocks = blocks))
+  }
+
   def transformTemp(proc: AST.IR.Procedure): AST.IR.Procedure = {
     val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
     val blocks = body.blocks
@@ -832,7 +858,7 @@ import Anvil._
         var substMap = tempSubstMap.get(b.label).get
         for (g <- b.grounds) {
           def rest(): Unit = {
-            grounds = grounds :+ TempExpSubstitutor(substMap).transformIRStmtGround(g).getOrElse(g)
+            grounds = grounds :+ TempExpSubstitutor(substMap, T).transformIRStmtGround(g).getOrElse(g)
           }
 
           g match {
@@ -847,11 +873,11 @@ import Anvil._
                 case rhs: AST.IR.Exp.EnumElementRef => substMap = substMap + g.lhs ~> rhs
                 case rhs: AST.IR.Exp.Temp => substMap = substMap + g.lhs ~> substMap.get(rhs.n).get
                 case rhs: AST.IR.Exp.Unary =>
-                  substMap = substMap + g.lhs ~> rhs(exp = TempExpSubstitutor(substMap).transformIRExp(rhs.exp).getOrElse(rhs.exp))
+                  substMap = substMap + g.lhs ~> rhs(exp = TempExpSubstitutor(substMap, T).transformIRExp(rhs.exp).getOrElse(rhs.exp))
                 case rhs: AST.IR.Exp.Type =>
-                  substMap = substMap + g.lhs ~> rhs(exp = TempExpSubstitutor(substMap).transformIRExp(rhs.exp).getOrElse(rhs.exp))
+                  substMap = substMap + g.lhs ~> rhs(exp = TempExpSubstitutor(substMap, T).transformIRExp(rhs.exp).getOrElse(rhs.exp))
                 case rhs: AST.IR.Exp.Binary =>
-                  val tes = TempExpSubstitutor(substMap)
+                  val tes = TempExpSubstitutor(substMap, T)
                   substMap = substMap + g.lhs ~> rhs(left = tes.transformIRExp(rhs.left).getOrElse(rhs.left),
                     right = tes.transformIRExp(rhs.right).getOrElse(rhs.right))
                 case _: AST.IR.Exp.Intrinsic => halt("Infeasible")
@@ -863,7 +889,7 @@ import Anvil._
             case _ => rest()
           }
         }
-        val jump = TempExpSubstitutor(substMap).transformIRJump(b.jump).getOrElse(b.jump)
+        val jump = TempExpSubstitutor(substMap, T).transformIRJump(b.jump).getOrElse(b.jump)
         blockMap = blockMap + b.label ~> b(grounds = grounds, jump = jump)
         for (target <- jump.targets) {
           tempSubstMap.get(target) match {
