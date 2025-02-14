@@ -33,6 +33,7 @@ import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
 import org.sireum.U32._
+import org.sireum.lang.ast.{IR, MIRTransformer}
 
 object Anvil {
 
@@ -115,15 +116,62 @@ object Anvil {
     }
   }
 
-  @record class ReadVarCollector(var reads: HashSet[QName]) extends AST.MIRTransformer {
-    override def postIRExpLocalVarRef(o: AST.IR.Exp.LocalVarRef): MOption[AST.IR.Exp] = {
-      reads = reads + (o.context.owner :+ o.context.id :+ o.id)
-      return MNone()
+  @record class AccessPathCollector(var accessPaths: HashSet[ISZ[String]]) extends AST.MIRTransformer {
+    override def preIRExp(o: IR.Exp): AST.MIRTransformer.PreResult[IR.Exp] = {
+      accessPaths = accessPaths ++ AccessPathCollector.computeAccessPathsExp(o).elements
+      return AST.MIRTransformer.PreResult(continu = F, resultOpt = MNone())
+    }
+  }
+
+  object AccessPathCollector {
+    @strictpure def computeAccessPath(e: AST.IR.Exp, suffix: ISZ[String]): ISZ[String] = e match {
+      case e: AST.IR.Exp.FieldVarRef => computeAccessPath(e.receiver, e.id +: suffix)
+      case e: AST.IR.Exp.Indexing => computeAccessPath(e.exp, ISZ())
+      case e: AST.IR.Exp.LocalVarRef => st"${(e.context.owner :+ e.context.id :+ e.id, ".")}".render +: suffix
+      case e: AST.IR.Exp.GlobalVarRef => st"${(e.name, ".")}".render +: suffix
+      case _ => halt(s"Infeasible: $e")
     }
 
-    override def postIRExpGlobalVarRef(o: AST.IR.Exp.GlobalVarRef): MOption[AST.IR.Exp] = {
-      reads = reads + o.name
-      return MNone()
+    def computeAccessPathsExp(exp: AST.IR.Exp): HashSet[ISZ[String]] = {
+      var r = HashSet.empty[ISZ[String]]
+      def rec(e: AST.IR.Exp): Unit = {
+        e match {
+          case _: AST.IR.Exp.Bool =>
+          case _: AST.IR.Exp.Int =>
+          case _: AST.IR.Exp.F32 =>
+          case _: AST.IR.Exp.F64 =>
+          case _: AST.IR.Exp.R =>
+          case _: AST.IR.Exp.String =>
+          case _: AST.IR.Exp.EnumElementRef =>
+          case _: AST.IR.Exp.Temp =>
+          case e: AST.IR.Exp.Unary => rec(e.exp)
+          case e: AST.IR.Exp.Type => rec(e.exp)
+          case e: AST.IR.Exp.Binary =>
+            rec(e.left)
+            rec(e.right)
+          case e: AST.IR.Exp.LocalVarRef =>
+            r = r + computeAccessPath(e, ISZ())
+          case e: AST.IR.Exp.FieldVarRef =>
+            r = r + computeAccessPath(e, ISZ())
+          case e: AST.IR.Exp.GlobalVarRef =>
+            r = r + computeAccessPath(e, ISZ())
+          case e: AST.IR.Exp.Indexing =>
+            rec(e.exp)
+            rec(e.index)
+          case e: AST.IR.Exp.Apply =>
+            for (arg <- e.args) {
+              rec(arg)
+            }
+          case e: AST.IR.Exp.Construct =>
+            for (arg <- e.args) {
+              rec(arg)
+            }
+          case _: AST.IR.Exp.Intrinsic => halt("Infeasible")
+          case _: AST.IR.Exp.If => halt("Infeasible")
+        }
+      }
+      rec(exp)
+      return r
     }
   }
 
@@ -334,14 +382,17 @@ import Anvil._
           |   ${(paramsST, "\n")}
           |
           |   Also note that IS/MS bytearray consists of:
-          |   * the first 4 bytes of the IS/MS type string SHA3 encoding
+          |   - the first 4 bytes of the IS/MS type string SHA3 encoding
           |     (e.g., for "org.sireum.MS[Z, U8]", it is 0xEF2BFABD)
-          |   * 8 bytes for .size
-          |   * IS/MS element bytes
+          |   - 8 bytes for .size
+          |   - IS/MS element bytes
           |
           |   A @datatype/@record class bytearray consists of:
-          |   * the first 4 bytes of the class type string SHA3 encoding
-          |   * the class field bytes
+          |   - the first 4 bytes of the class type string SHA3 encoding
+          |   - the class field bytes
+          |
+          |   decl/undecl and alloc/dealloc are the same except alloc/dealloc may have data-size for
+          |   class/trait/IS/MS types.
           | */"""
 
     }
@@ -447,6 +498,24 @@ import Anvil._
   }
 
   def transformSplitReadWrite(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    def areReadWritePathsDisallowed(reads: HashSet[ISZ[String]], writes: HashSet[ISZ[String]]): B = {
+      if (reads.isEmpty || writes.isEmpty) {
+        return F
+      }
+      for (w <- writes.elements) {
+        val wf = w(0)
+        for (r <- reads.elements if wf == r(0)) {
+          if (w.size < r.size && w == ops.ISZOps(r).dropRight(r.size - w.size)) {
+            return T
+          } else if (w.size > r.size && ops.ISZOps(w).dropRight(w.size - r.size) == r) {
+            return T
+          } else if (w == r) {
+            return T
+          }
+        }
+      }
+        return F
+    }
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     val blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
     var tempSubstMap = HashMap.empty[Z, HashMap[Z, AST.IR.Exp]] + body.blocks(0).label ~> HashMap.empty
@@ -455,8 +524,8 @@ import Anvil._
     while (work.nonEmpty) {
       var next = ISZ[AST.IR.BasicBlock]()
       for (b <- work) {
-        var reads = HashSet.empty[QName]
-        var writes = HashSet.empty[QName]
+        var readAccessPaths = HashSet.empty[ISZ[String]]
+        var writeAccessPaths = HashSet.empty[ISZ[String]]
         var grounds = ISZ[AST.IR.Stmt.Ground]()
         var substMap = tempSubstMap.get(b.label).get
         var block = b
@@ -468,8 +537,8 @@ import Anvil._
           val n = fresh.label()
           blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.Goto(n, pos))
           grounds = ISZ()
-          reads = HashSet.empty[QName]
-          writes = HashSet.empty[QName]
+          readAccessPaths = HashSet.empty[ISZ[String]]
+          writeAccessPaths = HashSet.empty[ISZ[String]]
           block = AST.IR.BasicBlock(n, grounds, block.jump)
           tempSubstMap = tempSubstMap + n ~> substMap
         }
@@ -478,32 +547,25 @@ import Anvil._
           g match {
             case g: AST.IR.Stmt.Assign.Temp =>
               substMap = substMap + g.lhs ~> TempExpSubstitutor(substMap).transformIRExp(g.rhs).getOrElse(g.rhs)
-            case g: AST.IR.Stmt.Assign.Local => writes = writes + (g.context.owner :+ g.context.id :+ g.lhs)
-            case g: AST.IR.Stmt.Assign.Field => addWriteRoot(g.receiver)
-            case g: AST.IR.Stmt.Assign.Index => addWriteRoot(g.receiver)
-            case g: AST.IR.Stmt.Assign.Global => writes = writes + g.name
+            case g: AST.IR.Stmt.Assign.Local => writeAccessPaths = writeAccessPaths +
+              ISZ(st"${(g.context.owner :+ g.context.id :+ g.lhs, ".")}".render)
+            case g: AST.IR.Stmt.Assign.Field =>
+              writeAccessPaths = writeAccessPaths + AccessPathCollector.computeAccessPath(g.receiver, ISZ(g.id))
+            case g: AST.IR.Stmt.Assign.Index =>
+              writeAccessPaths = writeAccessPaths + AccessPathCollector.computeAccessPath(g.receiver, ISZ())
+            case g: AST.IR.Stmt.Assign.Global => writeAccessPaths = writeAccessPaths + ISZ(st"${(g.name, ".")}".render)
             case _ =>
           }
         }
 
         def computeReads(g: AST.IR.Stmt.Ground): Unit = {
-          val rc = ReadVarCollector(reads)
+          val rc = AccessPathCollector(readAccessPaths)
           g match {
             case _: AST.IR.Stmt.Assign.Temp =>
             case g: AST.IR.Stmt.Assign => rc.transformIRExp(g.rhs)
             case _ => rc.transformIRStmtGround(g)
           }
-          reads = rc.reads
-        }
-
-        def addWriteRoot(e: AST.IR.Exp): Unit = {
-          e match {
-            case e: AST.IR.Exp.FieldVarRef => addWriteRoot(e.receiver)
-            case e: AST.IR.Exp.Indexing => addWriteRoot(e.exp)
-            case e: AST.IR.Exp.LocalVarRef => writes = writes + (e.context.owner :+ e.context.id :+ e.id)
-            case e: AST.IR.Exp.GlobalVarRef => writes = writes + e.name
-            case _ => halt(s"Infeasible: $e")
-          }
+          readAccessPaths = rc.accessPaths
         }
 
         var i = 0
@@ -512,17 +574,17 @@ import Anvil._
           val g = TempExpSubstitutor(substMap).transformIRStmtGround(ground).getOrElse(ground)
           computeWrites(g)
           computeReads(g)
-          if (reads.intersect(writes).nonEmpty) {
+          if (areReadWritePathsDisallowed(readAccessPaths, writeAccessPaths)) {
             introBlock(g.pos)
             computeWrites(g)
             computeReads(g)
-            if (reads.intersect(writes).nonEmpty) {
+            if (areReadWritePathsDisallowed(readAccessPaths, writeAccessPaths)) {
               grounds = grounds :+ ground
               introBlock(g.pos)
               i = i + 1
             }
-            reads = HashSet.empty[QName]
-            writes = HashSet.empty[QName]
+            readAccessPaths = HashSet.empty[ISZ[String]]
+            writeAccessPaths = HashSet.empty[ISZ[String]]
           } else {
             grounds = grounds :+ ground
             i = i + 1
@@ -530,10 +592,10 @@ import Anvil._
         }
         b.jump match {
           case j: AST.IR.Jump.If =>
-            val rc = ReadVarCollector(reads)
-            rc.transformIRExp(j.cond)
-            reads = rc.reads
-            if (reads.intersect(writes).nonEmpty) {
+            val rc = AccessPathCollector(readAccessPaths)
+            rc.transformIRExp(TempExpSubstitutor(substMap).transformIRExp(j.cond).getOrElse(j.cond))
+            readAccessPaths = rc.accessPaths
+            if (readAccessPaths.intersect(writeAccessPaths).nonEmpty) {
               introBlock(j.pos)
             }
             blocks = blocks :+ block(grounds = grounds, jump = j)
