@@ -82,14 +82,17 @@ object Intrinsic {
     }
   }
 
-  @datatype class StackPointer(val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"SP"
+  @datatype class SpecialRegister(val isStack: B, val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
+    @strictpure def prettyST: ST = if (isStack) st"SP" else st"CP"
 
     @strictpure def numOfTemps: Z = 0
   }
 
-  @datatype class StackPointerInc(val inc: Z, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST: ST = if (inc < 0) st"SP = SP - ${-inc}" else st"SP = SP + $inc"
+  @datatype class SpecialRegisterAssign(val isStack: B, val isInc: B, val value: Z, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def prettyST: ST = {
+      val reg: String = if (isStack) "SP" else "CP"
+      if (isInc) if (value < 0) st"$reg = $reg - ${-value}" else st"$reg = $reg + $value" else st"$reg = $value"
+    }
 
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
   }
