@@ -393,10 +393,9 @@ import Anvil._
         }
       }
       st"""/*
-          |   Note that globalSize = $globalSize, and initially:
-          |   - register SP (stack pointer) = $globalSize (signed, byte size = ${typeByteSize(spType)})
+          |   Note that globalSize = $globalSize, max registers (beside SP and CP) = $maxRegisters, and initially:
           |   - register CP (code pointer) = 1 (unsigned, byte size = ${typeByteSize(cpType)})
-          |   - max registers (beside SP and CP) = $maxRegisters
+          |   - register SP (stack pointer) = $globalSize (signed, byte size = ${typeByteSize(spType)})
           |   - $$ret (*SP) = 0 (signed, byte size = ${typeByteSize(cpType)})
           |   $resOpt
           |   ${(paramsST, "\n")}
@@ -588,34 +587,29 @@ import Anvil._
           }
           readAccessPaths = rc.accessPaths
         }
-
-        var i = 0
-        while (i < b.grounds.size) {
-          val ground = b.grounds(i)
+        for (ground <- b.grounds) {
           val g = TempExpSubstitutor(substMap, T).transformIRStmtGround(ground).getOrElse(ground)
-          grounds = grounds :+ ground
           computeWrites(g)
           if (writeAccessPaths.nonEmpty) {
             computeReads(g)
             if (areReadWritePathsDisallowed(readAccessPaths, writeAccessPaths)) {
               introBlock(g.pos)
+              grounds = grounds :+ ground
               computeWrites(g)
+            } else {
+              grounds = grounds :+ ground
             }
+          } else {
+            grounds = grounds :+ ground
           }
-          i = i + 1
         }
-        b.jump match {
-          case j: AST.IR.Jump.If =>
-            val rc = AccessPathCollector(readAccessPaths)
-            rc.transformIRExp(TempExpSubstitutor(substMap, T).transformIRExp(j.cond).getOrElse(j.cond))
-            readAccessPaths = rc.accessPaths
-            if (areReadWritePathsDisallowed(readAccessPaths, writeAccessPaths)) {
-              introBlock(j.pos)
-            }
-            blocks = blocks :+ block(grounds = grounds, jump = j)
-          case _ =>
-            blocks = blocks :+ block(grounds = grounds, jump = b.jump)
+        val rc = AccessPathCollector(readAccessPaths)
+        rc.transformIRJump(TempExpSubstitutor(substMap, T).transformIRJump(b.jump).getOrElse(b.jump))
+        readAccessPaths = rc.accessPaths
+        if (areReadWritePathsDisallowed(readAccessPaths, writeAccessPaths)) {
+          introBlock(b.jump.pos)
         }
+        blocks = blocks :+ block(grounds = grounds, jump = b.jump)
         for (target <- block.jump.targets) {
           tempSubstMap.get(target) match {
             case Some(_) =>
@@ -685,6 +679,9 @@ import Anvil._
       r = transformEmptyBlock(r)
       r = transformTemp(r)
       r = transformTempCompress(r)
+      println(r)
+      r = transformSplitTemp(fresh, r)
+      println(r)
       r = transformEmptyBlock(transformSplitReadWrite(fresh, r))
       return r
     }
@@ -1124,6 +1121,63 @@ import Anvil._
       work = next
     }
     return (maxOffset, proc(body = body(blocks = blockMap.values)), callResultIdOffsetMap)
+  }
+
+  def transformSplitTemp(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      var writes = HashSSet.empty[Z]
+      var reads = HashSSet.empty[Z]
+      var block = b
+      def computeWrites(g: AST.IR.Stmt.Ground): Unit = {
+        g match {
+          case g: AST.IR.Stmt.Assign.Temp =>
+            writes = writes + g.lhs
+          case _ =>
+        }
+      }
+      def computeReads(g: AST.IR.Stmt.Ground): Unit = {
+        val tc = TempCollector(reads)
+        tc.transformIRStmtGround(g)
+        reads = tc.r
+      }
+      def introBlock(pos: message.Position): Unit = {
+        if (grounds.isEmpty) {
+          return
+        }
+        val n = fresh.label()
+        blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.Goto(n, pos))
+        grounds = ISZ()
+        reads = HashSSet.empty[Z]
+        writes = HashSSet.empty[Z]
+        block = AST.IR.BasicBlock(n, grounds, block.jump)
+      }
+      for (g <- b.grounds) {
+        computeWrites(g)
+        if (writes.nonEmpty) {
+          computeReads(g)
+          if (reads.intersect(writes).nonEmpty) {
+            introBlock(g.pos)
+            grounds = grounds :+ g
+            computeWrites(g)
+          } else {
+            grounds = grounds :+ g
+          }
+        } else {
+          grounds = grounds :+ g
+        }
+      }
+      val tc = TempCollector(reads)
+      tc.transformIRJump(b.jump)
+      reads = tc.r
+      if (reads.intersect(writes).nonEmpty) {
+        introBlock(b.jump.pos)
+      }
+      blocks = blocks :+ block(grounds = grounds, jump = b.jump)
+    }
+    return p(body = body(blocks = blocks))
   }
 
   def transformMain(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, globalSize: Z, globalMap: HashSMap[QName, GlobalInfo]): AST.IR.Procedure = {
