@@ -32,16 +32,28 @@ import org.sireum.message.Position
 object Intrinsic {
 
   // Replaces AST.IR.Exp.LocalVarRef, AST.IR.Exp.GlobalVarRef, AST.IR.Exp.Field, AST.IR.Exp.Index
-  @datatype class Load(val temp: Z,
-                       val rhsOffset: AST.IR.Exp,
+  @datatype class TempLoad(val temp: Z,
+                           val rhsOffset: AST.IR.Exp,
+                           val isSigned: B,
+                           val bytes: Z,
+                           val comment: ST,
+                           val tipe: AST.Typed,
+                           val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def prettyST: ST = st"$$$temp = *${rhsOffset.prettyST} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
+
+    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps + 1)
+  }
+
+  // Replaces AST.IR.Exp.LocalVarRef, AST.IR.Exp.GlobalVarRef, AST.IR.Exp.Field, AST.IR.Exp.Index
+  @datatype class Load(val rhsOffset: AST.IR.Exp,
                        val isSigned: B,
                        val bytes: Z,
                        val comment: ST,
                        val tipe: AST.Typed,
-                       val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"$$$temp = *${rhsOffset.prettyST} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
-
-    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps + 1)
+                       val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
+    @strictpure def prettyST: ST = st"*${rhsOffset.prettyST}"
+    @strictpure def numOfTemps: Z = rhsOffset.numOfTemps
+    @strictpure def depth: Z = 1 + rhsOffset.depth
   }
 
   // Replaces AST.IR.Stmt.Assign.Local, AST.IR.Stmt.Assign.Field, AST.IR.Stmt.Assign.Global, AST.IR.Stmt.Assign.Index
@@ -74,23 +86,25 @@ object Intrinsic {
   // Replaces AST.IR.Stmt.Decl
   @datatype class Decl(val undecl: B, val isAlloc: B, val slots: ISZ[Decl.Local], val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
+
     @strictpure def prettyST: ST = st"${if (isAlloc) if (undecl) "unalloc" else "alloc" else if (undecl) "undecl" else "decl"} ${(for (slot <- slots) yield slot.prettyST, ", ")}"
   }
+
   object Decl {
     @datatype class Local(val offset: Z, val size: Z, val dataSize: Z, val id: String, val tipe: AST.Typed) {
       @strictpure def prettyST: ST = st"$id: $tipe [@$offset, $size]"
     }
   }
 
-  @datatype class SpecialRegister(val isStack: B, val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
-    @strictpure def prettyST: ST = if (isStack) st"SP" else st"CP"
-
+  @datatype class SpecialRegister(val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
+    @strictpure def prettyST: ST = st"SP"
     @strictpure def numOfTemps: Z = 0
+    @strictpure def depth: Z = 1
   }
 
-  @datatype class SpecialRegisterAssign(val isStack: B, val isInc: B, val value: Z, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+  @datatype class SpecialRegisterAssign(val isInc: B, val value: Z, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def prettyST: ST = {
-      val reg: String = if (isStack) "SP" else "CP"
+      val reg = "SP"
       if (isInc) if (value < 0) st"$reg = $reg - ${-value}" else st"$reg = $reg + $value" else st"$reg = $value"
     }
 
