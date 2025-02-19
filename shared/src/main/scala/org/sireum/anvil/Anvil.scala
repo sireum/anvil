@@ -1040,11 +1040,12 @@ import Anvil._
             case g: AST.IR.Stmt.Decl =>
               var locals = ISZ[Intrinsic.Decl.Local]()
               val mult: Z = if (g.undecl) -1 else 1
+              var assignSPs = ISZ[AST.IR.Stmt.Ground]()
               for (l <- g.locals) {
-                val size: Z =
-                  if (g.isAlloc || isScalar(l.tipe)) typeByteSize(l.tipe)
-                  else if (th.isMutable(l.tipe)) typeByteSize(spType) + typeByteSize(l.tipe)
-                  else typeByteSize(spType)
+                val (size, assignSP): (Z, B) =
+                  if (g.isAlloc || isScalar(l.tipe)) (typeByteSize(l.tipe), F)
+                  else if (th.isMutable(l.tipe)) (typeByteSize(spType) + typeByteSize(l.tipe), !g.undecl)
+                  else (typeByteSize(spType), F)
                 if (g.undecl) {
                   locals = locals :+ Intrinsic.Decl.Local(m.get(l.id).get, size, l.id, l.tipe)
                   m = m -- ISZ(l.id)
@@ -1052,13 +1053,22 @@ import Anvil._
                   m = m + l.id ~> offset
                   locals = locals :+ Intrinsic.Decl.Local(offset, size, l.id, l.tipe)
                 }
-                offset = offset + (if (isScalar(l.tipe)) typeByteSize(l.tipe) else typeByteSize(spType) +
-                  (if (g.isAlloc) typeByteSize(l.tipe) else 0)) * mult
+                if (assignSP) {
+                  assignSPs = assignSPs :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
+                    AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SpecialRegister(spType, g.pos)),
+                      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, offset, g.pos), g.pos),
+                    isSigned(spType), typeByteSize(spType),
+                    AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SpecialRegister(spType, g.pos)),
+                      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, offset + typeByteSize(spType), g.pos), g.pos),
+                    st"address of ${l.id}", spType, g.pos))
+                }
+                offset = offset + size * mult
               }
               if (maxOffset < offset) {
                 maxOffset = offset
               }
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(g.undecl, g.isAlloc, locals, g.pos))
+              grounds = grounds ++ assignSPs
             case _ =>
               g match {
                 case AST.IR.Stmt.Assign.Global(_, name, tipe, rhs, pos) =>
