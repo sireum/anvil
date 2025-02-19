@@ -475,8 +475,8 @@ import Anvil._
           |   - the first 4 bytes of the class type string SHA3 encoding
           |   - the class field bytes
           |
-          |   decl/undecl and alloc/dealloc are the same except alloc/dealloc may have data-size for
-          |   class/trait/IS/MS types.
+          |   decl/undecl and alloc/dealloc are the same except alloc/dealloc store raw data only,
+          |   while decl/undecl may store raw data and/or stack pointer.
           | */"""
 
     }
@@ -1023,15 +1023,16 @@ import Anvil._
               var locals = ISZ[Intrinsic.Decl.Local]()
               val mult: Z = if (g.undecl) -1 else 1
               for (l <- g.locals) {
-                val (size, dataSize): (Z, Z) =
-                  if (isScalar(l.tipe)) (typeByteSize(l.tipe), 0)
-                  else (typeByteSize(spType), if (g.isAlloc) typeByteSize(l.tipe) else 0)
+                val size: Z =
+                  if (g.isAlloc || isScalar(l.tipe)) typeByteSize(l.tipe)
+                  else if (th.isMutable(l.tipe)) typeByteSize(spType) + typeByteSize(l.tipe)
+                  else typeByteSize(spType)
                 if (g.undecl) {
-                  locals = locals :+ Intrinsic.Decl.Local(m.get(l.id).get, size, dataSize, l.id, l.tipe)
+                  locals = locals :+ Intrinsic.Decl.Local(m.get(l.id).get, size, l.id, l.tipe)
                   m = m -- ISZ(l.id)
                 } else {
                   m = m + l.id ~> offset
-                  locals = locals :+ Intrinsic.Decl.Local(offset, size, dataSize, l.id, l.tipe)
+                  locals = locals :+ Intrinsic.Decl.Local(offset, size, l.id, l.tipe)
                 }
                 offset = offset + (if (isScalar(l.tipe)) typeByteSize(l.tipe) else typeByteSize(spType) +
                   (if (g.isAlloc) typeByteSize(l.tipe) else 0)) * mult
