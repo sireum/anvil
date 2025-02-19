@@ -48,7 +48,7 @@ object Anvil {
 
   object Config {
     @strictpure def empty(projectName: String): Config =
-      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1)
+      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 2)
   }
 
   @record class TempCollector(var r: HashSSet[Z]) extends AST.MIRTransformer {
@@ -402,7 +402,7 @@ import Anvil._
         callResultOffsetMap = callResultOffsetMap ++ m.entries
         var proc = p2
         if (config.maxExpDepth != 1) {
-          proc = transformReduceTemp(proc)
+          proc = transformReduceExp(proc)
           proc = transformTempCompress(proc)
         }
         procedureMap = procedureMap + proc.context ~> proc
@@ -742,8 +742,8 @@ import Anvil._
       var r = p
       r = transformApplyResult(fresh, r)
       r = transformEmptyBlock(r)
-      r = transformTemp(r)
       r = transformReduceTemp(r)
+      r = transformReduceExp(r)
       r = transformTempCompress(r)
       r = transformSplitTemp(fresh, r)
       r = transformSplitReadWrite(fresh, r)
@@ -781,16 +781,27 @@ import Anvil._
             var grounds = ISZ[AST.IR.Stmt.Ground](
               AST.IR.Stmt.Intrinsic(Intrinsic.SpecialRegisterAssign(T, spAdd, e.pos))
             )
-            var locals = ISZ[AST.IR.Stmt.Decl.Local](
-              AST.IR.Stmt.Decl.Local(returnLocalId, cpType)
+            var offset: Z = 0
+            var locals = ISZ[Intrinsic.Decl.Local](
+              Intrinsic.Decl.Local(offset, typeByteSize(cpType), returnLocalId, cpType)
             )
+            offset = offset + typeByteSize(cpType)
+            val isMain = called.owner == owner && called.id == id
             if (p.tipe.ret != AST.Typed.unit) {
-              locals = locals :+ AST.IR.Stmt.Decl.Local(resultLocalId, spType)
+              val size: Z = if (isMain) typeByteSize(spType) + typeByteSize(p.tipe.ret) else typeByteSize(spType)
+              locals = locals :+ Intrinsic.Decl.Local(offset, size, resultLocalId, spType)
+              offset = offset + size
             }
+            var paramOffsetMap = HashMap.empty[String, Z]
             for (param <- ops.ISZOps(called.paramNames).zip(called.tipe.args)) {
-              locals = locals :+ AST.IR.Stmt.Decl.Local(param._1, param._2)
+              paramOffsetMap = paramOffsetMap + param._1 ~> offset
+              val size: Z =
+                if (isScalar(param._2)) typeByteSize(param._2)
+                else if (isMain) typeByteSize(spType) + typeByteSize(param._2) else typeByteSize(spType)
+              locals = locals :+ Intrinsic.Decl.Local(offset, size, param._1, param._2)
+              offset = offset + size
             }
-            grounds = grounds :+ AST.IR.Stmt.Decl(F, T, F, called.context, locals, e.pos)
+            grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(F, F, locals, e.pos))
             grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
               AST.IR.Exp.Intrinsic(Intrinsic.SpecialRegister(spType, e.pos)),
               T, typeByteSize(cpType), AST.IR.Exp.Int(cpType, label, e.pos), st"$returnLocalId@0 = $label", cpType, e.pos
@@ -805,28 +816,16 @@ import Anvil._
                   AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, n, e.pos), e.pos),
                 st"$resultLocalId@${typeByteSize(cpType)} = $n", spType, e.pos))
             }
-            var paramOffset: Z = typeByteSize(cpType)
-            val isMain = called.owner == owner && called.id == id
-            if (called.tipe.ret != AST.Typed.unit) {
-              paramOffset = paramOffset + typeByteSize(spType)
-              if (isMain) {
-                paramOffset = paramOffset + typeByteSize(p.tipe.ret)
-              }
-            }
             for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(mc.t.args)).zip(e.args)) {
               val ((pid, pt), parg) = param
               val t: AST.Typed = if (isScalar(pt)) pt else spType
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SpecialRegister(spType, e.pos)),
-                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, paramOffset, e.pos), e.pos),
+                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, paramOffsetMap.get(pid).get, e.pos), e.pos),
                 T, typeByteSize(t), parg, st"$pid = ${parg.prettyST}", t, parg.pos))
-              paramOffset = paramOffset + typeByteSize(t)
-              if (isMain && !isScalar(pt)) {
-                paramOffset = paramOffset + typeByteSize(pt)
-              }
             }
             var bgrounds = ISZ[AST.IR.Stmt.Ground](
-              AST.IR.Stmt.Decl(T, T, F, called.context, for (i <- locals.size - 1 to 0 by -1) yield locals(i), e.pos),
+              AST.IR.Stmt.Intrinsic(Intrinsic.Decl(T, F, for (i <- locals.size - 1 to 0 by -1) yield locals(i), e.pos)),
               AST.IR.Stmt.Intrinsic(Intrinsic.SpecialRegisterAssign(T, -spAdd, e.pos))
             )
             lhsOpt match {
@@ -889,7 +888,7 @@ import Anvil._
     return mergedBlocks :+ last
   }
 
-  def transformReduceTemp(proc: AST.IR.Procedure): AST.IR.Procedure = {
+  def transformReduceExp(proc: AST.IR.Procedure): AST.IR.Procedure = {
     val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
@@ -914,7 +913,7 @@ import Anvil._
     return proc(body = body(blocks = blocks))
   }
 
-  def transformTemp(proc: AST.IR.Procedure): AST.IR.Procedure = {
+  def transformReduceTemp(proc: AST.IR.Procedure): AST.IR.Procedure = {
     val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
     val blocks = body.blocks
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- blocks) yield (b.label, b))
@@ -929,9 +928,12 @@ import Anvil._
           def rest(): Unit = {
             grounds = grounds :+ TempExpSubstitutor(substMap, T).transformIRStmtGround(g).getOrElse(g)
           }
-
           g match {
             case g: AST.IR.Stmt.Assign.Temp =>
+              def restAssignTemp(): Unit = {
+                substMap = substMap + g.lhs ~> AST.IR.Exp.Temp(g.lhs, g.rhs.tipe, g.pos)
+                rest()
+              }
               g.rhs match {
                 case rhs: AST.IR.Exp.Bool => substMap = substMap + g.lhs ~> rhs
                 case rhs: AST.IR.Exp.Int => substMap = substMap + g.lhs ~> rhs
@@ -942,18 +944,31 @@ import Anvil._
                 case rhs: AST.IR.Exp.EnumElementRef => substMap = substMap + g.lhs ~> rhs
                 case rhs: AST.IR.Exp.Temp => substMap = substMap + g.lhs ~> substMap.get(rhs.n).get
                 case rhs: AST.IR.Exp.Unary =>
-                  substMap = substMap + g.lhs ~> rhs(exp = TempExpSubstitutor(substMap, T).transformIRExp(rhs.exp).getOrElse(rhs.exp))
+                  val newRhs = rhs(exp = TempExpSubstitutor(substMap, T).transformIRExp(rhs.exp).getOrElse(rhs.exp))
+                  if (newRhs.depth <= config.maxExpDepth) {
+                    substMap = substMap + g.lhs ~> newRhs
+                  } else {
+                    restAssignTemp()
+                  }
                 case rhs: AST.IR.Exp.Type =>
-                  substMap = substMap + g.lhs ~> rhs(exp = TempExpSubstitutor(substMap, T).transformIRExp(rhs.exp).getOrElse(rhs.exp))
+                  val newRhs = rhs(exp = TempExpSubstitutor(substMap, T).transformIRExp(rhs.exp).getOrElse(rhs.exp))
+                  if (newRhs.depth <= config.maxExpDepth) {
+                    substMap = substMap + g.lhs ~> newRhs
+                  } else {
+                    restAssignTemp()
+                  }
                 case rhs: AST.IR.Exp.Binary =>
                   val tes = TempExpSubstitutor(substMap, T)
-                  substMap = substMap + g.lhs ~> rhs(left = tes.transformIRExp(rhs.left).getOrElse(rhs.left),
+                  val newRhs = rhs(left = tes.transformIRExp(rhs.left).getOrElse(rhs.left),
                     right = tes.transformIRExp(rhs.right).getOrElse(rhs.right))
+                  if (newRhs.depth <= config.maxExpDepth) {
+                    substMap = substMap + g.lhs ~> newRhs
+                  } else {
+                    restAssignTemp()
+                  }
                 case _: AST.IR.Exp.Intrinsic => halt("Infeasible")
                 case _: AST.IR.Exp.If => halt("Infeasible")
-                case _ =>
-                  substMap = substMap + g.lhs ~> AST.IR.Exp.Temp(g.lhs, g.rhs.tipe, g.pos)
-                  rest()
+                case _ => restAssignTemp()
               }
             case _ => rest()
           }
@@ -996,9 +1011,9 @@ import Anvil._
     var maxOffset: Z = typeByteSize(cpType)
     if (proc.tipe.ret != AST.Typed.unit) {
       maxOffset = maxOffset + typeByteSize(spType)
-    }
-    if (isMain) {
-      maxOffset = maxOffset + typeByteSize(proc.tipe.ret)
+      if (isMain) {
+        maxOffset = maxOffset + typeByteSize(proc.tipe.ret)
+      }
     }
     {
       var m = HashMap.empty[String, Z]
@@ -1006,7 +1021,10 @@ import Anvil._
       for (param <- ops.ISZOps(proc.paramNames).zip(proc.tipe.args)) {
         val (id, t) = param
         m = m + id ~> offset
-        offset = offset + (if (isScalar(t)) typeByteSize(t) else typeByteSize(spType) + (if (isMain) typeByteSize(t) else 0))
+        val size: Z =
+          if (isScalar(t)) typeByteSize(t)
+          else if (isMain) typeByteSize(spType) + typeByteSize(t) else typeByteSize(spType)
+        offset = offset + size
       }
       blockLocalOffsetMap = blockLocalOffsetMap + blocks(0).label ~> (offset, m)
       maxOffset = offset
