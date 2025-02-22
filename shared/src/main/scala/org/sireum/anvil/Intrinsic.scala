@@ -96,13 +96,13 @@ object Intrinsic {
     }
   }
 
-  @datatype class SpecialRegister(val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
+  @datatype class SP(val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
     @strictpure def prettyST: ST = st"SP"
     @strictpure def numOfTemps: Z = 0
     @strictpure def depth: Z = 1
   }
 
-  @datatype class SpecialRegisterAssign(val isInc: B, val value: Z, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+  @datatype class SPAssign(val isInc: B, val value: Z, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def prettyST: ST = {
       val reg = "SP"
       if (isInc) if (value < 0) st"$reg = $reg - ${-value}" else st"$reg = $reg + $value" else st"$reg = $value"
@@ -116,7 +116,7 @@ object Intrinsic {
                             val context: AST.IR.MethodContext,
                             val id: String,
                             val pos: Position) extends AST.IR.Jump.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"goto $id@SP"
+    @strictpure def prettyST: ST = st"goto $id@0"
 
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
 
