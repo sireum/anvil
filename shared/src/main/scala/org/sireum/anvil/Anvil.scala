@@ -873,7 +873,7 @@ import Anvil._
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, e.pos)),
                   AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, paramOffsetMap.get(pid).get, e.pos), e.pos),
-                T, typeByteSize(t), parg, st"$pid = ${parg.prettyST}", t, parg.pos))
+                isSigned(t), typeByteSize(t), parg, st"$pid = ${parg.prettyST}", t, parg.pos))
             }
             var rgrounds = ISZ[AST.IR.Stmt.Ground]()
             for (i <- 0 until maxRegisters if lhsOpt.isEmpty || lhsOpt.get > i) {
@@ -928,7 +928,7 @@ import Anvil._
                     isSigned(spType), typeByteSize(spType), st"", spType, exp.pos))
                   if (isScalar(exp.tipe)) {
                     addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(lhsOffset,
-                      T, typeByteSize(spType), exp, st"$resultLocalId = ${exp.prettyST}", spType, exp.pos))
+                      isSigned(exp.tipe), typeByteSize(exp.tipe), exp, st"$resultLocalId = ${exp.prettyST}", exp.tipe, exp.pos))
                   } else {
                     addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset,
                       typeByteSize(p.context.t.ret), typeByteSize(exp.tipe), exp, st"$resultLocalId = ${exp.prettyST}",
