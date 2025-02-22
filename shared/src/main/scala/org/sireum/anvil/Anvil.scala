@@ -864,7 +864,7 @@ import Anvil._
                   AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeByteSize(cpType), e.pos), e.pos),
                 T, typeByteSize(spType),
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, e.pos)),
-                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, n, e.pos), e.pos),
+                  AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -n, e.pos), e.pos),
                 st"$resultLocalId@${typeByteSize(cpType)} = $n", spType, e.pos))
             }
             for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(mc.t.args)).zip(e.args)) {
