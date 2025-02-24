@@ -823,6 +823,10 @@ import Anvil._
         var blocks = ISZ[AST.IR.BasicBlock]()
         for (b <- p.body.asInstanceOf[AST.IR.Body.Basic].blocks) {
           def processInvoke(g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, label: Z): Unit = {
+            val numOfRegisters: Z = lhsOpt match {
+              case Some(lhs) => lhs
+              case _ => maxRegisters
+            }
             val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
             val called = procedureMap.get(mc).get
             if (!seen.contains(mc)) {
@@ -830,7 +834,7 @@ import Anvil._
             }
             val spAdd = procedureSizeMap.get(p.context).get
             var grounds = ISZ[AST.IR.Stmt.Ground]()
-            grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.SPAssign(T, spAdd + maxRegisters * 8, e.pos))
+            grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.SPAssign(T, spAdd + numOfRegisters * 8, e.pos))
 
             var offset: Z = 0
             var locals = ISZ[Intrinsic.Decl.Local](
@@ -858,7 +862,7 @@ import Anvil._
               T, typeByteSize(cpType), AST.IR.Exp.Int(cpType, label, e.pos), st"$returnLocalId@0 = $label", cpType, e.pos
             ))
             if (called.tipe.ret != AST.Typed.unit) {
-              val n = callResultOffsetMap.get(callResultId(e.id, e.pos)).get - (spAdd + maxRegisters * 8)
+              val n = callResultOffsetMap.get(callResultId(e.id, e.pos)).get - (spAdd + numOfRegisters * 8)
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, e.pos)),
                   AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeByteSize(cpType), e.pos), e.pos),
@@ -876,9 +880,9 @@ import Anvil._
                 isSigned(t), typeByteSize(t), parg, st"$pid = ${parg.prettyST}", t, parg.pos))
             }
             var rgrounds = ISZ[AST.IR.Stmt.Ground]()
-            for (i <- 0 until maxRegisters if lhsOpt.isEmpty || lhsOpt.get > i) {
+            for (i <- 0 until numOfRegisters if lhsOpt.isEmpty || lhsOpt.get > i) {
               val tempOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, e.pos)),
-                AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -(-(maxRegisters * 8) + i * 8), e.pos), e.pos)
+                AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -(-(numOfRegisters * 8) + i * 8), e.pos), e.pos)
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
                 tempOffset, F, 8, AST.IR.Exp.Temp(i, AST.Typed.u64, e.pos), st"save $$$i", AST.Typed.u64, e.pos))
               rgrounds = rgrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(i, tempOffset, F, 8, st"restore $$$i",
@@ -889,7 +893,7 @@ import Anvil._
             bgrounds = bgrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(T, F,
               for (i <- locals.size - 1 to 0 by -1) yield locals(i), e.pos))
             bgrounds = bgrounds :+ AST.IR.Stmt.Intrinsic(
-              Intrinsic.SPAssign(T, -(spAdd + maxRegisters * 8), e.pos))
+              Intrinsic.SPAssign(T, -(spAdd + numOfRegisters * 8), e.pos))
 
             lhsOpt match {
               case Some(lhs) =>
