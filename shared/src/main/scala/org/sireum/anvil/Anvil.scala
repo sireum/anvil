@@ -1653,14 +1653,17 @@ import Anvil._
         val sm = TypeChecker.buildTypeSubstMap(t.ids, None(), info.ast.typeParams, t.args, message.Reporter.create).get
         val tsubst = AST.Transformer(TypePrePostSubstitutor(sm))
         val params = HashSet ++ (for (p <- info.ast.params) yield p.id.value)
+        val context = t.ids :+ newInitId
+        val receiver = Option.some[AST.Exp](AST.Exp.Ident(AST.Id("this", AST.Attr(info.posOpt)),
+          AST.ResolvedAttr(info.posOpt, Some(AST.ResolvedInfo.LocalVar(context,
+            AST.ResolvedInfo.LocalVar.Scope.Current, F, T, "this")), Some(t))))
         for (v <- info.vars.values if !params.contains(v.ast.id.value)) {
           v.ast.initOpt match {
             case Some(ae) =>
               val tOpt = Option.some(ae.typedOpt.get.subst(sm))
-              r = r :+ AST.Stmt.Assign(AST.Exp.Select(
-                Some(AST.Exp.This(t.ids :+ newInitId, AST.TypedAttr(ae.asStmt.posOpt, tOpt))),
-                v.ast.id, ISZ(), AST.ResolvedAttr(ae.asStmt.posOpt, v.resOpt, tOpt)
-              ), tsubst.transformAssignExp(T, ae).resultOpt.getOrElse(ae), AST.Attr(v.posOpt))
+              r = r :+ AST.Stmt.Assign(AST.Exp.Select(receiver, v.ast.id, ISZ(),
+                AST.ResolvedAttr(ae.asStmt.posOpt, v.resOpt, tOpt)),
+                tsubst.transformAssignExp(T, ae).resultOpt.getOrElse(ae), AST.Attr(v.posOpt))
             case _ =>
           }
         }
