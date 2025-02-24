@@ -281,13 +281,6 @@ object Anvil {
     }
   }
 
-  @record class ConstructCollector(var constructs: ISZ[AST.IR.Exp.Construct]) extends AST.MIRTransformer {
-    override def postIRExpConstruct(o: AST.IR.Exp.Construct): MOption[AST.IR.Exp] = {
-      constructs = constructs :+ o
-      return MNone()
-    }
-  }
-
   val kind: String = "Anvil"
   val returnLocalId: String = "$ret"
   val resultLocalId: String = "$res"
