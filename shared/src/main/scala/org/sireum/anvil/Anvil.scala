@@ -318,19 +318,13 @@ import Anvil._
                       val id: String,
                       val config: Config) {
 
-  val spType: AST.Typed =
-    if (config.defaultBitWidth == 8) {
-      AST.Typed.s8
-    } else if (config.defaultBitWidth == 16) {
-      AST.Typed.s16
-    } else if (config.defaultBitWidth == 32) {
-      AST.Typed.s32
-    } else if (config.defaultBitWidth == 64) {
-      AST.Typed.s64
-    } else {
-      halt(s"Infeasible: ${config.defaultBitWidth}")
-    }
-  val cpType: AST.Typed = AST.Typed.u64
+  val spType: AST.Typed = AST.Typed.Name(ISZ("org", "sireum", "AnvilSP"), ISZ())
+  val cpType: AST.Typed = AST.Typed.Name(ISZ("org", "sireum", "AnvilCP"), ISZ())
+  val spTypeByteSize: Z = {
+    val n = computeBitwidth(config.memory) + 1
+    if (n % 8 == 0) n / 8 else (n / 8) + 1
+  }
+  val cpTypeByteSize: Z = 8
 
   def synthesize(fresh: lang.IRTranslator.Fresh, reporter: Reporter): HashSMap[ISZ[String], ST] = {
     val threeAddressCode = T
@@ -461,14 +455,14 @@ import Anvil._
         if (main.tipe.ret != AST.Typed.unit) {
           offset = offset + typeByteSize(spType) + typeByteSize(main.tipe.ret)
           Some(
-            st"- $$res (*(SP + ${typeByteSize(cpType)})) = ${globalSize + typeByteSize(cpType) + typeByteSize(spType)} (signed, size = ${typeByteSize(spType)}, data-size = ${typeByteSize(main.tipe.ret)})")
+            st"- $$res (*(SP + ${typeByteSize(cpType)})) = ${globalSize + typeByteSize(cpType) + typeByteSize(spType)} (${if (isSigned(spType)) "signed" else "unsigned"}, size = ${typeByteSize(spType)}, data-size = ${typeByteSize(main.tipe.ret)})")
         } else {
           None()
         }
       var paramsST = ISZ[ST]()
       for (param <- ops.ISZOps(main.paramNames).zip(main.tipe.args)) {
         if (!isScalar(param._2)) {
-          paramsST = paramsST :+ st"- for parameter ${param._1}: *(SP + $offset) = ${globalSize + offset + typeByteSize(spType)} (signed, size = ${typeByteSize(spType)}, data-size = ${typeByteSize(param._2)})"
+          paramsST = paramsST :+ st"- for parameter ${param._1}: *(SP + $offset) = ${globalSize + offset + typeByteSize(spType)} (${if (isSigned(spType)) "signed" else "unsigned"}, size = ${typeByteSize(spType)}, data-size = ${typeByteSize(param._2)})"
           offset = offset + typeByteSize(spType) + typeByteSize(param._2)
         } else {
           offset = offset + typeByteSize(param._2)
@@ -874,7 +868,7 @@ import Anvil._
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, e.pos)),
                   AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeByteSize(cpType), e.pos), e.pos),
-                T, typeByteSize(spType),
+                isSigned(spType), typeByteSize(spType),
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, e.pos)),
                   AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -n, e.pos), e.pos),
                 st"$resultLocalId@${typeByteSize(cpType)} = $n", spType, e.pos))
@@ -1410,18 +1404,18 @@ import Anvil._
       val (name, info) = ge
       if (!info.isScalar) {
         grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
-          AST.IR.Exp.Int(spType, offset, p.pos), T, typeByteSize(spType),
+          AST.IR.Exp.Int(spType, offset, p.pos), isSigned(spType), typeByteSize(spType),
           AST.IR.Exp.Int(spType, offset + typeByteSize(spType), p.pos), st"data address of ${(name, ".")} (size = ${typeByteSize(info.tipe)})", spType, p.pos))
       }
       offset = offset + info.size + info.dataSize
     }
     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
-      AST.IR.Exp.Int(cpType, offset, p.pos), F, typeByteSize(cpType),
+      AST.IR.Exp.Int(cpType, offset, p.pos), isSigned(cpType), typeByteSize(cpType),
       AST.IR.Exp.Int(cpType, 0, p.pos), st"$returnLocalId", cpType, p.pos))
     offset = offset + typeByteSize(cpType)
     if (p.tipe.ret != AST.Typed.unit) {
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
-        AST.IR.Exp.Int(spType, offset, p.pos), T, typeByteSize(spType),
+        AST.IR.Exp.Int(spType, offset, p.pos), isSigned(spType), typeByteSize(spType),
         AST.IR.Exp.Int(spType, offset + typeByteSize(spType), p.pos), st"data address of $resultLocalId (size = ${typeByteSize(p.tipe.ret)})", spType, p.pos))
       offset = offset + typeByteSize(spType)
       offset = offset + typeByteSize(p.tipe.ret)
@@ -1431,7 +1425,7 @@ import Anvil._
         offset = offset + typeByteSize(t)
       } else {
         grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
-          AST.IR.Exp.Int(spType, offset, p.pos), T, typeByteSize(spType),
+          AST.IR.Exp.Int(spType, offset, p.pos), isSigned(spType), typeByteSize(spType),
           AST.IR.Exp.Int(spType, offset + typeByteSize(spType), p.pos), st"data address of $id (size = ${typeByteSize(t)})", spType, p.pos))
         offset = offset + typeByteSize(spType)
         offset = offset + typeByteSize(t)
@@ -1551,6 +1545,8 @@ import Anvil._
         return r
       case AST.Typed.unit => return 0
       case AST.Typed.nothing => return 0
+      case `spType` => return spTypeByteSize
+      case `cpType` => return cpTypeByteSize
       case t: AST.Typed.Name =>
         if (t.ids == AST.Typed.isName || t.ids == AST.Typed.msName) {
           var r: Z = 4 // type sha
@@ -1621,6 +1617,8 @@ import Anvil._
       case AST.Typed.f32 =>
       case AST.Typed.f64 =>
       case AST.Typed.r =>
+      case `spType` =>
+      case `cpType` =>
       case _ => return isSubZ(t)
     }
     return T
@@ -1634,6 +1632,8 @@ import Anvil._
       case AST.Typed.f32 => return T
       case AST.Typed.f64 => return T
       case AST.Typed.r => return T
+      case `spType` => return F
+      case `cpType` => return F
       case _ => return subZOpt(t).get.ast.isSigned
     }
   }
@@ -1671,4 +1671,15 @@ import Anvil._
     }
     return r
   }
+
+  @pure def computeBitwidth(maxValue: Z): Z = {
+    var r: Z = 2
+    var i = 1
+    while (r < maxValue) {
+      r = r * 2
+      i = i + 1
+    }
+    return i
+  }
+
 }
