@@ -306,7 +306,7 @@ object Anvil {
     if (reporter.hasError) {
       return HashSMap.empty
     }
-    return Anvil(th, tsr, owner, id, config).synthesize(fresh, reporter)
+    return Anvil(th, tsr, owner, id, config, 0).synthesize(fresh, reporter)
   }
 }
 
@@ -316,15 +316,20 @@ import Anvil._
                       val tsr: TypeSpecializer.Result,
                       val owner: QName,
                       val id: String,
-                      val config: Config) {
+                      val config: Config,
+                      val numOfLocs: Z) {
 
-  val spType: AST.Typed = AST.Typed.Name(ISZ("org", "sireum", "AnvilSP"), ISZ())
-  val cpType: AST.Typed = AST.Typed.Name(ISZ("org", "sireum", "AnvilCP"), ISZ())
+  val spType: AST.Typed = AST.Typed.Name(ISZ("org", "sireum", "SP"), ISZ())
+  val cpType: AST.Typed = AST.Typed.Name(ISZ("org", "sireum", "CP"), ISZ())
   val spTypeByteSize: Z = {
     val n = computeBitwidth(config.memory) + 1
     if (n % 8 == 0) n / 8 else (n / 8) + 1
   }
-  val cpTypeByteSize: Z = 8
+  @memoize def cpTypeByteSize: Z = {
+    assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
+    val n = computeBitwidth(numOfLocs) + 1
+    return if (n % 8 == 0) n / 8 else (n / 8) + 1
+  }
 
   def synthesize(fresh: lang.IRTranslator.Fresh, reporter: Reporter): HashSMap[ISZ[String], ST] = {
     val threeAddressCode = T
@@ -403,17 +408,21 @@ import Anvil._
     program = transformProgram(irt.fresh, program)
     r = r + ISZ("ir", "2-program-transformed.sir") ~> program.prettyST
 
+    val numOfLocs: Z = ops.ISZOps(for (p <- program.procedures)
+      yield p.body.asInstanceOf[AST.IR.Body.Basic].blocks.size).foldLeft[Z]((r: Z, n: Z) => r + n, 0)
+    val anvil = Anvil(th, tsr, owner, id, config, numOfLocs + 1)
+
     var procedureMap = HashSMap.empty[AST.IR.MethodContext, AST.IR.Procedure]
     var procedureSizeMap = HashMap.empty[AST.IR.MethodContext, Z]
     var callResultOffsetMap = HashMap.empty[String, Z]
     program = {
       for (p <- program.procedures) {
-        val (maxOffset, p2, m) = transformOffset(globalMap, p)
+        val (maxOffset, p2, m) = anvil.transformOffset(globalMap, p)
         callResultOffsetMap = callResultOffsetMap ++ m.entries
         var proc = p2
         if (config.maxExpDepth != 1) {
-          proc = transformReduceExp(proc)
-          proc = transformTempCompress(proc)
+          proc = anvil.transformReduceExp(proc)
+          proc = anvil.transformTempCompress(proc)
         }
         procedureMap = procedureMap + proc.context ~> proc
         procedureSizeMap = procedureSizeMap + p2.context ~> maxOffset
@@ -431,7 +440,7 @@ import Anvil._
     val main = procedureMap.get(mainContext).get
     program = {
       val p = main(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
-        mergeProcedures(main, procedureMap, procedureSizeMap, callResultOffsetMap, maxRegisters)))
+        anvil.mergeProcedures(main, procedureMap, procedureSizeMap, callResultOffsetMap, maxRegisters)))
       program(procedures = ISZ(p))
     }
     r = r + ISZ("ir", "4-program-merged.sir") ~> program.prettyST
@@ -443,36 +452,36 @@ import Anvil._
       }
 
       var p = program.procedures(0)
-      p = transformSplitTest(fresh, p, isSPInc _)
-      p = transformMain(fresh, p, globalSize, globalMap)
-      p = transformCP(p)
+      p = anvil.transformSplitTest(fresh, p, isSPInc _)
+      p = anvil.transformMain(fresh, p, globalSize, globalMap)
+      p = anvil.transformCP(p)
       program(procedures = ISZ(p))
     }
 
     val header: ST = {
-      var offset: Z = typeByteSize(cpType)
+      var offset: Z = anvil.typeByteSize(cpType)
       val resOpt: Option[ST] =
         if (main.tipe.ret != AST.Typed.unit) {
-          offset = offset + typeByteSize(spType) + typeByteSize(main.tipe.ret)
+          offset = offset + anvil.typeByteSize(spType) + anvil.typeByteSize(main.tipe.ret)
           Some(
-            st"- $$res (*(SP + ${typeByteSize(cpType)})) = ${globalSize + typeByteSize(cpType) + typeByteSize(spType)} (${if (isSigned(spType)) "signed" else "unsigned"}, size = ${typeByteSize(spType)}, data-size = ${typeByteSize(main.tipe.ret)})")
+            st"- $$res (*(SP + ${anvil.typeByteSize(cpType)})) = ${globalSize + anvil.typeByteSize(cpType) + anvil.typeByteSize(spType)} (${if (anvil.isSigned(spType)) "signed" else "unsigned"}, size = ${anvil.typeByteSize(spType)}, data-size = ${anvil.typeByteSize(main.tipe.ret)})")
         } else {
           None()
         }
       var paramsST = ISZ[ST]()
       for (param <- ops.ISZOps(main.paramNames).zip(main.tipe.args)) {
         if (!isScalar(param._2)) {
-          paramsST = paramsST :+ st"- for parameter ${param._1}: *(SP + $offset) = ${globalSize + offset + typeByteSize(spType)} (${if (isSigned(spType)) "signed" else "unsigned"}, size = ${typeByteSize(spType)}, data-size = ${typeByteSize(param._2)})"
-          offset = offset + typeByteSize(spType) + typeByteSize(param._2)
+          paramsST = paramsST :+ st"- for parameter ${param._1}: *(SP + $offset) = ${globalSize + offset + anvil.typeByteSize(spType)} (${if (anvil.isSigned(spType)) "signed" else "unsigned"}, size = ${anvil.typeByteSize(spType)}, data-size = ${anvil.typeByteSize(param._2)})"
+          offset = offset + anvil.typeByteSize(spType) + anvil.typeByteSize(param._2)
         } else {
-          offset = offset + typeByteSize(param._2)
+          offset = offset + anvil.typeByteSize(param._2)
         }
       }
       st"""/*
           |   Note that globalSize = $globalSize, max registers (beside SP and CP) = $maxRegisters, and initially:
-          |   - register CP (code pointer) = 1 (unsigned, byte size = ${typeByteSize(cpType)})
-          |   - register SP (stack pointer) = $globalSize (signed, byte size = ${typeByteSize(spType)})
-          |   - $$ret (*SP) = 0 (signed, byte size = ${typeByteSize(cpType)})
+          |   - register CP (code pointer) = 1 (${if (anvil.isSigned(cpType)) "signed" else "unsigned"}, byte size = ${anvil.typeByteSize(cpType)})
+          |   - register SP (stack pointer) = $globalSize (${if (anvil.isSigned(spType)) "signed" else "unsigned"}, byte size = ${anvil.typeByteSize(spType)})
+          |   - $$ret (*SP) = 0 (signed, byte size = ${anvil.typeByteSize(cpType)})
           |   $resOpt
           |   ${(paramsST, "\n")}
           |
@@ -496,7 +505,13 @@ import Anvil._
       st"""$header
           |${program.prettyST}"""
 
-    r = r ++ HwSynthesizer(this).printProcedure(id, program.procedures(0), globalSize, maxRegisters).entries
+    {
+      val nlocs = program.procedures(0).body.asInstanceOf[AST.IR.Body.Basic].blocks.size
+      val cpMax = pow(2, anvil.typeByteSize(cpType) * 8)
+      assert(nlocs <= cpMax, s"nlocs ($nlocs) > cpMax (2 ** (${anvil.typeByteSize(cpType) * 8}) == $cpMax)")
+    }
+
+    r = r ++ HwSynthesizer(anvil).printProcedure(id, program.procedures(0), globalSize, maxRegisters).entries
 
     return r
   }
@@ -1546,7 +1561,9 @@ import Anvil._
       case AST.Typed.unit => return 0
       case AST.Typed.nothing => return 0
       case `spType` => return spTypeByteSize
-      case `cpType` => return cpTypeByteSize
+      case `cpType` =>
+        assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
+        return cpTypeByteSize
       case t: AST.Typed.Name =>
         if (t.ids == AST.Typed.isName || t.ids == AST.Typed.msName) {
           var r: Z = 4 // type sha
@@ -1618,7 +1635,7 @@ import Anvil._
       case AST.Typed.f64 =>
       case AST.Typed.r =>
       case `spType` =>
-      case `cpType` =>
+      case `cpType` => assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
       case _ => return isSubZ(t)
     }
     return T
@@ -1633,7 +1650,9 @@ import Anvil._
       case AST.Typed.f64 => return T
       case AST.Typed.r => return T
       case `spType` => return F
-      case `cpType` => return F
+      case `cpType` =>
+        assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
+        return F
       case _ => return subZOpt(t).get.ast.isSigned
     }
   }
@@ -1680,6 +1699,16 @@ import Anvil._
       i = i + 1
     }
     return i
+  }
+
+  @pure def pow(n: Z, m: Z): Z = {
+    var r: Z = 1
+    var i: Z = 0
+    while (i < m) {
+      r = r * n
+      i = i + 1
+    }
+    return r
   }
 
 }
