@@ -341,6 +341,24 @@ import Anvil._
       var procedures = ISZ[AST.IR.Procedure]()
       var globalSize: Z = 0
 
+      var mainOpt = Option.none[AST.IR.Procedure]()
+      for (ms <- tsr.methods.values; m <- ms.elements) {
+        var p = irt.translateMethod(F, None(), m.info.owner, m.info.ast)
+        p = p(body = irt.toBasic(p.body.asInstanceOf[AST.IR.Body.Block], p.pos))
+        procedures = procedures :+ p
+        if (m.info.owner == owner && m.info.ast.sig.id.value == id) {
+          mainOpt = Some(p)
+        }
+      }
+      for (t <- tsr.typeImpl.nodes.keys) {
+        val stmts = classInit(t)
+        if (stmts.nonEmpty) {
+          val posOpt = th.typeMap.get(t.ids).get.posOpt
+          procedures = procedures :+ irt.translateMethodH(T, Some(t), t.ids, newInitId, ISZ(),
+            ISZ("this"), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(t), AST.Typed.unit), posOpt.get,
+            Some(AST.Body(stmts, ISZ())))
+        }
+      }
       for (vs <- tsr.objectVars.entries) {
         val (owner, ids) = vs
         var objPosOpt: Option[message.Position] = th.nameMap.get(owner) match {
@@ -372,15 +390,6 @@ import Anvil._
         ), pos) +: body.block.stmts))
         val p = objInit(body = irt.toBasic(body, objInit.pos))
         procedures = procedures :+ p
-      }
-      var mainOpt = Option.none[AST.IR.Procedure]()
-      for (ms <- tsr.methods.values; m <- ms.elements) {
-        var p = irt.translateMethod(F, None(), m.info.owner, m.info.ast)
-        p = p(body = irt.toBasic(p.body.asInstanceOf[AST.IR.Body.Block], p.pos))
-        procedures = procedures :+ p
-        if (m.info.owner == owner && m.info.ast.sig.id.value == id) {
-          mainOpt = Some(p)
-        }
       }
       var globalMap = HashSMap.empty[ISZ[String], GlobalInfo]
       val spSize = typeByteSize(spType)
@@ -1673,9 +1682,7 @@ import Anvil._
         val tsubst = AST.Transformer(TypePrePostSubstitutor(sm))
         val params = HashSet ++ (for (p <- info.ast.params) yield p.id.value)
         val context = t.ids :+ newInitId
-        val receiver = Option.some[AST.Exp](AST.Exp.Ident(AST.Id("this", AST.Attr(info.posOpt)),
-          AST.ResolvedAttr(info.posOpt, Some(AST.ResolvedInfo.LocalVar(context,
-            AST.ResolvedInfo.LocalVar.Scope.Current, F, T, "this")), Some(t))))
+        val receiver = Option.some[AST.Exp](AST.Exp.This(context, AST.TypedAttr(info.posOpt, Some(t))))
         for (v <- info.vars.values if !params.contains(v.ast.id.value)) {
           v.ast.initOpt match {
             case Some(ae) =>
