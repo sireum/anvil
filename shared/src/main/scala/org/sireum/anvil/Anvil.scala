@@ -33,7 +33,6 @@ import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
 import org.sireum.U32._
-import org.sireum.lang.ast.Util.TypePrePostSubstitutor
 
 object Anvil {
 
@@ -281,6 +280,29 @@ object Anvil {
     }
   }
 
+  @record class SPDetector(var hasSP: B) extends AST.MIRTransformer {
+    override def postIRStmtIntrinsic(o: AST.IR.Stmt.Intrinsic): MOption[AST.IR.Stmt.Ground] = {
+      o.intrinsic match {
+        case intrinsic: Intrinsic.TempLoad => transformIRExp(intrinsic.rhsOffset)
+        case intrinsic: Intrinsic.Copy =>
+          transformIRExp(intrinsic.lhsOffset)
+          transformIRExp(intrinsic.rhs)
+        case intrinsic: Intrinsic.StoreScalar =>
+          transformIRExp(intrinsic.lhsOffset)
+          transformIRExp(intrinsic.rhs)
+        case _: Intrinsic.SPAssign =>
+        case _: Intrinsic.Decl =>
+      }
+      return MNone()
+    }
+    override def postIRExpIntrinsic(o: AST.IR.Exp.Intrinsic): MOption[AST.IR.Exp] = {
+      if (o.intrinsic.isInstanceOf[Intrinsic.SP]) {
+        hasSP = T
+      }
+      return MNone()
+    }
+  }
+
   val kind: String = "Anvil"
   val returnLocalId: String = "$ret"
   val resultLocalId: String = "$res"
@@ -448,13 +470,9 @@ import Anvil._
     r = r + ISZ("ir", "4-program-merged.sir") ~> program.prettyST
 
     program = {
-      @strictpure def isSPInc(g: AST.IR.Stmt.Ground): B = g match {
-        case g: AST.IR.Stmt.Intrinsic => g.intrinsic.isInstanceOf[Intrinsic.SPAssign]
-        case _ => F
-      }
-
       var p = program.procedures(0)
-      p = anvil.transformSplitTest(fresh, p, isSPInc _)
+      p = anvil.transformSPInc(fresh, p)
+      p = anvil.transformMergeSPInc(p)
       p = anvil.transformMain(fresh, p, globalSize, globalMap)
       p = anvil.transformCP(p)
       program(procedures = ISZ(p))
@@ -1411,6 +1429,59 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
+  def transformSPInc(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      var i: Z = 0
+      var split = b.grounds.size
+      val spd = SPDetector(F)
+      while (i < b.grounds.size) {
+        b.grounds(i) match {
+          case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.SPAssign) if intrinsic.isInc =>
+            var j = i + 1
+            while (j < b.grounds.size) {
+              spd.transformIRStmtGround(b.grounds(j))
+              if (spd.hasSP && split == b.grounds.size) {
+                split = j
+              }
+              j = j + 1
+            }
+          case _ =>
+        }
+        i = i + 1
+      }
+      if (split == b.grounds.size) {
+        blocks = blocks :+ b
+      } else {
+        val label = fresh.label()
+        val b1 = AST.IR.BasicBlock(b.label, ops.ISZOps(b.grounds).slice(0, split), AST.IR.Jump.Goto(label, b.grounds(split - 1).pos))
+        val b2 = AST.IR.BasicBlock(label, ops.ISZOps(b.grounds).slice(split, b.grounds.size), b.jump)
+        blocks = blocks :+ b1 :+ b2
+      }
+    }
+    return p(body = body(blocks = blocks))
+  }
+
+  def transformMergeSPInc(p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+    for (b <- body.blocks if blockMap.contains(b.label)) {
+      b.jump match {
+        case j: AST.IR.Jump.Goto =>
+          val b2 = blockMap.get(j.label).get
+          b2.grounds match {
+            case ISZ(AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.SPAssign), _*) if intrinsic.isInc =>
+              blockMap = blockMap -- ISZ(b2.label)
+              blockMap = blockMap + b.label ~> b(grounds = b.grounds ++ b2.grounds, jump = b2.jump)
+            case _ =>
+          }
+        case _ =>
+      }
+    }
+    return p(body = body(blocks = blockMap.values))
+  }
+
   def transformMain(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, globalSize: Z, globalMap: HashSMap[QName, GlobalInfo]): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var grounds = ISZ[AST.IR.Stmt.Ground](
@@ -1672,7 +1743,7 @@ import Anvil._
     th.typeMap.get(t.ids).get match {
       case info: TypeInfo.Adt if !info.ast.isRoot =>
         val sm = TypeChecker.buildTypeSubstMap(t.ids, None(), info.ast.typeParams, t.args, message.Reporter.create).get
-        val tsubst = AST.Transformer(TypePrePostSubstitutor(sm))
+        val tsubst = AST.Transformer(AST.Util.TypePrePostSubstitutor(sm))
         val params = HashSet ++ (for (p <- info.ast.params) yield p.id.value)
         val context = t.ids :+ newInitId
         val receiver = Option.some[AST.Exp](AST.Exp.This(context, AST.TypedAttr(info.posOpt, Some(t))))
