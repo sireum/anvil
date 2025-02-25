@@ -398,10 +398,7 @@ import Anvil._
           AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), pos, Some(AST.Body(stmts, ISZ())))
         var body = objInit.body.asInstanceOf[AST.IR.Body.Block]
         body = body(block = body.block(stmts = AST.IR.Stmt.Block(ISZ(
-          AST.IR.Stmt.If(AST.IR.Exp.GlobalVarRef(name, AST.Typed.b, pos),
-            AST.IR.Stmt.Block(ISZ(AST.IR.Stmt.Return(None(), pos)), pos),
-            AST.IR.Stmt.Block(ISZ(), pos), pos),
-          AST.IR.Stmt.Assign.Global(name, AST.Typed.b, AST.IR.Exp.Bool(T, pos), pos)
+          AST.IR.Stmt.Assign.Global(owner, AST.Typed.b, AST.IR.Exp.Bool(T, pos), pos)
         ), pos) +: body.block.stmts))
         val p = objInit(body = irt.toBasic(body, objInit.pos))
         procedures = procedures :+ p
@@ -464,7 +461,7 @@ import Anvil._
     val main = procedureMap.get(mainContext).get
     program = {
       val p = main(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
-        anvil.mergeProcedures(main, procedureMap, procedureSizeMap, callResultOffsetMap, maxRegisters)))
+        anvil.mergeProcedures(main, fresh, procedureMap, procedureSizeMap, callResultOffsetMap, maxRegisters)))
       program(procedures = ISZ(p))
     }
     r = r + ISZ("ir", "4-program-merged.sir") ~> program.prettyST
@@ -488,10 +485,14 @@ import Anvil._
         } else {
           None()
         }
-      var paramsST = ISZ[ST]()
+      var globalParamSTs = ISZ[ST]()
+      for (pair <- globalMap.entries) {
+        val (name, info) = pair
+        globalParamSTs = globalParamSTs :+ st"- global ${(name, ".")}: ${info.tipe} @[offset = ${info.offset}, size = ${info.size}, data-size = ${info.dataSize}]"
+      }
       for (param <- ops.ISZOps(main.paramNames).zip(main.tipe.args)) {
         if (!isScalar(param._2)) {
-          paramsST = paramsST :+ st"- for parameter ${param._1}: *(SP + $offset) = ${globalSize + offset + anvil.typeByteSize(spType)} (${if (anvil.isSigned(spType)) "signed" else "unsigned"}, size = ${anvil.typeByteSize(spType)}, data-size = ${anvil.typeByteSize(param._2)})"
+          globalParamSTs = globalParamSTs :+ st"- for parameter ${param._1}: *(SP + $offset) = ${globalSize + offset + anvil.typeByteSize(spType)} (${if (anvil.isSigned(spType)) "signed" else "unsigned"}, size = ${anvil.typeByteSize(spType)}, data-size = ${anvil.typeByteSize(param._2)})"
           offset = offset + anvil.typeByteSize(spType) + anvil.typeByteSize(param._2)
         } else {
           offset = offset + anvil.typeByteSize(param._2)
@@ -503,7 +504,7 @@ import Anvil._
           |   - register SP (stack pointer) = $globalSize (${if (anvil.isSigned(spType)) "signed" else "unsigned"}, byte size = ${anvil.typeByteSize(spType)})
           |   - $$ret (*SP) = 0 (signed, byte size = ${anvil.typeByteSize(cpType)})
           |   $resOpt
-          |   ${(paramsST, "\n")}
+          |   ${(globalParamSTs, "\n")}
           |
           |   Also note that IS/MS bytearray consists of:
           |   - the first 4 bytes of the IS/MS type string SHA3 encoding
@@ -820,9 +821,41 @@ import Anvil._
     return transformSplitTest(fresh, p(body = body(blocks = blocks)), isInvoke _)
   }
 
+  def transformGlobalVarRef(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      var block = b
+      for (g <- b.grounds) {
+        g match {
+          case g@AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.GlobalVarRef, pos) =>
+            val owner = ops.ISZOps(rhs.name).dropRight(1)
+            if (p.owner :+ p.id != owner) {
+              val label1 = fresh.label()
+              val label2 = fresh.label()
+              blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.If(AST.IR.Exp.GlobalVarRef(
+                owner, AST.Typed.b, pos), label2, label1, pos))
+              blocks = blocks :+ AST.IR.BasicBlock(label1, ISZ(AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, owner, objInitId,
+                ISZ(), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), AST.Typed.unit, pos))),
+                AST.IR.Jump.Goto(label2, pos))
+              grounds = ISZ(g)
+              block = b(label = label2, grounds = grounds)
+            } else {
+              grounds = grounds :+ g
+            }
+          case _ => grounds = grounds :+ g
+        }
+      }
+      blocks = blocks :+ block(grounds = grounds)
+    }
+    return p(body = body(blocks = blocks))
+  }
+
   def transformProgram(fresh: lang.IRTranslator.Fresh, program: AST.IR.Program): AST.IR.Program = {
     @pure def transform(p: AST.IR.Procedure): AST.IR.Procedure = {
       var r = p
+      r = transformGlobalVarRef(fresh, r)
       r = transformApplyConstructResult(fresh, r)
       r = transformEmptyBlock(r)
       r = transformReduceTemp(r)
@@ -844,7 +877,16 @@ import Anvil._
     return s"$constructLocalId@[${pos.beginLine},${pos.beginColumn}].${sha3(pos.string)}"
   }
 
+  @pure def countNumOfIncomingJumps(blocks: ISZ[AST.IR.BasicBlock]): HashMap[Z, Z] = {
+    var r = HashMap ++ (for (b <- blocks) yield (b.label, z"0"))
+    for (b <- blocks; target <- b.jump.targets) {
+      r = r + target ~> (r.get(target).get + 1)
+    }
+    return r
+  }
+
   def mergeProcedures(main: AST.IR.Procedure,
+                      fresh: lang.IRTranslator.Fresh,
                       procedureMap: HashSMap[AST.IR.MethodContext, AST.IR.Procedure],
                       procedureSizeMap: HashMap[AST.IR.MethodContext, Z],
                       callResultOffsetMap: HashMap[String, Z],
@@ -858,7 +900,9 @@ import Anvil._
         seen = seen + p.context
         var addBeginningMap = HashSMap.empty[Z, ISZ[AST.IR.Stmt.Ground]]
         var blocks = ISZ[AST.IR.BasicBlock]()
-        for (b <- p.body.asInstanceOf[AST.IR.Body.Basic].blocks) {
+        val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+        val m = countNumOfIncomingJumps(body.blocks)
+        for (b <- body.blocks) {
           def processInvoke(g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, label: Z): Unit = {
             val numOfRegisters: Z = lhsOpt match {
               case Some(lhs) => lhs
@@ -949,13 +993,24 @@ import Anvil._
             blocks = blocks :+ b(grounds = grounds,
               jump = AST.IR.Jump.Goto(called.body.asInstanceOf[AST.IR.Body.Basic].blocks(0).label, e.pos))
           }
+          def processInvokeH(g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, lbl: Z): Unit = {
+            var label = lbl
+            if (m.get(label).get != 1) {
+              label = fresh.label()
+            }
+            processInvoke(g, lhsOpt, e, label)
+            if (label != lbl) {
+              blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(lbl, e.pos))
+            }
+          }
 
           b.jump match {
             case j: AST.IR.Jump.Goto if b.grounds.size == 1 =>
               b.grounds(0) match {
-                case g: AST.IR.Stmt.Expr => processInvoke(g, None(), g.exp, j.label)
+                case g: AST.IR.Stmt.Expr =>
+                  processInvokeH(g, None(), g.exp, j.label)
                 case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Apply] =>
-                  processInvoke(g, Some(g.lhs), g.rhs.asInstanceOf[AST.IR.Exp.Apply], j.label)
+                  processInvokeH(g, Some(g.lhs), g.rhs.asInstanceOf[AST.IR.Exp.Apply], j.label)
                 case _ => blocks = blocks :+ b
               }
             case j: AST.IR.Jump.Return =>
@@ -1466,9 +1521,10 @@ import Anvil._
   def transformMergeSPInc(p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+    val m = countNumOfIncomingJumps(body.blocks)
     for (b <- body.blocks if blockMap.contains(b.label)) {
       b.jump match {
-        case j: AST.IR.Jump.Goto =>
+        case j: AST.IR.Jump.Goto if m.get(j.label).get == 1 =>
           val b2 = blockMap.get(j.label).get
           b2.grounds match {
             case ISZ(AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.SPAssign), _*) if intrinsic.isInc =>
