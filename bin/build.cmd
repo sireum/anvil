@@ -115,7 +115,7 @@ def compile(): Unit = {
 def test(): Unit = {
   compile()
   println("Running jvm tests ...")
-  proc"java -jar $sireumJar proyek test --project $projectStandalone --packages org.sireum $home org.sireum.anvil".
+  proc"java -jar $sireumJar proyek test --project $projectStandalone $home org.sireum.anvil".
     console.echo.runCheck()
   println()
 }
