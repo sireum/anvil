@@ -19,7 +19,6 @@ exit /B %errorlevel%
 import org.sireum._
 import org.sireum.project.ProjectUtil._
 import org.sireum.project.Project
-import org.sireum.project.PublishInfo.Developer
 
 val library = "library"
 
@@ -42,7 +41,7 @@ val (shared, jvm) = moduleSharedJvmPub(
     desc = "Anvil",
     url = "github.com/sireum/anvil",
     licenses = bsd2,
-    devs = ISZ(robby)
+    devs = ISZ(robby, kejunChen)
   )
 )
 
