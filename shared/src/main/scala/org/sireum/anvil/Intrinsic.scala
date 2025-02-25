@@ -57,13 +57,13 @@ object Intrinsic {
   }
 
   // Replaces AST.IR.Stmt.Assign.Local, AST.IR.Stmt.Assign.Field, AST.IR.Stmt.Assign.Global, AST.IR.Stmt.Assign.Index
-  @datatype class StoreScalar(val lhsOffset: AST.IR.Exp,
-                              val isSigned: B,
-                              val bytes: Z,
-                              val rhs: AST.IR.Exp,
-                              val comment: ST,
-                              val tipe: AST.Typed,
-                              val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+  @datatype class Store(val lhsOffset: AST.IR.Exp,
+                        val isSigned: B,
+                        val bytes: Z,
+                        val rhs: AST.IR.Exp,
+                        val comment: ST,
+                        val tipe: AST.Typed,
+                        val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def prettyST: ST = st"*${lhsOffset.prettyST} = ${rhs.prettyST} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
 
     @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps - rhs.numOfTemps)

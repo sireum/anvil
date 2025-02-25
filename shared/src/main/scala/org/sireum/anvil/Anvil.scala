@@ -70,7 +70,7 @@ object Anvil {
         case o: Intrinsic.Copy =>
           transformIRExp(o.lhsOffset)
           transformIRExp(o.rhs)
-        case o: Intrinsic.StoreScalar =>
+        case o: Intrinsic.Store =>
           transformIRExp(o.lhsOffset)
           transformIRExp(o.rhs)
         case o: Intrinsic.TempLoad =>
@@ -272,7 +272,7 @@ object Anvil {
 
     override def postIRStmtIntrinsic(o: AST.IR.Stmt.Intrinsic): MOption[AST.IR.Stmt.Ground] = {
       o.intrinsic match {
-        case in@Intrinsic.StoreScalar(AST.IR.Exp.Intrinsic(_: Intrinsic.SP), _, _, i@AST.IR.Exp.Int(_, cp, _), _, _, _) =>
+        case in@Intrinsic.Store(AST.IR.Exp.Intrinsic(_: Intrinsic.SP), _, _, i@AST.IR.Exp.Int(_, cp, _), _, _, _) =>
           return MSome(o(intrinsic = in(rhs = i(value = cpSubstMap.get(cp).get))))
         case _ =>
       }
@@ -287,7 +287,7 @@ object Anvil {
         case intrinsic: Intrinsic.Copy =>
           transformIRExp(intrinsic.lhsOffset)
           transformIRExp(intrinsic.rhs)
-        case intrinsic: Intrinsic.StoreScalar =>
+        case intrinsic: Intrinsic.Store =>
           transformIRExp(intrinsic.lhsOffset)
           transformIRExp(intrinsic.rhs)
         case _: Intrinsic.SPAssign =>
@@ -894,13 +894,13 @@ import Anvil._
               offset = offset + size
             }
             grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(F, F, locals, e.pos))
-            grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
+            grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
               AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, e.pos)),
               T, typeByteSize(cpType), AST.IR.Exp.Int(cpType, label, e.pos), st"$returnLocalId@0 = $label", cpType, e.pos
             ))
             if (called.tipe.ret != AST.Typed.unit) {
               val n = callResultOffsetMap.get(callResultId(e.id, e.pos)).get - (spAdd + numOfRegisters * 8)
-              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
+              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, e.pos)),
                   AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeByteSize(cpType), e.pos), e.pos),
                 isSigned(spType), typeByteSize(spType),
@@ -911,7 +911,7 @@ import Anvil._
             for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(mc.t.args)).zip(e.args)) {
               val ((pid, pt), parg) = param
               val t: AST.Typed = if (isScalar(pt)) pt else spType
-              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
+              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, e.pos)),
                   AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, paramOffsetMap.get(pid).get, e.pos), e.pos),
                 isSigned(t), typeByteSize(t), parg, st"$pid = ${parg.prettyST}", t, parg.pos))
@@ -920,7 +920,7 @@ import Anvil._
             for (i <- 0 until numOfRegisters if lhsOpt.isEmpty || lhsOpt.get > i) {
               val tempOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, e.pos)),
                 AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -(-(numOfRegisters * 8) + i * 8), e.pos), e.pos)
-              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
+              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
                 tempOffset, F, 8, AST.IR.Exp.Temp(i, AST.Typed.u64, e.pos), st"save $$$i", AST.Typed.u64, e.pos))
               rgrounds = rgrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(i, tempOffset, F, 8, st"restore $$$i",
                 AST.Typed.u64, e.pos))
@@ -968,7 +968,7 @@ import Anvil._
                       AST.IR.Exp.Int(spType, typeByteSize(cpType), exp.pos), exp.pos),
                     isSigned(spType), typeByteSize(spType), st"", spType, exp.pos))
                   if (isScalar(exp.tipe)) {
-                    addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(lhsOffset,
+                    addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset,
                       isSigned(exp.tipe), typeByteSize(exp.tipe), exp, st"$resultLocalId = ${exp.prettyST}", exp.tipe, exp.pos))
                   } else {
                     addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset,
@@ -1159,7 +1159,7 @@ import Anvil._
                   locals = locals :+ Intrinsic.Decl.Local(offset, size, l.id, l.tipe)
                 }
                 if (assignSP) {
-                  assignSPs = assignSPs :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
+                  assignSPs = assignSPs :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
                     AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, g.pos)),
                       AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, offset, g.pos), g.pos),
                     isSigned(spType), typeByteSize(spType),
@@ -1180,7 +1180,7 @@ import Anvil._
                   val newRhs = OffsetSubsitutor(this, m, globalMap).transformIRExp(rhs).getOrElse(rhs)
                   val globalOffset = AST.IR.Exp.Int(spType, globalMap.get(name).get.offset, pos)
                   if (isScalar(tipe)) {
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(globalOffset, isSigned(tipe),
+                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(globalOffset, isSigned(tipe),
                       typeByteSize(tipe), newRhs, g.prettyST, tipe, g.pos))
                   } else {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(globalOffset, typeByteSize(tipe),
@@ -1190,7 +1190,7 @@ import Anvil._
                   val newRhs = OffsetSubsitutor(this, m, globalMap).transformIRExp(rhs).getOrElse(rhs)
                   val localOffset = m.get(lhs).get
                   if (isScalar(t)) {
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
+                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
                       AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, newRhs.pos)),
                         AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, newRhs.pos), newRhs.pos),
                       T, typeByteSize(t), newRhs, st"$lhs = ${newRhs.prettyST}", t, pos))
@@ -1205,7 +1205,7 @@ import Anvil._
                   val lhsOffset = AST.IR.Exp.Binary(spType, receiver, AST.IR.Exp.Binary.Op.Add,
                     AST.IR.Exp.Int(spType, offset, rhs.pos), rhs.pos)
                   if (isScalar(ft)) {
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(lhsOffset, isSigned(ft),
+                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset, isSigned(ft),
                       typeByteSize(ft), rhs, g.prettyST, ft, pos))
                   } else {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset, typeByteSize(ft),
@@ -1239,7 +1239,7 @@ import Anvil._
                     AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, 4 + typeByteSize(AST.Typed.z), rcv.pos), rcv.pos)
                   val receiverOffset = AST.IR.Exp.Binary(spType, receiver, AST.IR.Exp.Binary.Op.Add, elementOffset, pos)
                   if (isScalar(elementType)) {
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(receiverOffset,
+                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(receiverOffset,
                       isSigned(elementType), typeByteSize(elementType), newRhs, g.prettyST, elementType, g.pos))
                   } else {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(receiverOffset, typeByteSize(elementType),
@@ -1324,14 +1324,14 @@ import Anvil._
                         AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset, g.pos),
                         g.pos)
                       val sha = sha3(rhs.tipe.string)
-                      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(lhsOffset, F, 4,
+                      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset, F, 4,
                         AST.IR.Exp.Int(AST.Typed.u32, sha.toZ, g.pos),
                         st"sha3 type signature of ${rhs.tipe}: 0x$sha", AST.Typed.u32, g.pos))
                       if (rhs.tipe.ids == AST.Typed.isName || rhs.tipe.ids == AST.Typed.msName) {
                         val sizeOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.SP(spType, g.pos)),
                           AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset + 4, g.pos),
                           g.pos)
-                        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(sizeOffset,
+                        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(sizeOffset,
                           isSigned(AST.Typed.z), typeByteSize(AST.Typed.z), AST.IR.Exp.Int(AST.Typed.z, rhs.args.size, g.pos),
                           st"size of ${rhs.prettyST}", AST.Typed.z, g.pos))
                       }
@@ -1491,18 +1491,18 @@ import Anvil._
     for (ge <- globalMap.entries) {
       val (name, info) = ge
       if (!info.isScalar) {
-        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
+        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
           AST.IR.Exp.Int(spType, offset, p.pos), isSigned(spType), typeByteSize(spType),
           AST.IR.Exp.Int(spType, offset + typeByteSize(spType), p.pos), st"data address of ${(name, ".")} (size = ${typeByteSize(info.tipe)})", spType, p.pos))
       }
       offset = offset + info.size + info.dataSize
     }
-    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
+    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
       AST.IR.Exp.Int(cpType, offset, p.pos), isSigned(cpType), typeByteSize(cpType),
       AST.IR.Exp.Int(cpType, 0, p.pos), st"$returnLocalId", cpType, p.pos))
     offset = offset + typeByteSize(cpType)
     if (p.tipe.ret != AST.Typed.unit) {
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
+      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(spType, offset, p.pos), isSigned(spType), typeByteSize(spType),
         AST.IR.Exp.Int(spType, offset + typeByteSize(spType), p.pos), st"data address of $resultLocalId (size = ${typeByteSize(p.tipe.ret)})", spType, p.pos))
       offset = offset + typeByteSize(spType)
@@ -1512,7 +1512,7 @@ import Anvil._
       if (isScalar(t)) {
         offset = offset + typeByteSize(t)
       } else {
-        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.StoreScalar(
+        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
           AST.IR.Exp.Int(spType, offset, p.pos), isSigned(spType), typeByteSize(spType),
           AST.IR.Exp.Int(spType, offset + typeByteSize(spType), p.pos), st"data address of $id (size = ${typeByteSize(t)})", spType, p.pos))
         offset = offset + typeByteSize(spType)
