@@ -5,6 +5,6 @@ object Foo {
   var x: Z = 2 * 4
 }
 
-def foo(): Z = {
+def global(): Z = {
   return Foo.x
 }
