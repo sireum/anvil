@@ -42,5 +42,4 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
     r = r + ISZ(name) ~> o.prettyST
     return
   }
-
 }
