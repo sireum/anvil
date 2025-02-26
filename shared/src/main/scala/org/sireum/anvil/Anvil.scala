@@ -410,7 +410,6 @@ import Anvil._
             v.ast.initOpt.get, AST.Attr(v.posOpt))
         }
         val pos = objPosOpt.get
-        val name = owner :+ objInitId
         val objInit = irt.translateMethodH(F, None(), owner, objInitId, ISZ(), ISZ(),
           AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), pos, Some(AST.Body(stmts, ISZ())))
         var body = objInit.body.asInstanceOf[AST.IR.Body.Block]
@@ -517,7 +516,7 @@ import Anvil._
       }
       st"""/*
           |   Note that globalSize = $globalSize, max registers (beside SP and CP) = $maxRegisters, and initially:
-          |   - register CP (code pointer) = 1 (${if (anvil.isSigned(cpType)) "signed" else "unsigned"}, byte size = ${anvil.typeByteSize(cpType)})
+          |   - register CP (code pointer) = 2 (${if (anvil.isSigned(cpType)) "signed" else "unsigned"}, byte size = ${anvil.typeByteSize(cpType)})
           |   - register SP (stack pointer) = $globalSize (${if (anvil.isSigned(spType)) "signed" else "unsigned"}, byte size = ${anvil.typeByteSize(spType)})
           |   - $$ret (*SP) = 0 (signed, byte size = ${anvil.typeByteSize(cpType)})
           |   $resOpt
@@ -649,7 +648,7 @@ import Anvil._
 
     for (b <- blocks) {
       if (b.label >= 1) {
-        cpSubstMap = cpSubstMap + b.label ~> (cpSubstMap.size + 1)
+        cpSubstMap = cpSubstMap + b.label ~> (cpSubstMap.size + 2)
       }
     }
     return CPSubstitutor(cpSubstMap).transformIRProcedure(p(body = body(blocks = blocks))).getOrElse(p)
