@@ -47,11 +47,13 @@ object Anvil {
                          val maxExpDepth: Z,
                          val runtimeCheck: B,
                          val assertion: B,
-                         val printSize: Z)
+                         val printSize: Z) {
+    val shouldPrint: B = printSize > 0
+  }
 
   object Config {
     @strictpure def empty(projectName: String): Config =
-      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, T, T, 0)
+      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, T, T, 4 * 1024)
   }
 
   @record class TempCollector(var r: HashSSet[Z]) extends AST.MIRTransformer {
@@ -333,7 +335,7 @@ object Anvil {
       for (stmt <- o.stmts) {
         stmt match {
           case _: AST.IR.Stmt.Assertume if !anvil.config.assertion => changed = T
-          case _: AST.IR.Stmt.Print if anvil.config.printSize == 0 => changed = T
+          case _: AST.IR.Stmt.Print if !anvil.config.shouldPrint => changed = T
           case _ => stmts = stmts :+ stmt
         }
       }
@@ -376,9 +378,18 @@ import Anvil._
   val typeShaSize: Z = typeByteSize(typeShaType)
   val spType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "SP"), ISZ())
   val cpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "CP"), ISZ())
+  val dpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "DP"), ISZ())
   val spTypeByteSize: Z = {
     val n = computeBitwidth(config.memory) + 1
     if (n % 8 == 0) n / 8 else (n / 8) + 1
+  }
+  val dpTypeByteSize: Z = {
+    if (config.shouldPrint) {
+      val n = computeBitwidth(config.printSize) + 1
+      if (n % 8 == 0) n / 8 else (n / 8) + 1
+    } else {
+      0
+    }
   }
   @memoize def cpTypeByteSize: Z = {
     assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
@@ -1591,6 +1602,28 @@ import Anvil._
     return p(body = body(blocks = blockMap.values))
   }
 
+  @pure def printStringLit(incDP: B, s: String, pos: message.Position): ISZ[AST.IR.Stmt.Ground] = {
+    var r = ISZ[AST.IR.Stmt.Ground]()
+    if (config.shouldPrint) {
+      val cis = conversions.String.toCis(s)
+      var i = 0
+      for (c <- cis) {
+        val cString = ops.COps(cis(i)).escapeString
+        for (byte <- conversions.String.toU8is(s"$c")) {
+          r = r :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+            AST.IR.Exp.Binary(dpType, AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos)), AST.IR.Exp.Binary.Op.Add,
+              AST.IR.Exp.Int(dpType, i, pos), pos),
+            F, 1, AST.IR.Exp.Int(AST.Typed.u8, byte.toZ, pos), st"print '$cString'", AST.Typed.u8, pos))
+          i = i + 1
+        }
+      }
+      if (incDP) {
+        r = r :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T, r.size, pos))
+      }
+    }
+    return r
+  }
+
   def transformInstanceOf(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
@@ -1616,12 +1649,12 @@ import Anvil._
                   egoto,
                   ISZ(AST.IR.Stmt.Assign.Temp(lhs, AST.IR.Exp.Bool(F, pos), pos)),
                   egoto)
-             else
-              (ISZ(),
-                AST.IR.Jump.Goto(eLabel, pos),
-                ISZ(),
-                if (config.runtimeCheck) AST.IR.Jump.Halt(Some(AST.IR.Exp.String(s"Cannot cast to ${rhs.t}", pos)), pos)
-                else egoto)
+              else
+                (ISZ(),
+                  AST.IR.Jump.Goto(eLabel, pos),
+                  printStringLit(T, s"Cannot cast to ${rhs.t}\n", pos),
+                  if (config.runtimeCheck) AST.IR.Jump.Halt(pos)
+                  else egoto)
             blocks = blocks :+ AST.IR.BasicBlock(tLabel, tStmts, tJump)
             blocks = blocks :+ AST.IR.BasicBlock(fLabel, fStmts, fJump)
             grounds = ISZ()
@@ -1639,6 +1672,9 @@ import Anvil._
     var grounds = ISZ[AST.IR.Stmt.Ground](
       AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, F, globalSize, p.pos))
     )
+    if (config.shouldPrint) {
+      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, F, 0, p.pos))
+    }
     var offset: Z = 0
     for (ge <- globalMap.entries) {
       val (name, info) = ge
