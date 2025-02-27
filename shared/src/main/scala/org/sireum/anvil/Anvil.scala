@@ -326,6 +326,21 @@ object Anvil {
     }
   }
 
+  @record class StmtFilter(val anvil: Anvil) extends AST.MIRTransformer {
+    override def postIRStmtBlock(o: AST.IR.Stmt.Block): MOption[AST.IR.Stmt] = {
+      var changed = F
+      var stmts = ISZ[AST.IR.Stmt]()
+      for (stmt <- o.stmts) {
+        stmt match {
+          case _: AST.IR.Stmt.Assertume if !anvil.config.assertion => changed = T
+          case _: AST.IR.Stmt.Print if anvil.config.printSize == 0 => changed = T
+          case _ => stmts = stmts :+ stmt
+        }
+      }
+      return if (changed) MSome(o(stmts = stmts)) else MNone()
+    }
+  }
+
   val kind: String = "Anvil"
   val returnLocalId: String = "$ret"
   val resultLocalId: String = "$res"
@@ -377,14 +392,18 @@ import Anvil._
     val irt = lang.IRTranslator(threeAddressCode = T, th = tsr.typeHierarchy, fresh = fresh)
 
     val mq: (AST.IR.MethodContext, AST.IR.Program, Z, HashSMap[ISZ[String], GlobalInfo]) = {
+      @pure def toBasic(p: AST.IR.Procedure): AST.IR.Procedure = {
+        var r = StmtFilter(this).transformIRProcedure(p).getOrElse(p)
+        r = r(body = irt.toBasic(r.body.asInstanceOf[AST.IR.Body.Block], p.pos))
+        return r
+      }
       var globals = ISZ[AST.IR.Global]()
       var procedures = ISZ[AST.IR.Procedure]()
       var globalSize: Z = 0
 
       var mainOpt = Option.none[AST.IR.Procedure]()
       for (ms <- tsr.methods.values; m <- ms.elements) {
-        var p = irt.translateMethod(F, None(), m.info.owner, m.info.ast)
-        p = p(body = irt.toBasic(p.body.asInstanceOf[AST.IR.Body.Block], p.pos))
+        val p = toBasic(irt.translateMethod(F, None(), m.info.owner, m.info.ast))
         procedures = procedures :+ p
         if (m.info.owner == owner && m.info.ast.sig.id.value == id) {
           mainOpt = Some(p)
@@ -394,9 +413,9 @@ import Anvil._
         val stmts = classInit(t)
         if (stmts.nonEmpty) {
           val posOpt = th.typeMap.get(t.ids).get.posOpt
-          procedures = procedures :+ irt.translateMethodH(T, Some(t), t.ids, newInitId, ISZ(),
+          procedures = procedures :+ toBasic(irt.translateMethodH(F, Some(t), t.ids, newInitId, ISZ(),
             ISZ("this"), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(t), AST.Typed.unit), posOpt.get,
-            Some(AST.Body(stmts, ISZ())))
+            Some(AST.Body(stmts, ISZ()))))
         }
       }
       for (vs <- tsr.objectVars.entries) {
@@ -421,11 +440,9 @@ import Anvil._
         val objInit = irt.translateMethodH(F, None(), owner, objInitId, ISZ(), ISZ(),
           AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), pos, Some(AST.Body(stmts, ISZ())))
         var body = objInit.body.asInstanceOf[AST.IR.Body.Block]
-        body = body(block = body.block(stmts = AST.IR.Stmt.Block(ISZ(
-          AST.IR.Stmt.Assign.Global(owner, AST.Typed.b, AST.IR.Exp.Bool(T, pos), pos)
-        ), pos) +: body.block.stmts))
-        val p = objInit(body = irt.toBasic(body, objInit.pos))
-        procedures = procedures :+ p
+        body = body(block = body.block(stmts =
+          AST.IR.Stmt.Assign.Global(owner, AST.Typed.b, AST.IR.Exp.Bool(T, pos), pos) +: body.block.stmts))
+        procedures = procedures :+ toBasic(objInit(body = body))
       }
       var globalMap = HashSMap.empty[ISZ[String], GlobalInfo]
       val spSize = typeByteSize(spType)
