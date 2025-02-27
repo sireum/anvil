@@ -45,11 +45,13 @@ object Anvil {
                          val customConstants: HashMap[QName, AST.Exp],
                          val bigEndian: B,
                          val maxExpDepth: Z,
-                         val runtimeCheck: B)
+                         val runtimeCheck: B,
+                         val assertion: B,
+                         val printSize: Z)
 
   object Config {
     @strictpure def empty(projectName: String): Config =
-      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, T)
+      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, T, T, 0)
   }
 
   @record class TempCollector(var r: HashSSet[Z]) extends AST.MIRTransformer {
@@ -584,6 +586,7 @@ import Anvil._
         case j: AST.IR.Jump.Goto => j(label = getTarget(j.label))
         case j: AST.IR.Jump.Return => j
         case j: AST.IR.Jump.Intrinsic => j
+        case j: AST.IR.Jump.Halt => j
       }
       blockMap = blockMap + b.label ~> b(jump = jump)
     }
@@ -1583,18 +1586,21 @@ import Anvil._
               for (sha3t <- sha3Types) yield AST.IR.Jump.Switch.Case(AST.IR.Exp.Int(typeShaType, sha3t, pos), tLabel),
               Some(fLabel), pos
             ))
-            val (tStmts, fStmts): (ISZ[AST.IR.Stmt.Ground], ISZ[AST.IR.Stmt.Ground]) = if (rhs.test) {
-              (ISZ(AST.IR.Stmt.Assign.Temp(lhs, AST.IR.Exp.Bool(T, pos), pos)),
-                ISZ(AST.IR.Stmt.Assign.Temp(lhs, AST.IR.Exp.Bool(F, pos), pos)))
-            } else {
-              var fs = ISZ[AST.IR.Stmt.Ground]()
-              if (config.runtimeCheck) {
-                fs = fs :+ AST.IR.Stmt.Halt(Some(AST.IR.Exp.String(s"Cannot cast to ${rhs.t}", pos)), pos)
-              }
-              (ISZ(), fs)
-            }
-            blocks = blocks :+ AST.IR.BasicBlock(tLabel, tStmts, AST.IR.Jump.Goto(eLabel, pos))
-            blocks = blocks :+ AST.IR.BasicBlock(fLabel, fStmts, AST.IR.Jump.Goto(eLabel, pos))
+            val egoto = AST.IR.Jump.Goto(eLabel, pos)
+            val (tStmts, tJump, fStmts, fJump): (ISZ[AST.IR.Stmt.Ground], AST.IR.Jump, ISZ[AST.IR.Stmt.Ground], AST.IR.Jump) =
+              if (rhs.test)
+                (ISZ(AST.IR.Stmt.Assign.Temp(lhs, AST.IR.Exp.Bool(T, pos), pos)),
+                  egoto,
+                  ISZ(AST.IR.Stmt.Assign.Temp(lhs, AST.IR.Exp.Bool(F, pos), pos)),
+                  egoto)
+             else
+              (ISZ(),
+                AST.IR.Jump.Goto(eLabel, pos),
+                ISZ(),
+                if (config.runtimeCheck) AST.IR.Jump.Halt(Some(AST.IR.Exp.String(s"Cannot cast to ${rhs.t}", pos)), pos)
+                else egoto)
+            blocks = blocks :+ AST.IR.BasicBlock(tLabel, tStmts, tJump)
+            blocks = blocks :+ AST.IR.BasicBlock(fLabel, fStmts, fJump)
             grounds = ISZ()
             block = AST.IR.BasicBlock(eLabel, grounds, b.jump)
           case _ => grounds = grounds :+ g

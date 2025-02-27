@@ -40,8 +40,6 @@ object Intrinsic {
                            val tipe: AST.Typed,
                            val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def prettyST: ST = st"$$$temp = *${rhsOffset.prettyST} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
-
-    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps + 1)
   }
 
   // Replaces AST.IR.Exp.LocalVarRef, AST.IR.Exp.GlobalVarRef, AST.IR.Exp.Field, AST.IR.Exp.Index
@@ -65,8 +63,6 @@ object Intrinsic {
                         val tipe: AST.Typed,
                         val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def prettyST: ST = st"*${lhsOffset.prettyST} = ${rhs.prettyST} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
-
-    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps - rhs.numOfTemps)
   }
 
   // Replaces AST.IR.Stmt.Assign.Local, AST.IR.Stmt.Assign.Field, AST.IR.Stmt.Assign.Global, AST.IR.Stmt.Assign.Index
@@ -79,14 +75,10 @@ object Intrinsic {
                        val rhsTipe: AST.Typed,
                        val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def prettyST: ST = st"${lhsOffset.prettyST} [$tipe, $lhsBytes]  <-  ${rhs.prettyST} [$rhsTipe, $rhsBytes]  // $comment"
-
-    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps + 1)
   }
 
   // Replaces AST.IR.Stmt.Decl
   @datatype class Decl(val undecl: B, val isAlloc: B, val slots: ISZ[Decl.Local], val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
-
     @strictpure def prettyST: ST = st"${if (isAlloc) if (undecl) "unalloc" else "alloc" else if (undecl) "undecl" else "decl"} ${(for (slot <- slots) yield slot.prettyST, ", ")}"
   }
 
@@ -107,8 +99,6 @@ object Intrinsic {
       val reg = "SP"
       if (isInc) if (value < 0) st"$reg = $reg - ${-value}" else st"$reg = $reg + $value" else st"$reg = $value"
     }
-
-    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
   }
 
   // Replaces AST.IR.Jump.Return
@@ -117,8 +107,6 @@ object Intrinsic {
                             val id: String,
                             val pos: Position) extends AST.IR.Jump.Intrinsic.Type {
     @strictpure def prettyST: ST = st"goto $id@0"
-
-    @strictpure def computeLocalsTemps(locals: Z, temps: Z): (Z, Z) = (locals, temps)
 
     @strictpure def targets: ISZ[Z] = ISZ()
   }
