@@ -297,6 +297,10 @@ object Anvil {
       }
       return MNone()
     }
+
+    override def postIRJumpHalt(o: AST.IR.Jump.Halt): MOption[AST.IR.Jump] = {
+      return MSome(AST.IR.Jump.Goto(errorLabel, o.pos))
+    }
   }
 
   @record class RegisterDetector(var hasSP: B, var hasDP: B) extends AST.MIRTransformer {
@@ -344,6 +348,9 @@ object Anvil {
   }
 
   val kind: String = "Anvil"
+  val exitLabel: Z = 0
+  val errorLabel: Z = 1
+  val startingLabel: Z = 3
   val returnLocalId: String = "$ret"
   val resultLocalId: String = "$res"
   val constructLocalId: String = "$new"
@@ -361,6 +368,8 @@ object Anvil {
     if (reporter.hasError) {
       return HashSMap.empty
     }
+    fresh.setTemp(0)
+    fresh.setLabel(startingLabel)
     return Anvil(th, tsr, owner, id, config, 0).synthesize(fresh, reporter)
   }
 }
@@ -661,7 +670,10 @@ import Anvil._
 
   def transformCP(p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-    var cpSubstMap = HashMap.empty[Z, Z] + 0 ~> 0
+    var cpSubstMap = HashMap.empty[Z, Z]
+    for (i <- 0 until startingLabel) {
+      cpSubstMap = cpSubstMap + i ~> i
+    }
     var blockMap = HashSMap.empty[Z, AST.IR.BasicBlock] ++ (for (b <- body.blocks) yield (b.label, b))
     var blocks = ISZ[AST.IR.BasicBlock]()
     var work = ISZ(body.blocks(0))
@@ -1110,7 +1122,9 @@ import Anvil._
       }
       work = next
     }
-    return mergedBlocks :+ AST.IR.BasicBlock(0, ISZ(), AST.IR.Jump.Return(None(), main.pos))
+    return mergedBlocks :+
+      AST.IR.BasicBlock(exitLabel, ISZ(), AST.IR.Jump.Return(None(), main.pos)) :+
+      AST.IR.BasicBlock(errorLabel, ISZ(), AST.IR.Jump.Return(None(), main.pos))
   }
 
   def transformReduceExp(proc: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1710,7 +1724,7 @@ import Anvil._
     for (param <- ops.ISZOps(p.paramNames).zip(p.tipe.args)) {
       updateOffset(param._1, param._2)
     }
-    return p(body = body(AST.IR.BasicBlock(fresh.label(), grounds, AST.IR.Jump.Goto(1, p.pos)) +: body.blocks))
+    return p(body = body(AST.IR.BasicBlock(fresh.label(), grounds, AST.IR.Jump.Goto(startingLabel, p.pos)) +: body.blocks))
   }
 
   @memoize def subZOpt(t: AST.Typed): Option[TypeInfo.SubZ] = {
