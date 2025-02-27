@@ -88,15 +88,15 @@ object Intrinsic {
     }
   }
 
-  @datatype class SP(val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"SP"
+  @datatype class Register(val isSP: B, val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
+    @strictpure def prettyST: ST = if (isSP) st"SP" else st"DP"
     @strictpure def numOfTemps: Z = 0
     @strictpure def depth: Z = 1
   }
 
-  @datatype class SPAssign(val isInc: B, val value: Z, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+  @datatype class RegisterAssign(val isSP: B, val isInc: B, val value: Z, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def prettyST: ST = {
-      val reg = "SP"
+      val reg: String = if (isSP) "SP" else "DP"
       if (isInc) if (value < 0) st"$reg = $reg - ${-value}" else st"$reg = $reg + $value" else st"$reg = $value"
     }
   }
