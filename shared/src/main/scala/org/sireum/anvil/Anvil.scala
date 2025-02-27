@@ -392,14 +392,7 @@ import Anvil._
     val n = computeBitwidth(config.memory) + 1
     if (n % 8 == 0) n / 8 else (n / 8) + 1
   }
-  val dpTypeByteSize: Z = {
-    if (config.shouldPrint) {
-      val n = computeBitwidth(config.printSize) + 1
-      if (n % 8 == 0) n / 8 else (n / 8) + 1
-    } else {
-      0
-    }
-  }
+  val dpTypeByteSize: Z = 8
   @memoize def cpTypeByteSize: Z = {
     assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
     val n = computeBitwidth(numOfLocs) + 1
@@ -542,7 +535,7 @@ import Anvil._
         if (main.tipe.ret != AST.Typed.unit) {
           offset = offset + anvil.typeByteSize(spType) + anvil.typeByteSize(main.tipe.ret)
           Some(
-            st"- $$res (*(SP + ${anvil.typeByteSize(cpType)})) = ${globalSize + anvil.typeByteSize(cpType) + anvil.typeByteSize(spType)} (${if (anvil.isSigned(spType)) "signed" else "unsigned"}, size = ${anvil.typeByteSize(spType)}, data-size = ${anvil.typeByteSize(main.tipe.ret)})")
+            st"- $$res (*(SP + ${anvil.typeByteSize(cpType)})) = ${globalSize + anvil.typeByteSize(cpType) + anvil.typeByteSize(spType)} (${anvil.signedString(spType)}, size = ${anvil.typeByteSize(spType)}, data-size = ${anvil.typeByteSize(main.tipe.ret)})")
         } else {
           None()
         }
@@ -561,8 +554,9 @@ import Anvil._
       }
       st"""/*
           |   Note that globalSize = $globalSize, max registers (beside SP and CP) = $maxRegisters, and initially:
-          |   - register CP (code pointer) = 2 (${if (anvil.isSigned(cpType)) "signed" else "unsigned"}, byte size = ${anvil.typeByteSize(cpType)})
-          |   - register SP (stack pointer) = $globalSize (${if (anvil.isSigned(spType)) "signed" else "unsigned"}, byte size = ${anvil.typeByteSize(spType)})
+          |   - register CP (code pointer) = 2 (${anvil.signedString(cpType)}, byte size = ${anvil.typeByteSize(cpType)})
+          |   - register SP (stack pointer) = $globalSize (${anvil.signedString(spType)}, byte size = ${anvil.typeByteSize(spType)})
+          |   - register DP (display pointer) = 0 (${anvil.signedString(dpType)}, byte size = ${anvil.typeByteSize(dpType)})
           |   - $$ret (*SP) = 0 (signed, byte size = ${anvil.typeByteSize(cpType)})
           |   $resOpt
           |   ${(globalParamSTs, "\n")}
@@ -696,8 +690,8 @@ import Anvil._
     }
 
     for (b <- blocks) {
-      if (b.label >= 1) {
-        cpSubstMap = cpSubstMap + b.label ~> (cpSubstMap.size + 2)
+      if (b.label >= startingLabel) {
+        cpSubstMap = cpSubstMap + b.label ~> cpSubstMap.size
       }
     }
     return CPSubstitutor(cpSubstMap).transformIRProcedure(p(body = body(blocks = blocks))).getOrElse(p)
@@ -1624,10 +1618,13 @@ import Anvil._
       for (c <- cis) {
         val cString = ops.COps(cis(i)).escapeString
         for (byte <- conversions.String.toU8is(s"$c")) {
-          r = r :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-            AST.IR.Exp.Binary(dpType, AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos)), AST.IR.Exp.Binary.Op.Add,
-              AST.IR.Exp.Int(dpType, i, pos), pos),
-            F, 1, AST.IR.Exp.Int(AST.Typed.u8, byte.toZ, pos), st"print '$cString'", AST.Typed.u8, pos))
+          var lhsOffset: AST.IR.Exp = AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos))
+          if (i != 0) {
+            lhsOffset = AST.IR.Exp.Binary(dpType, lhsOffset, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(dpType, i, pos), pos)
+          }
+          lhsOffset = AST.IR.Exp.Binary(dpType, lhsOffset, AST.IR.Exp.Binary.Op.Rem, AST.IR.Exp.Int(dpType, config.printSize, pos), pos)
+          r = r :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset, F, 1, AST.IR.Exp.Int(AST.Typed.u8, byte.toZ, pos),
+            st"print '$cString'", AST.Typed.u8, pos))
           i = i + 1
         }
       }
@@ -1835,6 +1832,7 @@ import Anvil._
         return r
       case AST.Typed.unit => return 0
       case AST.Typed.nothing => return 0
+      case `dpType` => return dpTypeByteSize
       case `spType` => return spTypeByteSize
       case `cpType` =>
         assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
@@ -1911,10 +1909,13 @@ import Anvil._
       case AST.Typed.r =>
       case `spType` =>
       case `cpType` => assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
+      case `dpType` =>
       case _ => return isSubZ(t)
     }
     return T
   }
+
+  @strictpure def signedString(t: AST.Typed): String = if (isSigned(t)) "signed" else "unsigned"
 
   @memoize def isSigned(t: AST.Typed): B = {
     t match {
@@ -1928,6 +1929,7 @@ import Anvil._
       case `cpType` =>
         assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
         return F
+      case `dpType` => return F
       case _ => return subZOpt(t).get.ast.isSigned
     }
   }
