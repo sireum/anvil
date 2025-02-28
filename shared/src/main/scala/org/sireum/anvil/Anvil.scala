@@ -357,6 +357,8 @@ object Anvil {
   val typeFieldId: String = "$type"
   val objInitId: String = "<objinit>"
   val newInitId: String = "<init>"
+  val displayId: String = "$display"
+  val displayName: ISZ[String] = ISZ(displayId)
 
   def synthesize(fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, owner: QName, id: String, config: Config, reporter: Reporter): HashSMap[ISZ[String], ST] = {
     assert(config.memory > 0 && config.memory % 8 == 0, s"Memory configuration has to be a positive integer multiples of 8")
@@ -388,6 +390,9 @@ import Anvil._
   val spType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "SP"), ISZ())
   val cpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "CP"), ISZ())
   val dpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "DP"), ISZ())
+  val displayIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "U"), ISZ())
+  val displayType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(displayIndexType, AST.Typed.u8))
+
   val spTypeByteSize: Z = {
     val n = computeBitwidth(config.memory) + 1
     if (n % 8 == 0) n / 8 else (n / 8) + 1
@@ -430,6 +435,9 @@ import Anvil._
             ISZ("this"), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(t), AST.Typed.unit), posOpt.get,
             Some(AST.Body(stmts, ISZ()))))
         }
+      }
+      if (config.shouldPrint) {
+        globals = globals :+ AST.IR.Global(displayType, displayName, mainOpt.get.pos)
       }
       for (vs <- tsr.objectVars.entries) {
         val (owner, ids) = vs
@@ -897,7 +905,7 @@ import Anvil._
       var block = b
       for (g <- b.grounds) {
         g match {
-          case g@AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.GlobalVarRef, pos) =>
+          case g@AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.GlobalVarRef, pos) if rhs.name != displayName =>
             val owner = ops.ISZOps(rhs.name).dropRight(1)
             if (p.owner :+ p.id != owner) {
               val label1 = fresh.label()
@@ -1615,16 +1623,15 @@ import Anvil._
     if (config.shouldPrint) {
       val cis = conversions.String.toCis(s)
       var i = 0
+      val register = AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos))
       for (c <- cis) {
-        val cString = ops.COps(cis(i)).escapeString
         for (byte <- conversions.String.toU8is(s"$c")) {
-          var lhsOffset: AST.IR.Exp = AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos))
+          var lhsOffset: AST.IR.Exp = register
           if (i != 0) {
             lhsOffset = AST.IR.Exp.Binary(dpType, lhsOffset, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(dpType, i, pos), pos)
           }
           lhsOffset = AST.IR.Exp.Binary(dpType, lhsOffset, AST.IR.Exp.Binary.Op.Rem, AST.IR.Exp.Int(dpType, config.printSize, pos), pos)
-          r = r :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset, F, 1, AST.IR.Exp.Int(AST.Typed.u8, byte.toZ, pos),
-            st"print '$cString'", AST.Typed.u8, pos))
+          r = r :+ AST.IR.Stmt.Assign.Index(AST.IR.Exp.GlobalVarRef(displayName, displayType, pos), lhsOffset, AST.IR.Exp.Int(AST.Typed.u8, byte.toZ, pos), pos)
           i = i + 1
         }
       }
@@ -1685,6 +1692,15 @@ import Anvil._
     )
     if (config.shouldPrint) {
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, F, 0, p.pos))
+      val display = globalMap.get(displayName).get
+      val sha3t = sha3(displayType.string)
+      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+        AST.IR.Exp.Int(typeShaType, display.offset + typeByteSize(spType), p.pos), isSigned(typeShaType), typeShaSize,
+        AST.IR.Exp.Int(typeShaType, sha3t.toZ, p.pos), st"$displayId.$typeFieldId ($displayType: 0x$sha3t)", typeShaType, p.pos))
+      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+        AST.IR.Exp.Int(AST.Typed.z, display.offset + typeByteSize(spType) + typeByteSize(typeShaType), p.pos),
+        isSigned(AST.Typed.z), typeByteSize(AST.Typed.z),
+        AST.IR.Exp.Int(AST.Typed.z, config.printSize, p.pos), st"$displayId.size", AST.Typed.z, p.pos))
     }
     var offset: Z = 0
     for (ge <- globalMap.entries) {
@@ -1750,6 +1766,10 @@ import Anvil._
   }
 
   @memoize def getMaxArraySize(t: AST.Typed.Name): Z = {
+    if (t == displayType) {
+      assert(config.shouldPrint)
+      return config.printSize
+    }
     assert(t.ids == AST.Typed.isName || t.ids == AST.Typed.msName)
     config.customArraySizes.get(t) match {
       case Some(n) => return n
