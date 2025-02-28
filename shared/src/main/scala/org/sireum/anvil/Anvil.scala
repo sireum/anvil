@@ -53,7 +53,7 @@ object Anvil {
 
   object Config {
     @strictpure def empty(projectName: String): Config =
-      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, T, T, 4 * 1024)
+      Config(projectName, 8 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, T, T, 4 * 1024)
   }
 
   @record class TempCollector(var r: HashSSet[Z]) extends AST.MIRTransformer {

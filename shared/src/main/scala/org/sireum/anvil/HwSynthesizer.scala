@@ -32,6 +32,9 @@ import org.sireum.lang.symbol.TypeInfo
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 
 @datatype class HwSynthesizer(val anvil: Anvil) {
+
+  val sharedMemName: String = "arrayRegFiles"
+  val generalRegName: String = "generalRegFiles"
   /*
     Notes/links:
     * Slang IR: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/IR.scala
@@ -39,7 +42,266 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
    */
   def printProcedure(name: String, o: AST.IR.Procedure, globalSize: Z, maxRegisters: Z): HashSMap[ISZ[String], ST] = {
     var r = HashSMap.empty[ISZ[String], ST]
-    r = r + ISZ(name) ~> o.prettyST
+    val processedProcedureST = processProcedure(name, o, maxRegisters)
+    r = r + ISZ(name) ~> processedProcedureST
+    //r = r + ISZ(name) ~> o.prettyST
     return r
+  }
+
+  def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Z): ST = {
+
+    val initialProcedureST =
+      st"""
+          |import chisel3._
+          |import chisel3.util._
+          |import chisel3.experimental._
+          |
+          |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 32,
+          |           val C_S_AXI_ADDR_WIDTH:  Int = 32,
+          |           val ARRAY_REG_WIDTH:     Int = 8,
+          |           val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
+          |           val GENERAL_REG_WIDTH:   Int = 64,
+          |           val GENERAL_REG_DEPTH:   Int = ${maxRegisters},
+          |           val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize},
+          |           val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize}) extends Module {
+          |
+          |    val io = IO(new Bundle{
+          |        val valid          = Input(Bool())
+          |        val ready          = Output(UInt(2.W))
+          |        val arrayRe        = Input(Bool())
+          |        val arrayWe        = Input(Bool())
+          |        val arrayStrb      = Input(UInt((C_S_AXI_DATA_WIDTH/8).W))
+          |        val arrayReadAddr  = Input(UInt((log2Ceil(ARRAY_REG_DEPTH)).W))
+          |        val arrayWriteAddr = Input(UInt((log2Ceil(ARRAY_REG_DEPTH)).W))
+          |        val arrayWData     = Input(UInt(C_S_AXI_DATA_WIDTH.W))
+          |        val arrayRData     = Output(UInt(C_S_AXI_DATA_WIDTH.W))
+          |    })
+          |
+          |    // reg for share array between software and IP
+          |    val ${sharedMemName} = Reg(Vec(1 << log2Ceil(ARRAY_REG_DEPTH), UInt(ARRAY_REG_WIDTH.W)))
+          |    // reg for general purpose
+          |    val ${generalRegName} = Reg(Vec(1 << log2Ceil(GENERAL_REG_DEPTH), UInt(GENERAL_REG_WIDTH.W)))
+          |    // reg for code pointer
+          |    val CP = RegInit(1.U(CODE_POINTER_WIDTH.W))
+          |    // reg for stack pointer
+          |    val SP = RegInit(0.S(STACK_POINTER_WIDTH.W))
+          |
+          |    // write operation
+          |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
+          |      when(io.arrayWe & (io.arrayStrb(byteIndex.U) === 1.U)) {
+          |        ${sharedMemName}(io.arrayWriteAddr + byteIndex.U) := io.arrayWData((byteIndex * 8) + 7, byteIndex * 8)
+          |      }
+          |    }
+          |
+          |    // read operation
+          |    io.arrayRData := Mux(io.arrayRe, Cat(${sharedMemName}(io.arrayReadAddr + 3.U),
+          |                                         ${sharedMemName}(io.arrayReadAddr + 2.U),
+          |                                         ${sharedMemName}(io.arrayReadAddr + 1.U),
+          |                                         ${sharedMemName}(io.arrayReadAddr + 0.U)), 0.U)
+          |
+          |    io.ready := Mux(CP === 0.U, 0.U, Mux(CP === 1.U, 1.U, 2.U))
+          |"""
+
+    val finialProcedureST = st"""
+                                | }
+                                |"""
+
+    val basicBlockST = processBasicBlock(o.body.asInstanceOf[AST.IR.Body.Basic].blocks)
+
+    var procedureST = ISZ[ST]()
+    procedureST = procedureST :+ initialProcedureST :+ basicBlockST :+ finialProcedureST
+
+    println(
+      st"""
+          |${(procedureST,"")}
+          |""".render
+    )
+
+    return st"""
+               |${(procedureST,"")}
+               |"""
+  }
+
+  def processBasicBlock(bs: ISZ[AST.IR.BasicBlock]): ST = {
+    var basicBlockST = ISZ[ST]()
+    val initialBasicBlockST: ST =
+      st"""
+          |    switch(CP) {
+          |      is(2.U) {
+          |        CP := Mux(io.valid, 3.U, CP)
+          |      }
+          |"""
+    val finalBasicBlockST: ST =
+      st"""
+          |    }
+          |"""
+
+    basicBlockST = basicBlockST :+ initialBasicBlockST
+
+    for (b <- bs) {
+      println(b)
+      basicBlockST = basicBlockST :+
+        st"      is(${b.label}.U){\n"
+
+      basicBlockST = basicBlockST :+ processGround(b.grounds)
+
+      basicBlockST = basicBlockST :+
+        st"      }\n"
+    }
+
+    basicBlockST = basicBlockST :+ finalBasicBlockST
+
+    return st"""
+               |${(basicBlockST, "")}
+               |"""
+  }
+
+  def processGround(gs: ISZ[AST.IR.Stmt.Ground]): ST = {
+    var groundST = ISZ[ST]()
+
+    for(g <- gs) {
+      g match {
+        case g: AST.IR.Stmt.Assign => {
+          groundST = groundST :+ processStmtAssign(g)
+        }
+        case g: AST.IR.Stmt.Intrinsic => {
+
+        }
+        case _ => {
+
+        }
+      }
+    }
+
+    return st"""
+               |        ${(groundST, "")}"""
+  }
+
+  def processStmtAssign(a: AST.IR.Stmt.Assign): ST = {
+    var assignST: ST = st""
+
+    def isIntrinsicLoad(a: AST.IR.Exp): B = a match {
+      case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => T
+      case _ => F
+    }
+
+    a match {
+      case a: AST.IR.Stmt.Assign.Temp => {
+        val regNo = a.lhs
+        val rhsST = processExpr(a.rhs)
+        if(isIntrinsicLoad(a.rhs)) {
+          assignST =
+            st"""
+                |${generalRegName}(${regNo}.U) := Cat{
+                |  ${rhsST.render}
+                |}
+            """
+        } else {
+          assignST =
+            st"""
+                |${generalRegName}(${regNo}.U) := ${rhsST.render}
+            """
+        }
+      }
+      case _ => {
+        halt(s"processStmtAssign unimplemented")
+      }
+    }
+
+    return assignST
+  }
+
+  def isBoolType(t: AST.Typed): B = t == AST.Typed.b
+  def is1BitVector(t: AST.Typed): B = anvil.subZOpt(t) match {
+    case Some(info) => info.ast.isBitVector && info.ast.bitWidth == 1
+    case _ => F
+  }
+
+  def processExpr(exp: AST.IR.Exp): ST = {
+    var exprST = ISZ[ST]()
+    exp match {
+      case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => {
+        val rhsExpr = processExpr(intrinsic.rhsOffset)
+        for(i <- intrinsic.bytes-1 to 0 by -1) {
+          if(i == 0) {
+            exprST = exprST :+ st"${sharedMemName}((${rhsExpr.render} + ${i}.U).asUInt)"
+          } else {
+            exprST = exprST :+ st"${sharedMemName}((${rhsExpr.render} + ${i}.U).asUInt),"
+          }
+        }
+      }
+      case exp: AST.IR.Exp.Temp => {
+        val indexPostfix = if(anvil.isSigned(exp.tipe)) ".asUInt" else ".U"
+        exprST = exprST :+ st"${generalRegName}(${exp.n}${indexPostfix})"
+      }
+      case exp: AST.IR.Exp.Int => {
+        val valuePostfix = if(anvil.isSigned(exp.tipe)) "S" else "U"
+        exprST = exprST :+ st"${exp.value}.${valuePostfix}"
+      }
+      case exp: AST.IR.Exp.Binary => {
+        val leftST = processExpr(exp.left)
+        val rightST = processExpr(exp.right)
+        exp.op match {
+          case AST.IR.Exp.Binary.Op.Add => {
+            exprST = exprST :+ st"${leftST.render} + ${rightST.render}"
+          }
+          case AST.IR.Exp.Binary.Op.Sub => {
+            exprST = exprST :+ st"${leftST.render} - ${rightST.render}"
+          }
+          case AST.IR.Exp.Binary.Op.Mul => {
+            exprST = exprST :+ st"${leftST.render} * ${rightST.render}"
+          }
+          case AST.IR.Exp.Binary.Op.Div => {
+            exprST = exprST :+ st"${leftST.render} / ${rightST.render}"
+          }
+          case AST.IR.Exp.Binary.Op.Rem => {
+            exprST = exprST :+ st"${leftST.render} % ${rightST.render}"
+          }
+          case AST.IR.Exp.Binary.Op.And => {
+            exprST = exprST :+ st"${leftST.render} & ${rightST.render}"
+          }
+          case AST.IR.Exp.Binary.Op.Or  => {
+            exprST = exprST :+ st"${leftST.render} | ${rightST.render}"
+          }
+          case AST.IR.Exp.Binary.Op.Xor => {
+            exprST = exprST :+ st"${leftST.render} ^ ${rightST.render}"
+          }
+          case AST.IR.Exp.Binary.Op.CondAnd => {
+            if(isBoolType(exp.tipe)) {
+              exprST = exprST :+ st"${leftST.render} && ${rightST.render}"
+            } else if(is1BitVector(exp.tipe)) {
+              exprST = exprST :+ st"${leftST.render}.asBool && ${rightST.render}.asBool"
+            } else {
+              halt(s"processExpr, you got an error about Op.CondAnd")
+            }
+          }
+          case AST.IR.Exp.Binary.Op.CondOr => {
+            if(isBoolType(exp.tipe)) {
+              exprST = exprST :+ st"${leftST.render} || ${rightST.render}"
+            } else if(is1BitVector(exp.tipe)) {
+              exprST = exprST :+ st"${leftST.render}.asBool || ${rightST.render}.asBool"
+            } else {
+              halt(s"processExpr, you got an error about Op.CondOr")
+            }
+          }
+          case AST.IR.Exp.Binary.Op.Eq => {
+            exprST = exprST :+ st"${leftST.render} === ${rightST.render}"
+          }
+          case AST.IR.Exp.Binary.Op.Ne => {
+            exprST = exprST :+ st"${leftST.render} =/= ${rightST.render}"
+          }
+          case _ => {
+            halt(s"processExpr AST.IR.Exp.Binary unimplemented")
+          }
+        }
+      }
+      case _ => {
+        halt(s"processExpr unimplemented, ${exp.prettyST.render}")
+      }
+    }
+
+    return st"""
+               |${(exprST, "")}
+               """
   }
 }
