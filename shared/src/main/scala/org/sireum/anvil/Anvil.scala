@@ -33,6 +33,8 @@ import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
 import org.sireum.U32._
+import org.sireum.U8._
+import org.sireum.anvil.PrinterIndex.U._
 
 object Anvil {
 
@@ -53,7 +55,7 @@ object Anvil {
 
   object Config {
     @strictpure def empty(projectName: String): Config =
-      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, T, 1, T, T, 4 * 1024)
+      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, T, 1, T, T, 0)
   }
 
   @record class TempCollector(var r: HashSSet[Z]) extends AST.MIRTransformer {
@@ -1642,6 +1644,49 @@ import Anvil._
     return r
   }
 
+  def transformPrint(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      for (g <- b.grounds) {
+        g match {
+          case AST.IR.Stmt.Expr(e) if e.isInObject && e.owner == AST.Typed.sireumName &&
+            (e.id == "print" || e.id == "eprint" || e.id == "cprint") =>
+            e.args(if (e.id == "cprint") 1 else 0) match {
+              case arg: AST.IR.Exp.Bool =>
+              case arg: AST.IR.Exp.Int =>
+              case arg: AST.IR.Exp.F32 =>
+                val buffer = MS.create[anvil.PrinterIndex.U, U8](50, u8"0")
+                val n = anvil.Printer.printF32_2(buffer, u"0", arg.value).toZ
+                halt("TODO")
+              case arg: AST.IR.Exp.F64 =>
+                val buffer = MS.create[anvil.PrinterIndex.U, U8](320, u8"0")
+                val n = anvil.Printer.printF64_2(buffer, u"0", arg.value).toZ
+                halt("TODO")
+              case arg: AST.IR.Exp.R =>
+              case arg: AST.IR.Exp.String =>
+                grounds = grounds ++ printStringLit(T, arg.value, arg.pos)
+              case arg =>
+                arg.tipe match {
+                  case AST.Typed.b =>
+                  case AST.Typed.z =>
+                  case AST.Typed.f32 =>
+                  case AST.Typed.f64 =>
+                  case AST.Typed.r =>
+                  case AST.Typed.string =>
+                  case t if subZOpt(t).nonEmpty =>
+                  case t => halt(s"TODO: $t, $arg")
+                }
+            }
+
+          case _ => grounds = grounds :+ g
+        }
+      }
+    }
+    return p(body = body(blocks = blocks))
+  }
+
   def transformInstanceOf(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
@@ -1698,7 +1743,7 @@ import Anvil._
         AST.IR.Exp.Int(typeShaType, display.offset + typeByteSize(spType), p.pos), isSigned(typeShaType), typeShaSize,
         AST.IR.Exp.Int(typeShaType, sha3t.toZ, p.pos), st"$displayId.$typeFieldId ($displayType: 0x$sha3t)", typeShaType, p.pos))
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-        AST.IR.Exp.Int(AST.Typed.z, display.offset + typeByteSize(spType) + typeByteSize(typeShaType), p.pos),
+        AST.IR.Exp.Int(spType, display.offset + typeByteSize(spType) + typeByteSize(typeShaType), p.pos),
         isSigned(AST.Typed.z), typeByteSize(AST.Typed.z),
         AST.IR.Exp.Int(AST.Typed.z, config.printSize, p.pos), st"$displayId.size", AST.Typed.z, p.pos))
     }
@@ -1786,6 +1831,13 @@ import Anvil._
       case _ =>
     }
     return config.maxArraySize
+  }
+
+  @memoize def isBitVector(t: AST.Typed): B = {
+    subZOpt(t) match {
+      case Some(subz) => return subz.ast.isBitVector
+      case _ => return F
+    }
   }
 
   @memoize def typeByteSize(t: AST.Typed): Z = {
