@@ -64,8 +64,8 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
           |           val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
           |           val GENERAL_REG_WIDTH:   Int = 64,
           |           val GENERAL_REG_DEPTH:   Int = ${maxRegisters},
-          |           val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize},
-          |           val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize}) extends Module {
+          |           val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize*8},
+          |           val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize*8}) extends Module {
           |
           |    val io = IO(new Bundle{
           |        val valid          = Input(Bool())
@@ -84,9 +84,11 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
           |    // reg for general purpose
           |    val ${generalRegName} = Reg(Vec(1 << log2Ceil(GENERAL_REG_DEPTH), UInt(GENERAL_REG_WIDTH.W)))
           |    // reg for code pointer
-          |    val CP = RegInit(1.U(CODE_POINTER_WIDTH.W))
+          |    val CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
           |    // reg for stack pointer
           |    val SP = RegInit(0.S(STACK_POINTER_WIDTH.W))
+          |    // reg for display pointer
+          |    val DP = RegInit(0.S(STACK_POINTER_WIDTH.W))
           |
           |    // write operation
           |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
@@ -128,18 +130,29 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
           |  ${(grounds, "")}
           |}"""
 
-    @strictpure def groundST(b: AST.IR.BasicBlock, ground: ST, jump: ST): ST =
+    @pure def groundST(b: AST.IR.BasicBlock, ground: ST, jump: ST): ST = {
+      var commentST = ISZ[ST]()
+
+      for(g <- b.grounds) {
+        commentST = commentST :+ g.prettyST
+      }
+      commentST = commentST :+ b.jump.prettyST
+
       st"""
           |is(${b.label}.U) {
+          |  /*
+          |  ${(commentST, "\n")}
+          |  */
           |  ${(ground, "")}
           |  ${jump.render}
           |}
         """
+    }
 
     var groundsST = ISZ[ST]()
 
     for (b <- bs) {
-      println(b)
+      //println(b)
       if(b.label != 0) {
         val jump = processJumpIntrinsic(b)
         groundsST = groundsST :+ groundST(b, processGround(b.grounds), jump)
@@ -178,7 +191,7 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
       case AST.IR.Jump.Intrinsic(intrinsic: Intrinsic.GotoLocal) => {
         var returnAddrST = ISZ[ST]()
 
-        for(i <- 7 to 0 by -1) {
+        for(i <- (anvil.cpTypeByteSize - 1) to 0 by -1) {
           if(i == 0) {
             returnAddrST = returnAddrST :+ st"${sharedMemName}((SP + ${intrinsic.offset}.S + ${i}.S).asUInt)"
           } else {
@@ -198,7 +211,7 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
       }
       case j: AST.IR.Jump.If => {
         val cond = processExpr(j.cond, F)
-        intrinsicST = st"CP := Mux(${cond.render}, ${j.thenLabel}.U, ${j.elseLabel}.U)"
+        intrinsicST = st"CP := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
       }
       case j: AST.IR.Jump.Return => {
       }
@@ -226,16 +239,16 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 
         for(i <- (intrinsic.bytes - 1) to 0 by -1) {
           if(i == 0) {
-            internalST = internalST :+ st"${sharedMemName}((${tmpWire} + ${i}.S).asUInt)"
+            internalST = internalST :+ st"${sharedMemName}((${tmpWire}.asSInt + ${i}.S).asUInt)"
           } else {
-            internalST = internalST :+ st"${sharedMemName}((${tmpWire} + ${i}.S).asUInt),"
+            internalST = internalST :+ st"${sharedMemName}((${tmpWire}.asSInt + ${i}.S).asUInt),"
           }
         }
 
         intrinsicST =
           st"""
               |val ${tmpWire} = ${rhsOffsetST.render}
-              |${generalRegName}(${intrinsic.temp}) := Cat(
+              |${generalRegName}(${intrinsic.temp}.U) := Cat(
               |  ${(internalST, "\n")}
               |)
             """
@@ -248,23 +261,23 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
         val lhsOffsetST = processExpr(intrinsic.lhsOffset, T)
         val rhsST = processExpr(intrinsic.rhs, intrinsic.isSigned)
         var shareMemAssign = ISZ[ST]()
-        val tmpWireLhs = st"__tmp_${tmpWireCount}"
-        val tmpWireRhs = st"__tmp_${tmpWireCount + 1}"
+        val tmpWireLhsST = st"__tmp_${tmpWireCount}"
+        val tmpWireRhsST = st"__tmp_${tmpWireCount + 1}"
         val tmpWireRhsContent: ST = if(isRhsIntType(intrinsic.rhs)) {
           st"${rhsST}(${intrinsic.bytes * 8}.W)"
         } else {
           rhsST
         }
 
-        for(i <- 1 to intrinsic.bytes by 1) {
+        for(i <- 0 to (intrinsic.bytes - 1) by 1) {
           shareMemAssign = shareMemAssign :+
-            st"${sharedMemName}((${tmpWireLhs} + ${i}.S).asUInt) := ${tmpWireRhs}(${(i-1)*8+7}, ${(i-1)*8})"
+            st"${sharedMemName}((${tmpWireLhsST}.asSInt + ${i}.S).asUInt) := ${tmpWireRhsST}(${(i)*8+7}, ${(i)*8})"
         }
 
         intrinsicST =
           st"""
-              |val ${tmpWireLhs} = ${lhsOffsetST.render}
-              |val ${tmpWireRhs} = ${tmpWireRhsContent.render}
+              |val ${tmpWireLhsST} = ${lhsOffsetST.render}
+              |val ${tmpWireRhsST} = (${tmpWireRhsContent.render}).asUInt
               |${(shareMemAssign, "\n")}
             """
         tmpWireCount = tmpWireCount + 2
@@ -328,8 +341,12 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
     case Some(info) => info.ast.isBitVector && info.ast.bitWidth == 1
     case _ => F
   }
+  def isSPorDP(exp: AST.IR.Exp): B = exp match {
+    case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Register) => T
+    case _ => F
+  }
 
-  @pure def processExpr(exp: AST.IR.Exp, isSPIndexed: B): ST = {
+  @pure def processExpr(exp: AST.IR.Exp, isForcedSign: B): ST = {
     var exprST = st""
 
     exp match {
@@ -337,29 +354,37 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
         exprST = if(intrinsic.isSP) st"SP" else st"DP"
       }
       case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => {
+        var rhsExprST = ISZ[ST]()
         val rhsExpr = processExpr(intrinsic.rhsOffset, T)
         for(i <- intrinsic.bytes-1 to 0 by -1) {
           if(i == 0) {
-            exprST = st"${sharedMemName}((${rhsExpr.render} + ${i}.U).asUInt)"
+            rhsExprST = rhsExprST :+ st"${sharedMemName}((${rhsExpr.render} + ${i}.S).asUInt)"
           } else {
-            exprST = st"${sharedMemName}((${rhsExpr.render} + ${i}.U).asUInt),"
+            rhsExprST = rhsExprST :+ st"${sharedMemName}((${rhsExpr.render} + ${i}.S).asUInt),"
           }
         }
+        exprST =
+          st"""
+              |Cat(
+              |  ${(rhsExprST, "\n")}
+              |)
+            """
       }
       case exp: AST.IR.Exp.Temp => {
         val indexPostfix: String = if(anvil.isSigned(exp.tipe)) ".asUInt" else ".U"
         exprST = st"${generalRegName}(${exp.n}${indexPostfix})"
       }
       case exp: AST.IR.Exp.Int => {
-        val valuePostfix: String = isSPIndexed match {
+        val valuePostfix: String = isForcedSign match {
           case T => "S"
           case _ => if(anvil.isSigned(exp.tipe)) "S" else "U"
         }
         exprST = st"${exp.value}.${valuePostfix}"
       }
       case exp: AST.IR.Exp.Binary => {
-        val leftST = processExpr(exp.left, isSPIndexed)
-        val rightST = processExpr(exp.right, isSPIndexed)
+        val signOperation = isSPorDP(exp.left) | isSPorDP(exp.right)
+        val leftST = processExpr(exp.left, signOperation)
+        val rightST = processExpr(exp.right, signOperation)
         exp.op match {
           case AST.IR.Exp.Binary.Op.Add => {
             exprST = st"${leftST.render} + ${rightST.render}"
@@ -387,39 +412,39 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
           }
           case AST.IR.Exp.Binary.Op.CondAnd => {
             if(isBoolType(exp.tipe)) {
-              exprST = st"${leftST.render} && ${rightST.render}"
+              exprST = st"(${leftST.render} && ${rightST.render}).asUInt"
             } else if(is1BitVector(exp.tipe)) {
-              exprST = st"${leftST.render}.asBool && ${rightST.render}.asBool"
+              exprST = st"(${leftST.render}.asBool && ${rightST.render}.asBool).asUInt"
             } else {
               halt(s"processExpr, you got an error about Op.CondAnd")
             }
           }
           case AST.IR.Exp.Binary.Op.CondOr => {
             if(isBoolType(exp.tipe)) {
-              exprST = st"${leftST.render} || ${rightST.render}"
+              exprST = st"(${leftST.render} || ${rightST.render}).asUInt"
             } else if(is1BitVector(exp.tipe)) {
-              exprST = st"${leftST.render}.asBool || ${rightST.render}.asBool"
+              exprST = st"(${leftST.render}.asBool || ${rightST.render}.asBool).asUInt"
             } else {
               halt(s"processExpr, you got an error about Op.CondOr")
             }
           }
           case AST.IR.Exp.Binary.Op.Eq => {
-            exprST = st"${leftST.render} === ${rightST.render}"
+            exprST = st"(${leftST.render} === ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Ne => {
-            exprST = st"${leftST.render} =/= ${rightST.render}"
+            exprST = st"(${leftST.render} =/= ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Ge => {
-            exprST = st"${leftST.render} <= ${rightST.render}"
+            exprST = st"(${leftST.render} <= ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Gt => {
-            exprST = st"${leftST.render} < ${rightST.render}"
+            exprST = st"(${leftST.render} < ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Le => {
-            exprST = st"${leftST.render} <= ${rightST.render}"
+            exprST = st"(${leftST.render} <= ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Lt => {
-            exprST = st"${leftST.render} < ${rightST.render}"
+            exprST = st"(${leftST.render} < ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Shr => {
             val right: ST = if(anvil.isSigned(exp.right.tipe)) st"(${rightST}).asUInt" else rightST
