@@ -32,17 +32,26 @@ import org.sireum.lang.symbol.Resolver.{QName, typeParamMap}
 import org.sireum.lang.symbol.TypeInfo
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 
+object TmpWireCount {
+  var count: Z = 0
+  def getCurrent: Z = {
+    return count
+  }
+  def incCount(): Unit = {
+    count = count + 1
+  }
+}
+
 @datatype class HwSynthesizer(val anvil: Anvil) {
 
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
-  var tmpWireCount = 0;
   /*
     Notes/links:
     * Slang IR: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/IR.scala
     * Anvil IR Intrinsic: https://github.com/sireum/anvil/blob/master/shared/src/main/scala/org/sireum/anvil/Intrinsic.scala
    */
-  def printProcedure(name: String, o: AST.IR.Procedure, globalSize: Z, maxRegisters: Z): HashSMap[ISZ[String], ST] = {
+  @pure def printProcedure(name: String, o: AST.IR.Procedure, globalSize: Z, maxRegisters: Z): HashSMap[ISZ[String], ST] = {
     var r = HashSMap.empty[ISZ[String], ST]
     val processedProcedureST = processProcedure(name, o, maxRegisters)
     r = r + ISZ(name) ~> processedProcedureST
@@ -59,13 +68,13 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
           |import chisel3.experimental._
           |
           |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 32,
-          |           val C_S_AXI_ADDR_WIDTH:  Int = 32,
-          |           val ARRAY_REG_WIDTH:     Int = 8,
-          |           val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
-          |           val GENERAL_REG_WIDTH:   Int = 64,
-          |           val GENERAL_REG_DEPTH:   Int = ${maxRegisters},
-          |           val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize*8},
-          |           val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize*8}) extends Module {
+          |               val C_S_AXI_ADDR_WIDTH:  Int = 32,
+          |               val ARRAY_REG_WIDTH:     Int = 8,
+          |               val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
+          |               val GENERAL_REG_WIDTH:   Int = 64,
+          |               val GENERAL_REG_DEPTH:   Int = ${maxRegisters},
+          |               val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize*8},
+          |               val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize*8}) extends Module {
           |
           |    val io = IO(new Bundle{
           |        val valid          = Input(Bool())
@@ -86,9 +95,9 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
           |    // reg for code pointer
           |    val CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
           |    // reg for stack pointer
-          |    val SP = RegInit(0.S(STACK_POINTER_WIDTH.W))
+          |    val SP = RegInit(0.U(STACK_POINTER_WIDTH.W))
           |    // reg for display pointer
-          |    val DP = RegInit(0.S(STACK_POINTER_WIDTH.W))
+          |    val DP = RegInit(0.U(STACK_POINTER_WIDTH.W))
           |
           |    // write operation
           |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
@@ -138,15 +147,15 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
       }
       commentST = commentST :+ b.jump.prettyST
 
-      st"""
-          |is(${b.label}.U) {
-          |  /*
-          |  ${(commentST, "\n")}
-          |  */
-          |  ${(ground, "")}
-          |  ${jump.render}
-          |}
-        """
+      return st"""
+                 |is(${b.label}.U) {
+                 |  /*
+                 |  ${(commentST, "\n")}
+                 |  */
+                 |  ${(ground, "")}
+                 |  ${jump.render}
+                 |}
+               """
     }
 
     var groundsST = ISZ[ST]()
@@ -190,12 +199,13 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
     j match {
       case AST.IR.Jump.Intrinsic(intrinsic: Intrinsic.GotoLocal) => {
         var returnAddrST = ISZ[ST]()
+        val offsetST: ST = if(intrinsic.offset < 0) st"- ${-intrinsic.offset}" else st"+ ${intrinsic.offset}"
 
         for(i <- (anvil.cpTypeByteSize - 1) to 0 by -1) {
           if(i == 0) {
-            returnAddrST = returnAddrST :+ st"${sharedMemName}((SP + ${intrinsic.offset}.S + ${i}.S).asUInt)"
+            returnAddrST = returnAddrST :+ st"${sharedMemName}(SP ${offsetST.render}.U + ${i}.U)"
           } else {
-            returnAddrST = returnAddrST :+ st"${sharedMemName}((SP + ${intrinsic.offset}.S + ${i}.S).asUInt),"
+            returnAddrST = returnAddrST :+ st"${sharedMemName}(SP ${offsetST.render}.U + ${i}.U),"
           }
         }
 
@@ -234,14 +244,14 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
     i match {
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.TempLoad) => {
         var internalST = ISZ[ST]()
-        val rhsOffsetST = processExpr(intrinsic.rhsOffset, T)
-        val tmpWire = st"__tmp_${tmpWireCount}"
+        val rhsOffsetST = processExpr(intrinsic.rhsOffset, F)
+        val tmpWire = st"__tmp_${TmpWireCount.getCurrent}"
 
         for(i <- (intrinsic.bytes - 1) to 0 by -1) {
           if(i == 0) {
-            internalST = internalST :+ st"${sharedMemName}((${tmpWire}.asSInt + ${i}.S).asUInt)"
+            internalST = internalST :+ st"${sharedMemName}(${tmpWire} + ${i}.U)"
           } else {
-            internalST = internalST :+ st"${sharedMemName}((${tmpWire}.asSInt + ${i}.S).asUInt),"
+            internalST = internalST :+ st"${sharedMemName}(${tmpWire} + ${i}.U),"
           }
         }
 
@@ -252,17 +262,21 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
               |  ${(internalST, "\n")}
               |)
             """
-        tmpWireCount = tmpWireCount + 1
+        TmpWireCount.incCount()
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Copy) => {
         halt(s"processStmtIntrinsic Intrinsic.Copy unimplemented")
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Store) => {
-        val lhsOffsetST = processExpr(intrinsic.lhsOffset, T)
+        println(intrinsic.prettyST.render)
+        println(intrinsic.lhsOffset.prettyST.render)
+        println(intrinsic.lhsOffset.tipe)
+        println("------")
+        val lhsOffsetST = processExpr(intrinsic.lhsOffset, F)
         val rhsST = processExpr(intrinsic.rhs, intrinsic.isSigned)
         var shareMemAssign = ISZ[ST]()
-        val tmpWireLhsST = st"__tmp_${tmpWireCount}"
-        val tmpWireRhsST = st"__tmp_${tmpWireCount + 1}"
+        val tmpWireLhsST = st"__tmp_${TmpWireCount.getCurrent}"
+        val tmpWireRhsST = st"__tmp_${TmpWireCount.getCurrent + 1}"
         val tmpWireRhsContent: ST = if(isRhsIntType(intrinsic.rhs)) {
           st"${rhsST}(${intrinsic.bytes * 8}.W)"
         } else {
@@ -271,7 +285,7 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 
         for(i <- 0 to (intrinsic.bytes - 1) by 1) {
           shareMemAssign = shareMemAssign :+
-            st"${sharedMemName}((${tmpWireLhsST}.asSInt + ${i}.S).asUInt) := ${tmpWireRhsST}(${(i)*8+7}, ${(i)*8})"
+            st"${sharedMemName}(${tmpWireLhsST} + ${i}.U) := ${tmpWireRhsST}(${(i)*8+7}, ${(i)*8})"
         }
 
         intrinsicST =
@@ -280,15 +294,16 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
               |val ${tmpWireRhsST} = (${tmpWireRhsContent.render}).asUInt
               |${(shareMemAssign, "\n")}
             """
-        tmpWireCount = tmpWireCount + 2
+        TmpWireCount.incCount()
+        TmpWireCount.incCount()
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign) => {
         val targetReg: String = if(intrinsic.isSP) "SP" else "DP"
         val updateContentST: ST =
           if(intrinsic.isInc)
-            if(intrinsic.value < 0) st"${targetReg} - ${-intrinsic.value}.S"
-            else st"${targetReg} + ${intrinsic.value}.S"
-          else st"${intrinsic.value}.S"
+            if(intrinsic.value < 0) st"${targetReg} - ${-intrinsic.value}.U"
+            else st"${targetReg} + ${intrinsic.value}.U"
+          else st"${intrinsic.value}.U"
 
         intrinsicST =
           st"""
@@ -341,10 +356,6 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
     case Some(info) => info.ast.isBitVector && info.ast.bitWidth == 1
     case _ => F
   }
-  def isSPorDP(exp: AST.IR.Exp): B = exp match {
-    case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Register) => T
-    case _ => F
-  }
 
   @pure def processExpr(exp: AST.IR.Exp, isForcedSign: B): ST = {
     var exprST = st""
@@ -355,12 +366,12 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
       }
       case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => {
         var rhsExprST = ISZ[ST]()
-        val rhsExpr = processExpr(intrinsic.rhsOffset, T)
+        val rhsExpr = processExpr(intrinsic.rhsOffset, F)
         for(i <- intrinsic.bytes-1 to 0 by -1) {
           if(i == 0) {
-            rhsExprST = rhsExprST :+ st"${sharedMemName}((${rhsExpr.render} + ${i}.S).asUInt)"
+            rhsExprST = rhsExprST :+ st"${sharedMemName}(${rhsExpr.render} + ${i}.U)"
           } else {
-            rhsExprST = rhsExprST :+ st"${sharedMemName}((${rhsExpr.render} + ${i}.S).asUInt),"
+            rhsExprST = rhsExprST :+ st"${sharedMemName}(${rhsExpr.render} + ${i}.U),"
           }
         }
         exprST =
@@ -382,9 +393,8 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
         exprST = st"${exp.value}.${valuePostfix}"
       }
       case exp: AST.IR.Exp.Binary => {
-        val signOperation = isSPorDP(exp.left) | isSPorDP(exp.right)
-        val leftST = processExpr(exp.left, signOperation)
-        val rightST = processExpr(exp.right, signOperation)
+        val leftST = processExpr(exp.left, F)
+        val rightST = processExpr(exp.right, F)
         exp.op match {
           case AST.IR.Exp.Binary.Op.Add => {
             exprST = st"${leftST.render} + ${rightST.render}"
