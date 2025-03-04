@@ -26,7 +26,7 @@
 package org.sireum.anvil
 
 import org.sireum._
-import org.sireum.alir.TypeSpecializer
+import org.sireum.alir.{ControlFlowGraph, MonotonicDataflowFramework, TypeSpecializer}
 import org.sireum.lang.{ast => AST}
 import org.sireum.lang.symbol.{Info, TypeInfo}
 import org.sireum.lang.symbol.Resolver.QName
@@ -429,6 +429,33 @@ object Anvil {
       }
       return MNone()
     }
+  }
+
+  @datatype class TempLV(val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[Z] {
+    @strictpure def isForward: B = F
+    @strictpure def isLUB: B = F
+    @strictpure def iota: HashSSet[Z] = HashSSet.empty
+    @strictpure def init: HashSSet[Z] = HashSSet.empty
+    @pure def genGround(g: AST.IR.Stmt.Ground): HashSSet[Z] = {
+      val tc = TempCollector(HashSSet.empty)
+      g match {
+        case g: AST.IR.Stmt.Assign.Temp => tc.transformIRExp(g.rhs)
+        case _ => tc.transformIRStmtGround(g)
+      }
+      return tc.r
+    }
+    @pure def killGround(g: AST.IR.Stmt.Ground): HashSSet[Z] = {
+      g match {
+        case g: AST.IR.Stmt.Assign.Temp => return HashSSet.empty[Z] + g.lhs
+        case _ => return HashSSet.empty
+      }
+    }
+    @pure def genJump(j: AST.IR.Jump): HashSSet[Z] = {
+      val tc = TempCollector(HashSSet.empty)
+      tc.transformIRJump(j)
+      return tc.r
+    }
+    @strictpure def killJump(j: AST.IR.Jump): HashSSet[Z] = HashSSet.empty
   }
 
   val kind: String = "Anvil"
@@ -1069,7 +1096,7 @@ import Anvil._
       r = transformEmptyBlock(r)
       return r
     }
-    return program(procedures = ops.ISZOps(program.procedures).mParMap(transform _))
+    return program(procedures = ops.ISZOps(program.procedures).map(transform _))
   }
 
   @memoize def callResultId(id: String, pos: message.Position): String = {
@@ -1408,14 +1435,17 @@ import Anvil._
     var changed = T
     while (changed) {
       changed = F
-      val tc = TempCollector(HashSSet.empty)
-      tc.transformIRBody(body)
+      val lv = TempLV(ControlFlowGraph.buildBasic(body))
+      val entrySet = MBox(HashSMap.empty[Z, ISZ[HashSSet[Z]]])
+      val exitSet = MBox(entrySet.value)
+      lv.compute(body, entrySet, exitSet)
       var blocks = ISZ[AST.IR.BasicBlock]()
       for (b <- body.blocks) {
         var grounds = ISZ[AST.IR.Stmt.Ground]()
-        for (g <- b.grounds) {
+        for (i <- b.grounds.indices) {
+          val g = b.grounds(i)
           g match {
-            case g: AST.IR.Stmt.Assign.Temp if !tc.r.contains(g.lhs) => changed = T
+            case g: AST.IR.Stmt.Assign.Temp if !exitSet.value.get(b.label).get(i).contains(g.lhs) => changed = T
             case _ => grounds = grounds :+ g
           }
         }
