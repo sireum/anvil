@@ -1096,7 +1096,7 @@ import Anvil._
       r = transformEmptyBlock(r)
       return r
     }
-    return program(procedures = ops.ISZOps(program.procedures).map(transform _))
+    return program(procedures = ops.ISZOps(program.procedures).mParMap(transform _))
   }
 
   @memoize def callResultId(id: String, pos: message.Position): String = {
