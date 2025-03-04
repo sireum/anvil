@@ -33,7 +33,7 @@ class AnvilTest extends SireumRcSpec {
   val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result"
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith(".sc") }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => !p.last.endsWith("print.sc") }
     m
   }
 

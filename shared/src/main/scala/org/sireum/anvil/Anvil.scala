@@ -542,11 +542,11 @@ import Anvil._
       }
       if (config.shouldPrint) {
         globals = globals :+ AST.IR.Global(displayType, displayName, mainOpt.get.pos)
-        for (id <- printTypeMap.keys) {
+        /*for (id <- printTypeMap.keys) {
           val info = th.nameMap.get(printerName :+ id).get.asInstanceOf[Info.Method]
           val p = toBasic(irt.translateMethod(F, None(), info.owner, info.ast))
           procedures = procedures :+ p
-        }
+        }*/
       }
       for (vs <- tsr.objectVars.entries) {
         val (owner, ids) = vs
@@ -1104,7 +1104,6 @@ import Anvil._
         var addBeginningMap = HashSMap.empty[Z, ISZ[AST.IR.Stmt.Ground]]
         var blocks = ISZ[AST.IR.BasicBlock]()
         val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-        val m = countNumOfIncomingJumps(body.blocks)
         for (b <- body.blocks) {
           def processInvoke(g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, label: Z): Unit = {
             val numOfRegisters: Z = lhsOpt match {
@@ -1204,14 +1203,9 @@ import Anvil._
                 return
               case _ =>
             }
-            var label = lbl
-            if (m.get(label).get != 1) {
-              label = fresh.label()
-            }
+            val label = fresh.label()
             processInvoke(g, lhsOpt, e, label)
-            if (label != lbl) {
-              blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(lbl, e.pos))
-            }
+            blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(lbl, e.pos))
           }
 
           b.jump match {
