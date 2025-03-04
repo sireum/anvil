@@ -542,11 +542,11 @@ import Anvil._
       }
       if (config.shouldPrint) {
         globals = globals :+ AST.IR.Global(displayType, displayName, mainOpt.get.pos)
-        /*for (id <- printTypeMap.keys) {
+        for (id <- printTypeMap.keys) {
           val info = th.nameMap.get(printerName :+ id).get.asInstanceOf[Info.Method]
           val p = toBasic(irt.translateMethod(F, None(), info.owner, info.ast))
           procedures = procedures :+ p
-        }*/
+        }
       }
       for (vs <- tsr.objectVars.entries) {
         val (owner, ids) = vs
@@ -1060,7 +1060,7 @@ import Anvil._
       r = transformPrint(fresh, r)
       r = transformApplyConstructResult(fresh, r)
       r = transformEmptyBlock(r)
-      r = transformReduceTemp(r)
+      //r = transformReduceTemp(r)
       r = transformReduceExp(r)
       r = transformTempCompress(r)
       r = transformSplitTemp(fresh, r)
@@ -2019,10 +2019,14 @@ import Anvil._
   }
 
   @memoize def classSizeFieldOffsets(t: AST.Typed.Name): (Z, HashSMap[String, (AST.Typed, Z)]) = {
-    val info = th.typeMap.get(t.ids).get.asInstanceOf[TypeInfo.Adt]
-    val sm = TypeChecker.buildTypeSubstMap(t.ids, None(), info.ast.typeParams, t.args, message.Reporter.create).get
     var r = HashSMap.empty[String, (AST.Typed, Z)] + typeFieldId ~> (typeShaType, 0)
     var offset: Z = typeShaSize
+    if (t == AST.Typed.string) {
+      r = r + "size" ~> (AST.Typed.z, offset)
+      return (offset + typeByteSize(AST.Typed.z), r)
+    }
+    val info = th.typeMap.get(t.ids).get.asInstanceOf[TypeInfo.Adt]
+    val sm = TypeChecker.buildTypeSubstMap(t.ids, None(), info.ast.typeParams, t.args, message.Reporter.create).get
     for (v <- info.vars.values) {
       val ft = v.typedOpt.get.subst(sm)
       r = r + v.ast.id.value ~> (ft, offset)
