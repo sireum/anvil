@@ -58,6 +58,10 @@ object Anvil {
       Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, T, 1, T, T, 0)
   }
 
+  @sig trait Output {
+    def add(isFinal: B, path: => ISZ[String], content: => ST): Unit
+  }
+
   @record class TempCollector(var r: HashSSet[Z]) extends AST.MIRTransformer {
     override def postIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
       r = r + o.n
@@ -489,7 +493,8 @@ object Anvil {
     "printF64_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.f64), AST.Typed.u64) +
     "printString" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.string), AST.Typed.u64)
 
-  def synthesize(fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, owner: QName, id: String, config: Config, reporter: Reporter): HashSMap[ISZ[String], ST] = {
+  def synthesize(fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, owner: QName, id: String, config: Config,
+                 output: Output, reporter: Reporter): Unit = {
     assert(config.memory > 0 && config.memory % 8 == 0, s"Memory configuration has to be a positive integer multiples of 8")
     val tsr = TypeSpecializer.specialize(th, ISZ(TypeSpecializer.EntryPoint.Method(owner :+ id)), HashMap.empty,
       reporter)
@@ -497,11 +502,11 @@ object Anvil {
       reporter.error(None(), kind, s"@ext methods are not supported")
     }
     if (reporter.hasError) {
-      return HashSMap.empty
+      return
     }
     fresh.setTemp(0)
     fresh.setLabel(startingLabel)
-    return Anvil(th, tsr, owner, id, config, 0).synthesize(fresh, reporter)
+    Anvil(th, tsr, owner, id, config, 0).synthesize(fresh, output, reporter)
   }
 }
 
@@ -531,15 +536,23 @@ import Anvil._
     return if (n % 8 == 0) n / 8 else (n / 8) + 1
   }
 
-  def synthesize(fresh: lang.IRTranslator.Fresh, reporter: Reporter): HashSMap[ISZ[String], ST] = {
+  @strictpure def irProcedurePath(procedureId: String, pType: AST.Typed.Fun, stage: Z, pass: Z, id: String): ISZ[String] =
+    ISZ("ir", "procedures", s"$procedureId-${sha3(pType.string)}-$stage-$pass-$id.sir")
+
+  def synthesize(fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): Unit = {
     val threeAddressCode = T
+
+    var stage: Z = 0
 
     val irt = lang.IRTranslator(threeAddressCode = T, threeAddressCodeLit = F, th = tsr.typeHierarchy, fresh = fresh)
 
     val mq: (AST.IR.MethodContext, AST.IR.Program, Z, HashSMap[ISZ[String], GlobalInfo]) = {
       @pure def toBasic(p: AST.IR.Procedure): AST.IR.Procedure = {
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, 0, "initial"), p.prettyST)
         var r = StmtFilter(this).transformIRProcedure(p).getOrElse(p)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, 1, "stmt-filter"), r.prettyST)
         r = r(body = irt.toBasic(r.body.asInstanceOf[AST.IR.Body.Block], p.pos))
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, 2, "basic"), r.prettyST)
         return r
       }
       var globals = ISZ[AST.IR.Global]()
@@ -621,11 +634,14 @@ import Anvil._
     val globalSize = mq._3
     val globalMap = mq._4
 
-    var r = HashSMap.empty[ISZ[String], ST]
-    r = r + ISZ("ir", "1-program.sir") ~> program.prettyST
+    output.add(F, ISZ("ir", "1-program.sir"), program.prettyST)
 
-    program = transformProgram(irt.fresh, program)
-    r = r + ISZ("ir", "2-program-transformed.sir") ~> program.prettyST
+    stage = stage + 1
+
+    program = transformProgram(stage, irt.fresh, program, output)
+    output.add(F, ISZ("ir", "2-program-transformed.sir"), program.prettyST)
+
+    stage = stage + 1
 
     val numOfLocs: Z = ops.ISZOps(for (p <- program.procedures)
       yield p.body.asInstanceOf[AST.IR.Body.Basic].blocks.size).foldLeft[Z]((r: Z, n: Z) => r + n, 0)
@@ -639,16 +655,26 @@ import Anvil._
         val (maxOffset, p2, m) = anvil.transformOffset(globalMap, p)
         callResultOffsetMap = callResultOffsetMap ++ m.entries
         var proc = p2
+        var pass: Z = 0
+
+        output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "offset"), proc.prettyST)
+        pass = pass + 1
+
         if (config.maxExpDepth != 1) {
           proc = anvil.transformReduceExp(proc)
+          output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "reduce-exp"), proc.prettyST)
+          pass = pass + 1
+
           proc = anvil.transformTempCompress(proc)
+          output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "temp-compress"), proc.prettyST)
+          pass = pass + 1
         }
         procedureMap = procedureMap + proc.context ~> proc
         procedureSizeMap = procedureSizeMap + p2.context ~> maxOffset
       }
       program(procedures = procedureMap.values)
     }
-    r = r + ISZ("ir", "3-program-offset.sir") ~> program.prettyST
+    output.add(F, ISZ("ir", "3-program-offset.sir"), program.prettyST)
 
     val maxRegisters: Z = {
       val tc = TempCollector(HashSSet.empty)
@@ -656,22 +682,43 @@ import Anvil._
       tc.r.elements.size
     }
 
+    stage = stage + 1
+
     val main = procedureMap.get(mainContext).get
     program = {
       val p = main(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
         anvil.mergeProcedures(main, fresh, procedureMap, procedureSizeMap, callResultOffsetMap, maxRegisters)))
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, 0, "merged"), p.prettyST)
       program(procedures = ISZ(p))
     }
-    r = r + ISZ("ir", "4-program-merged.sir") ~> program.prettyST
+    output.add(F, ISZ("ir", "4-program-merged.sir"), program.prettyST)
+
+    stage = stage + 1
 
     program = {
       var p = program.procedures(0)
+      var pass: Z = 0
+
       p = anvil.transformRegisterInc(fresh, p)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "register-inc"), p.prettyST)
+      pass = pass + 1
+
       p = anvil.transformMergeRegisterInc(p)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "merge-register-inc"), p.prettyST)
+      pass = pass + 1
+
       p = anvil.transformMain(fresh, p, globalSize, globalMap)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "main"), p.prettyST)
+      pass = pass + 1
+
       p = anvil.transformCP(p)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "cp"), p.prettyST)
+      pass = pass + 1
+
       program(procedures = ISZ(p))
     }
+
+    stage = stage + 1
 
     {
       val emc = ExtMethodCollector(this, HashSMap.empty)
@@ -732,9 +779,9 @@ import Anvil._
 
     }
 
-    r = r + ISZ("ir", "5-program-reordered.sir") ~>
+    output.add(F, ISZ("ir", "5-program-reordered.sir"),
       st"""$header
-          |${program.prettyST}"""
+          |${program.prettyST}""")
 
     {
       val nlocs = program.procedures(0).body.asInstanceOf[AST.IR.Body.Basic].blocks.size
@@ -742,9 +789,7 @@ import Anvil._
       assert(nlocs <= cpMax, s"nlocs ($nlocs) > cpMax (2 ** (${anvil.typeByteSize(cpType) * 8}) == $cpMax)")
     }
 
-    r = r ++ HwSynthesizer(anvil).printProcedure(id, program.procedures(0), globalSize, maxRegisters).entries
-
-    return r
+    HwSynthesizer(anvil).printProcedure(id, program.procedures(0), output, maxRegisters)
   }
 
   def transformEmptyBlock(p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1080,20 +1125,55 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformProgram(fresh: lang.IRTranslator.Fresh, program: AST.IR.Program): AST.IR.Program = {
+  def transformProgram(stage: Z, fresh: lang.IRTranslator.Fresh, program: AST.IR.Program, output: Output): AST.IR.Program = {
     @pure def transform(p: AST.IR.Procedure): AST.IR.Procedure = {
       var r = p
+      var pass: Z = 0
+
       r = transformGlobalVarRef(fresh, r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "global"), r.prettyST)
+      pass = pass + 1
+
       r = transformPrint(fresh, r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "print"), r.prettyST)
+      pass = pass + 1
+
       r = transformApplyConstructResult(fresh, r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "apply-construct-result"), r.prettyST)
+      pass = pass + 1
+
       r = transformEmptyBlock(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "empty-block"), r.prettyST)
+      pass = pass + 1
+
       r = transformReduceTemp(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "reduce-temp"), r.prettyST)
+      pass = pass + 1
+
       r = transformReduceExp(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "reduce-exp"), r.prettyST)
+      pass = pass + 1
+
       r = transformTempCompress(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "temp-compress"), r.prettyST)
+      pass = pass + 1
+
       r = transformSplitTemp(fresh, r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-temp"), r.prettyST)
+      pass = pass + 1
+
       r = transformSplitReadWrite(fresh, r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-read-write"), r.prettyST)
+      pass = pass + 1
+
       r = transformInstanceOf(fresh, r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "instanceof"), r.prettyST)
+      pass = pass + 1
+
       r = transformEmptyBlock(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "empty-block"), r.prettyST)
+      pass = pass + 1
+
       return r
     }
     return program(procedures = ops.ISZOps(program.procedures).mParMap(transform _))

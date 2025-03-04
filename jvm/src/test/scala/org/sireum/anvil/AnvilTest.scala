@@ -52,11 +52,15 @@ class AnvilTest extends SireumRcSpec {
         (dir / path(0)).removeAll()
         var config = Anvil.Config.empty(path.mkString("/"))
         config = config(memory = 1024, printSize = if (path(path.size - 1) == "print.sc") 100 else 0)
-        for (p <- Anvil.synthesize(lang.IRTranslator.createFresh, th2, ISZ(), lastMethod, config, reporter).entries) {
-          val f = dir /+ ISZ(path.map(String(_)): _*) /+ p._1
-          f.up.mkdirAll()
-          f.writeOver(p._2.render)
-        }
+        val out = dir /+ ISZ(path.map(String(_)): _*)
+        Anvil.synthesize(lang.IRTranslator.createFresh, th2, ISZ(), lastMethod, config, new Anvil.Output {
+          def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
+            val f = out /+ p
+            f.up.mkdirAll()
+            f.writeOver(content.render)
+          }
+          override def string: String = "AnvilTest.Output"
+        }, reporter)
         reporter.printMessages()
         T
       case _ => return F

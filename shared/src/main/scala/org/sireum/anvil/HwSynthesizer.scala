@@ -37,10 +37,10 @@ import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
     * Slang IR: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/IR.scala
     * Anvil IR Intrinsic: https://github.com/sireum/anvil/blob/master/shared/src/main/scala/org/sireum/anvil/Intrinsic.scala
    */
-  def printProcedure(name: String, o: AST.IR.Procedure, globalSize: Z, maxRegisters: Z): HashSMap[ISZ[String], ST] = {
+  def printProcedure(name: String, o: AST.IR.Procedure, output: Anvil.Output, maxRegisters: Z): Unit = {
     var r = HashSMap.empty[ISZ[String], ST]
     r = r + ISZ(name) ~> o.prettyST
-    return r
+    return
   }
 
 }
