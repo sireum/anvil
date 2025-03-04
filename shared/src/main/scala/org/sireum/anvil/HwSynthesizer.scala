@@ -303,11 +303,17 @@ object TmpWireCount {
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign) => {
         val targetReg: String = if(intrinsic.isSP) "SP" else "DP"
-        val updateContentST: ST =
-          if(intrinsic.isInc)
-            if(intrinsic.value < 0) st"${targetReg} - ${-intrinsic.value}.U"
-            else st"${targetReg} + ${intrinsic.value}.U"
-          else st"${intrinsic.value}.U"
+        val updateContentST: ST = intrinsic.value match {
+          case Either.Left(v) => {
+            if(intrinsic.isInc)
+              if(v < 0) st"${targetReg} - ${-v}.U"
+              else st"${targetReg} + ${v}.U"
+            else st"${v}.U"
+          }
+          case Either.Right(v) => {
+            halt(s"processStmtIntrinsic RegisterAssign Either.Right unimplemented")
+          }
+        }
 
         intrinsicST =
           st"""
