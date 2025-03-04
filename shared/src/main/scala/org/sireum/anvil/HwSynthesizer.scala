@@ -147,15 +147,19 @@ object TmpWireCount {
       }
       commentST = commentST :+ b.jump.prettyST
 
-      return st"""
-                 |is(${b.label}.U) {
-                 |  /*
-                 |  ${(commentST, "\n")}
-                 |  */
-                 |  ${(ground, "")}
-                 |  ${jump.render}
-                 |}
-               """
+      if(b.label > 1) {
+        return st"""
+                   |is(${b.label}.U) {
+                   |  /*
+                   |  ${(commentST, "\n")}
+                   |  */
+                   |  ${(ground, "")}
+                   |  ${jump.render}
+                   |}
+                 """
+      } else {
+        return st""
+      }
     }
 
     var groundsST = ISZ[ST]()
