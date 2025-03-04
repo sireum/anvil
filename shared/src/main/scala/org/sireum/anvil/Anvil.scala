@@ -64,14 +64,6 @@ object Anvil {
       return MNone()
     }
 
-    override def postIRExpIntrinsicType(o: AST.IR.Exp.Intrinsic.Type): MOption[AST.IR.Exp.Intrinsic.Type] = {
-      o match {
-        case _: Intrinsic.Register =>
-        case _ =>
-      }
-      return MNone()
-    }
-
     override def postIRStmtIntrinsicType(o: AST.IR.Stmt.Intrinsic.Type): MOption[AST.IR.Stmt.Intrinsic.Type] = {
       o match {
         case o: Intrinsic.Copy =>
@@ -80,10 +72,21 @@ object Anvil {
         case o: Intrinsic.Store =>
           transformIRExp(o.lhsOffset)
           transformIRExp(o.rhs)
-        case o: Intrinsic.TempLoad =>
-          transformIRExp(o.rhsOffset)
+        case o: Intrinsic.TempLoad => transformIRExp(o.rhsOffset)
+        case o: Intrinsic.RegisterAssign =>
+          o.value match {
+            case Either.Right(exp) => transformIRExp(exp)
+            case _ =>
+          }
         case _: Intrinsic.Decl =>
-        case _: Intrinsic.RegisterAssign =>
+
+      }
+      return MNone()
+    }
+    override def postIRExpIntrinsic(o: AST.IR.Exp.Intrinsic): MOption[AST.IR.Exp] = {
+      o.intrinsic match {
+        case intrinsic: Intrinsic.Load => transformIRExp(intrinsic.rhsOffset)
+        case _ =>
       }
       return MNone()
     }
@@ -201,6 +204,40 @@ object Anvil {
             case Some(n) => return MSome(o(intrinsic = in(temp = n)))
             case _ => halt(s"Infeasible: ${in.temp}, $map")
           }
+        case intrinsic: Intrinsic.Copy =>
+          val lOpt = transformIRExp(intrinsic.lhsOffset)
+          val rOpt = transformIRExp(intrinsic.rhs)
+          if (lOpt.nonEmpty || rOpt.nonEmpty) {
+            return MSome(o(intrinsic =
+              intrinsic(lhsOffset = lOpt.getOrElse(intrinsic.lhsOffset), rhs = rOpt.getOrElse(intrinsic.rhs))))
+          }
+        case intrinsic: Intrinsic.Store =>
+          val lOpt = transformIRExp(intrinsic.lhsOffset)
+          val rOpt = transformIRExp(intrinsic.rhs)
+          if (lOpt.nonEmpty || rOpt.nonEmpty) {
+            return MSome(o(intrinsic =
+              intrinsic(lhsOffset = lOpt.getOrElse(intrinsic.lhsOffset), rhs = rOpt.getOrElse(intrinsic.rhs))))
+          }
+        case intrinsic: Intrinsic.RegisterAssign =>
+          intrinsic.value match {
+            case Either.Right(e) =>
+              transformIRExp(e) match {
+                case MSome(e2) => return MSome(o(intrinsic = intrinsic(value = Either.Right(e2))))
+                case _ =>
+              }
+            case _ =>
+          }
+        case _ =>
+      }
+      return MNone()
+    }
+    override def postIRExpIntrinsic(o: AST.IR.Exp.Intrinsic): MOption[AST.IR.Exp] = {
+      o.intrinsic match {
+        case intrinsic: Intrinsic.Load =>
+          transformIRExp(intrinsic.rhsOffset) match {
+            case MSome(e) => return MSome(o(intrinsic = intrinsic(rhsOffset = e)))
+            case _ =>
+          }
         case _ =>
       }
       return MNone()
@@ -315,7 +352,11 @@ object Anvil {
         case intrinsic: Intrinsic.Store =>
           transformIRExp(intrinsic.lhsOffset)
           transformIRExp(intrinsic.rhs)
-        case _: Intrinsic.RegisterAssign =>
+        case intrinsic: Intrinsic.RegisterAssign =>
+          intrinsic.value match {
+            case Either.Right(e) => transformIRExp(e)
+            case _ =>
+          }
         case _: Intrinsic.Decl =>
       }
       return MNone()
@@ -328,6 +369,7 @@ object Anvil {
           } else {
             hasDP = T
           }
+        case intrinsic: Intrinsic.Load => transformIRExp(intrinsic.rhsOffset)
         case _ =>
       }
       return MNone()
@@ -349,6 +391,46 @@ object Anvil {
     }
   }
 
+  @record class ExtMethodCollector(val anvil: Anvil,
+                                   var nameMap: HashSMap[QName, ISZ[message.Position]]) extends AST.MIRTransformer {
+    override def postIRExpApply(o: AST.IR.Exp.Apply): MOption[AST.IR.Exp] = {
+      anvil.th.nameMap.get(o.owner :+ o.id) match {
+        case Some(info: Info.ExtMethod) =>
+          val name = info.name
+          val poss = nameMap.get(name).getOrElse(ISZ())
+          nameMap = nameMap + name ~> (poss :+ o.pos)
+        case _ =>
+      }
+      return MNone()
+    }
+    override def postIRStmtIntrinsic(o: AST.IR.Stmt.Intrinsic): MOption[AST.IR.Stmt.Ground] = {
+      o.intrinsic match {
+        case intrinsic: Intrinsic.TempLoad => transformIRExp(intrinsic.rhsOffset)
+        case intrinsic: Intrinsic.Copy =>
+          transformIRExp(intrinsic.lhsOffset)
+          transformIRExp(intrinsic.rhs)
+        case intrinsic: Intrinsic.Store =>
+          transformIRExp(intrinsic.lhsOffset)
+          transformIRExp(intrinsic.rhs)
+        case intrinsic: Intrinsic.RegisterAssign =>
+          intrinsic.value match {
+            case Either.Right(e) => transformIRExp(e)
+            case _ =>
+          }
+        case _: Intrinsic.Decl =>
+      }
+      return MNone()
+    }
+    override def postIRExpIntrinsic(o: AST.IR.Exp.Intrinsic): MOption[AST.IR.Exp] = {
+      o.intrinsic match {
+        case intrinsic: Intrinsic.Load =>
+          transformIRExp(intrinsic.rhsOffset)
+        case _ =>
+      }
+      return MNone()
+    }
+  }
+
   val kind: String = "Anvil"
   val exitLabel: Z = 0
   val errorLabel: Z = 1
@@ -361,6 +443,24 @@ object Anvil {
   val newInitId: String = "<init>"
   val displayId: String = "$display"
   val displayName: ISZ[String] = ISZ(displayId)
+  val displayIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "U"), ISZ())
+  val displayType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(displayIndexType, AST.Typed.u8))
+  val f32DigitIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "I50"), ISZ())
+  val f64DigitIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "I320"), ISZ())
+  val f32DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(f32DigitIndexType, AST.Typed.u8))
+  val f64DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(f64DigitIndexType, AST.Typed.u8))
+  val printerName: QName = AST.Typed.sireumName :+ "anvil" :+ "Printer"
+  val printTypeMap: HashSMap[String, AST.Typed.Fun] = HashSMap.empty[String, AST.Typed.Fun] +
+    "printB" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.b), AST.Typed.u64) +
+    "printC" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.c), AST.Typed.u64) +
+    "printS64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.s64), AST.Typed.u64) +
+    "printU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.u64), AST.Typed.u64) +
+    "printU64Hex" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.u64, AST.Typed.z), AST.Typed.u64) +
+    "f32Digit" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(f32DigitBufferType, f32DigitIndexType, AST.Typed.f32), AST.Typed.u64) +
+    "f64Digit" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(f64DigitBufferType, f64DigitIndexType, AST.Typed.f64), AST.Typed.u64) +
+    "printF32_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.f32), AST.Typed.u64) +
+    "printF64_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.f64), AST.Typed.u64) +
+    "printString" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.string), AST.Typed.u64)
 
   def synthesize(fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, owner: QName, id: String, config: Config, reporter: Reporter): HashSMap[ISZ[String], ST] = {
     assert(config.memory > 0 && config.memory % 8 == 0, s"Memory configuration has to be a positive integer multiples of 8")
@@ -392,8 +492,6 @@ import Anvil._
   val spType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "SP"), ISZ())
   val cpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "CP"), ISZ())
   val dpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "DP"), ISZ())
-  val displayIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "U"), ISZ())
-  val displayType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(displayIndexType, AST.Typed.u8))
 
   val spTypeByteSize: Z = {
     val n = computeBitwidth(config.memory) + 1
@@ -409,7 +507,7 @@ import Anvil._
   def synthesize(fresh: lang.IRTranslator.Fresh, reporter: Reporter): HashSMap[ISZ[String], ST] = {
     val threeAddressCode = T
 
-    val irt = lang.IRTranslator(threeAddressCode = T, th = tsr.typeHierarchy, fresh = fresh)
+    val irt = lang.IRTranslator(threeAddressCode = T, threeAddressCodeLit = F, th = tsr.typeHierarchy, fresh = fresh)
 
     val mq: (AST.IR.MethodContext, AST.IR.Program, Z, HashSMap[ISZ[String], GlobalInfo]) = {
       @pure def toBasic(p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -423,7 +521,11 @@ import Anvil._
 
       var mainOpt = Option.none[AST.IR.Procedure]()
       for (ms <- tsr.methods.values; m <- ms.elements) {
-        val p = toBasic(irt.translateMethod(F, None(), m.info.owner, m.info.ast))
+        val receiverOpt: Option[AST.Typed] = m.receiverOpt match {
+          case Some(t) => Some(t)
+          case _ => None()
+        }
+        val p = toBasic(irt.translateMethod(F, receiverOpt, m.info.owner, m.info.ast))
         procedures = procedures :+ p
         if (m.info.owner == owner && m.info.ast.sig.id.value == id) {
           mainOpt = Some(p)
@@ -440,6 +542,11 @@ import Anvil._
       }
       if (config.shouldPrint) {
         globals = globals :+ AST.IR.Global(displayType, displayName, mainOpt.get.pos)
+        for (id <- printTypeMap.keys) {
+          val info = th.nameMap.get(printerName :+ id).get.asInstanceOf[Info.Method]
+          val p = toBasic(irt.translateMethod(F, None(), info.owner, info.ast))
+          procedures = procedures :+ p
+        }
       }
       for (vs <- tsr.objectVars.entries) {
         val (owner, ids) = vs
@@ -537,6 +644,17 @@ import Anvil._
       p = anvil.transformMain(fresh, p, globalSize, globalMap)
       p = anvil.transformCP(p)
       program(procedures = ISZ(p))
+    }
+
+    {
+      val emc = ExtMethodCollector(this, HashSMap.empty)
+      emc.transformIRProgram(program)
+      for (pair <- emc.nameMap.entries) {
+        val (name, poss) = pair
+        for (pos <- poss) {
+          reporter.error(Some(pos), kind, st"Extension method ${(name, ".")} is not currently handled".render)
+        }
+      }
     }
 
     val header: ST = {
@@ -875,19 +993,24 @@ import Anvil._
             undeclMap = undeclMap + g.lhs ~> decl.undeclare
           case _ =>
             grounds = grounds :+ g
-            val tc = TempCollector(HashSSet.empty)
-            tc.transformIRStmtGround(g)
-            for (temp <- tc.r.elements) {
-              undeclMap.get(temp) match {
-                case Some(undecl) =>
-                  grounds = grounds :+ undecl
-                  undeclMap = undeclMap -- ISZ(temp)
-                case _ =>
-              }
-            }
         }
       }
-      blocks = blocks :+ b(grounds = grounds)
+      var grounds2 = ISZ[AST.IR.Stmt.Ground]()
+      for (i <- grounds.size - 1 to 0 by -1) {
+        val g = grounds(i)
+        val tc = TempCollector(HashSSet.empty)
+        tc.transformIRStmtGround(g)
+        for (temp <- tc.r.elements) {
+          undeclMap.get(temp) match {
+            case Some(undecl) =>
+              grounds2 = grounds2 :+ undecl
+              undeclMap = undeclMap -- ISZ(temp)
+            case _ =>
+          }
+        }
+        grounds2 = grounds2 :+ g
+      }
+      blocks = blocks :+ b(grounds = for (i <- grounds2.size - 1 to 0 by - 1) yield grounds2(i))
     }
 
     @strictpure def isInvoke(g: AST.IR.Stmt.Ground): B = g match {
@@ -934,6 +1057,7 @@ import Anvil._
     @pure def transform(p: AST.IR.Procedure): AST.IR.Procedure = {
       var r = p
       r = transformGlobalVarRef(fresh, r)
+      r = transformPrint(fresh, r)
       r = transformApplyConstructResult(fresh, r)
       r = transformEmptyBlock(r)
       r = transformReduceTemp(r)
@@ -945,7 +1069,6 @@ import Anvil._
       r = transformEmptyBlock(r)
       return r
     }
-
     return program(procedures = ops.ISZOps(program.procedures).mParMap(transform _))
   }
 
@@ -995,7 +1118,8 @@ import Anvil._
             }
             val spAdd = procedureSizeMap.get(p.context).get
             var grounds = ISZ[AST.IR.Stmt.Ground]()
-            grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, T, spAdd + numOfRegisters * 8, e.pos))
+            grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, T,
+              Either.Left(spAdd + numOfRegisters * 8), e.pos))
 
             var offset: Z = 0
             var locals = ISZ[Intrinsic.Decl.Local](
@@ -1054,7 +1178,7 @@ import Anvil._
             bgrounds = bgrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(T, F,
               for (i <- locals.size - 1 to 0 by -1) yield locals(i), e.pos))
             bgrounds = bgrounds :+ AST.IR.Stmt.Intrinsic(
-              Intrinsic.RegisterAssign(T, T, -(spAdd + numOfRegisters * 8), e.pos))
+              Intrinsic.RegisterAssign(T, T, Either.Left(-(spAdd + numOfRegisters * 8)), e.pos))
 
             lhsOpt match {
               case Some(lhs) =>
@@ -1074,6 +1198,12 @@ import Anvil._
               jump = AST.IR.Jump.Goto(called.body.asInstanceOf[AST.IR.Body.Basic].blocks(0).label, e.pos))
           }
           def processInvokeH(g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, lbl: Z): Unit = {
+            th.nameMap.get(e.owner :+ e.id) match {
+              case Some(_: Info.ExtMethod) =>
+                blocks = blocks :+ b
+                return
+              case _ =>
+            }
             var label = lbl
             if (m.get(label).get != 1) {
               label = fresh.label()
@@ -1638,7 +1768,7 @@ import Anvil._
         }
       }
       if (incDP) {
-        r = r :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T, r.size, pos))
+        r = r :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T, Either.Left(r.size), pos))
       }
     }
     return r
@@ -1648,6 +1778,17 @@ import Anvil._
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
+      val maxTemp: Z = {
+        val tc = TempCollector(HashSSet.empty)
+        tc.transformIRBasicBlock(b)
+        var max: Z = 0
+        for (t <- tc.r.elements) {
+          if (max <= t) {
+            max = max + 1
+          }
+        }
+        max
+      }
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       for (g <- b.grounds) {
         g match {
@@ -1655,34 +1796,120 @@ import Anvil._
             (e.id == "print" || e.id == "eprint" || e.id == "cprint") =>
             e.args(if (e.id == "cprint") 1 else 0) match {
               case arg: AST.IR.Exp.Bool =>
+                grounds = grounds ++ printStringLit(T, if (arg.value) "T" else "F", arg.pos)
               case arg: AST.IR.Exp.Int =>
+                if (isBitVector(arg.tipe)) {
+                  val n = typeByteSize(arg.tipe) * 2
+                  val buffer = MS.create[anvil.PrinterIndex.U, U8](n, u8"0")
+                  val value: U64 =
+                    if (arg.value < 0) conversions.S64.toRawU64(conversions.Z.toS64(arg.value))
+                    else conversions.Z.toU64(arg.value)
+                  anvil.Printer.printU64Hex(buffer, u"0", value, n)
+                  val u8ms = MSZ.create(n, u8"0")
+                  for (i <- 0 until n) {
+                    u8ms(i) = buffer(anvil.Printer.Ext.z2u(i))
+                  }
+                  grounds = grounds ++ printStringLit(T, conversions.String.fromU8ms(u8ms), arg.pos)
+                } else {
+                  val buffer = MS.create[anvil.PrinterIndex.U, U8](20, u8"0")
+                  val n: Z =
+                    if (isSigned(arg.tipe)) anvil.Printer.printS64(buffer, u"0", conversions.Z.toS64(arg.value)).toZ
+                    else anvil.Printer.printU64(buffer, u"0", conversions.Z.toU64(arg.value)).toZ
+                  val u8ms = MSZ.create(n, u8"0")
+                  for (i <- 0 until n) {
+                    u8ms(i) = buffer(anvil.Printer.Ext.z2u(i))
+                  }
+                  grounds = grounds ++ printStringLit(T, conversions.String.fromU8ms(u8ms), arg.pos)
+                }
               case arg: AST.IR.Exp.F32 =>
                 val buffer = MS.create[anvil.PrinterIndex.U, U8](50, u8"0")
                 val n = anvil.Printer.printF32_2(buffer, u"0", arg.value).toZ
-                halt("TODO")
+                val u8ms = MSZ.create(n, u8"0")
+                for (i <- 0 until n) {
+                  u8ms(i) = buffer(anvil.Printer.Ext.z2u(i))
+                }
+                grounds = grounds ++ printStringLit(T, conversions.String.fromU8ms(u8ms), arg.pos)
               case arg: AST.IR.Exp.F64 =>
                 val buffer = MS.create[anvil.PrinterIndex.U, U8](320, u8"0")
                 val n = anvil.Printer.printF64_2(buffer, u"0", arg.value).toZ
-                halt("TODO")
-              case arg: AST.IR.Exp.R =>
-              case arg: AST.IR.Exp.String =>
-                grounds = grounds ++ printStringLit(T, arg.value, arg.pos)
+                val u8ms = MSZ.create(n, u8"0")
+                for (i <- 0 until n) {
+                  u8ms(i) = buffer(anvil.Printer.Ext.z2u(i))
+                }
+                grounds = grounds ++ printStringLit(T, conversions.String.fromU8ms(u8ms), arg.pos)
+              case arg: AST.IR.Exp.R => halt(s"TODO: $arg")
+              case arg: AST.IR.Exp.String => grounds = grounds ++ printStringLit(T, arg.value, arg.pos)
               case arg =>
-                arg.tipe match {
+                fresh.setTemp(maxTemp)
+                val pos = g.pos
+                val buffer = AST.IR.Exp.GlobalVarRef(displayName, displayType, pos)
+                val index = AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos))
+                val printApply: AST.IR.Exp.Apply = arg.tipe match {
                   case AST.Typed.b =>
+                    val id = "printB"
+                    val mt = printTypeMap.get(id).get
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, arg), mt, mt.ret, pos)
+                  case AST.Typed.c =>
+                    val id = "printC"
+                    val mt = printTypeMap.get(id).get
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, arg), mt, mt.ret, pos)
                   case AST.Typed.z =>
+                    val id = "printS64"
+                    val mt = printTypeMap.get(id).get
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, AST.IR.Exp.Type(F, arg, AST.Typed.s64, pos)), mt, mt.ret, pos)
                   case AST.Typed.f32 =>
+                    val id = "printF32_2"
+                    val mt = printTypeMap.get(id).get
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, arg), mt, mt.ret, pos)
                   case AST.Typed.f64 =>
-                  case AST.Typed.r =>
+                    val id = "printF64_2"
+                    val mt = printTypeMap.get(id).get
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, arg), mt, mt.ret, pos)
                   case AST.Typed.string =>
+                    val id = "printString"
+                    val mt = printTypeMap.get(id).get
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, arg), mt, mt.ret, pos)
                   case t if subZOpt(t).nonEmpty =>
+                    if (isBitVector(t)) {
+                      val digits = AST.IR.Exp.Int(AST.Typed.z, typeByteSize(t), pos)
+                      val id = "printU64Hex"
+                      val mt = printTypeMap.get(id).get
+                      var a = arg
+                      if (a.tipe != AST.Typed.u64) {
+                        a = AST.IR.Exp.Type(F, a, AST.Typed.u64, pos)
+                      }
+                      AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, a, digits), mt, mt.ret, pos)
+                    } else if (isSigned(t)) {
+                      val id = "printS64"
+                      val mt = printTypeMap.get(id).get
+                      var a = arg
+                      if (a.tipe != AST.Typed.s64) {
+                        a = AST.IR.Exp.Type(F, a, AST.Typed.s64, pos)
+                      }
+                      AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, a), mt, mt.ret, pos)
+                    } else {
+                      val id = "printU64"
+                      val mt = printTypeMap.get(id).get
+                      var a = arg
+                      if (a.tipe != AST.Typed.u64) {
+                        a = AST.IR.Exp.Type(F, a, AST.Typed.u64, pos)
+                      }
+                      AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, a), mt, mt.ret, pos)
+                    }
+                    halt(s"TODO: $arg")
+                  case AST.Typed.r => halt(s"TODO: $arg")
                   case t => halt(s"TODO: $t, $arg")
                 }
+                val temp = fresh.temp()
+                grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, printApply, pos)
+                val inc = AST.IR.Exp.Type(F, AST.IR.Exp.Temp(temp, AST.Typed.u64, pos), dpType, pos)
+                grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T, Either.Right(inc), pos))
             }
 
           case _ => grounds = grounds :+ g
         }
       }
+      blocks = blocks :+ b(grounds = grounds)
     }
     return p(body = body(blocks = blocks))
   }
@@ -1733,10 +1960,10 @@ import Anvil._
   def transformMain(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, globalSize: Z, globalMap: HashSMap[QName, GlobalInfo]): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var grounds = ISZ[AST.IR.Stmt.Ground](
-      AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, F, globalSize, p.pos))
+      AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, F, Either.Left(globalSize), p.pos))
     )
     if (config.shouldPrint) {
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, F, 0, p.pos))
+      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, F, Either.Left(0), p.pos))
       val display = globalMap.get(displayName).get
       val sha3t = sha3(displayType.string)
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(

@@ -57,6 +57,7 @@ class AnvilTest extends SireumRcSpec {
           f.up.mkdirAll()
           f.writeOver(p._2.render)
         }
+        reporter.printMessages()
         T
       case _ => return F
     }
