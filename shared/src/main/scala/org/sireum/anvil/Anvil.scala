@@ -1060,7 +1060,7 @@ import Anvil._
       r = transformPrint(fresh, r)
       r = transformApplyConstructResult(fresh, r)
       r = transformEmptyBlock(r)
-      //r = transformReduceTemp(r)
+      r = transformReduceTemp(r)
       r = transformReduceExp(r)
       r = transformTempCompress(r)
       r = transformSplitTemp(fresh, r)
@@ -1265,11 +1265,22 @@ import Anvil._
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       for (g <- b.grounds) {
         g match {
-          case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) if tc.r.contains(in.temp) && (config.maxExpDepth <= 0 || in.rhsOffset.depth < config.maxExpDepth) =>
+          case g@AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) =>
             val rhs = TempExpSubstitutor(m, F).transformIRExp(in.rhsOffset).getOrElse(in.rhsOffset)
-            m = m + in.temp ~> AST.IR.Exp.Intrinsic(Intrinsic.Load(rhs, in.isSigned, in.bytes, in.comment, in.tipe, in.pos))
-          case g: AST.IR.Stmt.Assign.Temp if tc.r.contains(g.lhs) && (config.maxExpDepth <= 0 || g.rhs.depth < config.maxExpDepth) =>
-            m = m + g.lhs ~> TempExpSubstitutor(m, F).transformIRExp(g.rhs).getOrElse(g.rhs)
+            if (tc.r.contains(in.temp) && (config.maxExpDepth <= 0 || in.rhsOffset.depth < config.maxExpDepth)) {
+              m = m + in.temp ~> AST.IR.Exp.Intrinsic(Intrinsic.Load(rhs, in.isSigned, in.bytes, in.comment, in.tipe, in.pos))
+            } else {
+              m = m -- ISZ(in.temp)
+              grounds = grounds :+ g(intrinsic = in(rhsOffset = rhs))
+            }
+          case g: AST.IR.Stmt.Assign.Temp =>
+            val rhs = TempExpSubstitutor(m, F).transformIRExp(g.rhs).getOrElse(g.rhs)
+            if (tc.r.contains(g.lhs) && (config.maxExpDepth <= 0 || g.rhs.depth < config.maxExpDepth)) {
+              m = m + g.lhs ~> rhs
+            } else {
+              m = m -- ISZ(g.lhs)
+              grounds = grounds :+ g(rhs = rhs)
+            }
           case _ =>
             grounds = grounds :+ TempExpSubstitutor(m, F).transformIRStmtGround(g).getOrElse(g)
         }
@@ -1281,16 +1292,35 @@ import Anvil._
   }
 
   def transformReduceTemp(proc: AST.IR.Procedure): AST.IR.Procedure = {
-    val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
-    val blocks = body.blocks
-    var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- blocks) yield (b.label, b))
-    var tempSubstMap = HashMap.empty[Z, HashMap[Z, AST.IR.Exp]] + blocks(0).label ~> HashMap.empty
-    var work = ISZ[AST.IR.BasicBlock](blocks(0))
+    var body = proc.body.asInstanceOf[AST.IR.Body.Basic]
+    var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+    var tempSubstMap = HashMap.empty[Z, ISZ[HashMap[Z, AST.IR.Exp]]] + body.blocks(0).label ~> ISZ(HashMap.empty)
+    var work = ISZ[AST.IR.BasicBlock](body.blocks(0))
+    val incomingMap = countNumOfIncomingJumps(body.blocks)
+    def getSubstMap(label: Z): HashMap[Z, AST.IR.Exp] = {
+      val ms = tempSubstMap.get(label).get
+      var r = ms(0)
+      for (i <- 1 until ms.size) {
+        val m = ms(i)
+        for (entry <- m.entries) {
+          val (k, v2) = entry
+          r.get(k) match {
+            case Some(v) =>
+              if (v != v2) {
+                r = r + k ~> AST.IR.Exp.Temp(k, v.tipe, v.pos)
+              }
+            case _ =>
+              r = r + k ~> v2
+          }
+        }
+      }
+      return r
+    }
     while (work.nonEmpty) {
       var next = ISZ[AST.IR.BasicBlock]()
       for (b <- work) {
         var grounds = ISZ[AST.IR.Stmt.Ground]()
-        var substMap = tempSubstMap.get(b.label).get
+        var substMap = getSubstMap(b.label)
         for (g <- b.grounds) {
           def rest(): Unit = {
             grounds = grounds :+ TempExpSubstitutor(substMap, T).transformIRStmtGround(g).getOrElse(g)
@@ -1302,18 +1332,35 @@ import Anvil._
                 rest()
               }
               g.rhs match {
-                case rhs: AST.IR.Exp.Bool => substMap = substMap + g.lhs ~> rhs
-                case rhs: AST.IR.Exp.Int => substMap = substMap + g.lhs ~> rhs
-                case rhs: AST.IR.Exp.F32 => substMap = substMap + g.lhs ~> rhs
-                case rhs: AST.IR.Exp.F64 => substMap = substMap + g.lhs ~> rhs
-                case rhs: AST.IR.Exp.R => substMap = substMap + g.lhs ~> rhs
-                case rhs: AST.IR.Exp.String => substMap = substMap + g.lhs ~> rhs
-                case rhs: AST.IR.Exp.EnumElementRef => substMap = substMap + g.lhs ~> rhs
-                case rhs: AST.IR.Exp.Temp => substMap = substMap + g.lhs ~> substMap.get(rhs.n).get
+                case rhs: AST.IR.Exp.Bool =>
+                  substMap = substMap + g.lhs ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.Int =>
+                  substMap = substMap + g.lhs ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.F32 =>
+                  substMap = substMap + g.lhs ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.F64 =>
+                  substMap = substMap + g.lhs ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.R =>
+                  substMap = substMap + g.lhs ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.String =>
+                  substMap = substMap + g.lhs ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.EnumElementRef =>
+                  substMap = substMap + g.lhs ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.Temp =>
+                  substMap = substMap + g.lhs ~> substMap.get(rhs.n).get
+                  grounds = grounds :+ g
                 case rhs: AST.IR.Exp.Unary =>
                   val newRhs = rhs(exp = TempExpSubstitutor(substMap, T).transformIRExp(rhs.exp).getOrElse(rhs.exp))
                   if (newRhs.depth <= config.maxExpDepth) {
                     substMap = substMap + g.lhs ~> newRhs
+                    rest()
                   } else {
                     restAssignTemp()
                   }
@@ -1321,6 +1368,7 @@ import Anvil._
                   val newRhs = rhs(exp = TempExpSubstitutor(substMap, T).transformIRExp(rhs.exp).getOrElse(rhs.exp))
                   if (newRhs.depth <= config.maxExpDepth) {
                     substMap = substMap + g.lhs ~> newRhs
+                    rest()
                   } else {
                     restAssignTemp()
                   }
@@ -1330,6 +1378,7 @@ import Anvil._
                     right = tes.transformIRExp(rhs.right).getOrElse(rhs.right))
                   if (newRhs.depth <= config.maxExpDepth) {
                     substMap = substMap + g.lhs ~> newRhs
+                    rest()
                   } else {
                     restAssignTemp()
                   }
@@ -1344,16 +1393,37 @@ import Anvil._
         blockMap = blockMap + b.label ~> b(grounds = grounds, jump = jump)
         for (target <- jump.targets) {
           tempSubstMap.get(target) match {
-            case Some(_) =>
+            case Some(ms) => tempSubstMap = tempSubstMap + target ~> (ms :+ substMap)
             case _ =>
-              next = next :+ blockMap.get(target).get
-              tempSubstMap = tempSubstMap + target ~> substMap
+              tempSubstMap = tempSubstMap + target ~> ISZ(substMap)
+          }
+          if (tempSubstMap.get(target).get.size == incomingMap.get(target).get) {
+            next = next :+ blockMap.get(target).get
           }
         }
       }
       work = next
     }
-    return proc(body = body(blocks = blockMap.values))
+    body = body(blocks = blockMap.values)
+    var changed = T
+    while (changed) {
+      changed = F
+      val tc = TempCollector(HashSSet.empty)
+      tc.transformIRBody(body)
+      var blocks = ISZ[AST.IR.BasicBlock]()
+      for (b <- body.blocks) {
+        var grounds = ISZ[AST.IR.Stmt.Ground]()
+        for (g <- b.grounds) {
+          g match {
+            case g: AST.IR.Stmt.Assign.Temp if !tc.r.contains(g.lhs) => changed = T
+            case _ => grounds = grounds :+ g
+          }
+        }
+        blocks = blocks :+ b(grounds = grounds)
+      }
+      body = body(blocks = blocks)
+    }
+    return proc(body = body)
   }
 
   def transformTempCompress(proc: AST.IR.Procedure): AST.IR.Procedure = {
