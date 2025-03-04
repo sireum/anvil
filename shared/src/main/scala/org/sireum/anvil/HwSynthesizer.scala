@@ -462,7 +462,7 @@ object TmpWireCount {
             exprST = st"(${leftST.render} <= ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Gt => {
-            exprST = st"(${leftST.render} < ${rightST.render}).asUInt"
+            exprST = st"(${leftST.render} > ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Le => {
             exprST = st"(${leftST.render} <= ${rightST.render}).asUInt"
