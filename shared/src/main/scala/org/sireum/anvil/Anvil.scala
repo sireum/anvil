@@ -48,14 +48,13 @@ object Anvil {
                          val stackTrace: B,
                          val maxExpDepth: Z,
                          val runtimeCheck: B,
-                         val assertion: B,
                          val printSize: Z) {
     val shouldPrint: B = printSize > 0
   }
 
   object Config {
     @strictpure def empty(projectName: String): Config =
-      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, T, 1, T, T, 0)
+      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, T, 1, T, 0)
   }
 
   @sig trait Output {
@@ -386,7 +385,7 @@ object Anvil {
       var stmts = ISZ[AST.IR.Stmt]()
       for (stmt <- o.stmts) {
         stmt match {
-          case _: AST.IR.Stmt.Assertume if !anvil.config.assertion => changed = T
+          case _: AST.IR.Stmt.Assertume if !anvil.config.runtimeCheck => changed = T
           case _: AST.IR.Stmt.Print if !anvil.config.shouldPrint => changed = T
           case _ => stmts = stmts :+ stmt
         }
@@ -482,16 +481,16 @@ object Anvil {
   val f64DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(f64DigitIndexType, AST.Typed.u8))
   val printerName: QName = AST.Typed.sireumName :+ "anvil" :+ "Printer"
   val printTypeMap: HashSMap[String, AST.Typed.Fun] = HashSMap.empty[String, AST.Typed.Fun] +
-    "printB" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.b), AST.Typed.u64) +
-    "printC" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.c), AST.Typed.u64) +
-    "printS64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.s64), AST.Typed.u64) +
-    "printU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.u64), AST.Typed.u64) +
-    "printU64Hex" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.u64, AST.Typed.z), AST.Typed.u64) +
+    "printB" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.b), AST.Typed.u64) +
+    "printC" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.c), AST.Typed.u64) +
+    "printS64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.s64), AST.Typed.u64) +
+    "printU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.u64), AST.Typed.u64) +
+    "printU64Hex" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.u64, AST.Typed.z), AST.Typed.u64) +
     "f32Digit" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(f32DigitBufferType, f32DigitIndexType, AST.Typed.f32), AST.Typed.u64) +
     "f64Digit" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(f64DigitBufferType, f64DigitIndexType, AST.Typed.f64), AST.Typed.u64) +
-    "printF32_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.f32), AST.Typed.u64) +
-    "printF64_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.f64), AST.Typed.u64) +
-    "printString" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, AST.Typed.string), AST.Typed.u64)
+    "printF32_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.f32), AST.Typed.u64) +
+    "printF64_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.f64), AST.Typed.u64) +
+    "printString" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.string), AST.Typed.u64)
 
   def synthesize(fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, owner: QName, id: String, config: Config,
                  output: Output, reporter: Reporter): Unit = {
@@ -524,6 +523,15 @@ import Anvil._
   val spType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "SP"), ISZ())
   val cpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "CP"), ISZ())
   val dpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "DP"), ISZ())
+  val dpMask: Z = {
+    val size = anvil.Printer.Ext.z2u(config.printSize)
+    var r = u"2"
+    while (r < size) {
+      r = r << u"1"
+    }
+    r = r - u"1"
+    anvil.Printer.Ext.u2z(r)
+  }
 
   val spTypeByteSize: Z = {
     val n = computeBitwidth(config.memory) + 1
@@ -1936,7 +1944,7 @@ import Anvil._
           if (i != 0) {
             lhsOffset = AST.IR.Exp.Binary(dpType, lhsOffset, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(dpType, i, pos), pos)
           }
-          lhsOffset = AST.IR.Exp.Binary(dpType, lhsOffset, AST.IR.Exp.Binary.Op.Rem, AST.IR.Exp.Int(dpType, config.printSize, pos), pos)
+          lhsOffset = AST.IR.Exp.Binary(dpType, lhsOffset, AST.IR.Exp.Binary.Op.And, AST.IR.Exp.Int(dpType, dpMask, pos), pos)
           r = r :+ AST.IR.Stmt.Assign.Index(AST.IR.Exp.GlobalVarRef(displayName, displayType, pos), lhsOffset, AST.IR.Exp.Int(AST.Typed.u8, byte.toZ, pos), pos)
           i = i + 1
         }
@@ -1978,7 +1986,7 @@ import Anvil._
                   val value: U64 =
                     if (arg.value < 0) conversions.S64.toRawU64(conversions.Z.toS64(arg.value))
                     else conversions.Z.toU64(arg.value)
-                  anvil.Printer.printU64Hex(buffer, u"0", value, n)
+                  anvil.Printer.printU64Hex(buffer, u"0", anvil.Printer.Ext.z2u(dpMask), value, n)
                   val u8ms = MSZ.create(n, u8"0")
                   for (i <- 0 until n) {
                     u8ms(i) = buffer(anvil.Printer.Ext.z2u(i))
@@ -1987,8 +1995,8 @@ import Anvil._
                 } else {
                   val buffer = MS.create[anvil.PrinterIndex.U, U8](20, u8"0")
                   val n: Z =
-                    if (isSigned(arg.tipe)) anvil.Printer.printS64(buffer, u"0", conversions.Z.toS64(arg.value)).toZ
-                    else anvil.Printer.printU64(buffer, u"0", conversions.Z.toU64(arg.value)).toZ
+                    if (isSigned(arg.tipe)) anvil.Printer.printS64(buffer, u"0", anvil.Printer.Ext.z2u(dpMask), conversions.Z.toS64(arg.value)).toZ
+                    else anvil.Printer.printU64(buffer, u"0", anvil.Printer.Ext.z2u(dpMask), conversions.Z.toU64(arg.value)).toZ
                   val u8ms = MSZ.create(n, u8"0")
                   for (i <- 0 until n) {
                     u8ms(i) = buffer(anvil.Printer.Ext.z2u(i))
@@ -1997,7 +2005,7 @@ import Anvil._
                 }
               case arg: AST.IR.Exp.F32 =>
                 val buffer = MS.create[anvil.PrinterIndex.U, U8](50, u8"0")
-                val n = anvil.Printer.printF32_2(buffer, u"0", arg.value).toZ
+                val n = anvil.Printer.printF32_2(buffer, u"0", anvil.Printer.Ext.z2u(dpMask), arg.value).toZ
                 val u8ms = MSZ.create(n, u8"0")
                 for (i <- 0 until n) {
                   u8ms(i) = buffer(anvil.Printer.Ext.z2u(i))
@@ -2005,7 +2013,7 @@ import Anvil._
                 grounds = grounds ++ printStringLit(T, conversions.String.fromU8ms(u8ms), arg.pos)
               case arg: AST.IR.Exp.F64 =>
                 val buffer = MS.create[anvil.PrinterIndex.U, U8](320, u8"0")
-                val n = anvil.Printer.printF64_2(buffer, u"0", arg.value).toZ
+                val n = anvil.Printer.printF64_2(buffer, u"0", anvil.Printer.Ext.z2u(dpMask), arg.value).toZ
                 val u8ms = MSZ.create(n, u8"0")
                 for (i <- 0 until n) {
                   u8ms(i) = buffer(anvil.Printer.Ext.z2u(i))
@@ -2018,31 +2026,32 @@ import Anvil._
                 val pos = g.pos
                 val buffer = AST.IR.Exp.GlobalVarRef(displayName, displayType, pos)
                 val index = AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos))
+                val mask = AST.IR.Exp.Int(displayIndexType, dpMask, pos)
                 val printApply: AST.IR.Exp.Apply = arg.tipe match {
                   case AST.Typed.b =>
                     val id = "printB"
                     val mt = printTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, arg), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
                   case AST.Typed.c =>
                     val id = "printC"
                     val mt = printTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, arg), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
                   case AST.Typed.z =>
                     val id = "printS64"
                     val mt = printTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, AST.IR.Exp.Type(F, arg, AST.Typed.s64, pos)), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, mask, AST.IR.Exp.Type(F, arg, AST.Typed.s64, pos)), mt, mt.ret, pos)
                   case AST.Typed.f32 =>
                     val id = "printF32_2"
                     val mt = printTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, arg), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
                   case AST.Typed.f64 =>
                     val id = "printF64_2"
                     val mt = printTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, arg), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
                   case AST.Typed.string =>
                     val id = "printString"
                     val mt = printTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, arg), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
                   case t if subZOpt(t).nonEmpty =>
                     if (isBitVector(t)) {
                       val digits = AST.IR.Exp.Int(AST.Typed.z, typeByteSize(t), pos)
@@ -2052,7 +2061,7 @@ import Anvil._
                       if (a.tipe != AST.Typed.u64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.u64, pos)
                       }
-                      AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, a, digits), mt, mt.ret, pos)
+                      AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, mask, a, digits), mt, mt.ret, pos)
                     } else if (isSigned(t)) {
                       val id = "printS64"
                       val mt = printTypeMap.get(id).get
@@ -2060,7 +2069,7 @@ import Anvil._
                       if (a.tipe != AST.Typed.s64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.s64, pos)
                       }
-                      AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, a), mt, mt.ret, pos)
+                      AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, mask, a), mt, mt.ret, pos)
                     } else {
                       val id = "printU64"
                       val mt = printTypeMap.get(id).get
@@ -2068,7 +2077,7 @@ import Anvil._
                       if (a.tipe != AST.Typed.u64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.u64, pos)
                       }
-                      AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, a), mt, mt.ret, pos)
+                      AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, mask, a), mt, mt.ret, pos)
                     }
                     halt(s"TODO: $arg")
                   case AST.Typed.r => halt(s"TODO: $arg")
@@ -2146,7 +2155,7 @@ import Anvil._
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(spType, display.offset + typeByteSize(spType) + typeByteSize(typeShaType), p.pos),
         isSigned(AST.Typed.z), typeByteSize(AST.Typed.z),
-        AST.IR.Exp.Int(AST.Typed.z, config.printSize, p.pos), st"$displayId.size", AST.Typed.z, p.pos))
+        AST.IR.Exp.Int(AST.Typed.z, dpMask + 1, p.pos), st"$displayId.size", AST.Typed.z, p.pos))
     }
     var offset: Z = 0
     for (ge <- globalMap.entries) {
@@ -2218,7 +2227,7 @@ import Anvil._
   @memoize def getMaxArraySize(t: AST.Typed.Name): Z = {
     if (t == displayType) {
       assert(config.shouldPrint)
-      return config.printSize
+      return dpMask + 1
     }
     assert(t.ids == AST.Typed.isName || t.ids == AST.Typed.msName)
     config.customArraySizes.get(t) match {
