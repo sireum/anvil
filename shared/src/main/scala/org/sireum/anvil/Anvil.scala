@@ -777,6 +777,15 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "merge-register-inc"), p.prettyST)
       pass = pass + 1
 
+      @strictpure def isCopy(g: AST.IR.Stmt.Ground): B = g match {
+        case AST.IR.Stmt.Intrinsic(_: Intrinsic.Copy) => T
+        case _ => F
+      }
+
+      p = anvil.transformSplitTest(fresh, p, isCopy _)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-copy"), p.prettyST)
+      pass = pass + 1
+
       p = anvil.transformMain(fresh, p, globalSize, globalMap)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "main"), p.prettyST)
       pass = pass + 1
@@ -887,10 +896,11 @@ import Anvil._
   def transformEmptyBlock(p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
-    var map = HashMap.empty[Z, Z]
-    for (b <- body.blocks) {
+    var map = HashMap.empty[Z, AST.IR.Jump]
+    for (b <- body.blocks if b.grounds.isEmpty) {
       b.jump match {
-        case j: AST.IR.Jump.Goto if b.grounds.isEmpty => map = map + b.label ~> j.label
+        case j: AST.IR.Jump.Goto => map = map + b.label ~> j
+        case j@AST.IR.Jump.Intrinsic(_: Intrinsic.GotoLocal) => map = map + b.label ~> j
         case _ =>
       }
     }
@@ -899,7 +909,7 @@ import Anvil._
     }
     def getTarget(l: Z): Z = {
       map.get(l) match {
-        case Some(l2) => return getTarget(l2)
+        case Some(AST.IR.Jump.Goto(l2, _)) => return getTarget(l2)
         case _ => return l
       }
     }
@@ -912,14 +922,20 @@ import Anvil._
             case _ => None()
           }
           j(cases = for (c <- j.cases) yield c(label = getTarget(c.label)), defaultLabelOpt = dOpt)
-        case j: AST.IR.Jump.Goto => j(label = getTarget(j.label))
+        case j: AST.IR.Jump.Goto =>
+          val l = getTarget(j.label)
+          map.get(l) match {
+            case Some(j2) => j2
+            case _ => j(label = l)
+          }
         case j: AST.IR.Jump.Return => j
         case j: AST.IR.Jump.Intrinsic => j
         case j: AST.IR.Jump.Halt => j
       }
       blockMap = blockMap + b.label ~> b(jump = jump)
     }
-    blockMap = blockMap -- map.keys
+    blockMap = blockMap -- ((for (labelIncomings <- countNumOfIncomingJumps(blockMap.values).entries
+                                  if labelIncomings._2 == 0) yield labelIncomings._1) -- ISZ(0, 1, body.blocks(0).label))
     return p(body = body(blocks = blockMap.values))
   }
 
