@@ -986,7 +986,8 @@ import Anvil._
         cpSubstMap = cpSubstMap + b.label ~> cpSubstMap.size
       }
     }
-    return CPSubstitutor(cpSubstMap).transform_langastIRProcedure(p(body = body(blocks = blocks))).getOrElse(p)
+    return transformEmptyBlock(CPSubstitutor(cpSubstMap).
+      transform_langastIRProcedure(p(body = body(blocks = blocks))).getOrElse(p))
   }
 
   def transformSplitReadWrite(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
