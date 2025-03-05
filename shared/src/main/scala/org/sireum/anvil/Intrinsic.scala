@@ -94,12 +94,12 @@ object Intrinsic {
     @strictpure def depth: Z = 1
   }
 
-  @datatype class RegisterAssign(val isSP: B, val isInc: B, val value: Either[Z, AST.IR.Exp], val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+  @datatype class RegisterAssign(val isSP: B, val isInc: B, val value: AST.IR.Exp, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def prettyST: ST = {
       val reg: String = if (isSP) "SP" else "DP"
       value match {
-        case Either.Left(v) => if (isInc) if (v < 0) st"$reg = $reg - ${-v}" else st"$reg = $reg + $v" else st"$reg = $v"
-        case Either.Right(exp) => st"$reg = $reg + ${exp.prettyST}"
+        case AST.IR.Exp.Int(_, v, _) => if (isInc) if (v < 0) st"$reg = $reg - ${-v}" else st"$reg = $reg + $v" else st"$reg = $v"
+        case _ => st"$reg = $reg + ${value.prettyST}"
       }
     }
   }

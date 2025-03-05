@@ -24,3 +24,4 @@ target
 *.cmd.com
 project.json
 result
+result-*
