@@ -130,14 +130,7 @@ object Anvil {
       val seqType = o.exp.tipe.asInstanceOf[AST.Typed.Name]
       val indexType = seqType.args(0)
       val elementType = seqType.args(1)
-      val min: Z = indexType match {
-        case AST.Typed.z => 0
-        case _ =>
-          val subz = anvil.subZOpt(indexType).get.ast
-          if (subz.isIndex) subz.min
-          else if (subz.isZeroIndex) 0
-          else subz.min
-      }
+      val min: Z = anvil.minIndex(indexType)
       var index = o.index
       if (index.tipe != anvil.spType) {
         index = AST.IR.Exp.Type(F, index, anvil.spType, index.pos)
@@ -315,7 +308,8 @@ object Anvil {
   @record class ConversionsTransformer(val anvil: Anvil) extends MAnvilIRTransformer {
     override def post_langastIRStmtBlock(o: AST.IR.Stmt.Block): MOption[AST.IR.Stmt] = {
       @strictpure def isConversions(name: QName): B =
-        name.size > 3 && name(0) == "org" && name(1) == "sireum" && name(2) == "conversions"
+        (name.size > 3  && name(0) == "org" && name(1) == "sireum" && name(2) == "conversions") ||
+          name == ISZ("org", "sireum", "anvil", "Printer", "Ext")
       var changed = F
       var stmts = ISZ[AST.IR.Stmt]()
       for (stmt <- o.stmts) {
@@ -325,7 +319,15 @@ object Anvil {
             val idOps = ops.StringOps(rhs.id)
             assert(rhs.args.size == 1)
             val arg = rhs.args(0)
-            if (idOps.startsWith("toRaw")) {
+            if (idOps.s == "z2u") {
+              val cond = AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Int(AST.Typed.z, 0, pos), AST.IR.Exp.Binary.Op.Le,
+                arg, pos)
+              stmts = stmts :+ AST.IR.Stmt.Assertume(F, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
+                st"Out of bound ${rhs.tipe} value".render, pos))), pos)
+              stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, rhs.args(0), AST.Typed.z, pos))
+            } else if (idOps.s == "u2z") {
+              stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, rhs.args(0), AST.Typed.z, pos))
+            } else if (idOps.startsWith("toRaw")) {
               val (t, mask): (AST.Typed.Name, AST.IR.Exp.Int) = anvil.typeByteSize(arg.tipe) match {
                 case z"1" => (AST.Typed.u8, AST.IR.Exp.Int(AST.Typed.u8, 0xFF, pos))
                 case z"2" => (AST.Typed.u16, AST.IR.Exp.Int(AST.Typed.u16, 0xFFFF, pos))
@@ -389,7 +391,7 @@ object Anvil {
                         }
                         if (!cond.isInstanceOf[AST.IR.Exp.Bool]) {
                           stmts = stmts :+ AST.IR.Stmt.Assertume(F, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
-                            st"Implicit runtime bound checking for ${(rhs.owner :+ rhs.id, ".")}".render, pos))), pos)
+                            st"Out of bound ${rhs.tipe} value".render, pos))), pos)
                         }
                       }
                       stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, arg, rhs.tipe.asInstanceOf[AST.Typed.Name], pos))
@@ -407,9 +409,94 @@ object Anvil {
     }
   }
 
+  @record class RuntimeCheckInserter(val anvil: Anvil) extends MAnvilIRTransformer {
+    override def post_langastIRStmtBlock(o: AST.IR.Stmt.Block): MOption[AST.IR.Stmt] = {
+      if (!anvil.config.runtimeCheck) {
+        return MNone()
+      }
+      var changed = F
+      var stmts = ISZ[AST.IR.Stmt]()
+      for (stmt <- o.stmts) {
+        stmt match {
+          case stmt@AST.IR.Stmt.Assign.Temp(lhs, rhs, pos) =>
+            def addRangeCheck(): Unit = {
+              stmts = stmts :+ stmt
+              if (anvil.isBitVector(rhs.tipe)) {
+                return
+              }
+              val (minOpt, maxOpt) = anvil.minMaxOpt(rhs.tipe)
+              if (minOpt.isEmpty || maxOpt.isEmpty) {
+                return
+              }
+              var cond: AST.IR.Exp = AST.IR.Exp.Bool(T, pos)
+              val temp = AST.IR.Exp.Temp(lhs, rhs.tipe, pos)
+              minOpt match {
+                case Some(min) =>
+                  cond = AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Int(rhs.tipe, min, pos), AST.IR.Exp.Binary.Op.Le,
+                    temp, pos)
+                case _ =>
+              }
+              maxOpt match {
+                case Some(max) =>
+                  val c = AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Le,
+                    AST.IR.Exp.Int(rhs.tipe, max, pos), pos)
+                  cond = if (cond.isInstanceOf[AST.IR.Exp.Bool]) c else AST.IR.Exp.Binary(AST.Typed.b, cond,
+                    AST.IR.Exp.Binary.Op.And, c, pos)
+                case _ =>
+              }
+              if (!cond.isInstanceOf[AST.IR.Exp.Bool]) {
+                changed = T
+                stmts = stmts :+ AST.IR.Stmt.Assertume(T, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
+                  st"Out of range ${rhs.tipe} value".render, pos))), pos)
+              }
+            }
+            rhs match {
+              case rhs: AST.IR.Exp.Binary if rhs.tipe != AST.Typed.b =>
+                if (rhs.op == AST.IR.Exp.Binary.Op.Div || rhs.op == AST.IR.Exp.Binary.Op.Rem) {
+                  val cond = AST.IR.Exp.Binary(AST.Typed.b, rhs.right, AST.IR.Exp.Binary.Op.Ne,
+                    AST.IR.Exp.Int(rhs.right.tipe, 0, pos), pos)
+                  changed = T
+                  stmts = stmts :+ AST.IR.Stmt.Assertume(T, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
+                    st"Division by zero".render, pos))), pos)
+                  stmts = stmts :+ stmt
+                } else {
+                  addRangeCheck()
+                }
+              case rhs: AST.IR.Exp.Unary if rhs.tipe != AST.Typed.b =>
+                addRangeCheck()
+              case rhs: AST.IR.Exp.Indexing =>
+                val indexType = rhs.tipe.asInstanceOf[AST.Typed.Name].args(0)
+                val min = anvil.minIndex(indexType)
+                val lo = AST.IR.Exp.Int(rhs.tipe, min, pos)
+                var hi: AST.IR.Exp = AST.IR.Exp.FieldVarRef(rhs.exp, "size", AST.Typed.z, pos)
+                if (min != 0) {
+                  hi = AST.IR.Exp.Binary(AST.Typed.z, hi, AST.IR.Exp.Binary.Op.Sub, lo, pos)
+                }
+                var hil = rhs.index
+                if (hil.tipe != AST.Typed.z) {
+                  hil = AST.IR.Exp.Type(F, hil, AST.Typed.z, pos)
+                }
+                val cond = AST.IR.Exp.Binary(AST.Typed.b,
+                  AST.IR.Exp.Binary(AST.Typed.b, lo, AST.IR.Exp.Binary.Op.Le, rhs.index, pos),
+                  AST.IR.Exp.Binary.Op.And,
+                  AST.IR.Exp.Binary(AST.Typed.b, hil, AST.IR.Exp.Binary.Op.Le, hi, pos),
+                  pos)
+                changed = T
+                stmts = stmts :+ AST.IR.Stmt.Assertume(T, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
+                  st"Index out of bounds".render, pos))), pos)
+                stmts = stmts :+ stmt
+              case _ => stmts = stmts :+ stmt
+            }
+          case _ => stmts = stmts :+ stmt
+        }
+      }
+      return if (changed) MSome(o(stmts = stmts)) else MNone()
+    }
+  }
+
   @datatype class TempLV(val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[Z] {
     @strictpure def isForward: B = F
-    @strictpure def isLUB: B = F
+    @strictpure def isLUB: B = T
     @strictpure def iota: HashSSet[Z] = HashSSet.empty
     @strictpure def init: HashSSet[Z] = HashSSet.empty
     @pure def genGround(g: AST.IR.Stmt.Ground): HashSSet[Z] = {
@@ -523,32 +610,12 @@ import Anvil._
   def synthesize(fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): Unit = {
     val threeAddressCode = T
 
+    val irt = lang.IRTranslator(threeAddressCode = threeAddressCode, threeAddressCodeLit = F,
+      th = tsr.typeHierarchy, fresh = fresh)
+
     var stage: Z = 0
 
-    val irt = lang.IRTranslator(threeAddressCode = T, threeAddressCodeLit = F, th = tsr.typeHierarchy, fresh = fresh)
-
     val mq: (AST.IR.MethodContext, AST.IR.Program, Z, HashSMap[ISZ[String], GlobalInfo]) = {
-      @pure def toBasic(p: AST.IR.Procedure): AST.IR.Procedure = {
-        var pass: Z = 0
-        var r = p
-
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "initial"), r.prettyST)
-        pass = pass + 1
-
-        r = ConversionsTransformer(this).transform_langastIRProcedure(p).getOrElse(p)
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "conversions"), r.prettyST)
-        pass = pass + 1
-
-        r = StmtFilter(this).transform_langastIRProcedure(p).getOrElse(p)
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "stmt-filter"), r.prettyST)
-        pass = pass + 1
-
-        r = r(body = irt.toBasic(r.body.asInstanceOf[AST.IR.Body.Block], p.pos))
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "basic"), r.prettyST)
-        pass = pass + 1
-
-        return r
-      }
       var globals = ISZ[AST.IR.Global]()
       var procedures = ISZ[AST.IR.Procedure]()
       var globalSize: Z = 0
@@ -559,7 +626,7 @@ import Anvil._
           case Some(t) => Some(t)
           case _ => None()
         }
-        val p = toBasic(irt.translateMethod(F, receiverOpt, m.info.owner, m.info.ast))
+        val p = irt.translateMethod(F, receiverOpt, m.info.owner, m.info.ast)
         procedures = procedures :+ p
         if (m.info.owner == owner && m.info.ast.sig.id.value == id) {
           mainOpt = Some(p)
@@ -569,17 +636,16 @@ import Anvil._
         val stmts = classInit(t)
         if (stmts.nonEmpty) {
           val posOpt = th.typeMap.get(t.ids).get.posOpt
-          procedures = procedures :+ toBasic(irt.translateMethodH(F, Some(t), t.ids, newInitId, ISZ(),
+          procedures = procedures :+ irt.translateMethodH(F, Some(t), t.ids, newInitId, ISZ(),
             ISZ("this"), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(t), AST.Typed.unit), posOpt.get,
-            Some(AST.Body(stmts, ISZ()))))
+            Some(AST.Body(stmts, ISZ())))
         }
       }
       if (config.shouldPrint) {
         globals = globals :+ AST.IR.Global(displayType, displayName, mainOpt.get.pos)
         for (id <- printTypeMap.keys) {
           val info = th.nameMap.get(printerName :+ id).get.asInstanceOf[Info.Method]
-          val p = toBasic(irt.translateMethod(F, None(), info.owner, info.ast))
-          procedures = procedures :+ p
+          procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
         }
       }
       for (vs <- tsr.objectVars.entries) {
@@ -606,7 +672,7 @@ import Anvil._
         var body = objInit.body.asInstanceOf[AST.IR.Body.Block]
         body = body(block = body.block(stmts =
           AST.IR.Stmt.Assign.Global(owner, AST.Typed.b, AST.IR.Exp.Bool(T, pos), pos) +: body.block.stmts))
-        procedures = procedures :+ toBasic(objInit(body = body))
+        procedures = procedures :+ objInit(body = body)
       }
       var globalMap = HashSMap.empty[ISZ[String], GlobalInfo]
       val spSize = typeByteSize(spType)
@@ -628,12 +694,22 @@ import Anvil._
     val globalSize = mq._3
     val globalMap = mq._4
 
-    output.add(F, ISZ("ir", "1-program.sir"), program.prettyST)
+    output.add(F, ISZ("ir", s"$stage-initial.sir"), program.prettyST)
 
     stage = stage + 1
 
-    program = transformProgram(stage, irt.fresh, program, output)
-    output.add(F, ISZ("ir", "2-program-transformed.sir"), program.prettyST)
+    program = program(procedures = ops.ISZOps(program.procedures).mParMap(
+      (p: AST.IR.Procedure) => transformBlock(stage, output, p)))
+
+    program = program(procedures = for (p <- program.procedures) yield
+      p(body = irt.toBasic(p.body.asInstanceOf[AST.IR.Body.Block], p.pos)))
+
+    output.add(F, ISZ("ir", s"$stage-basic.sir"), program.prettyST)
+
+    stage = stage + 1
+
+    program = transformBasicBlock(stage, fresh, program, output)
+    output.add(F, ISZ("ir", s"$stage-transformed.sir"), program.prettyST)
 
     stage = stage + 1
 
@@ -668,15 +744,15 @@ import Anvil._
       }
       program(procedures = procedureMap.values)
     }
-    output.add(F, ISZ("ir", "3-program-offset.sir"), program.prettyST)
+    output.add(F, ISZ("ir", s"$stage-offset.sir"), program.prettyST)
+
+    stage = stage + 1
 
     val maxRegisters: Z = {
       val tc = TempCollector(HashSSet.empty)
       tc.transform_langastIRProgram(program)
       tc.r.elements.size
     }
-
-    stage = stage + 1
 
     val main = procedureMap.get(mainContext).get
     program = {
@@ -685,7 +761,7 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, 0, "merged"), p.prettyST)
       program(procedures = ISZ(p))
     }
-    output.add(F, ISZ("ir", "4-program-merged.sir"), program.prettyST)
+    output.add(F, ISZ("ir", s"$stage-merged.sir"), program.prettyST)
 
     stage = stage + 1
 
@@ -711,8 +787,6 @@ import Anvil._
 
       program(procedures = ISZ(p))
     }
-
-    stage = stage + 1
 
     {
       val emc = ExtMethodCollector(this, HashSMap.empty)
@@ -773,9 +847,11 @@ import Anvil._
 
     }
 
-    output.add(F, ISZ("ir", "5-program-reordered.sir"),
+    output.add(F, ISZ("ir", s"$stage-reordered.sir"),
       st"""$header
           |${program.prettyST}""")
+
+    stage = stage + 1
 
     {
       val nlocs = program.procedures(0).body.asInstanceOf[AST.IR.Body.Basic].blocks.size
@@ -784,6 +860,28 @@ import Anvil._
     }
 
     HwSynthesizer(anvil).printProcedure(id, program.procedures(0), output, maxRegisters)
+  }
+
+  @pure def transformBlock(stage: Z, output: Output, p: AST.IR.Procedure): AST.IR.Procedure = {
+    var pass: Z = 0
+    var r = p
+
+    output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "initial"), r.prettyST)
+    pass = pass + 1
+
+    r = ConversionsTransformer(this).transform_langastIRProcedure(r).getOrElse(r)
+    output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "conversions"), r.prettyST)
+    pass = pass + 1
+
+    r = RuntimeCheckInserter(this).transform_langastIRProcedure(r).getOrElse(r)
+    output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "runtime-check"), r.prettyST)
+    pass = pass + 1
+
+    r = StmtFilter(this).transform_langastIRProcedure(r).getOrElse(r)
+    output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "stmt-filter"), r.prettyST)
+    pass = pass + 1
+
+    return r
   }
 
   def transformEmptyBlock(p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1119,10 +1217,13 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformProgram(stage: Z, fresh: lang.IRTranslator.Fresh, program: AST.IR.Program, output: Output): AST.IR.Program = {
+  def transformBasicBlock(stage: Z, fresh: lang.IRTranslator.Fresh, program: AST.IR.Program, output: Output): AST.IR.Program = {
     @pure def transform(p: AST.IR.Procedure): AST.IR.Procedure = {
       var r = p
       var pass: Z = 0
+
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "basic"), r.prettyST)
+      pass = pass + 1
 
       r = transformGlobalVarRef(fresh, r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "global"), r.prettyST)
@@ -2091,7 +2192,7 @@ import Anvil._
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       for (g <- b.grounds) {
         g match {
-          case AST.IR.Stmt.Assign.Temp(lhs, rhs: AST.IR.Exp.Type, pos) =>
+          case AST.IR.Stmt.Assign.Temp(lhs, rhs: AST.IR.Exp.Type, pos) if !isScalar(rhs.t) =>
             val sha3Types = sha3TypeImplOf(rhs.t)
             val tLabel = fresh.label()
             val fLabel = fresh.label()
@@ -2449,6 +2550,18 @@ import Anvil._
       case _ =>
     }
     return r
+  }
+
+  @memoize def minIndex(indexType: AST.Typed): Z = {
+    val min: Z = indexType match {
+      case AST.Typed.z => 0
+      case _ =>
+        val subz = subZOpt(indexType).get.ast
+        if (subz.isIndex) subz.min
+        else if (subz.isZeroIndex) 0
+        else subz.min
+    }
+    return min
   }
 
   @memoize def sha3TypeImplOf(t: AST.Typed.Name): ISZ[Z] = {
