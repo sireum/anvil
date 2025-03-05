@@ -312,6 +312,101 @@ object Anvil {
     }
   }
 
+  @record class ConversionsTransformer(val anvil: Anvil) extends MAnvilIRTransformer {
+    override def post_langastIRStmtBlock(o: AST.IR.Stmt.Block): MOption[AST.IR.Stmt] = {
+      @strictpure def isConversions(name: QName): B =
+        name.size > 3 && name(0) == "org" && name(1) == "sireum" && name(2) == "conversions"
+      var changed = F
+      var stmts = ISZ[AST.IR.Stmt]()
+      for (stmt <- o.stmts) {
+        stmt match {
+          case stmt@AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.Apply, pos) if isConversions(rhs.owner) =>
+            val objectOps = ops.StringOps(rhs.owner(rhs.owner.size - 1))
+            val idOps = ops.StringOps(rhs.id)
+            assert(rhs.args.size == 1)
+            val arg = rhs.args(0)
+            if (idOps.startsWith("toRaw")) {
+              val (t, mask): (AST.Typed.Name, AST.IR.Exp.Int) = anvil.typeByteSize(arg.tipe) match {
+                case z"1" => (AST.Typed.u8, AST.IR.Exp.Int(AST.Typed.u8, 0xFF, pos))
+                case z"2" => (AST.Typed.u16, AST.IR.Exp.Int(AST.Typed.u16, 0xFFFF, pos))
+                case z"4" => (AST.Typed.u32, AST.IR.Exp.Int(AST.Typed.u32, 0xFFFFFFFF, pos))
+                case z"8" => (AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, 0xFFFFFFFFFFFFFFFFL, pos))
+                case n => halt(s"Infeasible: $n")
+              }
+              var r: AST.IR.Exp = AST.IR.Exp.Binary(t, AST.IR.Exp.Type(F, arg, t, pos), AST.IR.Exp.Binary.Op.And,
+                mask, pos)
+              if (t != rhs.tipe) {
+                r = AST.IR.Exp.Type(F, r, rhs.tipe.asInstanceOf[AST.Typed.Name], pos)
+              }
+              stmts = stmts :+ stmt(rhs = r)
+            } else {
+              objectOps.s match {
+                case string"String" =>
+                  idOps.s match {
+                    case string"toU8is" => stmts = stmts :+ stmt(rhs = rhs.args(0))
+                    case _ => halt(s"TODO: ${stmt.prettyST.render}")
+                  }
+                case string"ISB" => halt(s"TODO: ${stmt.prettyST.render}")
+                case string"MSB" => halt(s"TODO: ${stmt.prettyST.render}")
+                case _ =>
+                  if (idOps.s == "toCodePoints") {
+                    halt(s"TODO: ${stmt.prettyST.render}")
+                  } else if (idOps.startsWith("to")) {
+                    if (rhs.tipe == AST.Typed.z) {
+                      stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, arg, AST.Typed.z, pos))
+                    } else {
+                      if (anvil.config.runtimeCheck) {
+                        val ct: AST.Typed.Name = if (anvil.isSigned(arg.tipe)) AST.Typed.s64 else AST.Typed.u64
+                        var cond: AST.IR.Exp = AST.IR.Exp.Bool(T, pos)
+                        val (argMinOpt, argMaxOpt) = anvil.minMaxOpt(arg.tipe)
+                        val (rMinOpt, rMaxOpt) = anvil.minMaxOpt(rhs.tipe)
+                        (argMinOpt, rMinOpt) match {
+                          case (_, None()) =>
+                          case (Some(argMin), Some(rMin)) if rMin <= argMin =>
+                          case (_, Some(rMin)) =>
+                            arg match {
+                              case arg: AST.IR.Exp.Int if arg.value >= rMin =>
+                              case _ =>
+                                var c: AST.IR.Exp = if (ct == arg.tipe) arg else AST.IR.Exp.Type(F, arg, ct, pos)
+                                c = AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Int(ct, rMin, pos), AST.IR.Exp.Binary.Op.Le,
+                                  c, pos)
+                                cond = c
+                            }
+                        }
+                        (argMaxOpt, rMaxOpt) match {
+                          case (_, None()) =>
+                          case (Some(argMax), Some(rMax)) if rMax >= argMax =>
+                          case (_, Some(rMax)) =>
+                            arg match {
+                              case arg: AST.IR.Exp.Int if arg.value <= rMax =>
+                              case _ =>
+                                var c: AST.IR.Exp = if (ct == arg.tipe) arg else AST.IR.Exp.Type(F, arg, ct, pos)
+                                c = AST.IR.Exp.Binary(AST.Typed.b, c, AST.IR.Exp.Binary.Op.Le,
+                                  AST.IR.Exp.Int(ct, rMax, pos), pos)
+                                cond = if (cond.isInstanceOf[AST.IR.Exp.Bool]) c else AST.IR.Exp.Binary(AST.Typed.b, cond,
+                                  AST.IR.Exp.Binary.Op.And, c, pos)
+                            }
+                        }
+                        if (!cond.isInstanceOf[AST.IR.Exp.Bool]) {
+                          stmts = stmts :+ AST.IR.Stmt.Assertume(F, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
+                            st"Implicit runtime bound checking for ${(rhs.owner :+ rhs.id, ".")}".render, pos))), pos)
+                        }
+                      }
+                      stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, arg, rhs.tipe.asInstanceOf[AST.Typed.Name], pos))
+                    }
+                  } else {
+                    halt(s"TODO: $stmt")
+                  }
+              }
+            }
+            changed = T
+          case _ => stmts = stmts :+ stmt
+        }
+      }
+      return if (changed) MSome(o(stmts = stmts)) else MNone()
+    }
+  }
+
   @datatype class TempLV(val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[Z] {
     @strictpure def isForward: B = F
     @strictpure def isLUB: B = F
@@ -434,11 +529,24 @@ import Anvil._
 
     val mq: (AST.IR.MethodContext, AST.IR.Program, Z, HashSMap[ISZ[String], GlobalInfo]) = {
       @pure def toBasic(p: AST.IR.Procedure): AST.IR.Procedure = {
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, 0, "initial"), p.prettyST)
-        var r = StmtFilter(this).transform_langastIRProcedure(p).getOrElse(p)
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, 1, "stmt-filter"), r.prettyST)
+        var pass: Z = 0
+        var r = p
+
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "initial"), r.prettyST)
+        pass = pass + 1
+
+        r = ConversionsTransformer(this).transform_langastIRProcedure(p).getOrElse(p)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "conversions"), r.prettyST)
+        pass = pass + 1
+
+        r = StmtFilter(this).transform_langastIRProcedure(p).getOrElse(p)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "stmt-filter"), r.prettyST)
+        pass = pass + 1
+
         r = r(body = irt.toBasic(r.body.asInstanceOf[AST.IR.Body.Block], p.pos))
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, 2, "basic"), r.prettyST)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "basic"), r.prettyST)
+        pass = pass + 1
+
         return r
       }
       var globals = ISZ[AST.IR.Global]()
@@ -2280,6 +2388,19 @@ import Anvil._
   }
 
   @strictpure def signedString(t: AST.Typed): String = if (isSigned(t)) "signed" else "unsigned"
+
+  @memoize def minMaxOpt(t: AST.Typed): (Option[Z], Option[Z]) = {
+    if (t != AST.Typed.z) {
+      subZOpt(t) match {
+        case Some(info) =>
+          val minOpt: Option[Z] = if (info.ast.hasMin) Some(info.ast.min) else None()
+          val maxOpt: Option[Z] = if (info.ast.hasMax) Some(info.ast.max) else None()
+          return (minOpt, maxOpt)
+        case _ =>
+      }
+    }
+    return (None(), None())
+  }
 
   @memoize def isSigned(t: AST.Typed): B = {
     t match {
