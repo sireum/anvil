@@ -42,6 +42,12 @@ object TmpWireCount {
   }
 }
 
+object MemCopyLog {
+  //@strictpure def currentBlock(b: AST.IR.BasicBlock): AST.IR.BasicBlock = b
+  var currentBlock: MOption[AST.IR.BasicBlock] = MNone()
+  var isMemCopyInBlock: B = F
+}
+
 @datatype class HwSynthesizer(val anvil: Anvil) {
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
@@ -96,6 +102,8 @@ object TmpWireCount {
           |    val SP = RegInit(0.U(STACK_POINTER_WIDTH.W))
           |    // reg for display pointer
           |    val DP = RegInit(0.U(STACK_POINTER_WIDTH.W))
+          |    // reg for index in memcopy
+          |    val Idx = RegInit(0.U(16.W))
           |
           |    // write operation
           |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
@@ -152,7 +160,7 @@ object TmpWireCount {
                    |  ${(commentST, "\n")}
                    |  */
                    |  ${(ground, "")}
-                   |  ${jump.render}
+                   |  ${if(!MemCopyLog.isMemCopyInBlock) jump.render else st""}
                    |}
                  """
       } else {
@@ -163,10 +171,17 @@ object TmpWireCount {
     var groundsST = ISZ[ST]()
 
     for (b <- bs) {
-      //println(b)
+      MemCopyLog.currentBlock = MSome(b)
+
       if(b.label != 0) {
         val jump = processJumpIntrinsic(b)
         groundsST = groundsST :+ groundST(b, processGround(b.grounds), jump)
+      }
+
+      if(MemCopyLog.isMemCopyInBlock) {
+        MemCopyLog.isMemCopyInBlock = F
+      } else {
+        MemCopyLog.isMemCopyInBlock = F
       }
     }
 
@@ -267,7 +282,50 @@ object TmpWireCount {
         TmpWireCount.incCount()
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Copy) => {
-        halt(s"processStmtIntrinsic Intrinsic.Copy unimplemented")
+        MemCopyLog.isMemCopyInBlock = T
+
+        // acquire the source and destination address
+        val lhsAddrST = processExpr(intrinsic.lhsOffset, F)
+        val rhsAddrST = processExpr(intrinsic.rhs, F)
+
+        val tmpWireLhsST = st"__tmp_${TmpWireCount.getCurrent}"
+        val tmpWireRhsST = st"__tmp_${TmpWireCount.getCurrent + 1}"
+
+        // compute how many rounds needed for memory copy transfer
+        val transferRounds = intrinsic.rhsBytes/8
+        val leftBytes = intrinsic.rhsBytes - 8 * transferRounds
+        var leftBytesST = ISZ[ST]()
+        for(i <- 0 to (leftBytes - 1)) {
+          leftBytesST = leftBytesST :+ st"${sharedMemName}(${tmpWireLhsST.render} + Idx + ${i}.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + ${i}.U)"
+        }
+
+        // get the jump statement ST
+        val jumpST = processJumpIntrinsic(MemCopyLog.currentBlock.get)
+
+        intrinsicST =
+          st"""
+              |val ${tmpWireLhsST} = ${lhsAddrST.render}
+              |val ${tmpWireRhsST} = ${rhsAddrST.render}
+              |when(Idx < ${transferRounds}.U) {
+              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 0.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 0.U)
+              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 1.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 1.U)
+              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 2.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 2.U)
+              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 3.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 3.U)
+              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 4.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 4.U)
+              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 5.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 5.U)
+              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 6.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 6.U)
+              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 7.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 7.U)
+              |  Idx := Idx + 8.U
+              |}
+              |.otherwise {
+              |  ${(leftBytesST, "\n")}
+              |  Idx := 0.U
+              |  ${jumpST.render}
+              |}
+            """
+
+        TmpWireCount.incCount()
+        TmpWireCount.incCount()
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Store) => {
         val lhsOffsetST = processExpr(intrinsic.lhsOffset, F)
@@ -407,8 +465,9 @@ object TmpWireCount {
         exprST = st"${processExpr(exp.exp, F)}.asUInt"
       }
       case exp: AST.IR.Exp.Binary => {
-        val leftST = processExpr(exp.left, F)
-        val rightST = processExpr(exp.right, F)
+        val isSIntOperation = isSignedExp(exp.left) || isSignedExp(exp.right)
+        val leftST = st"${processExpr(exp.left, F).render}${if(isSIntOperation && (!isSignedExp(exp.left))) ".asSInt" else ""}"
+        val rightST = st"${processExpr(exp.right, F).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
         exp.op match {
           case AST.IR.Exp.Binary.Op.Add => {
             exprST = st"${leftST.render} + ${rightST.render}"
