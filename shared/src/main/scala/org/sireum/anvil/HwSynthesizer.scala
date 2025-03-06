@@ -237,6 +237,7 @@ object MemCopyLog {
         intrinsicST = st"CP := ${j.label}.U"
       }
       case j: AST.IR.Jump.If => {
+        println(j.prettyST.render)
         val cond = processExpr(j.cond, F)
         intrinsicST = st"CP := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
       }
@@ -355,17 +356,7 @@ object MemCopyLog {
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign) => {
         val targetReg: String = if(intrinsic.isSP) "SP" else "DP"
-        val updateContentST: ST = intrinsic.value match {
-          case Either.Left(v) => {
-            if(intrinsic.isInc)
-              if(v < 0) st"${targetReg} - ${-v}.U"
-              else st"${targetReg} + ${v}.U"
-            else st"${v}.U"
-          }
-          case Either.Right(v) => {
-            halt(s"processStmtIntrinsic RegisterAssign Either.Right unimplemented")
-          }
-        }
+        val updateContentST: ST = processExpr(intrinsic.value, F)
 
         intrinsicST =
           st"""
@@ -455,6 +446,8 @@ object MemCopyLog {
         exprST = st"${generalRegName}(${exp.n}.U)${if(isSignedExp(exp)) ".asSInt" else ""}"
       }
       case exp: AST.IR.Exp.Int => {
+        println(exp.prettyST.render)
+        println(exp.tipe)
         val valuePostfix: String = isForcedSign match {
           case T => "S"
           case _ => if(anvil.isSigned(exp.tipe)) "S" else "U"
@@ -466,6 +459,7 @@ object MemCopyLog {
       }
       case exp: AST.IR.Exp.Binary => {
         val isSIntOperation = isSignedExp(exp.left) || isSignedExp(exp.right)
+        println(exp.left.prettyST.render)
         val leftST = st"${processExpr(exp.left, F).render}${if(isSIntOperation && (!isSignedExp(exp.left))) ".asSInt" else ""}"
         val rightST = st"${processExpr(exp.right, F).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
         exp.op match {
