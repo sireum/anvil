@@ -275,7 +275,7 @@ object MemCopyLog {
 
         intrinsicST =
           st"""
-              |val ${tmpWire} = ${rhsOffsetST.render}
+              |val ${tmpWire} = (${rhsOffsetST.render}).asUInt
               |${generalRegName}(${intrinsic.temp}.U) := Cat(
               |  ${(internalST, "\n")}
               |).asUInt
@@ -442,8 +442,7 @@ object MemCopyLog {
           st"""
               |Cat(
               |  ${(rhsExprST, "\n")}
-              |)${if(anvil.isSigned(intrinsic.tipe)) ".asSInt" else ""}
-            """
+              |)${if(anvil.isSigned(intrinsic.tipe)) ".asSInt" else ""}"""
       }
       case exp: AST.IR.Exp.Temp => {
         exprST = st"${generalRegName}(${exp.n}.U)${if(isSignedExp(exp)) ".asSInt" else ""}"
@@ -453,10 +452,10 @@ object MemCopyLog {
           case T => "S"
           case _ => if(anvil.isSigned(exp.tipe)) "S" else "U"
         }
-        exprST = st"${exp.value}.${valuePostfix}"
+        exprST = st"${exp.value}${if(exp.value > 2147483647 || exp.value < -2147483648) "L" else ""}.${valuePostfix}"
       }
       case exp: AST.IR.Exp.Type => {
-        exprST = st"${processExpr(exp.exp, F)}.asUInt"
+        exprST = st"${processExpr(exp.exp, F)}${if(anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}"
       }
       case exp: AST.IR.Exp.Binary => {
         val isSIntOperation = isSignedExp(exp.left) || isSignedExp(exp.right)
