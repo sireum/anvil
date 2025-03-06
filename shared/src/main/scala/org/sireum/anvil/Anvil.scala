@@ -467,7 +467,7 @@ object Anvil {
               case rhs: AST.IR.Exp.Indexing =>
                 val indexType = rhs.tipe.asInstanceOf[AST.Typed.Name].args(0)
                 val min = anvil.minIndex(indexType)
-                val lo = AST.IR.Exp.Int(rhs.tipe, min, pos)
+                val lo = AST.IR.Exp.Int(indexType, min, pos)
                 var hi: AST.IR.Exp = AST.IR.Exp.FieldVarRef(rhs.exp, "size", AST.Typed.z, pos)
                 if (min != 0) {
                   hi = AST.IR.Exp.Binary(AST.Typed.z, hi, AST.IR.Exp.Binary.Op.Sub, lo, pos)
