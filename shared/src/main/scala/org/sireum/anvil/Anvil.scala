@@ -1301,8 +1301,18 @@ import Anvil._
 
   @pure def countNumOfIncomingJumps(blocks: ISZ[AST.IR.BasicBlock]): HashMap[Z, Z] = {
     var r = HashMap ++ (for (b <- blocks) yield (b.label, z"0"))
-    for (b <- blocks; target <- b.jump.targets) {
-      r = r + target ~> (r.get(target).get + 1)
+    for (b <- blocks) {
+      for (g <- b.grounds) {
+        g match {
+          case AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+          AST.IR.Exp.Intrinsic(Intrinsic.Register(T, _, _)), _, _, n: AST.IR.Exp.Int, _, _, _)) =>
+            r = r + n.value ~> (r.get(n.value).get + 1)
+          case _ =>
+        }
+      }
+      for (target <- b.jump.targets) {
+        r = r + target ~> (r.get(target).get + 1)
+      }
     }
     return r
   }
