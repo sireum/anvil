@@ -417,7 +417,30 @@ object Anvil {
       var changed = F
       var stmts = ISZ[AST.IR.Stmt]()
       for (stmt <- o.stmts) {
+        def addIndexingCheck(receiver: AST.IR.Exp, index: AST.IR.Exp, pos: message.Position): Unit = {
+          val indexType = receiver.tipe.asInstanceOf[AST.Typed.Name].args(0)
+          val min = anvil.minIndex(indexType)
+          val lo = AST.IR.Exp.Int(indexType, min, pos)
+          var hi: AST.IR.Exp = AST.IR.Exp.FieldVarRef(receiver, "size", AST.Typed.z, pos)
+          if (min != 0) {
+            hi = AST.IR.Exp.Binary(AST.Typed.z, hi, AST.IR.Exp.Binary.Op.Sub, lo, pos)
+          }
+          var hil = index
+          if (hil.tipe != AST.Typed.z) {
+            hil = AST.IR.Exp.Type(F, hil, AST.Typed.z, pos)
+          }
+          val cond = AST.IR.Exp.Binary(AST.Typed.b,
+            AST.IR.Exp.Binary(AST.Typed.b, lo, AST.IR.Exp.Binary.Op.Le, index, pos),
+            AST.IR.Exp.Binary.Op.And,
+            AST.IR.Exp.Binary(AST.Typed.b, hil, AST.IR.Exp.Binary.Op.Le, hi, pos),
+            pos)
+          changed = T
+          stmts = stmts :+ AST.IR.Stmt.Assertume(T, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
+            st"Index out of bounds".render, pos))), pos)
+          stmts = stmts :+ stmt
+        }
         stmt match {
+          case stmt: AST.IR.Stmt.Assign.Index => addIndexingCheck(stmt.receiver, stmt.index, stmt.pos)
           case stmt@AST.IR.Stmt.Assign.Temp(lhs, rhs, pos) =>
             def addRangeCheck(): Unit = {
               stmts = stmts :+ stmt
@@ -458,33 +481,10 @@ object Anvil {
                   changed = T
                   stmts = stmts :+ AST.IR.Stmt.Assertume(T, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
                     st"Division by zero".render, pos))), pos)
-                  stmts = stmts :+ stmt
-                } else {
-                  addRangeCheck()
                 }
-              case rhs: AST.IR.Exp.Unary if rhs.tipe != AST.Typed.b =>
                 addRangeCheck()
-              case rhs: AST.IR.Exp.Indexing =>
-                val indexType = rhs.tipe.asInstanceOf[AST.Typed.Name].args(0)
-                val min = anvil.minIndex(indexType)
-                val lo = AST.IR.Exp.Int(indexType, min, pos)
-                var hi: AST.IR.Exp = AST.IR.Exp.FieldVarRef(rhs.exp, "size", AST.Typed.z, pos)
-                if (min != 0) {
-                  hi = AST.IR.Exp.Binary(AST.Typed.z, hi, AST.IR.Exp.Binary.Op.Sub, lo, pos)
-                }
-                var hil = rhs.index
-                if (hil.tipe != AST.Typed.z) {
-                  hil = AST.IR.Exp.Type(F, hil, AST.Typed.z, pos)
-                }
-                val cond = AST.IR.Exp.Binary(AST.Typed.b,
-                  AST.IR.Exp.Binary(AST.Typed.b, lo, AST.IR.Exp.Binary.Op.Le, rhs.index, pos),
-                  AST.IR.Exp.Binary.Op.And,
-                  AST.IR.Exp.Binary(AST.Typed.b, hil, AST.IR.Exp.Binary.Op.Le, hi, pos),
-                  pos)
-                changed = T
-                stmts = stmts :+ AST.IR.Stmt.Assertume(T, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
-                  st"Index out of bounds".render, pos))), pos)
-                stmts = stmts :+ stmt
+              case rhs: AST.IR.Exp.Unary if rhs.tipe != AST.Typed.b => addRangeCheck()
+              case rhs: AST.IR.Exp.Indexing => addIndexingCheck(rhs.exp, rhs.index, pos)
               case _ => stmts = stmts :+ stmt
             }
           case _ => stmts = stmts :+ stmt
@@ -605,7 +605,7 @@ import Anvil._
   }
 
   @strictpure def irProcedurePath(procedureId: String, pType: AST.Typed.Fun, stage: Z, pass: Z, id: String): ISZ[String] =
-    ISZ("ir", "procedures", s"$procedureId-${sha3(pType.string)}-$stage-$pass-$id.sir")
+    ISZ("ir", "procedures", s"$procedureId-${sha3(pType.string)}", s"$stage-$pass-$id.sir")
 
   def synthesize(fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): Unit = {
     val threeAddressCode = T
