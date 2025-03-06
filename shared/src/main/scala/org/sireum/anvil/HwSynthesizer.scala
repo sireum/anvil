@@ -278,7 +278,7 @@ object MemCopyLog {
               |val ${tmpWire} = ${rhsOffsetST.render}
               |${generalRegName}(${intrinsic.temp}.U) := Cat(
               |  ${(internalST, "\n")}
-              |)
+              |).asUInt
             """
         TmpWireCount.incCount()
       }
@@ -356,7 +356,10 @@ object MemCopyLog {
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign) => {
         val targetReg: String = if(intrinsic.isSP) "SP" else "DP"
-        val updateContentST: ST = processExpr(intrinsic.value, F)
+        val updateContentST: ST = intrinsic.value match {
+          case AST.IR.Exp.Int(_, v, _) => if (intrinsic.isInc) if (v < 0) st"${targetReg} - ${-v}.U" else st"${targetReg} + ${v}.U" else st"${processExpr(intrinsic.value, F)}"
+          case _ => processExpr(intrinsic.value, F)
+        }
 
         intrinsicST =
           st"""
@@ -439,15 +442,13 @@ object MemCopyLog {
           st"""
               |Cat(
               |  ${(rhsExprST, "\n")}
-              |)
+              |)${if(anvil.isSigned(intrinsic.tipe)) ".asSInt" else ""}
             """
       }
       case exp: AST.IR.Exp.Temp => {
         exprST = st"${generalRegName}(${exp.n}.U)${if(isSignedExp(exp)) ".asSInt" else ""}"
       }
       case exp: AST.IR.Exp.Int => {
-        println(exp.prettyST.render)
-        println(exp.tipe)
         val valuePostfix: String = isForcedSign match {
           case T => "S"
           case _ => if(anvil.isSigned(exp.tipe)) "S" else "U"
@@ -459,7 +460,6 @@ object MemCopyLog {
       }
       case exp: AST.IR.Exp.Binary => {
         val isSIntOperation = isSignedExp(exp.left) || isSignedExp(exp.right)
-        println(exp.left.prettyST.render)
         val leftST = st"${processExpr(exp.left, F).render}${if(isSIntOperation && (!isSignedExp(exp.left))) ".asSInt" else ""}"
         val rightST = st"${processExpr(exp.right, F).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
         exp.op match {
