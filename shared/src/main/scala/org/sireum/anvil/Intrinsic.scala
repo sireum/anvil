@@ -99,7 +99,7 @@ object Intrinsic {
       val reg: String = if (isSP) "SP" else "DP"
       value match {
         case AST.IR.Exp.Int(_, v, _) => if (isInc) if (v < 0) st"$reg = $reg - ${-v}" else st"$reg = $reg + $v" else st"$reg = $v"
-        case _ => st"$reg = $reg + ${value.prettyST}"
+        case _ => if (isInc) st"$reg = $reg + ${value.prettyST}" else st"$reg = ${value.prettyST}"
       }
     }
   }
