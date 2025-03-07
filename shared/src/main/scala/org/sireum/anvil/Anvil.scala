@@ -561,7 +561,7 @@ object Anvil {
     "printF32_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.f32), AST.Typed.u64) +
     "printF64_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.f64), AST.Typed.u64) +
     "printString" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.string), AST.Typed.u64)
-
+  val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName
   def synthesize(fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, owner: QName, id: String, config: Config,
                  output: Output, reporter: Reporter): Unit = {
     assert(config.memory > 0 && config.memory % 8 == 0, s"Memory configuration has to be a positive integer multiples of 8")
@@ -745,6 +745,10 @@ import Anvil._
         output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "offset"), proc.prettyST)
         pass = pass + 1
 
+        proc = anvil.transformStackTraceDesc(mainContext == p.context, p)
+        output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "stack-frame-desc"), proc.prettyST)
+        pass = pass + 1
+
         if (config.maxExpDepth != 1) {
           proc = anvil.transformReduceExp(proc)
           output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "reduce-exp"), proc.prettyST)
@@ -771,7 +775,7 @@ import Anvil._
 
     val main = procedureMap.get(mainContext).get
     program = {
-      val p = main(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
+      val p = transformMainStackFrame(main)(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
         anvil.mergeProcedures(main, fresh, procedureMap, procedureSizeMap, callResultOffsetMap, maxRegisters)))
       output.add(F, irProcedurePath(p.id, p.tipe, stage, 0, "merged"), p.prettyST)
       program(procedures = ISZ(p))
@@ -1210,7 +1214,7 @@ import Anvil._
       var block = b
       for (g <- b.grounds) {
         g match {
-          case g@AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.GlobalVarRef, pos) if rhs.name != displayName =>
+          case g@AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.GlobalVarRef, pos) if !ignoreGlobalInits.contains(rhs.name) =>
             val owner = ops.ISZOps(rhs.name).dropRight(1)
             if (p.owner :+ p.id != owner) {
               val label1 = fresh.label()
@@ -1233,6 +1237,61 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
+  def transformStackTraceDesc(isMain: B, p: AST.IR.Procedure): AST.IR.Procedure = {
+    if (!config.stackTrace) {
+      return p
+    }
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    val sfCallerOffset = procedureParamInfo(isMain, p)._2.get(sfCallerId).get.offset + typeShaSize + typeByteSize(AST.Typed.z)
+    val first = body.blocks(0)
+    val desc = conversions.String.toU8is(procedureDesc(p))
+    var grounds = ISZ[AST.IR.Stmt.Ground]()
+    for (i <- desc.indices) {
+      val offset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)),
+        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, i + sfCallerOffset, p.pos), p.pos)
+      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(offset, F, 1,
+        AST.IR.Exp.Int(AST.Typed.u8, desc(i).toZ, p.pos), st"'${ops.COps(conversions.U32.toC(conversions.U8.toU32(desc(i)))).escapeString}'", AST.Typed.u8, p.pos))
+    }
+    return p(body = body(blocks = body.blocks(0 ~> first(grounds = grounds ++ first.grounds))))
+  }
+
+  def transformMainStackFrame(p: AST.IR.Procedure): AST.IR.Procedure = {
+    if (!config.stackTrace) {
+      return p
+    }
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var grounds = ISZ[AST.IR.Stmt.Ground]()
+    grounds = grounds :+ AST.IR.Stmt.Assign.Local(p.context, sfCallerId, spType, AST.IR.Exp.Int(spType, 0, p.pos), p.pos)
+    return p(body = body(blocks = body.blocks(0 ~> body.blocks(0)(grounds = grounds ++ body.blocks(0).grounds))))
+  }
+
+  def transformStackTraceLoc(p: AST.IR.Procedure): AST.IR.Procedure = {
+    if (!config.stackTrace) {
+      return p
+    }
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      var currentLine: Z = 0
+      def assignLoc(pos: message.Position): Unit = {
+        if (currentLine == pos.beginLine) {
+          return
+        }
+        currentLine = pos.beginLine
+        grounds = grounds :+ AST.IR.Stmt.Assign.Local(p.context, sfLocId, sfLocType,
+          AST.IR.Exp.Int(sfLocType, currentLine, pos), pos)
+      }
+      for (g <- b.grounds) {
+        assignLoc(g.pos)
+        grounds = grounds :+ g
+      }
+      assignLoc(b.jump.pos)
+      blocks = blocks :+ b(grounds = grounds)
+    }
+    return p(body = body(blocks = blocks))
+  }
+
   def transformBasicBlock(stage: Z, fresh: lang.IRTranslator.Fresh, program: AST.IR.Program, output: Output): AST.IR.Program = {
     @pure def transform(p: AST.IR.Procedure): AST.IR.Procedure = {
       var r = p
@@ -1243,6 +1302,10 @@ import Anvil._
 
       r = transformGlobalVarRef(fresh, r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "global"), r.prettyST)
+      pass = pass + 1
+
+      r = transformStackTraceLoc(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "stack-trace-loc"), r.prettyST)
       pass = pass + 1
 
       r = transformPrint(fresh, r)
@@ -1666,6 +1729,15 @@ import Anvil._
     return TempRenumberer(tempMap).transform_langastIRProcedure(proc).getOrElse(proc)
   }
 
+  @pure def procedureDesc(proc: AST.IR.Procedure): String = {
+    var uri = proc.pos.uriOpt.get
+    val i = ops.StringOps(uri).lastIndexOf('/')
+    if (i >= 0) {
+      uri = ops.StringOps(uri).substring(i + 1, uri.size)
+    }
+    return st"${(proc.owner :+ proc.id, ".")} ($uri".render
+  }
+
   def procedureParamInfo(isMain: B, proc: AST.IR.Procedure): (Z, HashSMap[String, VarInfo]) = {
     var m = HashSMap.empty[String, VarInfo]
     var maxOffset: Z = 0
@@ -1680,19 +1752,13 @@ import Anvil._
     }
 
     if (config.stackTrace) {
-      var uri = proc.pos.uriOpt.get
-      val i = ops.StringOps(uri).lastIndexOf('/')
-      if (i >= 0) {
-        uri = ops.StringOps(uri).substring(i + 1, uri.size)
-      }
-      val mdesc = st"${(proc.owner :+ proc.id, ".")} ($uri".render
-
       m = m + sfCallerId ~> VarInfo(isScalar(spType), maxOffset, typeByteSize(spType), 0, spType, proc.pos)
       maxOffset = maxOffset + typeByteSize(spType)
 
       m = m + sfLocId ~> VarInfo(isScalar(sfLocType), maxOffset, typeByteSize(sfLocType), 0, sfLocType, proc.pos)
       maxOffset = maxOffset + typeByteSize(sfLocType)
 
+      val mdesc = procedureDesc(proc)
       val mdescType = AST.Typed.Name(AST.Typed.isName, ISZ(AST.Typed.Name(ISZ(s"${mdesc.size}"), ISZ()), AST.Typed.u8))
       m = m + sfDescId ~> VarInfo(isScalar(mdescType), maxOffset, typeByteSize(mdescType), 0, mdescType, proc.pos)
       maxOffset = maxOffset + typeByteSize(mdescType)
