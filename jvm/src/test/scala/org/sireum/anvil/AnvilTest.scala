@@ -37,6 +37,10 @@ class AnvilTest extends SireumRcSpec {
     m
   }
 
+  val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "construct.sc" ~> 2048
+  val printFileSet: HashSet[String] = HashSet.empty[String] + "print.sc" + "assert.sc"
+  val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
+
   override def check(path: Vector[Predef.String], content: Predef.String): Boolean = {
     val reporter = message.Reporter.create
     lang.parser.Parser.parseTopUnit[lang.ast.TopUnit.Program](content, T, F, Some(path.mkString("/")), reporter) match {
@@ -53,9 +57,9 @@ class AnvilTest extends SireumRcSpec {
         var config = Anvil.Config.empty(path.mkString("/"))
         val file = path(path.size - 1)
         config = config(
-          memory = if (file == "construct.sc") 2048 else 1024,
-          printSize = if (file == "print.sc") 128 else 0,
-          stackTrace = T,
+          memory = memoryFileMap.get(file).getOrElse(1024),
+          printSize = if (printFileSet.contains(file)) 128 else 0,
+          stackTrace = stackTraceFileSet.contains(file),
           runtimeCheck = T)
         val out = dir /+ ISZ(path.map(String(_)): _*)
         Anvil.synthesize(lang.IRTranslator.createFresh, th2, ISZ(), lastMethod, config, new Anvil.Output {
