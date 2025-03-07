@@ -54,7 +54,9 @@ class AnvilTest extends SireumRcSpec {
         val file = path(path.size - 1)
         config = config(
           memory = if (file == "construct.sc") 2048 else 1024,
-          printSize = if (file == "print.sc") 128 else 0)
+          printSize = if (file == "print.sc") 128 else 0,
+          stackTrace = T,
+          runtimeCheck = T)
         val out = dir /+ ISZ(path.map(String(_)): _*)
         Anvil.synthesize(lang.IRTranslator.createFresh, th2, ISZ(), lastMethod, config, new Anvil.Output {
           def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
