@@ -48,13 +48,14 @@ object Anvil {
                          val stackTrace: B,
                          val maxExpDepth: Z,
                          val runtimeCheck: B,
-                         val printSize: Z) {
+                         val printSize: Z,
+                         val copySize: Z) {
     val shouldPrint: B = printSize > 0
   }
 
   object Config {
     @strictpure def empty(projectName: String): Config =
-      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, T, 1, T, 0)
+      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, T, 1, T, 0, 8)
   }
 
   @sig trait Output {
@@ -1700,7 +1701,7 @@ import Anvil._
     {
       for (param <- ops.ISZOps(proc.paramNames).zip(proc.tipe.args)) {
         val (id, t) = param
-        val dataSize: Z = if (isMain) typeByteSize(t) else 0
+        val dataSize: Z = if (isMain && !isScalar(t)) typeByteSize(t) else 0
         val size: Z = if (isScalar(t)) typeByteSize(t) else typeByteSize(spType)
         m = m + id ~> VarInfo(isScalar(t), maxOffset, size, dataSize, t, proc.pos)
         maxOffset = maxOffset + typeByteSize(spType) + dataSize
@@ -2568,23 +2569,26 @@ import Anvil._
 
   @strictpure def signedString(t: AST.Typed): String = if (isSigned(t)) "signed" else "unsigned"
 
-  @strictpure def copySize(exp: AST.IR.Exp): AST.IR.Exp = {
+  @pure def copySize(exp: AST.IR.Exp): AST.IR.Exp = {
     val t = exp.tipe
     assert(!isScalar(t))
     val pos = exp.pos
     if (t == AST.Typed.string || isSeq(t)) {
       val (sizeType, sizeOffset) = classSizeFieldOffsets(t.asInstanceOf[AST.Typed.Name])._2.get("size").get
-      AST.IR.Exp.Binary(AST.Typed.u64,
-        AST.IR.Exp.Type(F,
-          AST.IR.Exp.Intrinsic(Intrinsic.Load(
-            AST.IR.Exp.Binary(spType, exp, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, sizeOffset, pos), pos),
-            isSigned(sizeType), typeByteSize(sizeType), st"", sizeType, pos)),
-          AST.Typed.u64, pos),
-        AST.IR.Exp.Binary.Op.Add,
-        AST.IR.Exp.Int(AST.Typed.u64, typeShaSize + typeByteSize(AST.Typed.z), pos),
-        pos)
+      val elementByteSize: Z = if (t == AST.Typed.string) 1 else typeByteSize(t.asInstanceOf[AST.Typed.Name].args(1))
+      var elementSize: AST.IR.Exp = AST.IR.Exp.Type(F,
+        AST.IR.Exp.Intrinsic(Intrinsic.Load(
+          AST.IR.Exp.Binary(spType, exp, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, sizeOffset, pos), pos),
+          isSigned(sizeType), typeByteSize(sizeType), st"", sizeType, pos)),
+        spType, pos)
+      if (elementByteSize != 1) {
+        elementSize = AST.IR.Exp.Binary(spType, elementSize, AST.IR.Exp.Binary.Op.Mul,
+          AST.IR.Exp.Int(spType, elementByteSize, pos), pos)
+      }
+      return AST.IR.Exp.Binary(AST.Typed.u64, elementSize, AST.IR.Exp.Binary.Op.Add,
+        AST.IR.Exp.Int(AST.Typed.u64, typeShaSize + typeByteSize(AST.Typed.z), pos), pos)
     } else {
-      AST.IR.Exp.Int(AST.Typed.u64, typeByteSize(t), pos)
+      return AST.IR.Exp.Int(AST.Typed.u64, typeByteSize(t), pos)
     }
   }
 
