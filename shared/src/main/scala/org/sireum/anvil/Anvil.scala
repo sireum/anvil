@@ -754,7 +754,7 @@ import Anvil._
         output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "offset"), proc.prettyST)
         pass = pass + 1
 
-        proc = anvil.transformStackTraceDesc(mainContext == p.context, p)
+        proc = anvil.transformStackTraceDesc(mainContext == p.context, proc)
         output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "stack-frame-desc"), proc.prettyST)
         pass = pass + 1
 
