@@ -104,6 +104,9 @@ object MemCopyLog {
           |    val DP = RegInit(0.U(STACK_POINTER_WIDTH.W))
           |    // reg for index in memcopy
           |    val Idx = RegInit(0.U(16.W))
+          |    // reg for recording how many rounds needed for the left bytes
+          |    val LeftByteRounds = RegInit(0.U(8.W))
+          |    val IdxLeftByteRounds = RegInit(0.U(8.W))
           |
           |    // write operation
           |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
@@ -290,14 +293,19 @@ object MemCopyLog {
         val rhsAddrST = processExpr(intrinsic.rhs, F)
 
         val tmpWireLhsST = st"__tmp_${TmpWireCount.getCurrent}"
-        val tmpWireRhsST = st"__tmp_${TmpWireCount.getCurrent + 1}"
+        TmpWireCount.incCount()
+        val tmpWireRhsST = st"__tmp_${TmpWireCount.getCurrent}"
+        TmpWireCount.incCount()
+        val totalSizeWireST = st"__tmp_${TmpWireCount.getCurrent}"
+        TmpWireCount.incCount()
+        val leftByteStartST = st"__tmp_${TmpWireCount.getCurrent}"
+        TmpWireCount.incCount()
 
-        // compute how many rounds needed for memory copy transfer
-        val transferRounds = intrinsic.rhsBytes/8
-        val leftBytes = intrinsic.rhsBytes - 8 * transferRounds
-        var leftBytesST = ISZ[ST]()
-        for(i <- 0 to (leftBytes - 1)) {
-          leftBytesST = leftBytesST :+ st"${sharedMemName}(${tmpWireLhsST.render} + Idx + ${i}.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + ${i}.U)"
+        // compute how many bytes needed for memory copy transfer
+        val rhsBytesSt = processExpr(intrinsic.rhsBytes, F)
+        var BytesTransferST = ISZ[ST]()
+        for(i <- 0 to (anvil.config.copySize - 1)) {
+          BytesTransferST = BytesTransferST :+ st"${sharedMemName}(${tmpWireLhsST.render} + Idx + ${i}.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + ${i}.U)"
         }
 
         // get the jump statement ST
@@ -305,28 +313,26 @@ object MemCopyLog {
 
         intrinsicST =
           st"""
-              |val ${tmpWireLhsST} = ${lhsAddrST.render}
-              |val ${tmpWireRhsST} = ${rhsAddrST.render}
-              |when(Idx < ${transferRounds}.U) {
-              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 0.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 0.U)
-              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 1.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 1.U)
-              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 2.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 2.U)
-              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 3.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 3.U)
-              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 4.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 4.U)
-              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 5.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 5.U)
-              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 6.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 6.U)
-              |  ${sharedMemName}(${tmpWireLhsST.render} + Idx + 7.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + 7.U)
-              |  Idx := Idx + 8.U
-              |}
-              |.otherwise {
-              |  ${(leftBytesST, "\n")}
+              |val ${tmpWireLhsST.render} = ${lhsAddrST.render}
+              |val ${tmpWireRhsST.render} = ${rhsAddrST.render}
+              |val ${totalSizeWireST.render} = ${rhsBytesSt.render}
+              |
+              |when(Idx < ${totalSizeWireST.render}) {
+              |  ${(BytesTransferST, "\n")}
+              |  Idx := Idx + ${anvil.config.copySize}.U
+              |  LeftByteRounds := ${totalSizeWireST.render} - Idx - 8.U
+              |} .elsewhen(IdxLeftByteRounds < LeftByteRounds) {
+              |  val ${leftByteStartST.render} = Idx - ${anvil.config.copySize}.U
+              |  ${sharedMemName}(${tmpWireLhsST.render} + ${leftByteStartST.render} + IdxLeftByteRounds) := ${sharedMemName}(${tmpWireRhsST.render} + ${leftByteStartST.render} + IdxLeftByteRounds)
+              |  IdxLeftByteRounds := IdxLeftByteRounds + 1.U
+              |} .otherwise {
               |  Idx := 0.U
+              |  IdxLeftByteRounds := 0.U
+              |  LeftByteRounds := 0.U
               |  ${jumpST.render}
               |}
             """
 
-        TmpWireCount.incCount()
-        TmpWireCount.incCount()
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Store) => {
         val lhsOffsetST = processExpr(intrinsic.lhsOffset, F)
