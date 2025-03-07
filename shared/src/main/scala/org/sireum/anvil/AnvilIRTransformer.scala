@@ -1339,11 +1339,12 @@ import AnvilIRTransformer._
       val o2: Intrinsic.Copy = preR.resultOpt.getOrElse(o)
       val hasChanged: B = preR.resultOpt.nonEmpty
       val r0: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(preR.ctx, o2.lhsOffset)
-      val r1: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(r0.ctx, o2.rhs)
-      if (hasChanged || r0.resultOpt.nonEmpty || r1.resultOpt.nonEmpty)
-        TPostResult(r1.ctx, Some(o2(lhsOffset = r0.resultOpt.getOrElse(o2.lhsOffset), rhs = r1.resultOpt.getOrElse(o2.rhs))))
+      val r1: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(r0.ctx, o2.rhsBytes)
+      val r2: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(r1.ctx, o2.rhs)
+      if (hasChanged || r0.resultOpt.nonEmpty || r1.resultOpt.nonEmpty || r2.resultOpt.nonEmpty)
+        TPostResult(r2.ctx, Some(o2(lhsOffset = r0.resultOpt.getOrElse(o2.lhsOffset), rhsBytes = r1.resultOpt.getOrElse(o2.rhsBytes), rhs = r2.resultOpt.getOrElse(o2.rhs))))
       else
-        TPostResult(r1.ctx, None())
+        TPostResult(r2.ctx, None())
     } else if (preR.resultOpt.nonEmpty) {
       TPostResult(preR.ctx, Some(preR.resultOpt.getOrElse(o)))
     } else {
@@ -1861,11 +1862,12 @@ import AnvilIRTransformer._
             TPostResult(r1.ctx, None())
         case o2: Intrinsic.Copy =>
           val r0: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(preR.ctx, o2.lhsOffset)
-          val r1: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(r0.ctx, o2.rhs)
-          if (hasChanged || r0.resultOpt.nonEmpty || r1.resultOpt.nonEmpty)
-            TPostResult(r1.ctx, Some(o2(lhsOffset = r0.resultOpt.getOrElse(o2.lhsOffset), rhs = r1.resultOpt.getOrElse(o2.rhs))))
+          val r1: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(r0.ctx, o2.rhsBytes)
+          val r2: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(r1.ctx, o2.rhs)
+          if (hasChanged || r0.resultOpt.nonEmpty || r1.resultOpt.nonEmpty || r2.resultOpt.nonEmpty)
+            TPostResult(r2.ctx, Some(o2(lhsOffset = r0.resultOpt.getOrElse(o2.lhsOffset), rhsBytes = r1.resultOpt.getOrElse(o2.rhsBytes), rhs = r2.resultOpt.getOrElse(o2.rhs))))
           else
-            TPostResult(r1.ctx, None())
+            TPostResult(r2.ctx, None())
         case o2: Intrinsic.Decl =>
           val r0: TPostResult[Context, IS[Z, Intrinsic.Decl.Local]] = transformISZ(preR.ctx, o2.slots, transformIntrinsicDeclLocal _)
           if (hasChanged || r0.resultOpt.nonEmpty)

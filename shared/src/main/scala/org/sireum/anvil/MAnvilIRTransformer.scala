@@ -1587,9 +1587,10 @@ import MAnvilIRTransformer._
       val o2: Intrinsic.Copy = preR.resultOpt.getOrElse(o)
       val hasChanged: B = preR.resultOpt.nonEmpty
       val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.lhsOffset)
-      val r1: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhs)
-      if (hasChanged || r0.nonEmpty || r1.nonEmpty)
-        MSome(o2(lhsOffset = r0.getOrElse(o2.lhsOffset), rhs = r1.getOrElse(o2.rhs)))
+      val r1: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhsBytes)
+      val r2: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhs)
+      if (hasChanged || r0.nonEmpty || r1.nonEmpty || r2.nonEmpty)
+        MSome(o2(lhsOffset = r0.getOrElse(o2.lhsOffset), rhsBytes = r1.getOrElse(o2.rhsBytes), rhs = r2.getOrElse(o2.rhs)))
       else
         MNone()
     } else if (preR.resultOpt.nonEmpty) {
@@ -2109,9 +2110,10 @@ import MAnvilIRTransformer._
             MNone()
         case o2: Intrinsic.Copy =>
           val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.lhsOffset)
-          val r1: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhs)
-          if (hasChanged || r0.nonEmpty || r1.nonEmpty)
-            MSome(o2(lhsOffset = r0.getOrElse(o2.lhsOffset), rhs = r1.getOrElse(o2.rhs)))
+          val r1: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhsBytes)
+          val r2: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhs)
+          if (hasChanged || r0.nonEmpty || r1.nonEmpty || r2.nonEmpty)
+            MSome(o2(lhsOffset = r0.getOrElse(o2.lhsOffset), rhsBytes = r1.getOrElse(o2.rhsBytes), rhs = r2.getOrElse(o2.rhs)))
           else
             MNone()
         case o2: Intrinsic.Decl =>

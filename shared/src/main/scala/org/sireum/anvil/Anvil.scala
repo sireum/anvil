@@ -605,7 +605,7 @@ import Anvil._
   }
 
   @strictpure def irProcedurePath(procedureId: String, pType: AST.Typed.Fun, stage: Z, pass: Z, id: String): ISZ[String] =
-    ISZ("ir", "procedures", s"$procedureId-${sha3(pType.string)}", s"$stage-$pass-$id.sir")
+    ISZ("ir", "procedures", s"$procedureId-${sha3Type(pType)}", s"$stage-$pass-$id.sir")
 
   def synthesize(fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): Unit = {
     val threeAddressCode = T
@@ -1460,7 +1460,7 @@ import Anvil._
                       isSigned(exp.tipe), typeByteSize(exp.tipe), exp, st"$resultLocalId = ${exp.prettyST}", exp.tipe, exp.pos))
                   } else {
                     addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset,
-                      typeByteSize(p.context.t.ret), typeByteSize(exp.tipe), exp, st"$resultLocalId = ${exp.prettyST}",
+                      typeByteSize(p.context.t.ret), copySize(exp), exp, st"$resultLocalId = ${exp.prettyST}",
                       p.context.t.ret, exp.tipe, exp.pos))
                   }
                 case _ =>
@@ -1747,7 +1747,7 @@ import Anvil._
                       typeByteSize(tipe), newRhs, g.prettyST, tipe, g.pos))
                   } else {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(globalOffset, typeByteSize(tipe),
-                      typeByteSize(newRhs.tipe), newRhs, g.prettyST, tipe, newRhs.tipe, g.pos))
+                      copySize(newRhs), newRhs, g.prettyST, tipe, newRhs.tipe, g.pos))
                   }
                 case AST.IR.Stmt.Assign.Local(_, lhs, t, rhs, pos) =>
                   val newRhs = OffsetSubsitutor(this, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
@@ -1761,7 +1761,7 @@ import Anvil._
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(
                       AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, newRhs.pos)),
                         AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, newRhs.pos), newRhs.pos),
-                      typeByteSize(t), typeByteSize(newRhs.tipe), newRhs, st"$lhs = ${newRhs.prettyST}", t, newRhs.tipe, pos))
+                      typeByteSize(t), copySize(newRhs), newRhs, st"$lhs = ${newRhs.prettyST}", t, newRhs.tipe, pos))
                   }
                 case AST.IR.Stmt.Assign.Field(receiver, id, _, rhs, pos) =>
                   val (ft, offset) = classSizeFieldOffsets(receiver.tipe.asInstanceOf[AST.Typed.Name])._2.get(id).get
@@ -1772,7 +1772,7 @@ import Anvil._
                       typeByteSize(ft), rhs, g.prettyST, ft, pos))
                   } else {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset, typeByteSize(ft),
-                      typeByteSize(rhs.tipe), rhs, g.prettyST, ft, rhs.tipe, pos))
+                      copySize(rhs), rhs, g.prettyST, ft, rhs.tipe, pos))
                   }
                 case AST.IR.Stmt.Assign.Index(rcv, idx, rhs, pos) =>
                   val newRhs = OffsetSubsitutor(this, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
@@ -1806,7 +1806,7 @@ import Anvil._
                       isSigned(elementType), typeByteSize(elementType), newRhs, g.prettyST, elementType, g.pos))
                   } else {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(receiverOffset, typeByteSize(elementType),
-                      typeByteSize(newRhs.tipe), newRhs, g.prettyST, elementType, newRhs.tipe, g.pos))
+                      copySize(newRhs), newRhs, g.prettyST, elementType, newRhs.tipe, g.pos))
                   }
                 case AST.IR.Stmt.Assign.Temp(n, rhs, pos) =>
                   rhs match {
@@ -1886,7 +1886,7 @@ import Anvil._
                       val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
                         AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset, g.pos),
                         g.pos)
-                      val sha = sha3(rhs.tipe.string)
+                      val sha = sha3Type(rhs.tipe)
                       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset, F, typeShaSize,
                         AST.IR.Exp.Int(AST.Typed.u32, sha.toZ, g.pos),
                         st"sha3 type signature of ${rhs.tipe}: 0x$sha", AST.Typed.u32, g.pos))
@@ -2262,7 +2262,7 @@ import Anvil._
     if (config.shouldPrint) {
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, F, AST.IR.Exp.Int(dpType, 0, p.pos), p.pos))
       val display = globalMap.get(displayName).get
-      val sha3t = sha3(displayType.string)
+      val sha3t = sha3Type(displayType)
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(typeShaType, display.offset + typeByteSize(spType), p.pos), isSigned(typeShaType), typeShaSize,
         AST.IR.Exp.Int(typeShaType, sha3t.toZ, p.pos), st"$displayId.$typeFieldId ($displayType: 0x$sha3t)", typeShaType, p.pos))
@@ -2324,7 +2324,7 @@ import Anvil._
   @memoize def classSizeFieldOffsets(t: AST.Typed.Name): (Z, HashSMap[String, (AST.Typed, Z)]) = {
     var r = HashSMap.empty[String, (AST.Typed, Z)] + typeFieldId ~> (typeShaType, 0)
     var offset: Z = typeShaSize
-    if (t == AST.Typed.string) {
+    if (t == AST.Typed.string || isSeq(t)) {
       r = r + "size" ~> (AST.Typed.z, offset)
       return (offset + typeByteSize(AST.Typed.z), r)
     }
@@ -2348,7 +2348,16 @@ import Anvil._
       case Some(n) => return n
       case _ =>
     }
-    subZOpt(t.args(0)) match {
+    val indexType = t.args(0)
+    indexType match {
+      case AST.Typed.Name(ISZ(index), _) =>
+        Z(index) match {
+          case Some(size) => return size
+          case _ =>
+        }
+      case _ =>
+    }
+    subZOpt(indexType) match {
       case Some(subz) =>
         if (subz.ast.hasMax && subz.ast.hasMin) {
           val size = subz.ast.max - subz.ast.min + 1
@@ -2438,12 +2447,15 @@ import Anvil._
         assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
         return cpTypeByteSize
       case t: AST.Typed.Name =>
+        if (t.ids.size == 1 && t.args.isEmpty && Z(t.ids(0)).nonEmpty) {
+          return 8
+        }
         if (t.ids == AST.Typed.isName || t.ids == AST.Typed.msName) {
           var r: Z = 4 // type sha
           r = r + typeByteSize(AST.Typed.z) // .size
           val et = t.args(1)
           if (et == AST.Typed.b) {
-
+            r = r + getMaxArraySize(t)
           } else {
             r = r + getMaxArraySize(t) * typeByteSize(t.args(1)) // elements
           }
@@ -2491,6 +2503,8 @@ import Anvil._
     return F
   }
 
+  @strictpure def sha3Type(t: AST.Typed): U32 = sha3(t.string)
+
   @pure def sha3(s: String): U32 = {
     val sha = crypto.SHA3.init512
     sha.update(conversions.String.toU8is(s))
@@ -2510,6 +2524,7 @@ import Anvil._
       case `spType` =>
       case `cpType` => assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
       case `dpType` =>
+      case AST.Typed.Name(ISZ(index), ISZ()) if Z(index).nonEmpty =>
       case _ => return isSubZ(t)
     }
     return T
@@ -2517,15 +2532,38 @@ import Anvil._
 
   @strictpure def signedString(t: AST.Typed): String = if (isSigned(t)) "signed" else "unsigned"
 
+  @strictpure def copySize(exp: AST.IR.Exp): AST.IR.Exp = {
+    val t = exp.tipe
+    assert(!isScalar(t))
+    val pos = exp.pos
+    if (t == AST.Typed.string || isSeq(t)) {
+      val (sizeType, sizeOffset) = classSizeFieldOffsets(t.asInstanceOf[AST.Typed.Name])._2.get("size").get
+      AST.IR.Exp.Binary(AST.Typed.u64,
+        AST.IR.Exp.Type(F,
+          AST.IR.Exp.Intrinsic(Intrinsic.Load(
+            AST.IR.Exp.Binary(spType, exp, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, sizeOffset, pos), pos),
+            isSigned(sizeType), typeByteSize(sizeType), st"", sizeType, pos)),
+          AST.Typed.u64, pos),
+        AST.IR.Exp.Binary.Op.Add,
+        AST.IR.Exp.Int(AST.Typed.u64, typeShaSize + typeByteSize(AST.Typed.z), pos),
+        pos)
+    } else {
+      AST.IR.Exp.Int(AST.Typed.u64, typeByteSize(t), pos)
+    }
+  }
+
   @memoize def minMaxOpt(t: AST.Typed): (Option[Z], Option[Z]) = {
-    if (t != AST.Typed.z) {
-      subZOpt(t) match {
-        case Some(info) =>
-          val minOpt: Option[Z] = if (info.ast.hasMin) Some(info.ast.min) else None()
-          val maxOpt: Option[Z] = if (info.ast.hasMax) Some(info.ast.max) else None()
-          return (minOpt, maxOpt)
-        case _ =>
-      }
+    t match {
+      case AST.Typed.z =>
+      case AST.Typed.Name(ISZ(index), ISZ()) if Z(index).nonEmpty => return (Some(0), None())
+      case _ =>
+        subZOpt(t) match {
+          case Some(info) =>
+            val minOpt: Option[Z] = if (info.ast.hasMin) Some(info.ast.min) else None()
+            val maxOpt: Option[Z] = if (info.ast.hasMax) Some(info.ast.max) else None()
+            return (minOpt, maxOpt)
+          case _ =>
+        }
     }
     return (None(), None())
   }
@@ -2543,6 +2581,7 @@ import Anvil._
         assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
         return F
       case `dpType` => return F
+      case AST.Typed.Name(ISZ(index), ISZ()) if Z(index).nonEmpty => return F
       case _ => return subZOpt(t).get.ast.isSigned
     }
   }
@@ -2582,6 +2621,7 @@ import Anvil._
   @memoize def minIndex(indexType: AST.Typed): Z = {
     val min: Z = indexType match {
       case AST.Typed.z => 0
+      case AST.Typed.Name(ISZ(index), ISZ()) if Z(index).nonEmpty => return 0
       case _ =>
         val subz = subZOpt(indexType).get.ast
         if (subz.isIndex) subz.min
@@ -2594,11 +2634,11 @@ import Anvil._
   @memoize def sha3TypeImplOf(t: AST.Typed.Name): ISZ[Z] = {
     var r = ISZ[Z]()
     th.typeMap.get(t.ids).get match {
-      case info: TypeInfo.Adt if !info.ast.isRoot => r = r :+ sha3(t.string).toZ
+      case info: TypeInfo.Adt if !info.ast.isRoot => r = r :+ sha3Type(t).toZ
       case _ =>
         for (ct <- tsr.typeImpl.descendantsOf(t).elements) {
           th.typeMap.get(ct.ids).get match {
-            case info: TypeInfo.Adt if !info.ast.isRoot => r = r :+ sha3(ct.string).toZ
+            case info: TypeInfo.Adt if !info.ast.isRoot => r = r :+ sha3Type(ct).toZ
             case _ =>
           }
         }
