@@ -1804,7 +1804,7 @@ import Anvil._
         val dataSize: Z = if (isMain && !isScalar(t)) typeByteSize(t) else 0
         val size: Z = if (isScalar(t)) typeByteSize(t) else typeByteSize(spType)
         m = m + id ~> VarInfo(isScalar(t), maxOffset, size, dataSize, t, p.pos)
-        maxOffset = maxOffset + typeByteSize(spType) + dataSize
+        maxOffset = maxOffset + size + dataSize
       }
     }
 
