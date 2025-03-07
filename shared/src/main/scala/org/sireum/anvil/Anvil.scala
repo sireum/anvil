@@ -1933,7 +1933,7 @@ import Anvil._
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(receiverOffset, typeByteSize(elementType),
                       copySize(newRhs), newRhs, g.prettyST, elementType, newRhs.tipe, g.pos))
                   }
-                case AST.IR.Stmt.Assign.Temp(n, rhs, pos) =>
+                case g@AST.IR.Stmt.Assign.Temp(n, rhs, pos) =>
                   rhs match {
                     case rhs: AST.IR.Exp.LocalVarRef =>
                       val localOffset = m.get(rhs.id).get
@@ -2011,6 +2011,7 @@ import Anvil._
                       val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
                         AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset, g.pos),
                         g.pos)
+                      grounds = grounds :+ g(rhs = lhsOffset)
                       val sha = sha3Type(rhs.tipe)
                       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset, F, typeShaSize,
                         AST.IR.Exp.Int(AST.Typed.u32, sha.toZ, g.pos),
