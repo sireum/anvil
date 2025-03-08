@@ -329,7 +329,7 @@ object Anvil {
             val objectOps = ops.StringOps(rhs.owner(rhs.owner.size - 1))
             val idOps = ops.StringOps(rhs.id)
             assert(rhs.args.size == 1)
-            val arg = rhs.args(0)
+            var arg = rhs.args(0)
             if (idOps.s == "z2u") {
               val cond = AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Int(AST.Typed.z, 0, pos), AST.IR.Exp.Binary.Op.Le,
                 arg, pos)
@@ -405,7 +405,16 @@ object Anvil {
                             st"Out of bound ${rhs.tipe} value".render, pos))), pos)
                         }
                       }
-                      stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, arg, rhs.tipe.asInstanceOf[AST.Typed.Name], pos))
+                      arg = AST.IR.Exp.Type(F, arg, rhs.tipe.asInstanceOf[AST.Typed.Name], pos)
+                      if (anvil.isSigned(arg.tipe) && anvil.isSigned(rhs.tipe) && anvil.isBitVector(arg.tipe) &&
+                        anvil.typeByteSize(arg.tipe) < anvil.typeByteSize(rhs.tipe)) {
+                        assert(anvil.isBitVector(rhs.tipe))
+                        val n = AST.IR.Exp.Int(rhs.tipe,
+                          (anvil.typeByteSize(rhs.tipe) - anvil.typeByteSize(arg.tipe)) * 8, pos)
+                        arg = AST.IR.Exp.Binary(rhs.tipe, arg, AST.IR.Exp.Binary.Op.Shl, n, pos)
+                        arg = AST.IR.Exp.Binary(rhs.tipe, arg, AST.IR.Exp.Binary.Op.Shr, n, pos)
+                      }
+                      stmts = stmts :+ stmt(rhs = arg)
                     }
                   } else {
                     halt(s"TODO: $stmt")
