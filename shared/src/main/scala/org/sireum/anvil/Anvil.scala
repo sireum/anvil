@@ -540,7 +540,11 @@ object Anvil {
     @strictpure def killJump(j: AST.IR.Jump): HashSSet[Z] = HashSSet.empty
   }
 
-  @datatype class IR(val anvil: Anvil, val procedure: AST.IR.Procedure, val maxRegisters: Z)
+  @datatype class IR(val anvil: Anvil,
+                     val procedure: AST.IR.Procedure,
+                     val maxRegisters: Z,
+                     val globalInfoMap: HashSMap[QName, VarInfo],
+                     val paramInfoMap: HashSMap[String, VarInfo])
 
   val kind: String = "Anvil"
   val exitLabel: Z = 0
@@ -586,6 +590,14 @@ object Anvil {
 
   def synthesize(fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, owner: QName, id: String, config: Config,
                  output: Output, reporter: Reporter): Unit = {
+    generateIR(fresh, th, owner, id, config, output, reporter) match {
+      case Some(ir) => HwSynthesizer(ir.anvil).printProcedure(id, ir.procedure, output, ir.maxRegisters)
+      case _ =>
+    }
+  }
+
+  def generateIR(fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, owner: QName, id: String, config: Config,
+                 output: Output, reporter: Reporter): Option[IR] = {
     assert(config.memory > 0 && config.memory % 8 == 0, s"Memory configuration has to be a positive integer multiples of 8")
     val tsr = TypeSpecializer.specialize(th, ISZ(TypeSpecializer.EntryPoint.Method(owner :+ id)), HashMap.empty,
       reporter)
@@ -593,12 +605,13 @@ object Anvil {
       reporter.error(None(), kind, s"@ext methods are not supported")
     }
     if (reporter.hasError) {
-      return
+      return None()
     }
     fresh.setTemp(0)
     fresh.setLabel(startingLabel)
-    Anvil(th, tsr, owner, id, config, 0).synthesize(fresh, output, reporter)
+    return Some(Anvil(th, tsr, owner, id, config, 0).generateIR(fresh, output, reporter))
   }
+
 }
 
 import Anvil._
@@ -638,11 +651,6 @@ import Anvil._
 
   @strictpure def irProcedurePath(procedureId: String, pType: AST.Typed.Fun, stage: Z, pass: Z, id: String): ISZ[String] =
     ISZ("ir", "procedures", s"$procedureId-${sha3Type(pType)}", s"$stage-$pass-$id.sir")
-
-  def synthesize(fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): Unit = {
-    val ir = generateIR(fresh, output, reporter)
-    HwSynthesizer(ir.anvil).printProcedure(id, ir.procedure, output, ir.maxRegisters)
-  }
 
   def generateIR(fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): IR = {
     val threeAddressCode = T
@@ -896,7 +904,8 @@ import Anvil._
       val cpMax = pow(2, anvil.typeByteSize(cpType) * 8)
       assert(nlocs <= cpMax, s"nlocs ($nlocs) > cpMax (2 ** (${anvil.typeByteSize(cpType) * 8}) == $cpMax)")
     }
-    return IR(anvil, program.procedures(0), maxRegisters)
+    return IR(anvil, program.procedures(0), maxRegisters, globalMap,
+      anvil.procedureParamInfo(T, PBox(program.procedures(0)))._2)
   }
 
   @pure def transformBlock(stage: Z, output: Output, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1524,9 +1533,9 @@ import Anvil._
                   AST.IR.Exp.Binary(spType,
                     AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
                     AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeByteSize(cpType), g.pos), g.pos),
-                  isSigned(t), typeByteSize(t), st"", t, g.pos))
+                  isSigned(spType), typeByteSize(spType), st"", t, g.pos))
                 bgrounds = (rgrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(lhs, rhsOffset, F,
-                  typeByteSize(spType), st"$$$lhs = $returnLocalId", spType, g.pos))) ++ bgrounds
+                  typeByteSize(t), st"$$$lhs = $returnLocalId", t, g.pos))) ++ bgrounds
               case _ =>
                 bgrounds = rgrounds ++ bgrounds
             }
@@ -2368,7 +2377,6 @@ import Anvil._
                       }
                       AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, mask, a), mt, mt.ret, pos)
                     }
-                    halt(s"TODO: $arg")
                   case AST.Typed.r => halt(s"TODO: $arg")
                   case t => halt(s"TODO: $t, $arg")
                 }
@@ -2759,6 +2767,9 @@ import Anvil._
   }
 
   @memoize def isSigned(t: AST.Typed): B = {
+    if (!isScalar(t)) {
+      return F
+    }
     t match {
       case AST.Typed.b => return F
       case AST.Typed.c => return F
@@ -2772,7 +2783,12 @@ import Anvil._
         return F
       case `dpType` => return F
       case AST.Typed.Name(ISZ(index), ISZ()) if Z(index).nonEmpty => return F
-      case _ => return subZOpt(t).get.ast.isSigned
+      case _ =>
+        subZOpt(t) match {
+          case Some(info) => return info.ast.isSigned
+          case _ => halt(s"Infeasible: $t")
+        }
+
     }
   }
 
