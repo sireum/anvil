@@ -32,6 +32,8 @@ import org.sireum.lang.symbol.{Info, TypeInfo}
 import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
+import org.sireum.U64._
+import org.sireum.S64._
 import org.sireum.U32._
 import org.sireum.U8._
 import org.sireum.anvil.PrinterIndex.U._
@@ -530,6 +532,8 @@ object Anvil {
     @strictpure def killJump(j: AST.IR.Jump): HashSSet[Z] = HashSSet.empty
   }
 
+  @datatype class IR(val anvil: Anvil, val procedure: AST.IR.Procedure, val maxRegisters: Z)
+
   val kind: String = "Anvil"
   val exitLabel: Z = 0
   val errorLabel: Z = 1
@@ -612,7 +616,6 @@ import Anvil._
     r = r - u"1"
     anvil.Printer.Ext.u2z(r)
   }
-  val memType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(AST.Typed.Name(ISZ(s"${config.memory}"), ISZ()), AST.Typed.u8))
 
   val spTypeByteSize: Z = {
     val n = computeBitwidth(config.memory) + 1
@@ -629,6 +632,11 @@ import Anvil._
     ISZ("ir", "procedures", s"$procedureId-${sha3Type(pType)}", s"$stage-$pass-$id.sir")
 
   def synthesize(fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): Unit = {
+    val ir = generateIR(fresh, output, reporter)
+    HwSynthesizer(ir.anvil).printProcedure(id, ir.procedure, output, ir.maxRegisters)
+  }
+
+  def generateIR(fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): IR = {
     val threeAddressCode = T
 
     val irt = lang.IRTranslator(threeAddressCode = threeAddressCode, threeAddressCodeLit = F,
@@ -880,8 +888,7 @@ import Anvil._
       val cpMax = pow(2, anvil.typeByteSize(cpType) * 8)
       assert(nlocs <= cpMax, s"nlocs ($nlocs) > cpMax (2 ** (${anvil.typeByteSize(cpType) * 8}) == $cpMax)")
     }
-
-    HwSynthesizer(anvil).printProcedure(id, program.procedures(0), output, maxRegisters)
+    return IR(anvil, program.procedures(0), maxRegisters)
   }
 
   @pure def transformBlock(stage: Z, output: Output, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -2838,5 +2845,8 @@ import Anvil._
     }
     return r
   }
+
+  @strictpure def signExtend(n: Z, bits: U64): U64 =
+    conversions.S64.toRawU64(conversions.U64.toRawS64(conversions.Z.toU64(n) << u64"56") >> s64"56")
 
 }
