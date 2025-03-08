@@ -32,10 +32,9 @@ import org.sireum.anvil.Printer
 import org.sireum.anvil.PrinterIndex.U
 import org.sireum.anvil.PrinterIndex.U._
 import org.sireum.U8._
-import org.sireum.S64._
 import org.sireum.U64._
 
-object AnvilSimulator {
+object IRSimulator {
   @datatype class State(val memory: IS[U, U8], val CP: U64, val SP: U64, val DP: U64, val temps: IS[Z, U64])
 
   object State {
@@ -404,7 +403,7 @@ object AnvilSimulator {
     @strictpure def toS64: S64 = conversions.Z.toS64(value)
     @strictpure def toF32: F32 = conversions.U32.toRawF32(conversions.Z.toU32(value))
     @strictpure def toF64: F64 = conversions.U64.toRawF64(conversions.Z.toU64(value))
-    @strictpure def toU: U = anvil.Printer.Ext.z2u(value)
+    @strictpure def toU: U = Printer.Ext.z2u(value)
   }
 
   object Value {
@@ -443,19 +442,39 @@ object AnvilSimulator {
       case (_, _) => halt(s"Infeasible: $n, $isSigned, $bytes")
     }
     @strictpure def u(n: U): Value = Value(Kind.U64, n.toZ)
+    @strictpure def fromU64(n: U64, isSigned: B, bytes: Z): Value = if (isSigned) {
+      bytes match {
+        case z"1" => s8(conversions.U8.toRawS8(conversions.U64.toU8(n)))
+        case z"2" => s16(conversions.U16.toRawS16(conversions.U64.toU16(n)))
+        case z"3" => s32(conversions.U32.toRawS32(conversions.U64.toU32(n)))
+        case z"4" => s64(conversions.U64.toRawS64(n))
+        case _ => halt(s"Infeasible: $bytes")
+      }
+    } else {
+      bytes match {
+        case z"1" => u8(conversions.U64.toU8(n))
+        case z"2" => u16(conversions.U64.toU16(n))
+        case z"3" => u32(conversions.U64.toU32(n))
+        case z"4" => u64(n)
+        case _ => halt(s"Infeasible: $bytes")
+      }
+    }
   }
 }
 
-import AnvilSimulator._
+import IRSimulator._
 
-@datatype class AnvilSimulator(val anvil: Anvil) {
+@datatype class IRSimulator(val anvil: Anvil) {
+
   @pure def evalExp(state: State, exp: AST.IR.Exp): Value = {
     exp match {
       case exp: AST.IR.Exp.Bool => return Value.b(exp.value)
       case exp: AST.IR.Exp.Int => return Value.z(exp.value, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
       case exp: AST.IR.Exp.F32 => return Value.f32(exp.value)
       case exp: AST.IR.Exp.F64 => return Value.f64(exp.value)
-      case exp: AST.IR.Exp.Temp => return Value.u64(state.temps(exp.n))
+      case exp: AST.IR.Exp.Temp =>
+        val v = state.temps(exp.n)
+        return Value.fromU64(v, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
       case exp: AST.IR.Exp.Binary =>
         val left = evalExp(state, exp.left)
         val right = evalExp(state, exp.right)
@@ -497,14 +516,22 @@ import AnvilSimulator._
         }
       case exp: AST.IR.Exp.Type =>
         val v = evalExp(state, exp.exp)
-        return Value.z(v.value, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
+        val n: U64 =
+          if (anvil.isSigned(exp.t)) conversions.S64.toRawU64(conversions.Z.toS64(v.value))
+          else conversions.Z.toU64(v.value)
+        return Value.fromU64(n, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
       case exp: AST.IR.Exp.Intrinsic =>
         exp.intrinsic match {
           case in: Intrinsic.Load =>
             val offset = evalExp(state, in.rhsOffset)
             val n = Printer.load(state.memory.toMS, offset.toU, Printer.Ext.z2u(in.bytes))
-            return Value.z(n.toZ, in.isSigned, in.bytes)
-          case in: Intrinsic.Register => halt(s"TODO: ${exp.prettyST}")
+            return Value.fromU64(conversions.Z.toU64(n.toZ), in.isSigned, in.bytes)
+          case in: Intrinsic.Register =>
+            if (in.isSP) {
+              return Value.fromU64(state.SP, anvil.isSigned(in.tipe), anvil.typeByteSize(in.tipe))
+            } else {
+              return Value.u64(state.DP)
+            }
         }
       case exp: AST.IR.Exp.R => halt(s"TODO: ${exp.prettyST}")
       case exp: AST.IR.Exp.Construct => halt(s"Infeasible: ${exp.prettyST}")
@@ -523,42 +550,26 @@ import AnvilSimulator._
     stmt match {
       case stmt: AST.IR.Stmt.Assign.Temp =>
         val rhs = evalExp(state, stmt.rhs)
-        assert(rhs.kind == Value.Kind.U64)
-        val temps = state.temps(stmt.lhs ~> conversions.Z.toU64(rhs.value))
+        val n: U64 =
+          if (anvil.isSigned(stmt.rhs.tipe)) conversions.S64.toRawU64(conversions.Z.toS64(rhs.value))
+          else conversions.Z.toU64(rhs.value)
+        val temps = state.temps(stmt.lhs ~> n)
         return (s: State) => s(temps = temps)
       case stmt: AST.IR.Stmt.Intrinsic =>
         stmt.intrinsic match {
           case in: Intrinsic.TempLoad =>
             val offset = evalExp(state, in.rhsOffset)
-            val n = Printer.load(state.memory.toMS, offset.toU, Printer.Ext.z2u(in.bytes)).toZ
-            val v: U64 = if (anvil.isSigned(in.tipe)) {
-              in.bytes match {
-                case z"1" => anvil.signExtend(n, u64"56")
-                case z"2" => anvil.signExtend(n, u64"48")
-                case z"4" => anvil.signExtend(n, u64"32")
-                case z"8" => conversions.Z.toU64(n)
-                case _ => halt(s"Infeasible: $in")
-              }
-            } else {
-              conversions.Z.toU64(n)
-            }
-            val temps = state.temps(in.temp ~> v)
+            val v = Value.fromU64(conversions.Z.toU64(Printer.load(state.memory.toMS, offset.toU,
+              Printer.Ext.z2u(in.bytes)).toZ), in.isSigned, in.bytes)
+            val n: U64 =
+              if (in.isSigned) conversions.S64.toRawU64(conversions.Z.toS64(v.value))
+              else conversions.Z.toU64(v.value)
+            val temps = state.temps(in.temp ~> n)
             return (s: State) => s(temps = temps)
           case in: Intrinsic.Store =>
             val n: U = {
-              val v = evalExp(state, in.rhs).value
-              if (in.isSigned) {
-                val bits: U64 = in.bytes match {
-                  case z"1" => u64"56"
-                  case z"2" => u64"48"
-                  case z"4" => u64"32"
-                  case z"8" => u64"0"
-                  case _ => halt(s"Infeasible: $in")
-                }
-                Printer.Ext.z2u(anvil.signExtend(v, bits).toZ)
-              } else {
-                Printer.Ext.z2u(v)
-              }
+              val v = evalExp(state, in.rhs)
+              Printer.Ext.z2u(if (in.isSigned) conversions.S64.toRawU64(conversions.Z.toS64(v.value)).toZ else v.value)
             }
             val offset = evalExp(state, in.lhsOffset)
             val memory = state.memory.toMS
@@ -590,7 +601,7 @@ import AnvilSimulator._
               }
               return (s: State) => s(SP = sp, memory = memory)
             } else {
-              assert(v > 0)
+              assert(v >= 0)
               val dp: U64 = conversions.Z.toU64(if (in.isInc) conversions.U64.toZ(state.DP) + v else v)
               return (s: State) => s(DP = dp)
             }
