@@ -2377,7 +2377,7 @@ import Anvil._
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       for (g <- b.grounds) {
         g match {
-          case AST.IR.Stmt.Assign.Temp(lhs, rhs: AST.IR.Exp.Type, pos) if !isScalar(rhs.t) =>
+          case g@AST.IR.Stmt.Assign.Temp(lhs, rhs: AST.IR.Exp.Type, pos) if !isScalar(rhs.t) =>
             val sha3Types = sha3TypeImplOf(rhs.t)
             val tLabel = fresh.label()
             val fLabel = fresh.label()
@@ -2395,7 +2395,7 @@ import Anvil._
                   ISZ(AST.IR.Stmt.Assign.Temp(lhs, AST.IR.Exp.Bool(F, pos), pos)),
                   egoto)
               else
-                (ISZ(),
+                (ISZ(g(rhs = rhs.exp)),
                   AST.IR.Jump.Goto(eLabel, pos),
                   printStringLit(T, s"Cannot cast to ${rhs.t}\n", pos),
                   if (config.runtimeCheck) AST.IR.Jump.Halt(pos)
