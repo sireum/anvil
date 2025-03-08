@@ -2216,7 +2216,9 @@ import Anvil._
         case _: AST.IR.Jump.Halt =>
           val pos = b.jump.pos
           blocks = blocks :+ b(grounds = b.grounds ++ ISZ[AST.IR.Stmt.Ground](
-            AST.IR.Stmt.Assign.Temp(0, AST.IR.Exp.Apply(T, printerName, id, ISZ(
+            AST.IR.Stmt.Assign.Temp(0, AST.IR.Exp.Type(F, AST.IR.Exp.LocalVarRef(T, p.context, sfCallerId, spType, pos),
+              displayIndexType, pos), pos),
+            AST.IR.Stmt.Assign.Temp(1, AST.IR.Exp.Apply(T, printerName, id, ISZ(
               AST.IR.Exp.GlobalVarRef(displayName, displayType, pos),
               AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos)),
               AST.IR.Exp.Int(spType, 0, pos),
@@ -2224,10 +2226,10 @@ import Anvil._
               AST.IR.Exp.Int(displayIndexType, spTypeByteSize, pos),
               AST.IR.Exp.Int(displayIndexType, typeByteSize(sfLocType), pos),
               AST.IR.Exp.Int(displayIndexType, typeByteSize(AST.Typed.z), pos),
-              AST.IR.Exp.LocalVarRef(T, p.context, sfCallerId, spType, pos)
+              AST.IR.Exp.Temp(0, displayIndexType, pos)
             ), printTypeMap.get(id).get, AST.Typed.u64, pos), pos),
             AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T,
-              AST.IR.Exp.Type(F, AST.IR.Exp.Temp(0, AST.Typed.u64, pos), dpType, pos), pos))
+              AST.IR.Exp.Type(F, AST.IR.Exp.Temp(1, AST.Typed.u64, pos), dpType, pos), pos))
           ))
         case _ => blocks = blocks :+ b
       }
