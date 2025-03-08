@@ -101,7 +101,7 @@ object MemCopyLog {
           |    // reg for stack pointer
           |    val SP = RegInit(0.U(STACK_POINTER_WIDTH.W))
           |    // reg for display pointer
-          |    val DP = RegInit(0.U(STACK_POINTER_WIDTH.W))
+          |    val DP = RegInit(0.U(64.W))
           |    // reg for index in memcopy
           |    val Idx = RegInit(0.U(16.W))
           |    // reg for recording how many rounds needed for the left bytes
@@ -464,6 +464,10 @@ object MemCopyLog {
         exprST = if(intrinsic.isSP) st"SP" else st"DP"
       }
       case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => {
+        if(MemCopyLog.currentBlock.get.label == 203) {
+          println(intrinsic.prettyST.render)
+          println(intrinsic.bytes)
+        }
         var rhsExprST = ISZ[ST]()
         val rhsExpr = processExpr(intrinsic.rhsOffset, F)
         for(i <- intrinsic.bytes-1 to 0 by -1) {
@@ -477,7 +481,7 @@ object MemCopyLog {
           st"""
               |Cat(
               |  ${(rhsExprST, "\n")}
-              |)${if(anvil.isSigned(intrinsic.tipe)) ".asSInt" else ""}"""
+              |)${if(intrinsic.isSigned) ".asSInt" else ""}"""
       }
       case exp: AST.IR.Exp.Temp => {
         exprST = st"${generalRegName}(${exp.n}.U)${if(isSignedExp(exp)) ".asSInt" else ""}"
