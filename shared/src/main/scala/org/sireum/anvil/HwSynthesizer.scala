@@ -240,9 +240,38 @@ object MemCopyLog {
         intrinsicST = st"CP := ${j.label}.U"
       }
       case j: AST.IR.Jump.If => {
-        println(j.prettyST.render)
         val cond = processExpr(j.cond, F)
         intrinsicST = st"CP := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
+      }
+      case j: AST.IR.Jump.Switch => {
+        val condExprST = processExpr(j.exp, F)
+
+        val tmpWire = st"__tmp_${TmpWireCount.getCurrent}"
+        TmpWireCount.incCount()
+
+        val defaultStatementST: ST = j.defaultLabelOpt match {
+          case Some(x) => st"CP := ${x}.U"
+          case None() => st""
+        }
+
+        var isStatementST = ISZ[ST]()
+        for(i <- j.cases) {
+          isStatementST = isStatementST :+
+            st"""
+                |is(${processExpr(i.value, F).render}) {
+                |  CP := ${i.label}.U
+                |}
+              """
+        }
+
+        intrinsicST =
+          st"""
+              |val ${tmpWire.render} = ${condExprST.render}
+              |${defaultStatementST.render}
+              |switch(${tmpWire.render}) {
+              |  ${(isStatementST, "\n")}
+              |}
+            """
       }
       case j: AST.IR.Jump.Return => {
       }
@@ -320,7 +349,7 @@ object MemCopyLog {
               |when(Idx < ${totalSizeWireST.render}) {
               |  ${(BytesTransferST, "\n")}
               |  Idx := Idx + ${anvil.config.copySize}.U
-              |  LeftByteRounds := ${totalSizeWireST.render} - Idx - 8.U
+              |  LeftByteRounds := ${totalSizeWireST.render} - Idx
               |} .elsewhen(IdxLeftByteRounds < LeftByteRounds) {
               |  val ${leftByteStartST.render} = Idx - ${anvil.config.copySize}.U
               |  ${sharedMemName}(${tmpWireLhsST.render} + ${leftByteStartST.render} + IdxLeftByteRounds) := ${sharedMemName}(${tmpWireRhsST.render} + ${leftByteStartST.render} + IdxLeftByteRounds)
@@ -452,6 +481,12 @@ object MemCopyLog {
       }
       case exp: AST.IR.Exp.Temp => {
         exprST = st"${generalRegName}(${exp.n}.U)${if(isSignedExp(exp)) ".asSInt" else ""}"
+      }
+      case exp: AST.IR.Exp.Bool => {
+        exprST = exp.value match {
+          case T => st"1.U"
+          case F => st"0.U"
+        }
       }
       case exp: AST.IR.Exp.Int => {
         val valuePostfix: String = isForcedSign match {
