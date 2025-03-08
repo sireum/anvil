@@ -406,9 +406,8 @@ object Anvil {
                         }
                       }
                       arg = AST.IR.Exp.Type(F, arg, rhs.tipe.asInstanceOf[AST.Typed.Name], pos)
-                      if (anvil.isSigned(arg.tipe) && anvil.isSigned(rhs.tipe) && anvil.isBitVector(arg.tipe) &&
+                      if (anvil.isSigned(arg.tipe) && anvil.isSigned(rhs.tipe) &&
                         anvil.typeByteSize(arg.tipe) < anvil.typeByteSize(rhs.tipe)) {
-                        assert(anvil.isBitVector(rhs.tipe))
                         val n = AST.IR.Exp.Int(rhs.tipe,
                           (anvil.typeByteSize(rhs.tipe) - anvil.typeByteSize(arg.tipe)) * 8, pos)
                         arg = AST.IR.Exp.Binary(rhs.tipe, arg, AST.IR.Exp.Binary.Op.Shl, n, pos)
