@@ -6,6 +6,10 @@ import org.sireum.U16._
   return x + y
 }
 
-@anvil.test def testAdd(): Unit = {
+@anvil.test def testAdd1(): Unit = {
   println(add(u16"3", u16"5"))
+}
+
+@anvil.test def testAdd2(): Unit = {
+  println(add(u16"1403437", u16"5"))
 }

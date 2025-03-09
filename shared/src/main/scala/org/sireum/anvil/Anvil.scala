@@ -240,7 +240,7 @@ import Anvil._
         val test = AST.IR.Procedure(T, ISZ(), ISZ(), testId, ISZ(),
           AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit),
           AST.IR.Body.Block(AST.IR.Stmt.Block(stmts, pos)), pos)
-        procedures = procedures :+ test
+        procedures = test +: procedures
         startOpt = Some(test)
       } else {
         if (startOpt.isEmpty) {
