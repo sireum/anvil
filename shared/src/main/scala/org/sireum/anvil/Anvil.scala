@@ -78,9 +78,9 @@ object Anvil {
                      val maxRegisters: Z,
                      val globalInfoMap: HashSMap[QName, VarInfo])
 
-  def synthesize(fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, name: QName, config: Config,
+  def synthesize(isTest: B, fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, name: QName, config: Config,
                  output: Output, reporter: Reporter): Unit = {
-    generateIR(F, fresh, th, name, config, output, reporter) match {
+    generateIR(isTest, fresh, th, name, config, output, reporter) match {
       case Some(ir) => HwSynthesizer(ir.anvil).printProcedure(ir.procedure.id, ir.procedure, output, ir.maxRegisters)
       case _ =>
     }

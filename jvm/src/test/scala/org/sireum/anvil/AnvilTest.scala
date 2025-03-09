@@ -41,6 +41,7 @@ class AnvilTest extends SireumRcSpec {
   val printFileSet: HashSet[String] = HashSet.empty[String] + "print.sc" + "assert.sc" + "add-test.sc"
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc" + "add-test.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add-test.sc"
+  val testFileSet: HashSet[String] = HashSet.empty[String] + "add-test.sc"
 
   override def check(path: Vector[Predef.String], content: Predef.String): Boolean = {
     val reporter = message.Reporter.create
@@ -57,7 +58,7 @@ class AnvilTest extends SireumRcSpec {
           erase = eraseFileSet.contains(file),
           runtimeCheck = T)
         val out = dir /+ ISZ(path.map(String(_)): _*)
-        Anvil.synthesize(lang.IRTranslator.createFresh, th2, ISZ(), config, new Anvil.Output {
+        Anvil.synthesize(testFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config, new Anvil.Output {
           def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
             val f = out /+ p
             f.up.mkdirAll()
