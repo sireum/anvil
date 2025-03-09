@@ -32,7 +32,7 @@ import org.sireum.U8._
 class IRSimulatorTest extends SireumRcSpec {
 
   val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
-  val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result"
+  val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result-sim"
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
     val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith("-test.sc") }
@@ -60,7 +60,7 @@ class IRSimulatorTest extends SireumRcSpec {
         var config = Anvil.Config.empty(path.mkString("/"))
         val file = path(path.size - 1)
         config = config(
-          printSize = 32,
+          printSize = 4096,
           stackTrace = T,
           erase = T,
           runtimeCheck = T)

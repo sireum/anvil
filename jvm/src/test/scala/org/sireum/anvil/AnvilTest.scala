@@ -38,9 +38,9 @@ class AnvilTest extends SireumRcSpec {
   }
 
   val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "construct.sc" ~> 2048
-  val printFileSet: HashSet[String] = HashSet.empty[String] + "print.sc" + "assert.sc"
-  val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
-  val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc"
+  val printFileSet: HashSet[String] = HashSet.empty[String] + "print.sc" + "assert.sc" + "add-test.sc"
+  val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc" + "add-test.sc"
+  val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add-test.sc"
 
   override def check(path: Vector[Predef.String], content: Predef.String): Boolean = {
     val reporter = message.Reporter.create
