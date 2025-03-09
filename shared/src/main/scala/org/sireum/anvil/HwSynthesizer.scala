@@ -464,10 +464,6 @@ object MemCopyLog {
         exprST = if(intrinsic.isSP) st"SP" else st"DP"
       }
       case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => {
-        if(MemCopyLog.currentBlock.get.label == 203) {
-          println(intrinsic.prettyST.render)
-          println(intrinsic.bytes)
-        }
         var rhsExprST = ISZ[ST]()
         val rhsExpr = processExpr(intrinsic.rhsOffset, F)
         for(i <- intrinsic.bytes-1 to 0 by -1) {
@@ -569,15 +565,15 @@ object MemCopyLog {
           }
           case AST.IR.Exp.Binary.Op.Shr => {
             val right: ST = if(anvil.isSigned(exp.right.tipe)) st"(${rightST}).asUInt" else rightST
-            exprST = st"${leftST.render} >> ${right.render}"
+            exprST = st"${leftST.render} >> ${right.render}(4,0)"
           }
           case AST.IR.Exp.Binary.Op.Ushr => {
             val right: ST = if(anvil.isSigned(exp.right.tipe)) st"(${rightST}).asUInt" else rightST
-            exprST = st"(${leftST.render}).asUInt >> ${right.render}"
+            exprST = st"(${leftST.render}).asUInt >> ${right.render}(4,0)"
           }
           case AST.IR.Exp.Binary.Op.Shl => {
             val right: ST = if(anvil.isSigned(exp.right.tipe)) st"(${rightST}).asUInt" else rightST
-            exprST = st"${leftST.render} << ${right.render}"
+            exprST = st"${leftST.render} << ${right.render}(4,0)"
           }
           case _ => {
             halt(s"processExpr AST.IR.Exp.Binary unimplemented")
