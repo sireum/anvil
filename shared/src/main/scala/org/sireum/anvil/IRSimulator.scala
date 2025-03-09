@@ -28,14 +28,11 @@ package org.sireum.anvil
 
 import org.sireum._
 import org.sireum.lang.{ast => AST}
+import org.sireum.U8._
 import org.sireum.U64._
 
 object IRSimulator {
-  @msig trait State {
-    def memory: MSZ[U8]
-
-    def temps: MSZ[U64]
-
+  @record @unclonable class State(val memory: MSZ[U8], val temps: MSZ[U64]) {
     def cpIndex: Z = {
       return temps.size - 3
     }
@@ -134,9 +131,7 @@ object IRSimulator {
       }
     }
 
-    @ext("State_Ext") object Ext {
-      @pure def create(memory: Z, temps: Z): State = $
-    }
+    @strictpure def create(memory: Z, temps: Z): State = State(MSZ.create(memory, u8"0"), MSZ.create(temps + 3, u64"0"))
 
   }
 
@@ -815,14 +810,9 @@ import IRSimulator._
     }
   }
 
-  @pure def evalBlock(state: State, b: AST.IR.BasicBlock): Unit = {
-    val edits = ops.ISZOps((for (g <- b.grounds) yield evalGroundOrJump(Either.Left(g))) :+
+  @pure def evalBlock(state: State, b: AST.IR.BasicBlock): ISZ[State.Edit] = {
+    return ops.ISZOps((for (g <- b.grounds) yield evalGroundOrJump(Either.Left(g))) :+
       evalGroundOrJump(Either.Right(b.jump))).parMapUnordered((f: State => State.Edit) => f(state))
-    var i = 0
-    while (i < edits.size) {
-      edits(i).update(state)
-      i = i + 1
-    }
   }
 
   def evalProcedure(state: State, p: AST.IR.Procedure): Unit = {
@@ -845,7 +835,12 @@ import IRSimulator._
     while (state.CP != u64"0" && state.CP != u64"1") {
       val b = blockMap.get(state.CP).get
       //log("Evaluating", b)
-      evalBlock(state, b)
+      val edits = evalBlock(state, b)
+      var i = 0
+      while (i < edits.size) {
+        edits(i).update(state)
+        i = i + 1
+      }
     }
 
     //println(s"End state: $state")
