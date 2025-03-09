@@ -1908,9 +1908,10 @@ import Anvil._
                         AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, newRhs.pos), newRhs.pos),
                       T, typeByteSize(t), newRhs, st"$lhs = ${newRhs.prettyST}", t, pos))
                   } else {
+                    val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, newRhs.pos)),
+                      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, newRhs.pos), newRhs.pos)
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(
-                      AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, newRhs.pos)),
-                        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, newRhs.pos), newRhs.pos),
+                      AST.IR.Exp.Intrinsic(Intrinsic.Load(lhsOffset, isSigned(spType), typeByteSize(spType), st"", spType, pos)),
                       typeByteSize(t), copySize(newRhs), newRhs, st"$lhs = ${newRhs.prettyST}", t, newRhs.tipe, pos))
                   }
                 case AST.IR.Stmt.Assign.Field(receiver, id, _, rhs, pos) =>
@@ -2032,7 +2033,7 @@ import Anvil._
                         grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, rhsOffset, pos)
                       }
                     case rhs: AST.IR.Exp.Construct =>
-                      val loffset =  m.get(constructResultId(rhs.pos)).get
+                      val loffset = m.get(constructResultId(rhs.pos)).get
                       val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
                         AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset, g.pos),
                         g.pos)
@@ -2290,6 +2291,15 @@ import Anvil._
                     u8ms(i) = buffer(anvil.Printer.Ext.z2u(i))
                   }
                   grounds = grounds ++ printStringLit(T, conversions.String.fromU8ms(u8ms), arg.pos)
+                } else if (arg.tipe == AST.Typed.c) {
+                  val buffer = MS.create[anvil.PrinterIndex.U, U8](4, u8"0")
+                  val n = anvil.Printer.printC(buffer, u"0", anvil.Printer.Ext.z2u(dpMask),
+                    conversions.U32.toC(conversions.Z.toU32(arg.value))).toZ
+                  val u8ms = MSZ.create(n, u8"0")
+                  for (i <- 0 until n) {
+                    u8ms(i) = buffer(anvil.Printer.Ext.z2u(i))
+                  }
+                  grounds = grounds ++ printStringLit(T, conversions.String.fromU8ms(u8ms), arg.pos)
                 } else {
                   val buffer = MS.create[anvil.PrinterIndex.U, U8](20, u8"0")
                   val n: Z =
@@ -2352,7 +2362,7 @@ import Anvil._
                     AST.IR.Exp.Apply(T, printerName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
                   case t if subZOpt(t).nonEmpty =>
                     if (isBitVector(t)) {
-                      val digits = AST.IR.Exp.Int(AST.Typed.z, typeByteSize(t), pos)
+                      val digits = AST.IR.Exp.Int(AST.Typed.z, typeByteSize(t) * 2, pos)
                       val id = "printU64Hex"
                       val mt = printTypeMap.get(id).get
                       var a = arg
@@ -2466,40 +2476,31 @@ import Anvil._
         isSigned(AST.Typed.z), typeByteSize(AST.Typed.z),
         AST.IR.Exp.Int(AST.Typed.z, dpMask + 1, p.pos), st"$displayId.size", AST.Typed.z, p.pos))
     }
-    var offset: Z = 0
     for (ge <- globalMap.entries) {
       val (name, info) = ge
       if (!info.isScalar) {
         grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-          AST.IR.Exp.Int(spType, offset, p.pos), isSigned(spType), typeByteSize(spType),
-          AST.IR.Exp.Int(spType, offset + typeByteSize(spType), p.pos), st"data address of ${(name, ".")} (size = ${typeByteSize(info.tipe)})", spType, p.pos))
+          AST.IR.Exp.Int(spType, info.offset, p.pos), isSigned(spType), typeByteSize(spType),
+          AST.IR.Exp.Int(spType, info.offset + typeByteSize(spType), p.pos), st"data address of ${(name, ".")} (size = ${typeByteSize(info.tipe)})", spType, p.pos))
       }
-      offset = offset + info.size + info.dataSize
     }
+    val paramInfo = procedureParamInfo(T, PBox(p))._2
     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-      AST.IR.Exp.Int(cpType, offset, p.pos), isSigned(cpType), typeByteSize(cpType),
+      AST.IR.Exp.Int(cpType, paramInfo.get(returnLocalId).get.offset, p.pos), isSigned(cpType), typeByteSize(cpType),
       AST.IR.Exp.Int(cpType, 0, p.pos), st"$returnLocalId", cpType, p.pos))
-    offset = offset + typeByteSize(cpType)
     if (p.tipe.ret != AST.Typed.unit) {
+      val offset = paramInfo.get(resultLocalId).get.offset
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(spType, offset, p.pos), isSigned(spType), typeByteSize(spType),
         AST.IR.Exp.Int(spType, offset + typeByteSize(spType), p.pos), st"data address of $resultLocalId (size = ${typeByteSize(p.tipe.ret)})", spType, p.pos))
-      offset = offset + typeByteSize(spType)
-      offset = offset + typeByteSize(p.tipe.ret)
     }
-    def updateOffset(id: String, t: AST.Typed): Unit = {
-      if (isScalar(t)) {
-        offset = offset + typeByteSize(t)
-      } else {
+    for (pid <- p.paramNames) {
+      val info = paramInfo.get(pid).get
+      if (!isScalar(info.tipe)) {
         grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-          AST.IR.Exp.Int(spType, offset, p.pos), isSigned(spType), typeByteSize(spType),
-          AST.IR.Exp.Int(spType, offset + typeByteSize(spType), p.pos), st"data address of $id (size = ${typeByteSize(t)})", spType, p.pos))
-        offset = offset + typeByteSize(spType)
-        offset = offset + typeByteSize(t)
+          AST.IR.Exp.Int(spType, info.offset, p.pos), isSigned(spType), typeByteSize(spType),
+          AST.IR.Exp.Int(spType, info.offset + typeByteSize(spType), p.pos), st"data address of $id (size = ${typeByteSize(info.tipe)})", spType, p.pos))
       }
-    }
-    for (param <- ops.ISZOps(p.paramNames).zip(p.tipe.args)) {
-      updateOffset(param._1, param._2)
     }
     return p(body = body(AST.IR.BasicBlock(fresh.label(), grounds, AST.IR.Jump.Goto(startingLabel, p.pos)) +: body.blocks))
   }

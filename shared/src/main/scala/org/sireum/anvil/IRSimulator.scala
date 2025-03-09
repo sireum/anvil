@@ -688,7 +688,6 @@ import IRSimulator._
     @pure def evalStmtH(g: AST.IR.Stmt.Ground): State => State = {
       return evalStmt(state, g)
     }
-    println(s"Evaluating block ${b.label}: $state")
     var s = state
     for (f <- ops.ISZOps(b.grounds).parMap(evalStmtH _) :+ evalJump(s, b.jump)) {
       s = f(s)
@@ -701,9 +700,21 @@ import IRSimulator._
     val blockMap: HashMap[U64, AST.IR.BasicBlock] = HashMap ++
       (for (b <- body.blocks) yield (conversions.Z.toU64(b.label), b))
     var s = state(CP = conversions.Z.toU64(body.blocks(0).label))
-    while (s.CP != u64"0" && s.CP != u64"1") {
-      s = evalBlock(s, blockMap.get(s.CP).get)
+    def log(title: String, b: AST.IR.BasicBlock): Unit = {
+      val pos: message.Position = if (b.grounds.nonEmpty) b.grounds(0).pos else b.jump.pos
+      var file = pos.uriOpt.get
+      val i = ops.StringOps(file).lastIndexOf('/')
+      if (i >= 0) {
+        file = ops.StringOps(file).substring(i + 1, file.size)
+      }
+      println(s"$title block ${b.label}: [251 = ${s.memory(u"251").toZ}] $s")
     }
+    while (s.CP != u64"0" && s.CP != u64"1") {
+      val b = blockMap.get(s.CP).get
+      // log("Evaluating", b)
+      s = evalBlock(s, b)
+    }
+    // println(s"End state: $s")
     return s
   }
 }
