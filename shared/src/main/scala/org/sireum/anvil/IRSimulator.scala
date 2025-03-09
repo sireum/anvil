@@ -28,19 +28,63 @@ package org.sireum.anvil
 
 import org.sireum._
 import org.sireum.lang.{ast => AST}
-import org.sireum.anvil.Printer
-import org.sireum.anvil.PrinterIndex.U
-import org.sireum.anvil.PrinterIndex.U._
 import org.sireum.U8._
 import org.sireum.U64._
 
 object IRSimulator {
-  @datatype class State(val memory: IS[U, U8], val CP: U64, val SP: U64, val DP: U64, val temps: IS[Z, U64]) {
+  @datatype class State(val memory: ISZ[U8], val CP: U64, val SP: U64, val DP: U64, val temps: IS[Z, U64]) {
     @strictpure override def string: String = s"CP = ${CP.toZ}, SP = ${SP.toZ}, DP = ${DP.toZ}, temps = ${for (t <- temps) yield t.toZ}"
   }
 
   object State {
-    @strictpure def create(memory: Z, temps: Z): State = State(IS.create[U, U8](memory, u8"0"), u64"0", u64"0", u64"0",
+    type Undo = Edit
+    @datatype trait Edit {
+      def update(state: State): (State, Undo)
+    }
+
+    object Edit {
+      @datatype class Idem extends Edit {
+        def update(state: State): (State, Undo) = {
+          return (state, this)
+        }
+      }
+      @datatype class CP(val cp: U64) extends Edit {
+        def update(state: State): (State, Undo) = {
+          val r = CP(state.CP)
+          return (state(CP = cp), r)
+        }
+      }
+      @datatype class SP(val sp: U64) extends Edit {
+        def update(state: State): (State, Undo) = {
+          val r = SP(state.SP)
+          return (state(SP = sp), r)
+        }
+      }
+      @datatype class DP(val dp: U64) extends Edit {
+        def update(state: State): (State, Undo) = {
+          val r = DP(state.DP)
+          return (state(DP = dp), r)
+        }
+      }
+      @datatype class Temp(val temp: Z, val value: U64) extends Edit {
+        def update(state: State): (State, Undo) = {
+          val r = Temp(temp, state.temps(temp))
+          return (state(temps = state.temps(temp ~> value)), r)
+        }
+      }
+      @datatype class Memory(val offset: Z, val values: ISZ[U8]) extends Edit {
+        def update(state: State): (State, Undo) = {
+          val r = Memory(offset, for (i <- values.indices) yield state.memory(offset + i))
+          val memory = state.memory.toMS
+          for (i <- values.indices) {
+            memory(offset + i) = values(i)
+          }
+          return (state(memory = memory.toIS), r)
+        }
+      }
+    }
+
+    @strictpure def create(memory: Z, temps: Z): State = State(ISZ.create[U8](memory, u8"0"), u64"0", u64"0", u64"0",
       ISZ.create(temps, u64"0"))
   }
 
@@ -84,89 +128,89 @@ object IRSimulator {
     @strictpure def +(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asU8(toU8 + other.toU8)
-        case Value.Kind.U16 => Value.asU16(toU16 + other.toU16)
-        case Value.Kind.U32 => Value.asU32(toU32 + other.toU32)
-        case Value.Kind.U64 => Value.asU64(toU64 + other.toU64)
-        case Value.Kind.S8 => Value.asS8(toS8 + other.toS8)
-        case Value.Kind.S16 => Value.asS16(toS16 + other.toS16)
-        case Value.Kind.S32 => Value.asS32(toS32 + other.toS32)
-        case Value.Kind.S64 => Value.asS64(toS64 + other.toS64)
-        case Value.Kind.F32 => Value.asF32(toF32 + other.toF32)
-        case Value.Kind.F64 => Value.asF64(toF64 + other.toF64)
+        case Value.Kind.U8 => Value.fromU8(toU8 + other.toU8)
+        case Value.Kind.U16 => Value.fromU16(toU16 + other.toU16)
+        case Value.Kind.U32 => Value.fromU32(toU32 + other.toU32)
+        case Value.Kind.U64 => Value.fromU64(toU64 + other.toU64)
+        case Value.Kind.S8 => Value.fromS8(toS8 + other.toS8)
+        case Value.Kind.S16 => Value.fromS16(toS16 + other.toS16)
+        case Value.Kind.S32 => Value.fromS32(toS32 + other.toS32)
+        case Value.Kind.S64 => Value.fromS64(toS64 + other.toS64)
+        case Value.Kind.F32 => Value.fromF32(toF32 + other.toF32)
+        case Value.Kind.F64 => Value.fromF64(toF64 + other.toF64)
       }
     }
     @strictpure def -(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
-        case Value.Kind.U8 => Value.asU8(toU8 - other.toU8)
-        case Value.Kind.U16 => Value.asU16(toU16 - other.toU16)
-        case Value.Kind.U32 => Value.asU32(toU32 - other.toU32)
-        case Value.Kind.U64 => Value.asU64(toU64 - other.toU64)
-        case Value.Kind.S8 => Value.asS8(toS8 - other.toS8)
-        case Value.Kind.S16 => Value.asS16(toS16 - other.toS16)
-        case Value.Kind.S32 => Value.asS32(toS32 - other.toS32)
-        case Value.Kind.S64 => Value.asS64(toS64 - other.toS64)
-        case Value.Kind.F32 => Value.asF32(toF32 - other.toF32)
-        case Value.Kind.F64 => Value.asF64(toF64 - other.toF64)
+        case Value.Kind.U8 => Value.fromU8(toU8 - other.toU8)
+        case Value.Kind.U16 => Value.fromU16(toU16 - other.toU16)
+        case Value.Kind.U32 => Value.fromU32(toU32 - other.toU32)
+        case Value.Kind.U64 => Value.fromU64(toU64 - other.toU64)
+        case Value.Kind.S8 => Value.fromS8(toS8 - other.toS8)
+        case Value.Kind.S16 => Value.fromS16(toS16 - other.toS16)
+        case Value.Kind.S32 => Value.fromS32(toS32 - other.toS32)
+        case Value.Kind.S64 => Value.fromS64(toS64 - other.toS64)
+        case Value.Kind.F32 => Value.fromF32(toF32 - other.toF32)
+        case Value.Kind.F64 => Value.fromF64(toF64 - other.toF64)
       }
     }
     @strictpure def *(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asU8(toU8 * other.toU8)
-        case Value.Kind.U16 => Value.asU16(toU16 * other.toU16)
-        case Value.Kind.U32 => Value.asU32(toU32 * other.toU32)
-        case Value.Kind.U64 => Value.asU64(toU64 * other.toU64)
-        case Value.Kind.S8 => Value.asS8(toS8 * other.toS8)
-        case Value.Kind.S16 => Value.asS16(toS16 * other.toS16)
-        case Value.Kind.S32 => Value.asS32(toS32 * other.toS32)
-        case Value.Kind.S64 => Value.asS64(toS64 * other.toS64)
-        case Value.Kind.F32 => Value.asF32(toF32 * other.toF32)
-        case Value.Kind.F64 => Value.asF64(toF64 * other.toF64)
+        case Value.Kind.U8 => Value.fromU8(toU8 * other.toU8)
+        case Value.Kind.U16 => Value.fromU16(toU16 * other.toU16)
+        case Value.Kind.U32 => Value.fromU32(toU32 * other.toU32)
+        case Value.Kind.U64 => Value.fromU64(toU64 * other.toU64)
+        case Value.Kind.S8 => Value.fromS8(toS8 * other.toS8)
+        case Value.Kind.S16 => Value.fromS16(toS16 * other.toS16)
+        case Value.Kind.S32 => Value.fromS32(toS32 * other.toS32)
+        case Value.Kind.S64 => Value.fromS64(toS64 * other.toS64)
+        case Value.Kind.F32 => Value.fromF32(toF32 * other.toF32)
+        case Value.Kind.F64 => Value.fromF64(toF64 * other.toF64)
       }
     }
     @strictpure def /(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asU8(toU8 / other.toU8)
-        case Value.Kind.U16 => Value.asU16(toU16 / other.toU16)
-        case Value.Kind.U32 => Value.asU32(toU32 / other.toU32)
-        case Value.Kind.U64 => Value.asU64(toU64 / other.toU64)
-        case Value.Kind.S8 => Value.asS8(toS8 / other.toS8)
-        case Value.Kind.S16 => Value.asS16(toS16 / other.toS16)
-        case Value.Kind.S32 => Value.asS32(toS32 / other.toS32)
-        case Value.Kind.S64 => Value.asS64(toS64 / other.toS64)
-        case Value.Kind.F32 => Value.asF32(toF32 / other.toF32)
-        case Value.Kind.F64 => Value.asF64(toF64 / other.toF64)
+        case Value.Kind.U8 => Value.fromU8(toU8 / other.toU8)
+        case Value.Kind.U16 => Value.fromU16(toU16 / other.toU16)
+        case Value.Kind.U32 => Value.fromU32(toU32 / other.toU32)
+        case Value.Kind.U64 => Value.fromU64(toU64 / other.toU64)
+        case Value.Kind.S8 => Value.fromS8(toS8 / other.toS8)
+        case Value.Kind.S16 => Value.fromS16(toS16 / other.toS16)
+        case Value.Kind.S32 => Value.fromS32(toS32 / other.toS32)
+        case Value.Kind.S64 => Value.fromS64(toS64 / other.toS64)
+        case Value.Kind.F32 => Value.fromF32(toF32 / other.toF32)
+        case Value.Kind.F64 => Value.fromF64(toF64 / other.toF64)
       }
     }
     @strictpure def %(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asU8(toU8 % other.toU8)
-        case Value.Kind.U16 => Value.asU16(toU16 % other.toU16)
-        case Value.Kind.U32 => Value.asU32(toU32 % other.toU32)
-        case Value.Kind.U64 => Value.asU64(toU64 % other.toU64)
-        case Value.Kind.S8 => Value.asS8(toS8 % other.toS8)
-        case Value.Kind.S16 => Value.asS16(toS16 % other.toS16)
-        case Value.Kind.S32 => Value.asS32(toS32 % other.toS32)
-        case Value.Kind.S64 => Value.asS64(toS64 % other.toS64)
-        case Value.Kind.F32 => Value.asF32(toF32 % other.toF32)
-        case Value.Kind.F64 => Value.asF64(toF64 % other.toF64)
+        case Value.Kind.U8 => Value.fromU8(toU8 % other.toU8)
+        case Value.Kind.U16 => Value.fromU16(toU16 % other.toU16)
+        case Value.Kind.U32 => Value.fromU32(toU32 % other.toU32)
+        case Value.Kind.U64 => Value.fromU64(toU64 % other.toU64)
+        case Value.Kind.S8 => Value.fromS8(toS8 % other.toS8)
+        case Value.Kind.S16 => Value.fromS16(toS16 % other.toS16)
+        case Value.Kind.S32 => Value.fromS32(toS32 % other.toS32)
+        case Value.Kind.S64 => Value.fromS64(toS64 % other.toS64)
+        case Value.Kind.F32 => Value.fromF32(toF32 % other.toF32)
+        case Value.Kind.F64 => Value.fromF64(toF64 % other.toF64)
       }
     }
     @strictpure def >>(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asU8(toU8 >> other.toU8)
-        case Value.Kind.U16 => Value.asU16(toU16 >> other.toU16)
-        case Value.Kind.U32 => Value.asU32(toU32 >> other.toU32)
-        case Value.Kind.U64 => Value.asU64(toU64 >> other.toU64)
-        case Value.Kind.S8 => Value.asS8(toS8 >> other.toS8)
-        case Value.Kind.S16 => Value.asS16(toS16 >> other.toS16)
-        case Value.Kind.S32 => Value.asS32(toS32 >> other.toS32)
-        case Value.Kind.S64 => Value.asS64(toS64 >> other.toS64)
+        case Value.Kind.U8 => Value.fromU8(toU8 >> other.toU8)
+        case Value.Kind.U16 => Value.fromU16(toU16 >> other.toU16)
+        case Value.Kind.U32 => Value.fromU32(toU32 >> other.toU32)
+        case Value.Kind.U64 => Value.fromU64(toU64 >> other.toU64)
+        case Value.Kind.S8 => Value.fromS8(toS8 >> other.toS8)
+        case Value.Kind.S16 => Value.fromS16(toS16 >> other.toS16)
+        case Value.Kind.S32 => Value.fromS32(toS32 >> other.toS32)
+        case Value.Kind.S64 => Value.fromS64(toS64 >> other.toS64)
         case Value.Kind.F32 => halt("Infeasible")
         case Value.Kind.F64 => halt("Infeasible")
       }
@@ -182,8 +226,8 @@ object IRSimulator {
         case Value.Kind.S16 => halt("Infeasible")
         case Value.Kind.S32 => halt("Infeasible")
         case Value.Kind.S64 => halt("Infeasible")
-        case Value.Kind.F32 => Value.asB(toF32 ~~ other.toF32)
-        case Value.Kind.F64 => Value.asB(toF32 ~~ other.toF32)
+        case Value.Kind.F32 => Value.fromB(toF32 ~~ other.toF32)
+        case Value.Kind.F64 => Value.fromB(toF32 ~~ other.toF32)
       }
     }
     @strictpure def !~(other: Value): Value = {
@@ -197,21 +241,21 @@ object IRSimulator {
         case Value.Kind.S16 => halt("Infeasible")
         case Value.Kind.S32 => halt("Infeasible")
         case Value.Kind.S64 => halt("Infeasible")
-        case Value.Kind.F32 => Value.asB(toF32 !~ other.toF32)
-        case Value.Kind.F64 => Value.asB(toF32 !~ other.toF32)
+        case Value.Kind.F32 => Value.fromB(toF32 !~ other.toF32)
+        case Value.Kind.F64 => Value.fromB(toF32 !~ other.toF32)
       }
     }
     @strictpure def >>>(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asU8(toU8 >>> other.toU8)
-        case Value.Kind.U16 => Value.asU16(toU16 >>> other.toU16)
-        case Value.Kind.U32 => Value.asU32(toU32 >>> other.toU32)
-        case Value.Kind.U64 => Value.asU64(toU64 >>> other.toU64)
-        case Value.Kind.S8 => Value.asS8(toS8 >>> other.toS8)
-        case Value.Kind.S16 => Value.asS16(toS16 >>> other.toS16)
-        case Value.Kind.S32 => Value.asS32(toS32 >>> other.toS32)
-        case Value.Kind.S64 => Value.asS64(toS64 >>> other.toS64)
+        case Value.Kind.U8 => Value.fromU8(toU8 >>> other.toU8)
+        case Value.Kind.U16 => Value.fromU16(toU16 >>> other.toU16)
+        case Value.Kind.U32 => Value.fromU32(toU32 >>> other.toU32)
+        case Value.Kind.U64 => Value.fromU64(toU64 >>> other.toU64)
+        case Value.Kind.S8 => Value.fromS8(toS8 >>> other.toS8)
+        case Value.Kind.S16 => Value.fromS16(toS16 >>> other.toS16)
+        case Value.Kind.S32 => Value.fromS32(toS32 >>> other.toS32)
+        case Value.Kind.S64 => Value.fromS64(toS64 >>> other.toS64)
         case Value.Kind.F32 => halt("Infeasible")
         case Value.Kind.F64 => halt("Infeasible")
       }
@@ -219,14 +263,14 @@ object IRSimulator {
     @strictpure def <<(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asU8(toU8 << other.toU8)
-        case Value.Kind.U16 => Value.asU16(toU16 << other.toU16)
-        case Value.Kind.U32 => Value.asU32(toU32 << other.toU32)
-        case Value.Kind.U64 => Value.asU64(toU64 << other.toU64)
-        case Value.Kind.S8 => Value.asS8(toS8 << other.toS8)
-        case Value.Kind.S16 => Value.asS16(toS16 << other.toS16)
-        case Value.Kind.S32 => Value.asS32(toS32 << other.toS32)
-        case Value.Kind.S64 => Value.asS64(toS64 << other.toS64)
+        case Value.Kind.U8 => Value.fromU8(toU8 << other.toU8)
+        case Value.Kind.U16 => Value.fromU16(toU16 << other.toU16)
+        case Value.Kind.U32 => Value.fromU32(toU32 << other.toU32)
+        case Value.Kind.U64 => Value.fromU64(toU64 << other.toU64)
+        case Value.Kind.S8 => Value.fromS8(toS8 << other.toS8)
+        case Value.Kind.S16 => Value.fromS16(toS16 << other.toS16)
+        case Value.Kind.S32 => Value.fromS32(toS32 << other.toS32)
+        case Value.Kind.S64 => Value.fromS64(toS64 << other.toS64)
         case Value.Kind.F32 => halt("Infeasible")
         case Value.Kind.F64 => halt("Infeasible")
       }
@@ -234,14 +278,14 @@ object IRSimulator {
     @strictpure def &(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asU8(toU8 & other.toU8)
-        case Value.Kind.U16 => Value.asU16(toU16 & other.toU16)
-        case Value.Kind.U32 => Value.asU32(toU32 & other.toU32)
-        case Value.Kind.U64 => Value.asU64(toU64 & other.toU64)
-        case Value.Kind.S8 => Value.asS8(toS8 & other.toS8)
-        case Value.Kind.S16 => Value.asS16(toS16 & other.toS16)
-        case Value.Kind.S32 => Value.asS32(toS32 & other.toS32)
-        case Value.Kind.S64 => Value.asS64(toS64 & other.toS64)
+        case Value.Kind.U8 => Value.fromU8(toU8 & other.toU8)
+        case Value.Kind.U16 => Value.fromU16(toU16 & other.toU16)
+        case Value.Kind.U32 => Value.fromU32(toU32 & other.toU32)
+        case Value.Kind.U64 => Value.fromU64(toU64 & other.toU64)
+        case Value.Kind.S8 => Value.fromS8(toS8 & other.toS8)
+        case Value.Kind.S16 => Value.fromS16(toS16 & other.toS16)
+        case Value.Kind.S32 => Value.fromS32(toS32 & other.toS32)
+        case Value.Kind.S64 => Value.fromS64(toS64 & other.toS64)
         case Value.Kind.F32 => halt("Infeasible")
         case Value.Kind.F64 => halt("Infeasible")
       }
@@ -249,14 +293,14 @@ object IRSimulator {
     @strictpure def |(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asU8(toU8 | other.toU8)
-        case Value.Kind.U16 => Value.asU16(toU16 | other.toU16)
-        case Value.Kind.U32 => Value.asU32(toU32 | other.toU32)
-        case Value.Kind.U64 => Value.asU64(toU64 | other.toU64)
-        case Value.Kind.S8 => Value.asS8(toS8 | other.toS8)
-        case Value.Kind.S16 => Value.asS16(toS16 | other.toS16)
-        case Value.Kind.S32 => Value.asS32(toS32 | other.toS32)
-        case Value.Kind.S64 => Value.asS64(toS64 | other.toS64)
+        case Value.Kind.U8 => Value.fromU8(toU8 | other.toU8)
+        case Value.Kind.U16 => Value.fromU16(toU16 | other.toU16)
+        case Value.Kind.U32 => Value.fromU32(toU32 | other.toU32)
+        case Value.Kind.U64 => Value.fromU64(toU64 | other.toU64)
+        case Value.Kind.S8 => Value.fromS8(toS8 | other.toS8)
+        case Value.Kind.S16 => Value.fromS16(toS16 | other.toS16)
+        case Value.Kind.S32 => Value.fromS32(toS32 | other.toS32)
+        case Value.Kind.S64 => Value.fromS64(toS64 | other.toS64)
         case Value.Kind.F32 => halt("Infeasible")
         case Value.Kind.F64 => halt("Infeasible")
       }
@@ -264,14 +308,14 @@ object IRSimulator {
     @strictpure def |^(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asU8(toU8 |^ other.toU8)
-        case Value.Kind.U16 => Value.asU16(toU16 |^ other.toU16)
-        case Value.Kind.U32 => Value.asU32(toU32 |^ other.toU32)
-        case Value.Kind.U64 => Value.asU64(toU64 |^ other.toU64)
-        case Value.Kind.S8 => Value.asS8(toS8 |^ other.toS8)
-        case Value.Kind.S16 => Value.asS16(toS16 |^ other.toS16)
-        case Value.Kind.S32 => Value.asS32(toS32 |^ other.toS32)
-        case Value.Kind.S64 => Value.asS64(toS64 |^ other.toS64)
+        case Value.Kind.U8 => Value.fromU8(toU8 |^ other.toU8)
+        case Value.Kind.U16 => Value.fromU16(toU16 |^ other.toU16)
+        case Value.Kind.U32 => Value.fromU32(toU32 |^ other.toU32)
+        case Value.Kind.U64 => Value.fromU64(toU64 |^ other.toU64)
+        case Value.Kind.S8 => Value.fromS8(toS8 |^ other.toS8)
+        case Value.Kind.S16 => Value.fromS16(toS16 |^ other.toS16)
+        case Value.Kind.S32 => Value.fromS32(toS32 |^ other.toS32)
+        case Value.Kind.S64 => Value.fromS64(toS64 |^ other.toS64)
         case Value.Kind.F32 => halt("Infeasible")
         case Value.Kind.F64 => halt("Infeasible")
       }
@@ -279,7 +323,7 @@ object IRSimulator {
     @strictpure def __>:(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asB(!toB | other.toB)
+        case Value.Kind.U8 => Value.fromB(!toB | other.toB)
         case Value.Kind.U16 => halt("Infeasible")
         case Value.Kind.U32 => halt("Infeasible")
         case Value.Kind.U64 => halt("Infeasible")
@@ -294,66 +338,66 @@ object IRSimulator {
     @strictpure def <(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asB(toU8 < other.toU8)
-        case Value.Kind.U16 => Value.asB(toU16 < other.toU16)
-        case Value.Kind.U32 => Value.asB(toU32 < other.toU32)
-        case Value.Kind.U64 => Value.asB(toU64 < other.toU64)
-        case Value.Kind.S8 => Value.asB(toS8 < other.toS8)
-        case Value.Kind.S16 => Value.asB(toS16 < other.toS16)
-        case Value.Kind.S32 => Value.asB(toS32 < other.toS32)
-        case Value.Kind.S64 => Value.asB(toS64 < other.toS64)
-        case Value.Kind.F32 => Value.asB(toF32 < other.toF32)
-        case Value.Kind.F64 => Value.asB(toF64 < other.toF64)
+        case Value.Kind.U8 => Value.fromB(toU8 < other.toU8)
+        case Value.Kind.U16 => Value.fromB(toU16 < other.toU16)
+        case Value.Kind.U32 => Value.fromB(toU32 < other.toU32)
+        case Value.Kind.U64 => Value.fromB(toU64 < other.toU64)
+        case Value.Kind.S8 => Value.fromB(toS8 < other.toS8)
+        case Value.Kind.S16 => Value.fromB(toS16 < other.toS16)
+        case Value.Kind.S32 => Value.fromB(toS32 < other.toS32)
+        case Value.Kind.S64 => Value.fromB(toS64 < other.toS64)
+        case Value.Kind.F32 => Value.fromB(toF32 < other.toF32)
+        case Value.Kind.F64 => Value.fromB(toF64 < other.toF64)
       }
     }
     @strictpure def <=(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asB(toU8 <= other.toU8)
-        case Value.Kind.U16 => Value.asB(toU16 <= other.toU16)
-        case Value.Kind.U32 => Value.asB(toU32 <= other.toU32)
-        case Value.Kind.U64 => Value.asB(toU64 <= other.toU64)
-        case Value.Kind.S8 => Value.asB(toS8 <= other.toS8)
-        case Value.Kind.S16 => Value.asB(toS16 <= other.toS16)
-        case Value.Kind.S32 => Value.asB(toS32 <= other.toS32)
-        case Value.Kind.S64 => Value.asB(toS64 <= other.toS64)
-        case Value.Kind.F32 => Value.asB(toF32 <= other.toF32)
-        case Value.Kind.F64 => Value.asB(toF64 <= other.toF64)
+        case Value.Kind.U8 => Value.fromB(toU8 <= other.toU8)
+        case Value.Kind.U16 => Value.fromB(toU16 <= other.toU16)
+        case Value.Kind.U32 => Value.fromB(toU32 <= other.toU32)
+        case Value.Kind.U64 => Value.fromB(toU64 <= other.toU64)
+        case Value.Kind.S8 => Value.fromB(toS8 <= other.toS8)
+        case Value.Kind.S16 => Value.fromB(toS16 <= other.toS16)
+        case Value.Kind.S32 => Value.fromB(toS32 <= other.toS32)
+        case Value.Kind.S64 => Value.fromB(toS64 <= other.toS64)
+        case Value.Kind.F32 => Value.fromB(toF32 <= other.toF32)
+        case Value.Kind.F64 => Value.fromB(toF64 <= other.toF64)
       }
     }
     @strictpure def >(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asB(toU8 > other.toU8)
-        case Value.Kind.U16 => Value.asB(toU16 > other.toU16)
-        case Value.Kind.U32 => Value.asB(toU32 > other.toU32)
-        case Value.Kind.U64 => Value.asB(toU64 > other.toU64)
-        case Value.Kind.S8 => Value.asB(toS8 > other.toS8)
-        case Value.Kind.S16 => Value.asB(toS16 > other.toS16)
-        case Value.Kind.S32 => Value.asB(toS32 > other.toS32)
-        case Value.Kind.S64 => Value.asB(toS64 > other.toS64)
-        case Value.Kind.F32 => Value.asB(toF32 > other.toF32)
-        case Value.Kind.F64 => Value.asB(toF64 > other.toF64)
+        case Value.Kind.U8 => Value.fromB(toU8 > other.toU8)
+        case Value.Kind.U16 => Value.fromB(toU16 > other.toU16)
+        case Value.Kind.U32 => Value.fromB(toU32 > other.toU32)
+        case Value.Kind.U64 => Value.fromB(toU64 > other.toU64)
+        case Value.Kind.S8 => Value.fromB(toS8 > other.toS8)
+        case Value.Kind.S16 => Value.fromB(toS16 > other.toS16)
+        case Value.Kind.S32 => Value.fromB(toS32 > other.toS32)
+        case Value.Kind.S64 => Value.fromB(toS64 > other.toS64)
+        case Value.Kind.F32 => Value.fromB(toF32 > other.toF32)
+        case Value.Kind.F64 => Value.fromB(toF64 > other.toF64)
       }
     }
     @strictpure def >=(other: Value): Value = {
       assert(kind == other.kind)
       kind match {
-        case Value.Kind.U8 => Value.asB(toU8 >= other.toU8)
-        case Value.Kind.U16 => Value.asB(toU16 >= other.toU16)
-        case Value.Kind.U32 => Value.asB(toU32 >= other.toU32)
-        case Value.Kind.U64 => Value.asB(toU64 >= other.toU64)
-        case Value.Kind.S8 => Value.asB(toS8 >= other.toS8)
-        case Value.Kind.S16 => Value.asB(toS16 >= other.toS16)
-        case Value.Kind.S32 => Value.asB(toS32 >= other.toS32)
-        case Value.Kind.S64 => Value.asB(toS64 >= other.toS64)
-        case Value.Kind.F32 => Value.asB(toF32 >= other.toF32)
-        case Value.Kind.F64 => Value.asB(toF64 >= other.toF64)
+        case Value.Kind.U8 => Value.fromB(toU8 >= other.toU8)
+        case Value.Kind.U16 => Value.fromB(toU16 >= other.toU16)
+        case Value.Kind.U32 => Value.fromB(toU32 >= other.toU32)
+        case Value.Kind.U64 => Value.fromB(toU64 >= other.toU64)
+        case Value.Kind.S8 => Value.fromB(toS8 >= other.toS8)
+        case Value.Kind.S16 => Value.fromB(toS16 >= other.toS16)
+        case Value.Kind.S32 => Value.fromB(toS32 >= other.toS32)
+        case Value.Kind.S64 => Value.fromB(toS64 >= other.toS64)
+        case Value.Kind.F32 => Value.fromB(toF32 >= other.toF32)
+        case Value.Kind.F64 => Value.fromB(toF64 >= other.toF64)
       }
     }
     @strictpure def not : Value = {
       kind match {
-        case Value.Kind.U8 => Value.asB(!toB)
+        case Value.Kind.U8 => Value.fromB(!toB)
         case Value.Kind.U16 => halt("Infeasible")
         case Value.Kind.U32 => halt("Infeasible")
         case Value.Kind.U64 => halt("Infeasible")
@@ -367,30 +411,30 @@ object IRSimulator {
     }
     @strictpure def complement : Value = {
       kind match {
-        case Value.Kind.U8 => Value.asU8(~toU8)
-        case Value.Kind.U16 => Value.asU16(~toU16)
-        case Value.Kind.U32 => Value.asU32(~toU32)
-        case Value.Kind.U64 => Value.asU64(~toU64)
-        case Value.Kind.S8 => Value.asS8(~toS8 )
-        case Value.Kind.S16 => Value.asS16(~toS16)
-        case Value.Kind.S32 => Value.asS32(~toS32)
-        case Value.Kind.S64 => Value.asS64(~toS64)
+        case Value.Kind.U8 => Value.fromU8(~toU8)
+        case Value.Kind.U16 => Value.fromU16(~toU16)
+        case Value.Kind.U32 => Value.fromU32(~toU32)
+        case Value.Kind.U64 => Value.fromU64(~toU64)
+        case Value.Kind.S8 => Value.fromS8(~toS8 )
+        case Value.Kind.S16 => Value.fromS16(~toS16)
+        case Value.Kind.S32 => Value.fromS32(~toS32)
+        case Value.Kind.S64 => Value.fromS64(~toS64)
         case Value.Kind.F32 => halt("Infeasible")
         case Value.Kind.F64 => halt("Infeasible")
       }
     }
     @strictpure def minus : Value = {
       kind match {
-        case Value.Kind.U8 => Value.asU8(-toU8)
-        case Value.Kind.U16 => Value.asU16(-toU16)
-        case Value.Kind.U32 => Value.asU32(-toU32)
-        case Value.Kind.U64 => Value.asU64(-toU64)
-        case Value.Kind.S8 => Value.asS8(-toS8 )
-        case Value.Kind.S16 => Value.asS16(-toS16)
-        case Value.Kind.S32 => Value.asS32(-toS32)
-        case Value.Kind.S64 => Value.asS64(-toS64)
-        case Value.Kind.F32 => Value.asF32(-toF32)
-        case Value.Kind.F64 => Value.asF64(-toF64)
+        case Value.Kind.U8 => Value.fromU8(-toU8)
+        case Value.Kind.U16 => Value.fromU16(-toU16)
+        case Value.Kind.U32 => Value.fromU32(-toU32)
+        case Value.Kind.U64 => Value.fromU64(-toU64)
+        case Value.Kind.S8 => Value.fromS8(-toS8 )
+        case Value.Kind.S16 => Value.fromS16(-toS16)
+        case Value.Kind.S32 => Value.fromS32(-toS32)
+        case Value.Kind.S64 => Value.fromS64(-toS64)
+        case Value.Kind.F32 => Value.fromF32(-toF32)
+        case Value.Kind.F64 => Value.fromF64(-toF64)
       }
     }
 
@@ -405,7 +449,6 @@ object IRSimulator {
     @strictpure def toS64: S64 = conversions.Z.toS64(value)
     @strictpure def toF32: F32 = conversions.U32.toRawF32(conversions.Z.toU32(value))
     @strictpure def toF64: F64 = conversions.U64.toRawF64(conversions.Z.toU64(value))
-    @strictpure def toU: U = Printer.Ext.z2u(value)
   }
 
   object Value {
@@ -421,17 +464,17 @@ object IRSimulator {
       "F32"
       "F64"
     }
-    @strictpure def asB(n: B): Value = Value(Kind.U8, if (n) 1 else 0)
-    @strictpure def asU8(n: U8): Value = Value(Kind.U8, n.toZ)
-    @strictpure def asU16(n: U16): Value = Value(Kind.U16, n.toZ)
-    @strictpure def asU32(n: U32): Value = Value(Kind.U32, n.toZ)
-    @strictpure def asU64(n: U64): Value = Value(Kind.U64, n.toZ)
-    @strictpure def asS8(n: S8): Value = Value(Kind.S8, n.toZ)
-    @strictpure def asS16(n: S16): Value = Value(Kind.S16, n.toZ)
-    @strictpure def asS32(n: S32): Value = Value(Kind.S32, n.toZ)
-    @strictpure def asS64(n: S64): Value = Value(Kind.S64, n.toZ)
-    @strictpure def asF32(n: F32): Value = Value(Kind.F32, conversions.F32.toRawU32(n).toZ)
-    @strictpure def asF64(n: F64): Value = Value(Kind.F64, conversions.F64.toRawU64(n).toZ)
+    @strictpure def fromB(n: B): Value = Value(Kind.U8, if (n) 1 else 0)
+    @strictpure def fromU8(n: U8): Value = Value(Kind.U8, n.toZ)
+    @strictpure def fromU16(n: U16): Value = Value(Kind.U16, n.toZ)
+    @strictpure def fromU32(n: U32): Value = Value(Kind.U32, n.toZ)
+    @strictpure def fromU64(n: U64): Value = Value(Kind.U64, n.toZ)
+    @strictpure def fromS8(n: S8): Value = Value(Kind.S8, n.toZ)
+    @strictpure def fromS16(n: S16): Value = Value(Kind.S16, n.toZ)
+    @strictpure def fromS32(n: S32): Value = Value(Kind.S32, n.toZ)
+    @strictpure def fromS64(n: S64): Value = Value(Kind.S64, n.toZ)
+    @strictpure def fromF32(n: F32): Value = Value(Kind.F32, conversions.F32.toRawU32(n).toZ)
+    @strictpure def fromF64(n: F64): Value = Value(Kind.F64, conversions.F64.toRawU64(n).toZ)
     @strictpure def fromZ(n: Z, isSigned: B, bytes: Z): Value =
       if (isSigned) {
         if (bytes == 1) {
@@ -458,28 +501,27 @@ object IRSimulator {
           halt(s"Infeasible: $n, $isSigned, $bytes")
         }
       }
-    @strictpure def u(n: U): Value = Value(Kind.U64, n.toZ)
-    @strictpure def fromU64(n: U64, isSigned: B, bytes: Z): Value = if (isSigned) {
+    @strictpure def fromRawU64(n: U64, isSigned: B, bytes: Z): Value = if (isSigned) {
       if (bytes == 1) {
-        asS8(conversions.U8.toRawS8(conversions.U64.toU8(n & u64"0xFF")))
+        fromS8(conversions.U8.toRawS8(conversions.U64.toU8(n & u64"0xFF")))
       } else if (bytes == 2) {
-        asS16(conversions.U16.toRawS16(conversions.U64.toU16(n & u64"0xFFFF")))
+        fromS16(conversions.U16.toRawS16(conversions.U64.toU16(n & u64"0xFFFF")))
       } else if (bytes <= 4) {
-        asS32(conversions.U32.toRawS32(conversions.U64.toU32(n & u64"0xFFFFFFFF")))
+        fromS32(conversions.U32.toRawS32(conversions.U64.toU32(n & u64"0xFFFFFFFF")))
       } else if (bytes <= 8) {
-        asS64(conversions.U64.toRawS64(n))
+        fromS64(conversions.U64.toRawS64(n))
       } else {
         halt(s"Infeasible: $bytes")
       }
     } else {
       if (bytes == 1) {
-        asU8(conversions.U64.toU8(n))
+        fromU8(conversions.U64.toU8(n))
       } else if (bytes == 2) {
-        asU16(conversions.U64.toU16(n))
+        fromU16(conversions.U64.toU16(n))
       } else if (bytes <= 4) {
-        asU32(conversions.U64.toU32(n))
+        fromU32(conversions.U64.toU32(n))
       } else if (bytes <= 8) {
-        asU64(n)
+        fromU64(n)
       } else {
         halt(s"Infeasible: $bytes")
       }
@@ -493,16 +535,16 @@ import IRSimulator._
 
   @pure def evalExp(state: State, exp: AST.IR.Exp): Value = {
     exp match {
-      case exp: AST.IR.Exp.Bool => return Value.asB(exp.value)
+      case exp: AST.IR.Exp.Bool => return Value.fromB(exp.value)
       case exp: AST.IR.Exp.Int => return Value.fromZ(exp.value, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
-      case exp: AST.IR.Exp.F32 => return Value.asF32(exp.value)
-      case exp: AST.IR.Exp.F64 => return Value.asF64(exp.value)
+      case exp: AST.IR.Exp.F32 => return Value.fromF32(exp.value)
+      case exp: AST.IR.Exp.F64 => return Value.fromF64(exp.value)
       case exp: AST.IR.Exp.Temp =>
         val v = state.temps(exp.n)
         if (anvil.isScalar(exp.tipe)) {
-          return Value.fromU64(v, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
+          return Value.fromRawU64(v, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
         } else {
-          return Value.fromU64(v, anvil.isSigned(anvil.spType), anvil.typeByteSize(anvil.spType))
+          return Value.fromRawU64(v, anvil.isSigned(anvil.spType), anvil.typeByteSize(anvil.spType))
         }
       case exp: AST.IR.Exp.Binary =>
         val left = evalExp(state, exp.left)
@@ -520,8 +562,8 @@ import IRSimulator._
           case AST.IR.Exp.Binary.Op.Le => return left <= right
           case AST.IR.Exp.Binary.Op.Gt => return left > right
           case AST.IR.Exp.Binary.Op.Ge => return left >= right
-          case AST.IR.Exp.Binary.Op.Eq => return Value.asB(left == right)
-          case AST.IR.Exp.Binary.Op.Ne => return Value.asB(left != right)
+          case AST.IR.Exp.Binary.Op.Eq => return Value.fromB(left == right)
+          case AST.IR.Exp.Binary.Op.Ne => return Value.fromB(left != right)
           case AST.IR.Exp.Binary.Op.FpEq => return left ~~ right
           case AST.IR.Exp.Binary.Op.FpNe => return left !~ right
           case AST.IR.Exp.Binary.Op.And => return left & right
@@ -548,18 +590,18 @@ import IRSimulator._
         val n: U64 =
           if (anvil.isSigned(exp.t)) conversions.S64.toRawU64(conversions.Z.toS64(v.value))
           else conversions.Z.toU64(v.value)
-        return Value.fromU64(n, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
+        return Value.fromRawU64(n, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
       case exp: AST.IR.Exp.Intrinsic =>
         exp.intrinsic match {
           case in: Intrinsic.Load =>
             val offset = evalExp(state, in.rhsOffset)
-            val n = Printer.load(state.memory.toMS, offset.toU, Printer.Ext.z2u(in.bytes))
-            return Value.fromU64(conversions.Z.toU64(n.toZ), in.isSigned, in.bytes)
+            val n = load(state.memory, offset.value, in.bytes)
+            return Value.fromRawU64(conversions.Z.toU64(n.toZ), in.isSigned, in.bytes)
           case in: Intrinsic.Register =>
             if (in.isSP) {
-              return Value.fromU64(state.SP, anvil.isSigned(in.tipe), anvil.typeByteSize(in.tipe))
+              return Value.fromRawU64(state.SP, anvil.isSigned(in.tipe), anvil.typeByteSize(in.tipe))
             } else {
-              return Value.asU64(state.DP)
+              return Value.fromU64(state.DP)
             }
         }
       case exp: AST.IR.Exp.R => halt(s"TODO: ${exp.prettyST}")
@@ -575,61 +617,50 @@ import IRSimulator._
     }
   }
 
-  @pure def evalStmt(state: State, stmt: AST.IR.Stmt.Ground): State => State = {
+  @pure def evalStmt(state: State, stmt: AST.IR.Stmt.Ground): State.Edit = {
     stmt match {
       case stmt: AST.IR.Stmt.Assign.Temp =>
         val rhs = evalExp(state, stmt.rhs)
         val n: U64 =
           if (anvil.isSigned(stmt.rhs.tipe)) conversions.S64.toRawU64(conversions.Z.toS64(rhs.value))
           else conversions.Z.toU64(rhs.value)
-        return (s: State) =>
-          s(temps = s.temps(stmt.lhs ~> n))
+        return State.Edit.Temp(stmt.lhs, n)
       case stmt: AST.IR.Stmt.Intrinsic =>
         stmt.intrinsic match {
           case in: Intrinsic.TempLoad =>
             val offset = evalExp(state, in.rhsOffset)
-            val v = Value.fromU64(conversions.Z.toU64(Printer.load(state.memory.toMS, offset.toU,
-              Printer.Ext.z2u(in.bytes)).toZ), in.isSigned, in.bytes)
+            val v = Value.fromRawU64(load(state.memory, offset.value, in.bytes), in.isSigned, in.bytes)
             val n: U64 =
               if (in.isSigned) conversions.S64.toRawU64(conversions.Z.toS64(v.value))
               else conversions.Z.toU64(v.value)
-            return (s: State) =>
-              s(temps = s.temps(in.temp ~> n))
+            return State.Edit.Temp(in.temp, n)
           case in: Intrinsic.Store =>
-            val n: U = {
+            val n: U64 = {
               val v = evalExp(state, in.rhs)
-              Printer.Ext.z2u(if (in.isSigned) conversions.S64.toRawU64(conversions.Z.toS64(v.value)).toZ else v.value)
+              if (in.isSigned) conversions.S64.toRawU64(conversions.Z.toS64(v.value)) else v.toU64
             }
             val offset = evalExp(state, in.lhsOffset)
-            return (s: State) => {
-              val memory = s.memory.toMS
-              Printer.store(memory, Printer.Ext.z2u(offset.value), Printer.Ext.z2u(anvil.typeByteSize(in.tipe)), n)
-              s(memory = memory.toIS[U8])
-            }
+            return store(offset.value, anvil.typeByteSize(in.tipe), n)
           case in: Intrinsic.Copy =>
-            val lhsOffset = Printer.Ext.z2u(evalExp(state, in.lhsOffset).value)
-            val rhsOffset = Printer.Ext.z2u(evalExp(state, in.rhs).value)
-            val size = Printer.Ext.z2u(evalExp(state, in.rhsBytes).value)
-            return (s: State) => {
-              val memory = state.memory.toMS
-              for (i <- u"0" until size) {
-                memory(lhsOffset + i) = memory(rhsOffset + i)
-              }
-              s(memory = memory.toIS[U8])
+            val lhsOffset = evalExp(state, in.lhsOffset).value
+            val rhsOffset = evalExp(state, in.rhs).value
+            val size = evalExp(state, in.rhsBytes).value
+            var bs = ISZ[U8]()
+            for (i <- 0 until size) {
+              bs = bs :+ state.memory(rhsOffset + i)
             }
+            return State.Edit.Memory(lhsOffset, bs)
           case in: Intrinsic.RegisterAssign =>
             val v = evalExp(state, in.value).value
             if (in.isSP) {
               val sp: U64 = conversions.Z.toU64(if (in.isInc) conversions.U64.toZ(state.SP) + v else v)
-              return (s: State) =>
-                s(SP = sp)
+              return State.Edit.SP(sp)
             } else {
               assert(v >= 0)
               val dp: U64 = conversions.Z.toU64(if (in.isInc) conversions.U64.toZ(state.DP) + v else v)
-              return (s: State) =>
-                s(DP = dp)
+              return State.Edit.DP(dp)
             }
-          case _: Intrinsic.Decl => return (s: State) => s
+          case _: Intrinsic.Decl => return State.Edit.Idem()
         }
       case _: AST.IR.Stmt.Expr => halt(s"Infeasible: ${stmt.prettyST}")
       case _: AST.IR.Stmt.Decl => halt(s"Infeasible: ${stmt.prettyST}")
@@ -637,17 +668,15 @@ import IRSimulator._
     }
   }
 
-  @pure def evalJump(state: State, jump: AST.IR.Jump): State => State = {
+  @pure def evalJump(state: State, jump: AST.IR.Jump): State.Edit.CP = {
     jump match {
       case jump: AST.IR.Jump.Goto =>
         val cp = conversions.Z.toU64(jump.label)
-        return (s: State) =>
-          s(CP = cp)
+        return State.Edit.CP(cp)
       case jump: AST.IR.Jump.If =>
         val label: Z = if (evalExp(state, jump.cond).toB) jump.thenLabel else jump.elseLabel
         val cp = conversions.Z.toU64(label)
-        return (s: State) =>
-          s(CP = cp)
+        return State.Edit.CP(cp)
       case jump: AST.IR.Jump.Switch =>
         val v = evalExp(state, jump.exp).value
         var label: Z = 1
@@ -668,16 +697,13 @@ import IRSimulator._
         }
         assert(found)
         val cp = conversions.Z.toU64(label)
-        return (s: State) =>
-          s(CP = cp)
+        return State.Edit.CP(cp)
       case jump: AST.IR.Jump.Intrinsic =>
         jump.intrinsic match {
           case in: Intrinsic.GotoLocal =>
-            val offset = Printer.Ext.z2u(state.SP.toZ + in.offset)
-            val cp = conversions.Z.toU64(Printer.load(state.memory.toMS, offset,
-              Printer.Ext.z2u(anvil.cpTypeByteSize)).toZ)
-            return (s: State) =>
-              s(CP = cp)
+            val offset = state.SP.toZ + in.offset
+            val cp = load(state.memory, offset, anvil.cpTypeByteSize)
+            return State.Edit.CP(cp)
         }
       case _: AST.IR.Jump.Return => halt(s"Infeasible: ${jump.prettyST}")
       case _: AST.IR.Jump.Halt => halt(s"Infeasible: ${jump.prettyST}")
@@ -685,12 +711,12 @@ import IRSimulator._
   }
 
   @pure def evalBlock(state: State, b: AST.IR.BasicBlock): State = {
-    @pure def evalStmtH(g: AST.IR.Stmt.Ground): State => State = {
+    @pure def evalStmtH(g: AST.IR.Stmt.Ground): State.Edit = {
       return evalStmt(state, g)
     }
     var s = state
-    for (f <- ops.ISZOps(b.grounds).parMap(evalStmtH _) :+ evalJump(s, b.jump)) {
-      s = f(s)
+    for (edit <- ops.ISZOps(b.grounds).parMap(evalStmtH _) :+ evalJump(s, b.jump)) {
+      s = edit.update(s)._1
     }
     return s
   }
@@ -707,7 +733,7 @@ import IRSimulator._
       if (i >= 0) {
         file = ops.StringOps(file).substring(i + 1, file.size)
       }
-      println(s"$title block ${b.label}: [251 = ${s.memory(u"251").toZ}] $s")
+      println(s"$title block ${b.label}: $s")
     }
     while (s.CP != u64"0" && s.CP != u64"1") {
       val b = blockMap.get(s.CP).get
@@ -716,5 +742,25 @@ import IRSimulator._
     }
     // println(s"End state: $s")
     return s
+  }
+
+  @pure def load(memory: ISZ[U8], offset: Z, size: Z): U64 = {
+    var r = u64"0"
+    var i: Z = 0
+    while (i < size) {
+      val b = conversions.U8.toU64(memory(offset + i))
+      r = r | (b << conversions.Z.toU64((size - i - 1) * 8))
+      i = i + 1
+    }
+    return r
+  }
+
+  def store(offset: Z, size: Z, value: U64): State.Edit.Memory = {
+    var bs = ISZ[U8]()
+    for (i <- 0 until size) {
+      val b = conversions.U64.toU8((value >> conversions.Z.toU64((size - i - 1) * 8)) & u64"0xFF")
+      bs = bs :+ b
+    }
+    return State.Edit.Memory(offset, bs)
   }
 }

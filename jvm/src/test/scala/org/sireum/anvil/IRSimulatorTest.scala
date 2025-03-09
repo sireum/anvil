@@ -76,13 +76,13 @@ class IRSimulatorTest extends SireumRcSpec {
           case Some(ir) =>
             val state = IRSimulator(ir.anvil).evalProcedure(IRSimulator.State.create(ir.anvil.config.memory, ir.maxRegisters), ir.procedure)
             val displaySize = ir.anvil.config.printSize
-            val offset = Printer.Ext.z2u(ir.globalInfoMap.get(Anvil.displayName).get.offset + ir.anvil.spTypeByteSize +
-              ir.anvil.typeShaSize + ir.anvil.typeByteSize(AST.Typed.z))
+            val offset = ir.globalInfoMap.get(Anvil.displayName).get.offset + ir.anvil.spTypeByteSize +
+              ir.anvil.typeShaSize + ir.anvil.typeByteSize(AST.Typed.z)
             val dp = state.DP.toZ
             val (lo, hi): (Z, Z) = if (dp < displaySize) (0, dp) else (dp, displaySize + dp - 1)
             val u8ms = MSZ.create(hi - lo, u8"0")
             var j: Z = 0
-            for (i <- Printer.Ext.z2u(lo) until Printer.Ext.z2u(hi)) {
+            for (i <- lo until hi) {
               u8ms(j) = state.memory(offset + i)
               j = j + 1
             }
