@@ -88,7 +88,7 @@ class IRSimulatorTest extends SireumRcSpec {
             val u8ms = MSZ.create(hi - lo, u8"0")
             var j: Z = 0
             for (i <- lo until hi) {
-              u8ms(j) = state.memory(offset + i)
+              u8ms(j) = state.memory((offset + i) % displaySize)
               j = j + 1
             }
             val display = conversions.String.fromU8ms(u8ms)
