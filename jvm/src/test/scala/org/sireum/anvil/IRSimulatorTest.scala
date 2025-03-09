@@ -65,7 +65,7 @@ class IRSimulatorTest extends SireumRcSpec {
           erase = T,
           runtimeCheck = T)
         val out = dir /+ ISZ(path.map(String(_)): _*)
-        Anvil.generateIR(lang.IRTranslator.createFresh, th2, ISZ(), lastMethod, config, new Anvil.Output {
+        Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, new Anvil.Output {
           def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
             val f = out /+ p
             f.up.mkdirAll()
@@ -77,7 +77,7 @@ class IRSimulatorTest extends SireumRcSpec {
             val state = IRSimulator.State.create(ir.anvil.config.memory, ir.maxRegisters)
             IRSimulator(ir.anvil).evalProcedure(state, ir.procedure)
             val displaySize = ir.anvil.config.printSize
-            val offset = ir.globalInfoMap.get(Anvil.displayName).get.offset + ir.anvil.spTypeByteSize +
+            val offset = ir.globalInfoMap.get(Util.displayName).get.offset + ir.anvil.spTypeByteSize +
               ir.anvil.typeShaSize + ir.anvil.typeByteSize(AST.Typed.z)
             val dp = state.DP.toZ
             val (lo, hi): (Z, Z) = if (dp < displaySize) (0, dp) else (dp, displaySize + dp - 1)

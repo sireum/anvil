@@ -1,6 +1,6 @@
 // #Sireum
 import org.sireum._
 
-def mkIS(x: Z, y: Z, z: Z): ISZ[Z] = {
+@anvil.hls def mkIS(x: Z, y: Z, z: Z): ISZ[Z] = {
   return ISZ(x, y, z)
 }

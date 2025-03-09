@@ -5,7 +5,7 @@ import org.sireum._
 @datatype class B(x: Z) extends A
 @datatype class C(y: Z) extends A
 
-def instanceof(a: A): Z = {
+@anvil.hls def instanceof(a: A): Z = {
   if (a.isInstanceOf[B]) {
     return a.asInstanceOf[B].x
   }

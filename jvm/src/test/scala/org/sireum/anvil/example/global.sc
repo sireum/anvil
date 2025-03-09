@@ -5,6 +5,6 @@ object Foo {
   var x: Z = 2 * 4
 }
 
-def global(): Z = {
+@anvil.hls def global(): Z = {
   return Foo.x
 }

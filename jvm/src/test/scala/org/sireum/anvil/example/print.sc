@@ -1,7 +1,7 @@
 // #Sireum
 import org.sireum._
 
-def printTest(): Unit = {
+@anvil.hls def printTest(): Unit = {
   println("Hello world!")
   val x = 5
   val c = '≡'

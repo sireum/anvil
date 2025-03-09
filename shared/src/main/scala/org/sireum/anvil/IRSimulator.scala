@@ -834,7 +834,7 @@ import IRSimulator._
 
     while (state.CP != u64"0" && state.CP != u64"1") {
       val b = blockMap.get(state.CP).get
-      //log("Evaluating", b)
+      log("Evaluating", b)
       val edits = evalBlock(state, b)
       var i = 0
       while (i < edits.size) {
@@ -843,7 +843,7 @@ import IRSimulator._
       }
     }
 
-    //println(s"End state: $state")
+    println(s"End state: $state")
   }
 
   @pure def load(memory: MSZ[U8], offset: Z, size: Z): U64 = {

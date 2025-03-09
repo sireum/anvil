@@ -5,7 +5,7 @@ import org.sireum._
 
 import I0_5._
 
-def square(seq: MS[I0_5, U64]): Unit = {
+@anvil.hls def square(seq: MS[I0_5, U64]): Unit = {
   var i = i0_5"0"
   while (i < i0_5"5") {
     seq(i) = seq(i) * seq(i)

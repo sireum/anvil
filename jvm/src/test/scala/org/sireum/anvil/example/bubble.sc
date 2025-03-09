@@ -7,7 +7,7 @@ def swap(a: MSZ[S16], i: Z, j: Z): Unit = {
   a(j) = t
 }
 
-def bubble(a: MSZ[S16]): Unit = {
+@anvil.hls def bubble(a: MSZ[S16]): Unit = {
   var i: Z = 0
   while (i < a.size) {
     var j: Z = i + 1

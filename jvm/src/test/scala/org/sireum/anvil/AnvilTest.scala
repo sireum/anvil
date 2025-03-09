@@ -47,13 +47,6 @@ class AnvilTest extends SireumRcSpec {
     lang.parser.Parser.parseTopUnit[lang.ast.TopUnit.Program](content, T, F, Some(path.mkString("/")), reporter) match {
       case Some(p) if !reporter.hasError =>
         val (th2, p2) = lang.FrontEnd.checkWorksheet(100, Some(th), p, reporter)
-        var lastMethod: String = ""
-        for (stmt <- p2.body.stmts) {
-          stmt match {
-            case stmt: lang.ast.Stmt.Method => lastMethod = stmt.sig.id.value
-            case _ =>
-          }
-        }
         (dir / path(0)).removeAll()
         var config = Anvil.Config.empty(path.mkString("/"))
         val file = path(path.size - 1)
@@ -64,7 +57,7 @@ class AnvilTest extends SireumRcSpec {
           erase = eraseFileSet.contains(file),
           runtimeCheck = T)
         val out = dir /+ ISZ(path.map(String(_)): _*)
-        Anvil.synthesize(lang.IRTranslator.createFresh, th2, ISZ(), lastMethod, config, new Anvil.Output {
+        Anvil.synthesize(lang.IRTranslator.createFresh, th2, ISZ(), config, new Anvil.Output {
           def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
             val f = out /+ p
             f.up.mkdirAll()
