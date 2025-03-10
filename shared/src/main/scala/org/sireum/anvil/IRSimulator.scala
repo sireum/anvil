@@ -122,7 +122,7 @@ object IRSimulator {
               case Temp.Kind.DP => "DP"
               case Temp.Kind.Register => s"$$temp$temp"
             }
-            println(s"* Updating $tempString to ${shortenHexString(value)} (from ${shortenHexString(r.value)})")
+            println(s"* $tempString = ${shortenHexString(value)} (old: ${shortenHexString(r.value)})")
           }
           state.temps(temp) = value
           return r
@@ -145,7 +145,11 @@ object IRSimulator {
             Accesses(reads.temps, reads.memory -- (for (i <- values.indices) yield offset + i)).
               addMemory(offset, values))
           if (DEBUG_EDIT) {
-            println(s"* Updating memory starting at offset ${shortenHexString(conversions.Z.toU64(offset))} to $values (from ${r.values})")
+            if (values.size == 1) {
+              println(s"* memory(${shortenHexString(conversions.Z.toU64(offset))}) = ${values(0)}  (old ${r.values(0)})")
+            } else {
+              println(s"* memory(${shortenHexString(conversions.Z.toU64(offset))}, ...) <- $values  (old ${r.values})")
+            }
           }
           for (i <- values.indices) {
             state.memory(offset + i) = values(i)
