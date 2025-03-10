@@ -95,63 +95,55 @@ object IRSimulator {
     type Undo = Edit
 
     @datatype trait Edit {
+      @pure def reads: Accesses
+      @pure def writes: Accesses
       def update(state: State): Undo
     }
 
     object Edit {
+
       @datatype class Idem extends Edit {
+        @strictpure def reads: Accesses = Accesses.empty
+        @strictpure def writes: Accesses = Accesses.empty
         def update(state: State): Undo = {
           return this
         }
       }
 
-      @datatype class CP(val cp: U64) extends Edit {
+      @datatype class Temp(val kind: Temp.Kind.Type, val temp: Z, val value: U64, val reads: Accesses) extends Edit {
+        @strictpure def writes: Accesses = Accesses.empty.addTemp(temp, value)
         def update(state: State): Undo = {
-          val r = CP(state.CP)
+          val r = Temp(kind, temp, state.temps(temp), Accesses(reads.temps -- ISZ(temp), reads.memory).
+            addTemp(temp, value))
           if (DEBUG_EDIT) {
-            println(s"* Updating CP to ${shortenHexString(cp)} (from ${shortenHexString(r.cp)})")
-          }
-          state.upCP(cp)
-          return r
-        }
-      }
-
-      @datatype class SP(val sp: U64) extends Edit {
-        def update(state: State): Undo = {
-          val r = SP(state.SP)
-          if (DEBUG_EDIT) {
-            println(s"* Updating SP to ${shortenHexString(sp)} (from ${shortenHexString(r.sp)})")
-          }
-          state.upSP(sp)
-          return r
-        }
-      }
-
-      @datatype class DP(val dp: U64) extends Edit {
-        def update(state: State): Undo = {
-          val r = DP(state.DP)
-          if (DEBUG_EDIT) {
-            println(s"* Updating DP to ${shortenHexString(dp)} (from ${shortenHexString(r.dp)})")
-          }
-          state.upDP(dp)
-          return r
-        }
-      }
-
-      @datatype class Temp(val temp: Z, val value: U64) extends Edit {
-        def update(state: State): Undo = {
-          val r = Temp(temp, state.temps(temp))
-          if (DEBUG_EDIT) {
-            println(s"* Updating $$temp$temp to ${shortenHexString(value)} (from ${shortenHexString(r.value)})")
+            val tempString: String = kind match {
+              case Temp.Kind.CP => "CP"
+              case Temp.Kind.SP => "SP"
+              case Temp.Kind.DP => "DP"
+              case Temp.Kind.Register => s"$$temp$temp"
+            }
+            println(s"* Updating $tempString to ${shortenHexString(value)} (from ${shortenHexString(r.value)})")
           }
           state.temps(temp) = value
           return r
         }
       }
 
-      @datatype class Memory(val offset: Z, val values: ISZ[U8]) extends Edit {
+      object Temp {
+        @enum object Kind {
+          "CP"
+          "SP"
+          "DP"
+          "Register"
+        }
+      }
+
+      @datatype class Memory(val offset: Z, val values: ISZ[U8], val reads: Accesses) extends Edit {
+        @strictpure def writes: Accesses = Accesses.empty.addMemory(offset, values)
         def update(state: State): Undo = {
-          val r = Memory(offset, for (i <- values.indices) yield state.memory(offset + i))
+          val r = Memory(offset, for (i <- values.indices) yield state.memory(offset + i),
+            Accesses(reads.temps, reads.memory -- (for (i <- values.indices) yield offset + i)).
+              addMemory(offset, values))
           if (DEBUG_EDIT) {
             println(s"* Updating memory starting at offset ${shortenHexString(conversions.Z.toU64(offset))} to $values (from ${r.values})")
           }
@@ -161,6 +153,36 @@ object IRSimulator {
           return r
         }
       }
+    }
+
+    @datatype class Accesses(val temps: HashSMap[Z, U64], val memory: HashSMap[Z, U8]) {
+
+      @pure def addTemp(temp: Z, readValue: U64): Accesses = {
+        assert(temps.get(temp).getOrElse(readValue) == readValue)
+        return Accesses(temps + temp ~> readValue, memory)
+      }
+
+      @pure def addMemory(offset: Z, readValues: ISZ[U8]): Accesses = {
+        for (i <- readValues.indices) {
+          assert(memory.get(offset + i).getOrElse(readValues(i)) == readValues(i))
+        }
+        return Accesses(temps, memory ++ (for (i <- 0 until readValues.size) yield (offset + i, readValues(i))))
+      }
+
+      @pure def +(other: Accesses): Accesses = {
+        var r = this
+        for (entry <- other.temps.entries) {
+          r = r.addTemp(entry._1, entry._2)
+        }
+        for (entry <- other.memory.entries) {
+          r = r.addMemory(entry._1, IS(entry._2))
+        }
+        return r
+      }
+    }
+
+    object Accesses {
+      @strictpure def empty: Accesses = Accesses(HashSMap.empty, HashSMap.empty)
     }
 
     @strictpure def create(memory: Z, temps: Z): State = State(MSZ.create(memory, u8"0"), MSZ.create(temps + 3, u64"0"))
@@ -658,43 +680,46 @@ import IRSimulator._
 
 @datatype class IRSimulator(val anvil: Anvil) {
 
-  @pure def evalExp(state: State, exp: AST.IR.Exp): Value = {
+  @pure def evalExp(state: State, exp: AST.IR.Exp): (Value, State.Accesses) = {
     exp match {
-      case exp: AST.IR.Exp.Bool => return Value.fromB(exp.value)
-      case exp: AST.IR.Exp.Int => return Value.fromZ(exp.value, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
-      case exp: AST.IR.Exp.F32 => return Value.fromF32(exp.value)
-      case exp: AST.IR.Exp.F64 => return Value.fromF64(exp.value)
+      case exp: AST.IR.Exp.Bool => return (Value.fromB(exp.value), State.Accesses.empty)
+      case exp: AST.IR.Exp.Int =>
+        return (Value.fromZ(exp.value, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe)), State.Accesses.empty)
+      case exp: AST.IR.Exp.F32 => return (Value.fromF32(exp.value), State.Accesses.empty)
+      case exp: AST.IR.Exp.F64 => return (Value.fromF64(exp.value), State.Accesses.empty)
       case exp: AST.IR.Exp.Temp =>
         val v = state.temps(exp.n)
+        val acs = State.Accesses.empty.addTemp(exp.n, v)
         if (anvil.isScalar(exp.tipe)) {
-          return Value.fromRawU64(v, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
+          return (Value.fromRawU64(v, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe)), acs)
         } else {
-          return Value.fromRawU64(v, anvil.isSigned(anvil.spType), anvil.typeByteSize(anvil.spType))
+          return (Value.fromRawU64(v, anvil.isSigned(anvil.spType), anvil.typeByteSize(anvil.spType)), acs)
         }
       case exp: AST.IR.Exp.Binary =>
-        val left = evalExp(state, exp.left)
-        val right = evalExp(state, exp.right)
+        val (left, lacs) = evalExp(state, exp.left)
+        val (right, racs) = evalExp(state, exp.right)
+        val acs = lacs + racs
         exp.op match {
-          case AST.IR.Exp.Binary.Op.Add => return left + right
-          case AST.IR.Exp.Binary.Op.Sub => return left - right
-          case AST.IR.Exp.Binary.Op.Mul => return left * right
-          case AST.IR.Exp.Binary.Op.Div => return left / right
-          case AST.IR.Exp.Binary.Op.Rem => return left % right
-          case AST.IR.Exp.Binary.Op.Shr => return left >> right
-          case AST.IR.Exp.Binary.Op.Shl => return left << right
-          case AST.IR.Exp.Binary.Op.Ushr => return left >>> right
-          case AST.IR.Exp.Binary.Op.Lt => return left < right
-          case AST.IR.Exp.Binary.Op.Le => return left <= right
-          case AST.IR.Exp.Binary.Op.Gt => return left > right
-          case AST.IR.Exp.Binary.Op.Ge => return left >= right
-          case AST.IR.Exp.Binary.Op.Eq => return Value.fromB(left == right)
-          case AST.IR.Exp.Binary.Op.Ne => return Value.fromB(left != right)
-          case AST.IR.Exp.Binary.Op.FpEq => return left ~~ right
-          case AST.IR.Exp.Binary.Op.FpNe => return left !~ right
-          case AST.IR.Exp.Binary.Op.And => return left & right
-          case AST.IR.Exp.Binary.Op.Or => return left | right
-          case AST.IR.Exp.Binary.Op.Xor => return left |^ right
-          case AST.IR.Exp.Binary.Op.Imply => return left __>: right
+          case AST.IR.Exp.Binary.Op.Add => return (left + right, acs)
+          case AST.IR.Exp.Binary.Op.Sub => return (left - right, acs)
+          case AST.IR.Exp.Binary.Op.Mul => return (left * right, acs)
+          case AST.IR.Exp.Binary.Op.Div => return (left / right, acs)
+          case AST.IR.Exp.Binary.Op.Rem => return (left % right, acs)
+          case AST.IR.Exp.Binary.Op.Shr => return (left >> right, acs)
+          case AST.IR.Exp.Binary.Op.Shl => return (left << right, acs)
+          case AST.IR.Exp.Binary.Op.Ushr => return (left >>> right, acs)
+          case AST.IR.Exp.Binary.Op.Lt => return (left < right, acs)
+          case AST.IR.Exp.Binary.Op.Le => return (left <= right, acs)
+          case AST.IR.Exp.Binary.Op.Gt => return (left > right, acs)
+          case AST.IR.Exp.Binary.Op.Ge => return (left >= right, acs)
+          case AST.IR.Exp.Binary.Op.Eq => return (Value.fromB(left == right), acs)
+          case AST.IR.Exp.Binary.Op.Ne => return (Value.fromB(left != right), acs)
+          case AST.IR.Exp.Binary.Op.FpEq => return (left ~~ right, acs)
+          case AST.IR.Exp.Binary.Op.FpNe => return (left !~ right, acs)
+          case AST.IR.Exp.Binary.Op.And => return (left & right, acs)
+          case AST.IR.Exp.Binary.Op.Or => return (left | right, acs)
+          case AST.IR.Exp.Binary.Op.Xor => return (left |^ right, acs)
+          case AST.IR.Exp.Binary.Op.Imply => return (left __>: right, acs)
           case AST.IR.Exp.Binary.Op.CondAnd => halt(s"Infeasible: $exp")
           case AST.IR.Exp.Binary.Op.CondOr => halt(s"Infeasible: $exp")
           case AST.IR.Exp.Binary.Op.CondImply => halt(s"Infeasible: $exp")
@@ -703,30 +728,33 @@ import IRSimulator._
           case AST.IR.Exp.Binary.Op.Prepend => halt(s"Infeasible: $exp")
         }
       case exp: AST.IR.Exp.Unary =>
-        val v = evalExp(state, exp.exp)
+        val (v, acs) = evalExp(state, exp.exp)
         exp.op match {
-          case AST.Exp.UnaryOp.Not => return v.not
-          case AST.Exp.UnaryOp.Complement => return v.complement
-          case AST.Exp.UnaryOp.Plus => return v
-          case AST.Exp.UnaryOp.Minus => return v.minus
+          case AST.Exp.UnaryOp.Not => return (v.not, acs)
+          case AST.Exp.UnaryOp.Complement => return (v.complement, acs)
+          case AST.Exp.UnaryOp.Plus => return (v, acs)
+          case AST.Exp.UnaryOp.Minus => return (v.minus, acs)
         }
       case exp: AST.IR.Exp.Type =>
-        val v = evalExp(state, exp.exp)
+        val (v, acs) = evalExp(state, exp.exp)
         val n: U64 =
           if (anvil.isSigned(exp.t)) conversions.S64.toRawU64(conversions.Z.toS64(v.value))
           else conversions.Z.toU64(v.value)
-        return Value.fromRawU64(n, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
+        return (Value.fromRawU64(n, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe)), acs)
       case exp: AST.IR.Exp.Intrinsic =>
         exp.intrinsic match {
           case in: Intrinsic.Load =>
-            val offset = evalExp(state, in.rhsOffset)
-            val n = load(state.memory, offset.value, in.bytes)
-            return Value.fromRawU64(conversions.Z.toU64(n.toZ), in.isSigned, in.bytes)
+            val (offset, eacs) = evalExp(state, in.rhsOffset)
+            val (n, lacs) = load(state.memory, offset.value, in.bytes)
+            val acs = eacs + lacs
+            return (Value.fromRawU64(conversions.Z.toU64(n.toZ), in.isSigned, in.bytes), acs)
           case in: Intrinsic.Register =>
             if (in.isSP) {
-              return Value.fromRawU64(state.SP, anvil.isSigned(in.tipe), anvil.typeByteSize(in.tipe))
+              val acs = State.Accesses.empty.addTemp(state.spIndex, state.SP)
+              return (Value.fromRawU64(state.SP, anvil.isSigned(in.tipe), anvil.typeByteSize(in.tipe)), acs)
             } else {
-              return Value.fromU64(state.DP)
+              val acs = State.Accesses.empty.addTemp(state.dpIndex, state.DP)
+              return (Value.fromU64(state.DP), acs)
             }
         }
       case exp: AST.IR.Exp.R => halt(s"TODO: ${exp.prettyST}")
@@ -745,45 +773,47 @@ import IRSimulator._
   @pure def evalStmt(state: State, stmt: AST.IR.Stmt.Ground): State.Edit = {
     stmt match {
       case stmt: AST.IR.Stmt.Assign.Temp =>
-        val rhs = evalExp(state, stmt.rhs)
+        val (rhs, acs) = evalExp(state, stmt.rhs)
         val n: U64 =
           if (anvil.isSigned(stmt.rhs.tipe)) conversions.S64.toRawU64(conversions.Z.toS64(rhs.value))
           else conversions.Z.toU64(rhs.value)
-        return State.Edit.Temp(stmt.lhs, n)
+        return State.Edit.Temp(State.Edit.Temp.Kind.Register, stmt.lhs, n, acs)
       case stmt: AST.IR.Stmt.Intrinsic =>
         stmt.intrinsic match {
           case in: Intrinsic.TempLoad =>
-            val offset = evalExp(state, in.rhsOffset)
-            val v = Value.fromRawU64(load(state.memory, offset.value, in.bytes), in.isSigned, in.bytes)
+            val (offset, eacs) = evalExp(state, in.rhsOffset)
+            val (m, lacs) = load(state.memory, offset.value, in.bytes)
+            val acs = eacs + lacs
+            val v = Value.fromRawU64(m, in.isSigned, in.bytes)
             val n: U64 =
               if (in.isSigned) conversions.S64.toRawU64(conversions.Z.toS64(v.value))
               else conversions.Z.toU64(v.value)
-            return State.Edit.Temp(in.temp, n)
+            return State.Edit.Temp(State.Edit.Temp.Kind.Register, in.temp, n, acs)
           case in: Intrinsic.Store =>
-            val n: U64 = {
-              val v = evalExp(state, in.rhs)
-              if (in.isSigned) conversions.S64.toRawU64(conversions.Z.toS64(v.value)) else v.toU64
-            }
-            val offset = evalExp(state, in.lhsOffset)
-            return store(offset.value, anvil.typeByteSize(in.tipe), n)
+            val (v, eacs) = evalExp(state, in.rhs)
+            val n: U64 = if (in.isSigned) conversions.S64.toRawU64(conversions.Z.toS64(v.value)) else v.toU64
+            val (offset, oacs) = evalExp(state, in.lhsOffset)
+            val acs = eacs + oacs
+            return store(offset.value, anvil.typeByteSize(in.tipe), n, acs)
           case in: Intrinsic.Copy =>
-            val lhsOffset = evalExp(state, in.lhsOffset).value
-            val rhsOffset = evalExp(state, in.rhs).value
-            val size = evalExp(state, in.rhsBytes).value
+            val (lhsOffset, lacs) = evalExp(state, in.lhsOffset)
+            val (rhsOffset, racs) = evalExp(state, in.rhs)
+            val (size, sacs) = evalExp(state, in.rhsBytes)
+            val acs = lacs + racs + sacs
             var bs = ISZ[U8]()
-            for (i <- 0 until size) {
-              bs = bs :+ state.memory(rhsOffset + i)
+            for (i <- 0 until size.value) {
+              bs = bs :+ state.memory(rhsOffset.value + i)
             }
-            return State.Edit.Memory(lhsOffset, bs)
+            return State.Edit.Memory(lhsOffset.value, bs, acs)
           case in: Intrinsic.RegisterAssign =>
-            val v = evalExp(state, in.value).value
+            val (v, acs) = evalExp(state, in.value)
             if (in.isSP) {
-              val sp: U64 = conversions.Z.toU64(if (in.isInc) conversions.U64.toZ(state.SP) + v else v)
-              return State.Edit.SP(sp)
+              val sp: U64 = conversions.Z.toU64(if (in.isInc) conversions.U64.toZ(state.SP) + v.value else v.value)
+              return State.Edit.Temp(State.Edit.Temp.Kind.SP, state.spIndex, sp, acs)
             } else {
-              assert(v >= 0)
-              val dp: U64 = conversions.Z.toU64(if (in.isInc) conversions.U64.toZ(state.DP) + v else v)
-              return State.Edit.DP(dp)
+              assert(v.value >= 0)
+              val dp: U64 = conversions.Z.toU64(if (in.isInc) conversions.U64.toZ(state.DP) + v.value else v.value)
+              return State.Edit.Temp(State.Edit.Temp.Kind.DP, state.dpIndex, dp, acs)
             }
           case _: Intrinsic.Decl => return State.Edit.Idem()
         }
@@ -793,21 +823,25 @@ import IRSimulator._
     }
   }
 
-  @pure def evalJump(state: State, jump: AST.IR.Jump): State.Edit.CP = {
+  @pure def evalJump(state: State, jump: AST.IR.Jump): State.Edit.Temp = {
     jump match {
       case jump: AST.IR.Jump.Goto =>
         val cp = conversions.Z.toU64(jump.label)
-        return State.Edit.CP(cp)
+        return State.Edit.Temp(State.Edit.Temp.Kind.CP, state.cpIndex, cp, State.Accesses.empty)
       case jump: AST.IR.Jump.If =>
-        val label: Z = if (evalExp(state, jump.cond).toB) jump.thenLabel else jump.elseLabel
+        val (cond, acs) = evalExp(state, jump.cond)
+        val label: Z = if (cond.toB) jump.thenLabel else jump.elseLabel
         val cp = conversions.Z.toU64(label)
-        return State.Edit.CP(cp)
+        return State.Edit.Temp(State.Edit.Temp.Kind.CP, state.cpIndex, cp, acs)
       case jump: AST.IR.Jump.Switch =>
-        val v = evalExp(state, jump.exp).value
+        val (v, cacs) = evalExp(state, jump.exp)
         var label: Z = 1
         var found = F
+        var acs = cacs
         for (c <- jump.cases if !found) {
-          if (v == evalExp(state, c.value).value) {
+          val (cv, casacs) = evalExp(state, c.value)
+          if (v == cv) {
+            acs = acs + casacs
             found = T
             label = c.label
           }
@@ -822,29 +856,75 @@ import IRSimulator._
         }
         assert(found)
         val cp = conversions.Z.toU64(label)
-        return State.Edit.CP(cp)
+        return State.Edit.Temp(State.Edit.Temp.Kind.CP, state.cpIndex, cp, acs)
       case jump: AST.IR.Jump.Intrinsic =>
         jump.intrinsic match {
           case in: Intrinsic.GotoLocal =>
             val offset = state.SP.toZ + in.offset
-            val cp = load(state.memory, offset, anvil.cpTypeByteSize)
-            return State.Edit.CP(cp)
+            val (cp, acs) = load(state.memory, offset, anvil.cpTypeByteSize)
+            return State.Edit.Temp(State.Edit.Temp.Kind.CP, state.cpIndex, cp, acs)
         }
       case _: AST.IR.Jump.Return => halt(s"Infeasible: ${jump.prettyST}")
       case _: AST.IR.Jump.Halt => halt(s"Infeasible: ${jump.prettyST}")
     }
   }
 
-  @strictpure def evalGroundOrJump(e: Either[AST.IR.Stmt.Ground, AST.IR.Jump]): State => State.Edit = (s: State) => {
-    e match {
-      case Either.Left(g) => evalStmt(s, g)
-      case Either.Right(j) => evalJump(s, j)
+  @pure def checkRAW(label: Z, edits: ISZ[State.Edit], index: Z): Unit = {
+    for (i <- edits.indices if i != index) {
+      if (edits(index).writes.temps.keySet.intersect(edits(i).reads.temps.keySet).nonEmpty) {
+        halt(
+          st"""Detected temp RAW hazard in block .$label
+              |* Temp Writes = ${(edits(index).writes.temps.keySet.elements, ", ")}
+              |* Temp Reads = ${(edits(i).reads.temps.keySet.elements, ", ")}""".render)
+      }
+      if (edits(index).writes.memory.keySet.intersect(edits(i).reads.memory.keySet).nonEmpty) {
+        halt(
+          st"""Detected memory RAW hazard in block .$label
+              |* Memory Writes = ${(edits(index).writes.memory.keySet.elements, ", ")}
+              |* Memory Reads =  ${(edits(i).reads.memory.keySet.elements, ", ")}""".render)
+      }
     }
   }
 
+  @pure def checkWrites(label: Z, edits: ISZ[State.Edit], index: Z): Unit = {
+    for (i <- index + 1 until edits.size) {
+      val tempSet = edits(index).writes.temps.keySet.intersect(edits(i).reads.temps.keySet)
+      if (tempSet.nonEmpty) {
+        halt(st"Detected same multiple temp writes hazard in block .$label (${(tempSet.elements, ", ")})".render)
+      }
+      val memSet = edits(index).writes.memory.keySet.intersect(edits(i).reads.memory.keySet)
+      if (memSet.nonEmpty) {
+        halt(st"Detected same multiple memory cell writes hazard in block .$label (${(memSet.elements, ", ")})".render)
+      }
+    }
+  }
+
+  @pure def checkAccesses(label: Z, edits: ISZ[State.Edit]): Unit = {
+    ops.ISZOps(for (i <- edits.indices) yield i).parMap((i: Z) => {
+      checkRAW(label, edits, i)
+      checkWrites(label, edits, i)
+    })
+  }
+
   @pure def evalBlock(state: State, b: AST.IR.BasicBlock): ISZ[State.Edit] = {
-    return ops.ISZOps((for (g <- b.grounds) yield evalGroundOrJump(Either.Left(g))) :+
-      evalGroundOrJump(Either.Right(b.jump))).parMapUnordered((f: State => State.Edit) => f(state))
+    var r = ISZ[State.Edit]()
+    for (g <- b.grounds) {
+      r = r :+ evalStmt(state, g)
+    }
+    r = r :+ evalJump(state, b.jump)
+    checkAccesses(b.label, r)
+    return r
+  }
+
+  def executeBlock(state: State, b: AST.IR.BasicBlock): ISZ[State.Undo] = {
+    var r = ISZ[State.Undo]()
+    val edits = evalBlock(state, b)
+    var i: Z = 0
+    while (i < edits.size) {
+      r = r :+ edits(i).update(state)
+      i = i + 1
+    }
+    return r
   }
 
   def evalProcedure(state: State, p: AST.IR.Procedure): Unit = {
@@ -862,7 +942,8 @@ import IRSimulator._
     val blockMap: HashMap[U64, AST.IR.BasicBlock] = HashMap ++
       (for (b <- body.blocks) yield (conversions.Z.toU64(b.label), b))
 
-    State.Edit.CP(conversions.Z.toU64(body.blocks(0).label)).update(state)
+    State.Edit.Temp(State.Edit.Temp.Kind.CP, state.cpIndex, conversions.Z.toU64(body.blocks(0).label),
+      State.Accesses.empty).update(state)
     if (DEBUG_EDIT) {
       println()
     }
@@ -872,12 +953,7 @@ import IRSimulator._
       if (DEBUG) {
         log("Evaluating", b)
       }
-      val edits = evalBlock(state, b)
-      var i = 0
-      while (i < edits.size) {
-        edits(i).update(state)
-        i = i + 1
-      }
+      executeBlock(state, b)
       if (DEBUG && DEBUG_EDIT) {
         println()
       }
@@ -888,23 +964,27 @@ import IRSimulator._
     }
   }
 
-  @pure def load(memory: MSZ[U8], offset: Z, size: Z): U64 = {
+  @pure def load(memory: MSZ[U8], offset: Z, size: Z): (U64, State.Accesses) = {
     var r = u64"0"
     var i: Z = 0
+    var bs = ISZ[U8]()
     while (i < size) {
-      val b = conversions.U8.toU64(memory(offset + i))
-      r = r | (b << conversions.Z.toU64((size - i - 1) * 8))
+      val b = memory(offset + i)
+      bs = bs :+ b
+      val b64 = conversions.U8.toU64(b)
+      r = r | (b64 << conversions.Z.toU64((size - i - 1) * 8))
       i = i + 1
     }
-    return r
+    val acs = State.Accesses.empty.addMemory(offset, bs)
+    return (r, acs)
   }
 
-  @pure def store(offset: Z, size: Z, value: U64): State.Edit.Memory = {
+  @pure def store(offset: Z, size: Z, value: U64, acs: State.Accesses): State.Edit.Memory = {
     var bs = ISZ[U8]()
     for (i <- 0 until size) {
       val b = conversions.U64.toU8((value >> conversions.Z.toU64((size - i - 1) * 8)) & u64"0xFF")
       bs = bs :+ b
     }
-    return State.Edit.Memory(offset, bs)
+    return State.Edit.Memory(offset, bs, acs)
   }
 }

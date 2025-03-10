@@ -78,7 +78,8 @@ class IRSimulatorTest extends SireumRcSpec {
             val state = IRSimulator.State.create(ir.anvil.config.memory, ir.maxRegisters)
             val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.offset
             IRSimulator.State.Edit.Memory(testNumInfoOffset,
-              for (_ <- 0 until ir.anvil.typeByteSize(AST.Typed.z)) yield u8"0xFF").update(state)
+              for (_ <- 0 until ir.anvil.typeByteSize(AST.Typed.z)) yield u8"0xFF",
+              IRSimulator.State.Accesses.empty).update(state)
             IRSimulator(ir.anvil).evalProcedure(state, ir.procedure)
             val displaySize = ir.anvil.config.printSize
             val offset = ir.globalInfoMap.get(Util.displayName).get.offset + ir.anvil.spTypeByteSize +

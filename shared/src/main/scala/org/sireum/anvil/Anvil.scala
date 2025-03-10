@@ -395,12 +395,13 @@ import Anvil._
       var p = program.procedures(0)
       var pass: Z = 0
 
-      p = anvil.transformRegisterInc(fresh, p)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "register-inc"), p.prettyST)
-      pass = pass + 1
+      @strictpure def isRegisterInc(g: AST.IR.Stmt.Ground): B = g match {
+        case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isInc => T
+        case _ => F
+      }
 
-      p = anvil.transformMergeRegisterInc(p)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "merge-register-inc"), p.prettyST)
+      p = anvil.transformSplitTest(fresh, p, isRegisterInc _)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "register-inc"), p.prettyST)
       pass = pass + 1
 
       @strictpure def isCopy(g: AST.IR.Stmt.Ground): B = g match {
@@ -546,6 +547,27 @@ import Anvil._
     blockMap = blockMap -- ((for (labelIncomings <- countNumOfIncomingJumps(blockMap.values).entries
                                   if labelIncomings._2 == 0) yield labelIncomings._1) -- ISZ(0, 1, body.blocks(0).label))
     return p(body = body(blocks = blockMap.values))
+  }
+
+  def transformSplitTempJump(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      if (b.grounds.isEmpty) {
+        blocks = blocks :+ b
+      } else {
+        val tc = TempCollector(HashSSet.empty)
+        tc.transform_langastIRJump(b.jump)
+        if (tc.r.nonEmpty) {
+          val label = fresh.label()
+          blocks = blocks :+ b(jump = AST.IR.Jump.Goto(label, b.jump.pos))
+          blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), b.jump)
+        } else {
+          blocks = blocks :+ b
+        }
+      }
+    }
+    return p(body = body(blocks = blocks))
   }
 
   def transformSplitTest(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure,
@@ -942,13 +964,35 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "temp-compress"), r.prettyST)
       pass = pass + 1
 
-      r = transformSplitTemp(fresh, r)
+      @pure def hasTempUsage(g: AST.IR.Stmt.Ground): B = {
+        g match {
+          case g: AST.IR.Stmt.Assign =>
+            val tc = TempCollector(HashSSet.empty)
+            tc.transform_langastIRExp(g.rhs)
+            g match {
+              case g: AST.IR.Stmt.Assign.Index =>
+                tc.transform_langastIRExp(g.receiver)
+                tc.transform_langastIRExp(g.index)
+              case g: AST.IR.Stmt.Assign.Field =>
+                tc.transform_langastIRExp(g.receiver)
+              case _ =>
+            }
+            return tc.r.nonEmpty
+          case _ => return F
+        }
+      }
+
+      r = transformSplitTest(fresh, r, hasTempUsage _)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-temp"), r.prettyST)
       pass = pass + 1
 
-      r = transformSplitReadWrite(fresh, r)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-read-write"), r.prettyST)
+      r = transformSplitTempJump(fresh, r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-temp-jump"), r.prettyST)
       pass = pass + 1
+
+//      r = transformSplitReadWrite(fresh, r)
+//      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-read-write"), r.prettyST)
+//      pass = pass + 1
 
       r = transformInstanceOf(fresh, r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "instanceof"), r.prettyST)
@@ -1021,7 +1065,6 @@ import Anvil._
             grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, T,
               AST.IR.Exp.Int(spType, spAdd + numOfRegisters * 8, e.pos), e.pos))
 
-            val isMain = procedureMod(called.context) == PMod.Main
             val paramInfo = procedureParamInfo(PBox(called))._2
 
             val returnInfo = paramInfo.get(returnLocalId).get
@@ -1658,117 +1701,6 @@ import Anvil._
       work = next
     }
     return (maxOffset, proc(body = body(blocks = blockMap.values)), callResultIdOffsetMap)
-  }
-
-  def transformSplitTemp(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
-    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-    var blocks = ISZ[AST.IR.BasicBlock]()
-    for (b <- body.blocks) {
-      var grounds = ISZ[AST.IR.Stmt.Ground]()
-      var writes = HashSSet.empty[Z]
-      var reads = HashSSet.empty[Z]
-      var block = b
-      def computeWrites(g: AST.IR.Stmt.Ground): Unit = {
-        g match {
-          case g: AST.IR.Stmt.Assign.Temp =>
-            writes = writes + g.lhs
-          case _ =>
-        }
-      }
-      def computeReads(g: AST.IR.Stmt.Ground): Unit = {
-        val tc = TempCollector(reads)
-        tc.transform_langastIRStmtGround(g)
-        reads = tc.r
-      }
-      def introBlock(pos: message.Position): Unit = {
-        if (grounds.isEmpty) {
-          return
-        }
-        val n = fresh.label()
-        blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.Goto(n, pos))
-        grounds = ISZ()
-        reads = HashSSet.empty[Z]
-        writes = HashSSet.empty[Z]
-        block = AST.IR.BasicBlock(n, grounds, block.jump)
-      }
-      for (g <- b.grounds) {
-        computeWrites(g)
-        if (writes.nonEmpty) {
-          computeReads(g)
-          if (reads.intersect(writes).nonEmpty) {
-            introBlock(g.pos)
-            grounds = grounds :+ g
-            computeWrites(g)
-          } else {
-            grounds = grounds :+ g
-          }
-        } else {
-          grounds = grounds :+ g
-        }
-      }
-      val tc = TempCollector(reads)
-      tc.transform_langastIRJump(b.jump)
-      reads = tc.r
-      if (reads.intersect(writes).nonEmpty) {
-        introBlock(b.jump.pos)
-      }
-      blocks = blocks :+ block(grounds = grounds, jump = b.jump)
-    }
-    return p(body = body(blocks = blocks))
-  }
-
-  def transformRegisterInc(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
-    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-    var blocks = ISZ[AST.IR.BasicBlock]()
-    for (b <- body.blocks) {
-      var i: Z = 0
-      var split = b.grounds.size
-      val rd = RegisterDetector(F, F)
-      while (i < b.grounds.size) {
-        b.grounds(i) match {
-          case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign) if intrinsic.isInc =>
-            var j = i + 1
-            while (j < b.grounds.size) {
-              rd.transform_langastIRStmtGround(b.grounds(j))
-              if ((intrinsic.isSP && rd.hasSP || !intrinsic.isSP && rd.hasDP) && split == b.grounds.size) {
-                split = j
-              }
-              j = j + 1
-            }
-          case _ =>
-        }
-        i = i + 1
-      }
-      if (split == b.grounds.size) {
-        blocks = blocks :+ b
-      } else {
-        val label = fresh.label()
-        val b1 = AST.IR.BasicBlock(b.label, ops.ISZOps(b.grounds).slice(0, split), AST.IR.Jump.Goto(label, b.grounds(split - 1).pos))
-        val b2 = AST.IR.BasicBlock(label, ops.ISZOps(b.grounds).slice(split, b.grounds.size), b.jump)
-        blocks = blocks :+ b1 :+ b2
-      }
-    }
-    return p(body = body(blocks = blocks))
-  }
-
-  def transformMergeRegisterInc(p: AST.IR.Procedure): AST.IR.Procedure = {
-    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-    var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
-    val m = countNumOfIncomingJumps(body.blocks)
-    for (b <- body.blocks if blockMap.contains(b.label)) {
-      b.jump match {
-        case j: AST.IR.Jump.Goto if m.get(j.label).get == 1 =>
-          val b2 = blockMap.get(j.label).get
-          b2.grounds match {
-            case ISZ(AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign), _*) if intrinsic.isInc =>
-              blockMap = blockMap -- ISZ(b2.label)
-              blockMap = blockMap + b.label ~> b(grounds = b.grounds ++ b2.grounds, jump = b2.jump)
-            case _ =>
-          }
-        case _ =>
-      }
-    }
-    return p(body = body(blocks = blockMap.values))
   }
 
   @pure def printStringLit(incDP: B, s: String, pos: message.Position): ISZ[AST.IR.Stmt.Ground] = {
