@@ -284,7 +284,7 @@ object Util {
     override def post_langastIRStmtBlock(o: AST.IR.Stmt.Block): MOption[AST.IR.Stmt] = {
       @strictpure def isConversions(name: QName): B =
         (name.size > 3  && name(0) == "org" && name(1) == "sireum" && name(2) == "conversions") ||
-          name == ISZ("org", "sireum", "anvil", "Printer", "Ext")
+          name == ISZ("org", "sireum", "anvil", "Runtime", "Ext")
       var changed = F
       var stmts = ISZ[AST.IR.Stmt]()
       for (stmt <- o.stmts) {
@@ -540,10 +540,10 @@ object Util {
   val f64DigitIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "I320"), ISZ())
   val f32DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(f32DigitIndexType, AST.Typed.u8))
   val f64DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(f64DigitIndexType, AST.Typed.u8))
-  val printerName: QName = AST.Typed.sireumName :+ "anvil" :+ "Printer"
+  val runtimeName: QName = AST.Typed.sireumName :+ "anvil" :+ "Runtime"
   val mainAnnName: QName = AST.Typed.sireumName :+ "anvil" :+ "hls"
   val testAnnName: QName = AST.Typed.sireumName :+ "anvil" :+ "test"
-  val printTypeMap: HashSMap[String, AST.Typed.Fun] = HashSMap.empty[String, AST.Typed.Fun] +
+  val runtimeMethodTypeMap: HashSMap[String, AST.Typed.Fun] = HashSMap.empty[String, AST.Typed.Fun] +
     "printB" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.b), AST.Typed.u64) +
     "printC" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.c), AST.Typed.u64) +
     "printS64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.s64), AST.Typed.u64) +
