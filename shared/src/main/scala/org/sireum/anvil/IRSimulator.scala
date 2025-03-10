@@ -32,6 +32,9 @@ import org.sireum.U8._
 import org.sireum.U64._
 
 object IRSimulator {
+  val DEBUG: B = T
+  val DEBUG_EDIT: B = T
+
   @record @unclonable class State(val memory: MSZ[U8], val temps: MSZ[U64]) {
     def cpIndex: Z = {
       return temps.size - 3
@@ -70,21 +73,22 @@ object IRSimulator {
     }
 
     @pure override def string: String = {
-      return st"CP = ${shortenHexString(temps(temps.size - 3))}, SP = ${shortenHexString(SP)}, DP = ${shortenHexString(DP)}, temps = [${(for (i <- 0 until temps.size - 3) yield shortenHexString(temps(i)), ", ")}]".render
-    }
-
-    @pure def shortenHexString(n: U64): String = {
-      val r = conversions.String.toCis(n.string)
-      var i: Z = 0
-      while (i < r.size && r(i) == '0') {
-        i = i + 1
+      if (DEBUG) {
+        return st"CP = ${shortenHexString(temps(temps.size - 3))}, SP = ${shortenHexString(SP)}, DP = ${shortenHexString(DP)}, temps = [${(for (i <- 0 until temps.size - 3) yield shortenHexString(temps(i)), ", ")}]".render
+      } else {
+        return s"CP = ${temps(temps.size - 3).toZ}, SP = ${SP.toZ}, DP = ${DP.toZ}, temps = ${for (i <- 0 until temps.size - 3) yield temps(i).toZ}"
       }
-      return if (i == r.size) "0" else ops.StringOps.substring(r, i, r.size)
     }
 
-//    @pure override def string: String = {
-//      return s"CP = ${temps(temps.size - 3).toZ}, SP = ${SP.toZ}, DP = ${DP.toZ}, temps = ${for (i <- 0 until temps.size - 3) yield temps(i).toZ}"
-//    }
+  }
+
+  @pure def shortenHexString(n: U64): String = {
+    val r = conversions.String.toCis(n.string)
+    var i: Z = 0
+    while (i < r.size && r(i) == '0') {
+      i = i + 1
+    }
+    return if (i == r.size) "0" else ops.StringOps.substring(r, i, r.size)
   }
 
   object State {
@@ -104,6 +108,9 @@ object IRSimulator {
       @datatype class CP(val cp: U64) extends Edit {
         def update(state: State): Undo = {
           val r = CP(state.CP)
+          if (DEBUG_EDIT) {
+            println(s"* Updating CP to ${shortenHexString(cp)} (from ${shortenHexString(r.cp)})")
+          }
           state.upCP(cp)
           return r
         }
@@ -112,6 +119,9 @@ object IRSimulator {
       @datatype class SP(val sp: U64) extends Edit {
         def update(state: State): Undo = {
           val r = SP(state.SP)
+          if (DEBUG_EDIT) {
+            println(s"* Updating SP to ${shortenHexString(sp)} (from ${shortenHexString(r.sp)})")
+          }
           state.upSP(sp)
           return r
         }
@@ -120,6 +130,9 @@ object IRSimulator {
       @datatype class DP(val dp: U64) extends Edit {
         def update(state: State): Undo = {
           val r = DP(state.DP)
+          if (DEBUG_EDIT) {
+            println(s"* Updating DP to ${shortenHexString(dp)} (from ${shortenHexString(r.dp)})")
+          }
           state.upDP(dp)
           return r
         }
@@ -128,6 +141,9 @@ object IRSimulator {
       @datatype class Temp(val temp: Z, val value: U64) extends Edit {
         def update(state: State): Undo = {
           val r = Temp(temp, state.temps(temp))
+          if (DEBUG_EDIT) {
+            println(s"* Updating $$temp$temp to ${shortenHexString(value)} (from ${shortenHexString(r.value)})")
+          }
           state.temps(temp) = value
           return r
         }
@@ -136,6 +152,9 @@ object IRSimulator {
       @datatype class Memory(val offset: Z, val values: ISZ[U8]) extends Edit {
         def update(state: State): Undo = {
           val r = Memory(offset, for (i <- values.indices) yield state.memory(offset + i))
+          if (DEBUG_EDIT) {
+            println(s"* Updating memory starting at offset ${shortenHexString(conversions.Z.toU64(offset))} to $values (from ${r.values})")
+          }
           for (i <- values.indices) {
             state.memory(offset + i) = values(i)
           }
@@ -847,16 +866,23 @@ import IRSimulator._
 
     while (state.CP != u64"0" && state.CP != u64"1") {
       val b = blockMap.get(state.CP).get
-      log("Evaluating", b)
+      if (DEBUG) {
+        log("Evaluating", b)
+      }
       val edits = evalBlock(state, b)
       var i = 0
       while (i < edits.size) {
         edits(i).update(state)
         i = i + 1
       }
+      if (DEBUG && DEBUG_EDIT) {
+        println()
+      }
     }
 
-    println(s"End state: $state")
+    if (DEBUG) {
+      println(s"End state: $state")
+    }
   }
 
   @pure def load(memory: MSZ[U8], offset: Z, size: Z): U64 = {
