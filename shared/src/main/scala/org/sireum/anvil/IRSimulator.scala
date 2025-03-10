@@ -984,7 +984,7 @@ import IRSimulator._
       val b = memory(offset + i)
       bs = bs :+ b
       val b64 = conversions.U8.toU64(b)
-      r = r | (b64 << conversions.Z.toU64((size - i - 1) * 8))
+      r = r | (b64 << conversions.Z.toU64(i * 8))
       i = i + 1
     }
     val acs = State.Accesses.empty.addMemory(offset, bs)
@@ -994,7 +994,7 @@ import IRSimulator._
   @pure def store(offset: Z, size: Z, value: U64, acs: State.Accesses): State.Edit.Memory = {
     var bs = ISZ[U8]()
     for (i <- 0 until size) {
-      val b = conversions.U64.toU8((value >> conversions.Z.toU64((size - i - 1) * 8)) & u64"0xFF")
+      val b = conversions.U64.toU8((value >> conversions.Z.toU64(i * 8)) & u64"0xFF")
       bs = bs :+ b
     }
     return State.Edit.Memory(offset, bs, acs)
