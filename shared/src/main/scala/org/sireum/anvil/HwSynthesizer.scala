@@ -370,7 +370,7 @@ object MemCopyLog {
         val tmpWireLhsST = st"__tmp_${TmpWireCount.getCurrent}"
         val tmpWireRhsST = st"__tmp_${TmpWireCount.getCurrent + 1}"
         val tmpWireRhsContent: ST = if(isRhsIntType(intrinsic.rhs)) {
-          st"${rhsST}(${intrinsic.bytes * 8}.W)"
+          st"${rhsST}"
         } else {
           rhsST
         }
@@ -493,7 +493,7 @@ object MemCopyLog {
           case T => "S"
           case _ => if(anvil.isSigned(exp.tipe)) "S" else "U"
         }
-        exprST = st"${exp.value}${if(exp.value > 2147483647 || exp.value < -2147483648) "L" else ""}.${valuePostfix}"
+        exprST = st"${exp.value}${if(exp.value > 2147483647 || exp.value < -2147483648) "L" else ""}.${valuePostfix}(${anvil.typeByteSize(exp.tipe)*8}.W)"
       }
       case exp: AST.IR.Exp.Type => {
         exprST = st"${processExpr(exp.exp, F)}${if(anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}"
