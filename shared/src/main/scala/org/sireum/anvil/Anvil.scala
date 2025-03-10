@@ -2059,7 +2059,7 @@ import Anvil._
     }
     val paramInfo = procedureParamInfo(PBox(p))._2
     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-      AST.IR.Exp.Int(cpType, paramInfo.get(returnLocalId).get.offset, p.pos), isSigned(cpType), typeByteSize(cpType),
+      AST.IR.Exp.Int(cpType, globalSize + paramInfo.get(returnLocalId).get.offset, p.pos), isSigned(cpType), typeByteSize(cpType),
       AST.IR.Exp.Int(cpType, 0, p.pos), st"$returnLocalId", cpType, p.pos))
     if (p.tipe.ret != AST.Typed.unit) {
       val offset = paramInfo.get(resultLocalId).get.offset
