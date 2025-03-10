@@ -39,11 +39,6 @@ class IRSimulatorTest extends SireumRcSpec {
     m
   }
 
-  val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "construct.sc" ~> 2048
-  val printFileSet: HashSet[String] = HashSet.empty[String] + "print.sc" + "assert.sc"
-  val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
-  val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc"
-
   override def check(path: Vector[Predef.String], content: Predef.String): Boolean = {
     val reporter = message.Reporter.create
     lang.parser.Parser.parseTopUnit[lang.ast.TopUnit.Program](content, T, F, Some(path.mkString("/")), reporter) match {
@@ -59,10 +54,16 @@ class IRSimulatorTest extends SireumRcSpec {
         (dir / path(0)).removeAll()
         var config = Anvil.Config.empty(path.mkString("/"))
         val file = path(path.size - 1)
+//        config = config(
+//          printSize = 4096,
+//          stackTrace = T,
+//          erase = T,
+//          runtimeCheck = T)
         config = config(
-          printSize = 4096,
-          stackTrace = T,
-          erase = T,
+          memory = AnvilTest.memoryFileMap.get(file).getOrElse(1024),
+          printSize = if (AnvilTest.printFileSet.contains(file)) 128 else 0,
+          stackTrace = AnvilTest.stackTraceFileSet.contains(file),
+          erase = AnvilTest.eraseFileSet.contains(file),
           runtimeCheck = T)
         val out = dir /+ ISZ(path.map(String(_)): _*)
         Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, new Anvil.Output {

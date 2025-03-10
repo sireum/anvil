@@ -70,8 +70,21 @@ object IRSimulator {
     }
 
     @pure override def string: String = {
-      return s"CP = ${temps(temps.size - 3).toZ}, SP = ${SP.toZ}, DP = ${DP.toZ}, temps = ${for (i <- 0 until temps.size - 3) yield temps(i).toZ}"
+      return st"CP = ${shortenHexString(temps(temps.size - 3))}, SP = ${shortenHexString(SP)}, DP = ${shortenHexString(DP)}, temps = [${(for (i <- 0 until temps.size - 3) yield shortenHexString(temps(i)), ", ")}]".render
     }
+
+    @pure def shortenHexString(n: U64): String = {
+      val r = conversions.String.toCis(n.string)
+      var i: Z = 0
+      while (i < r.size && r(i) == '0') {
+        i = i + 1
+      }
+      return if (i == r.size) "0" else ops.StringOps.substring(r, i, r.size)
+    }
+
+//    @pure override def string: String = {
+//      return s"CP = ${temps(temps.size - 3).toZ}, SP = ${SP.toZ}, DP = ${DP.toZ}, temps = ${for (i <- 0 until temps.size - 3) yield temps(i).toZ}"
+//    }
   }
 
   object State {
@@ -834,7 +847,7 @@ import IRSimulator._
 
     while (state.CP != u64"0" && state.CP != u64"1") {
       val b = blockMap.get(state.CP).get
-      //log("Evaluating", b)
+      log("Evaluating", b)
       val edits = evalBlock(state, b)
       var i = 0
       while (i < edits.size) {
@@ -843,7 +856,7 @@ import IRSimulator._
       }
     }
 
-    //println(s"End state: $state")
+    println(s"End state: $state")
   }
 
   @pure def load(memory: MSZ[U8], offset: Z, size: Z): U64 = {
