@@ -11,5 +11,5 @@ import org.sireum.U16._
 }
 
 @anvil.test def testAdd2(): Unit = {
-  println(add(u16"1403437", u16"5"))
+  println(add(u16"0x6A32", u16"5"))
 }
