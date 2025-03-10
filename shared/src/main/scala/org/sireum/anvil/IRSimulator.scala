@@ -862,7 +862,10 @@ import IRSimulator._
     val blockMap: HashMap[U64, AST.IR.BasicBlock] = HashMap ++
       (for (b <- body.blocks) yield (conversions.Z.toU64(b.label), b))
 
-    state.upCP(conversions.Z.toU64(body.blocks(0).label))
+    State.Edit.CP(conversions.Z.toU64(body.blocks(0).label)).update(state)
+    if (DEBUG_EDIT) {
+      println()
+    }
 
     while (state.CP != u64"0" && state.CP != u64"1") {
       val b = blockMap.get(state.CP).get
