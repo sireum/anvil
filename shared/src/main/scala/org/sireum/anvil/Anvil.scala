@@ -1003,6 +1003,10 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "global"), r.prettyST)
       pass = pass + 1
 
+      r = IntTransformer(this).transform_langastIRProcedure(r).getOrElse(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "int"), r.prettyST)
+      pass = pass + 1
+
       r = transformStackTraceLoc(r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "stack-trace-loc"), r.prettyST)
       pass = pass + 1

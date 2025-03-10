@@ -665,24 +665,24 @@ object IRSimulator {
         fromS8(conversions.U8.toRawS8(conversions.U64.toU8(n & u64"0xFF")))
       } else if (bytes == 2) {
         fromS16(conversions.U16.toRawS16(conversions.U64.toU16(n & u64"0xFFFF")))
-      } else if (bytes <= 4) {
+      } else if (bytes == 4) {
         fromS32(conversions.U32.toRawS32(conversions.U64.toU32(n & u64"0xFFFFFFFF")))
-      } else if (bytes <= 8) {
+      } else if (bytes == 8) {
         fromS64(conversions.U64.toRawS64(n))
       } else {
         halt(s"Infeasible: $bytes")
       }
     } else {
-      if (bytes == 1) {
-        fromU8(conversions.U64.toU8(n))
-      } else if (bytes == 2) {
-        fromU16(conversions.U64.toU16(n))
-      } else if (bytes <= 4) {
-        fromU32(conversions.U64.toU32(n))
-      } else if (bytes <= 8) {
-        fromU64(n)
-      } else {
-        halt(s"Infeasible: $bytes")
+      bytes match {
+        case z"1" => fromU8(conversions.U64.toU8(n & u64"0xFF"))
+        case z"2" => fromU16(conversions.U64.toU16(n & u64"0xFFFF"))
+        case z"3" => fromU32(conversions.U64.toU32(n & u64"0xFFFFFF"))
+        case z"4" => fromU32(conversions.U64.toU32(n & u64"0xFFFFFFFF"))
+        case z"5" => fromU64(n & u64"0xFFFFFFFFFF")
+        case z"6" => fromU64(n & u64"0xFFFFFFFFFFFF")
+        case z"7" => fromU64(n & u64"0xFFFFFFFFFFFFFF")
+        case z"8" => fromU64(n)
+        case _ => halt(s"Infeasible: $bytes")
       }
     }
   }

@@ -477,6 +477,15 @@ object Util {
     }
   }
 
+  @record class IntTransformer(val anvil: Anvil) extends MAnvilIRTransformer {
+    override def post_langastIRExpInt(o: AST.IR.Exp.Int): MOption[AST.IR.Exp] = {
+      val isSigned = anvil.isSigned(o.tipe)
+      val n: U64 = conversions.Z.toU64(if (o.value < 0) o.value + anvil.pow(2, 64) else o.value)
+      val v = IRSimulator.Value.fromRawU64(n, isSigned, anvil.typeByteSize(o.tipe)).value
+      return if (v != o.value) MSome(o(value = v)) else MNone()
+    }
+  }
+
   @datatype class TempLV(val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[Z] {
     @strictpure def isForward: B = F
     @strictpure def isLUB: B = T
