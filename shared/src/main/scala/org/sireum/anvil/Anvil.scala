@@ -395,8 +395,10 @@ import Anvil._
       var p = program.procedures(0)
       var pass: Z = 0
 
-      @strictpure def isRegisterInc(g: AST.IR.Stmt.Ground): B = g match {
-        case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isInc => T
+      @strictpure def isRegisterInc(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
+        case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isInc =>
+          grounds.isEmpty ||
+            ops.ISZOps(grounds).exists((ground: AST.IR.Stmt.Ground) => !ground.isInstanceOf[AST.IR.Stmt.Decl])
         case _ => F
       }
 
@@ -404,7 +406,7 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "register-inc"), p.prettyST)
       pass = pass + 1
 
-      @strictpure def isCopy(g: AST.IR.Stmt.Ground): B = g match {
+      @strictpure def isCopy(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
         case AST.IR.Stmt.Intrinsic(_: Intrinsic.Copy) => T
         case _ => F
       }
@@ -571,7 +573,7 @@ import Anvil._
   }
 
   def transformSplitTest(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure,
-                         test: AST.IR.Stmt.Ground => B @pure): AST.IR.Procedure = {
+                         test: (ISZ[AST.IR.Stmt.Ground], AST.IR.Stmt.Ground) => B @pure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
@@ -581,7 +583,7 @@ import Anvil._
         var block = b
         var grounds = ISZ[AST.IR.Stmt.Ground]()
         for (g <- b.grounds) {
-          if (test(g)) {
+          if (test(grounds, g)) {
             if (grounds.isEmpty) {
               val n = fresh.label()
               blocks = blocks :+ AST.IR.BasicBlock(block.label, ISZ(g), AST.IR.Jump.Goto(n, g.pos))
@@ -749,18 +751,41 @@ import Anvil._
     return transformEmptyBlock(p(body = body(blocks = blocks)))
   }
 
-  def transformConstruct(p: AST.IR.Procedure): AST.IR.Procedure = {
+  def transformMergeDecl(p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-
-    var blocks = ISZ[AST.IR.BasicBlock]()
+    var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+    val m = countNumOfIncomingJumps(body.blocks)
     for (b <- body.blocks) {
+      b.jump match {
+        case j: AST.IR.Jump.Goto if m.get(j.label) == Some(1) && ops.ISZOps(b.grounds).
+          forall((g: AST.IR.Stmt.Ground) => g.isInstanceOf[AST.IR.Stmt.Decl]) =>
+          val b2 = blockMap.get(j.label).get
+          blockMap = blockMap + b.label ~> b(grounds = b.grounds ++ b2.grounds, jump = b2.jump)
+          blockMap = blockMap -- ISZ(b2.label)
+        case _ =>
+      }
+    }
+    return p(body = body(blocks = blockMap.values))
+  }
+
+  def transformConstruct(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    var body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+
+    for (b <- body.blocks) {
+      var block = b
       var grounds = ISZ[AST.IR.Stmt.Ground]()
-      var undeclMap = HashMap.empty[Z, AST.IR.Stmt.Decl]
       for (g <- b.grounds) {
         g match {
           case g@AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.Construct, _) =>
-            undeclMap = undeclMap + g.lhs ~> AST.IR.Stmt.Decl(T, T, T, p.context, ISZ(
+            val decl = AST.IR.Stmt.Decl(F, T, T, p.context, ISZ(
               AST.IR.Stmt.Decl.Local(constructResultId(rhs.pos), rhs.tipe)), g.pos)
+            grounds = grounds :+ decl
+            grounds = grounds :+ g
+            val label = fresh.label()
+            blocks = blocks :+ block(block.label, grounds, AST.IR.Jump.Goto(label, g.pos))
+            grounds = ISZ()
+            block = block(label, grounds, block.jump)
             val temp = AST.IR.Exp.Temp(g.lhs, rhs.tipe, rhs.pos)
             if (rhs.tipe.ids == AST.Typed.isName || rhs.tipe.ids == AST.Typed.msName) {
               val indexType = rhs.tipe.args(0)
@@ -793,27 +818,47 @@ import Anvil._
           case _ => grounds = grounds :+ g
         }
       }
-      var grounds2 = ISZ[AST.IR.Stmt.Ground]()
-      for (i <- grounds.size - 1 to 0 by -1) {
-        val g = grounds(i)
+      blocks = blocks :+ block(grounds = grounds)
+    }
+    body = body(blocks = blocks)
+
+    val exit = MBox(HashSMap.empty[Z, ISZ[HashSSet[Z]]])
+    TempLV(ControlFlowGraph.buildBasic(body)).compute(body, MBox(HashSMap.empty[Z, ISZ[HashSSet[Z]]]), exit)
+    var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+
+    def rec(label: Z, i: Z, temp: Z, undecl: AST.IR.Stmt.Decl): Unit = {
+      val b = blockMap.get(label).get
+      for (j <- i until b.grounds.size) {
+        val g = b.grounds(j)
         val tc = TempCollector(HashSSet.empty)
         tc.transform_langastIRStmtGround(g)
-        for (temp <- tc.r.elements) {
-          undeclMap.get(temp) match {
-            case Some(undecl) =>
-              grounds2 = grounds2 :+ undecl
-              undeclMap = undeclMap -- ISZ(temp)
-            case _ =>
-          }
+        if (tc.r.contains(temp) && !exit.value.get(b.label).get(i).contains(temp)) {
+          val bgOps = ops.ISZOps(b.grounds)
+          blockMap = blockMap + label ~> b(grounds = (bgOps.slice(0, j + 1) :+ undecl) ++ bgOps.slice(j + 1, b.grounds.size))
+          return
         }
-        grounds2 = grounds2 :+ g
       }
-      blocks = blocks :+ b(grounds = for (i <- grounds2.size - 1 to 0 by - 1) yield grounds2(i))
+      for (target <- b.jump.targets) {
+        rec(target, 0, temp, undecl)
+      }
     }
-    return p(body = body(blocks = blocks))
+
+    for (b <- body.blocks) {
+      for (i <- b.grounds.indices) {
+        val g = b.grounds(i)
+        g match {
+          case AST.IR.Stmt.Assign.Temp(temp, rhs: AST.IR.Exp.Construct, _) =>
+            val undecl = AST.IR.Stmt.Decl(T, T, T, p.context, ISZ(
+              AST.IR.Stmt.Decl.Local(constructResultId(rhs.pos), rhs.tipe)), g.pos)
+            rec(b.label, i + 1, temp, undecl)
+          case _ =>
+        }
+      }
+    }
+    return p(body = body(blocks = blockMap.values))
   }
 
-  def transformApplyConstructResult(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+  def transformApplyConstructResult(p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
 
     var blocks = ISZ[AST.IR.BasicBlock]()
@@ -834,42 +879,6 @@ import Anvil._
               AST.IR.Stmt.Decl.Local(callResultId(e.id, e.pos), e.tipe)), g.pos)
             grounds = grounds :+ decl
             grounds = grounds :+ g
-            undeclMap = undeclMap + g.lhs ~> decl.undeclare
-          case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Construct] =>
-            val e = g.rhs.asInstanceOf[AST.IR.Exp.Construct]
-            val temp = AST.IR.Exp.Temp(g.lhs, e.tipe, e.pos)
-            val decl = AST.IR.Stmt.Decl(F, T, T, p.context, ISZ(
-              AST.IR.Stmt.Decl.Local(constructResultId(e.pos), e.tipe)), g.pos)
-            grounds = grounds :+ decl
-            grounds = grounds :+ g
-            if (e.tipe.ids == AST.Typed.isName || e.tipe.ids == AST.Typed.msName) {
-              val indexType = e.tipe.args(0)
-              val min: Z = indexType match {
-                case AST.Typed.z => 0
-                case _ =>
-                  val subz = subZOpt(indexType).get.ast
-                  if (subz.isIndex) subz.min
-                  else if (subz.isZeroIndex) 0
-                  else subz.min
-              }
-              for (i <- e.args.indices) {
-                val arg = e.args(i)
-                grounds = grounds :+ AST.IR.Stmt.Assign.Index(temp, AST.IR.Exp.Int(indexType, min + i, arg.pos), arg,
-                  arg.pos)
-              }
-            } else {
-              val info = th.typeMap.get(e.tipe.ids).get.asInstanceOf[TypeInfo.Adt]
-              val sm = TypeChecker.buildTypeSubstMap(e.tipe.ids, None(), info.ast.typeParams, e.tipe.args,
-                message.Reporter.create).get
-              for (pair <- ops.ISZOps(info.ast.params).zip(e.args)) {
-                grounds = grounds :+ AST.IR.Stmt.Assign.Field(temp, pair._1.id.value,
-                  pair._1.tipe.typedOpt.get.subst(sm), pair._2, pair._2.pos)
-              }
-            }
-            if (classInit(e.tipe).nonEmpty) {
-              grounds = grounds :+ AST.IR.Stmt.Expr(AST.IR.Exp.Apply(F, e.tipe.ids, newInitId,
-                ISZ(temp), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(e.tipe), AST.Typed.unit), AST.Typed.unit, e.pos))
-            }
             undeclMap = undeclMap + g.lhs ~> decl.undeclare
           case _ =>
             grounds = grounds :+ g
@@ -893,13 +902,7 @@ import Anvil._
       blocks = blocks :+ b(grounds = for (i <- grounds2.size - 1 to 0 by - 1) yield grounds2(i))
     }
 
-    @strictpure def isInvoke(g: AST.IR.Stmt.Ground): B = g match {
-      case AST.IR.Stmt.Assign.Temp(_, _: AST.IR.Exp.Apply, _) => T
-      case _: AST.IR.Stmt.Expr => T
-      case _ => F
-    }
-
-    return transformSplitTest(fresh, p(body = body(blocks = blocks)), isInvoke _)
+    return p(body = body(blocks = blocks))
   }
 
   def transformGlobalVarRef(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1012,7 +1015,7 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "print"), r.prettyST)
       pass = pass + 1
 
-      r = transformApplyConstructResult(fresh, r)
+      r = transformApplyConstructResult(r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "apply-construct-result"), r.prettyST)
       pass = pass + 1
 
@@ -1032,7 +1035,7 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "temp-compress"), r.prettyST)
       pass = pass + 1
 
-      @pure def hasAssignTempUsage(g: AST.IR.Stmt.Ground): B = {
+      @pure def hasAssignTempUsage(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
         g match {
           case g: AST.IR.Stmt.Assign.Temp =>
             val tc = TempCollector(HashSSet.empty)
@@ -1051,9 +1054,9 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-temp-jump"), r.prettyST)
       pass = pass + 1
 
-//      r = transformConstruct(r)
-//      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "construct"), r.prettyST)
-//      pass = pass + 1
+      r = transformConstruct(fresh, r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "construct"), r.prettyST)
+      pass = pass + 1
 
       //      r = transformSplitReadWrite(fresh, r)
 //      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-read-write"), r.prettyST)
@@ -1061,6 +1064,20 @@ import Anvil._
 
       r = transformInstanceOf(fresh, r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "instanceof"), r.prettyST)
+      pass = pass + 1
+
+      r = transformMergeDecl(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "merge-decl"), r.prettyST)
+      pass = pass + 1
+
+      @strictpure def isInvoke(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
+        case AST.IR.Stmt.Assign.Temp(_, _: AST.IR.Exp.Apply, _) => T
+        case _: AST.IR.Stmt.Expr => T
+        case _ => F
+      }
+
+      r = transformSplitTest(fresh, r, isInvoke _)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-invoke"), r.prettyST)
       pass = pass + 1
 
       r = transformEmptyBlock(r)
@@ -1524,7 +1541,6 @@ import Anvil._
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- blocks) yield (b.label, b))
     var blockLocalOffsetMap = HashMap.empty[Z, (Z, HashMap[String, Z])]
     var callResultIdOffsetMap = HashMap.empty[String, Z]
-    val isMain = procedureMod(proc.context) == PMod.Main
     val offsetParamInfo = procedureParamInfo(PBox(proc))
     var maxOffset = offsetParamInfo._1
     blockLocalOffsetMap = blockLocalOffsetMap + blocks(0).label ~> (maxOffset, HashMap.empty[String, Z] ++

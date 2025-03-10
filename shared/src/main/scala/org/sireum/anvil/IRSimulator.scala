@@ -36,15 +36,15 @@ object IRSimulator {
   val DEBUG_EDIT: B = T
 
   @record @unclonable class State(val memory: MSZ[U8], val temps: MSZ[U64]) {
-    def cpIndex: Z = {
+    @pure def cpIndex: Z = {
       return temps.size - 3
     }
 
-    def spIndex: Z = {
+    @pure def spIndex: Z = {
       return temps.size - 2
     }
 
-    def dpIndex: Z = {
+    @pure def dpIndex: Z = {
       return temps.size - 1
     }
 
@@ -71,6 +71,14 @@ object IRSimulator {
     def upDP(dp: U64): Unit = {
       temps(dpIndex) = dp
     }
+
+    @strictpure def tempST(temp: Z): ST =
+      if (temp == spIndex) st"SP"
+      else if (temp == cpIndex) st"CP"
+      else if (temp == dpIndex) st"DP"
+      else st"$$$temp"
+
+    @strictpure def tempsST(temps: ISZ[Z]): ST = st"${(for (t <- temps) yield tempST(t), ", ")}"
 
     @pure override def string: String = {
       if (DEBUG) {
@@ -120,7 +128,7 @@ object IRSimulator {
               case Temp.Kind.CP => "CP"
               case Temp.Kind.SP => "SP"
               case Temp.Kind.DP => "DP"
-              case Temp.Kind.Register => s"$$temp$temp"
+              case Temp.Kind.Register => s"$$$temp"
             }
             println(s"* $tempString = ${shortenHexString(value)} (old: ${shortenHexString(r.value)})")
           }
@@ -761,16 +769,16 @@ import IRSimulator._
               return (Value.fromU64(state.DP), acs)
             }
         }
-      case exp: AST.IR.Exp.R => halt(s"TODO: ${exp.prettyST}")
-      case exp: AST.IR.Exp.Construct => halt(s"Infeasible: ${exp.prettyST}")
-      case _: AST.IR.Exp.String => halt(s"Infeasible: ${exp.prettyST}")
-      case _: AST.IR.Exp.Indexing => halt(s"Infeasible: ${exp.prettyST}")
-      case _: AST.IR.Exp.LocalVarRef => halt(s"Infeasible: ${exp.prettyST}")
-      case _: AST.IR.Exp.GlobalVarRef => halt(s"Infeasible: ${exp.prettyST}")
-      case _: AST.IR.Exp.FieldVarRef => halt(s"Infeasible: ${exp.prettyST}")
-      case _: AST.IR.Exp.EnumElementRef => halt(s"Infeasible: ${exp.prettyST}")
-      case _: AST.IR.Exp.If => halt(s"Infeasible: ${exp.prettyST}")
-      case _: AST.IR.Exp.Apply => halt(s"Infeasible: ${exp.prettyST}")
+      case exp: AST.IR.Exp.R => halt(s"TODO: ${exp.prettyST.render}")
+      case exp: AST.IR.Exp.Construct => halt(s"Infeasible: ${exp.prettyST.render}")
+      case _: AST.IR.Exp.String => halt(s"Infeasible: ${exp.prettyST.render}")
+      case _: AST.IR.Exp.Indexing => halt(s"Infeasible: ${exp.prettyST.render}")
+      case _: AST.IR.Exp.LocalVarRef => halt(s"Infeasible: ${exp.prettyST.render}")
+      case _: AST.IR.Exp.GlobalVarRef => halt(s"Infeasible: ${exp.prettyST.render}")
+      case _: AST.IR.Exp.FieldVarRef => halt(s"Infeasible: ${exp.prettyST.render}")
+      case _: AST.IR.Exp.EnumElementRef => halt(s"Infeasible: ${exp.prettyST.render}")
+      case _: AST.IR.Exp.If => halt(s"Infeasible: ${exp.prettyST.render}")
+      case _: AST.IR.Exp.Apply => halt(s"Infeasible: ${exp.prettyST.render}")
     }
   }
 
@@ -873,13 +881,13 @@ import IRSimulator._
     }
   }
 
-  @pure def checkRAW(label: Z, edits: ISZ[State.Edit], index: Z): Unit = {
+  @pure def checkRAW(label: Z, edits: ISZ[State.Edit], index: Z, tsf: ISZ[Z] => ST): Unit = {
     for (i <- edits.indices if i != index) {
       if (edits(index).writes.temps.keySet.intersect(edits(i).reads.temps.keySet).nonEmpty) {
         halt(
           st"""Detected temp RAW hazard in block .$label
-              |* Temp Writes = ${(edits(index).writes.temps.keySet.elements, ", ")}
-              |* Temp Reads = ${(edits(i).reads.temps.keySet.elements, ", ")}""".render)
+              |* Temp Writes = ${tsf(edits(index).writes.temps.keySet.elements)}
+              |* Temp Reads = ${tsf(edits(i).reads.temps.keySet.elements)}""".render)
       }
       if (edits(index).writes.memory.keySet.intersect(edits(i).reads.memory.keySet).nonEmpty) {
         halt(
@@ -890,11 +898,11 @@ import IRSimulator._
     }
   }
 
-  @pure def checkWrites(label: Z, edits: ISZ[State.Edit], index: Z): Unit = {
+  @pure def checkWrites(label: Z, edits: ISZ[State.Edit], index: Z, tsf: ISZ[Z] => ST): Unit = {
     for (i <- index + 1 until edits.size) {
       val tempSet = edits(index).writes.temps.keySet.intersect(edits(i).reads.temps.keySet)
       if (tempSet.nonEmpty) {
-        halt(st"Detected same multiple temp writes hazard in block .$label (${(tempSet.elements, ", ")})".render)
+        halt(st"Detected same multiple temp writes hazard in block .$label (${tsf(tempSet.elements)})".render)
       }
       val memSet = edits(index).writes.memory.keySet.intersect(edits(i).reads.memory.keySet)
       if (memSet.nonEmpty) {
@@ -903,10 +911,10 @@ import IRSimulator._
     }
   }
 
-  @pure def checkAccesses(label: Z, edits: ISZ[State.Edit]): Unit = {
+  @pure def checkAccesses(state: State, label: Z, edits: ISZ[State.Edit]): Unit = {
     ops.ISZOps(for (i <- edits.indices) yield i).parMap((i: Z) => {
-      checkRAW(label, edits, i)
-      checkWrites(label, edits, i)
+      checkRAW(label, edits, i, state.tempsST _)
+      checkWrites(label, edits, i, state.tempsST _)
     })
   }
 
@@ -916,7 +924,6 @@ import IRSimulator._
       r = r :+ evalStmt(state, g)
     }
     r = r :+ evalJump(state, b.jump)
-    checkAccesses(b.label, r)
     return r
   }
 
@@ -928,6 +935,7 @@ import IRSimulator._
       r = r :+ edits(i).update(state)
       i = i + 1
     }
+    checkAccesses(state, b.label, r)
     return r
   }
 
