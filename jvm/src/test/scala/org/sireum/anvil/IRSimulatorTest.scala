@@ -35,7 +35,7 @@ class IRSimulatorTest extends SireumRcSpec {
   val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result-sim"
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith("-test.sc") }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith("assert-test.sc") }
     m
   }
 
@@ -79,21 +79,24 @@ class IRSimulatorTest extends SireumRcSpec {
             val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.offset
             IRSimulator.State.Edit.Memory(testNumInfoOffset,
               for (_ <- 0 until ir.anvil.typeByteSize(AST.Typed.z)) yield u8"0xFF",
+              //ISZ(u8"1", u8"0", u8"0", u8"0", u8"0", u8"0", u8"0", u8"0"),
               IRSimulator.State.Accesses.empty).update(state)
             IRSimulator(ir.anvil).evalProcedure(state, ir.procedure)
             val displaySize = ir.anvil.config.printSize
-            val offset = ir.globalInfoMap.get(Util.displayName).get.offset + ir.anvil.spTypeByteSize +
-              ir.anvil.typeShaSize + ir.anvil.typeByteSize(AST.Typed.z)
-            val dp = state.DP.toZ
-            val (lo, hi): (Z, Z) = if (dp < displaySize) (0, dp) else (dp, displaySize + dp - 1)
-            val u8ms = MSZ.create(hi - lo, u8"0")
-            var j: Z = 0
-            for (i <- lo until hi) {
-              u8ms(j) = state.memory((offset + i) % displaySize)
-              j = j + 1
+            if (ir.anvil.config.shouldPrint) {
+              val offset = ir.globalInfoMap.get(Util.displayName).get.offset + ir.anvil.spTypeByteSize +
+                ir.anvil.typeShaSize + ir.anvil.typeByteSize(AST.Typed.z)
+              val dp = state.DP.toZ
+              val (lo, hi): (Z, Z) = if (dp < displaySize) (0, dp) else (dp, displaySize + dp - 1)
+              val u8ms = MSZ.create(hi - lo, u8"0")
+              var j: Z = 0
+              for (i <- lo until hi) {
+                u8ms(j) = state.memory((offset + i) % displaySize)
+                j = j + 1
+              }
+              val display = conversions.String.fromU8ms(u8ms)
+              print(display)
             }
-            val display = conversions.String.fromU8ms(u8ms)
-            print(display)
           case _ =>
         }
         reporter.printMessages()

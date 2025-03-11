@@ -402,7 +402,7 @@ import Anvil._
         case _ => F
       }
 
-      p = anvil.transformSplitTest(fresh, p, isRegisterInc _)
+      p = anvil.transformSplitTest(F, fresh, p, isRegisterInc _)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "register-inc"), p.prettyST)
       pass = pass + 1
 
@@ -411,7 +411,7 @@ import Anvil._
         case _ => F
       }
 
-      p = anvil.transformSplitTest(fresh, p, isCopy _)
+      p = anvil.transformSplitTest(F, fresh, p, isCopy _)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-copy"), p.prettyST)
       pass = pass + 1
 
@@ -572,30 +572,39 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformSplitTest(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure,
+  def transformSplitTest(goto: B, fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure,
                          test: (ISZ[AST.IR.Stmt.Ground], AST.IR.Stmt.Ground) => B @pure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
       if (b.grounds.size <= 1) {
-        blocks = blocks :+ b
+        if (goto && !b.jump.isInstanceOf[AST.IR.Jump.Goto]) {
+          val n = fresh.label()
+          blocks = blocks :+ AST.IR.BasicBlock(b.label, b.grounds, AST.IR.Jump.Goto(n, b.jump.pos))
+          blocks = blocks :+ AST.IR.BasicBlock(n, ISZ(), b.jump)
+        } else {
+          blocks = blocks :+ b
+        }
       } else {
         var block = b
         var grounds = ISZ[AST.IR.Stmt.Ground]()
         for (g <- b.grounds) {
           if (test(grounds, g)) {
+            val n = fresh.label()
             if (grounds.isEmpty) {
-              val n = fresh.label()
               blocks = blocks :+ AST.IR.BasicBlock(block.label, ISZ(g), AST.IR.Jump.Goto(n, g.pos))
-              grounds = ISZ()
-              block = AST.IR.BasicBlock(n, grounds, block.jump)
             } else {
-              val n = fresh.label()
               val m = fresh.label()
-              blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.Goto(n, g.pos))
-              blocks = blocks :+ AST.IR.BasicBlock(n, ISZ(g), AST.IR.Jump.Goto(m, g.pos))
-              grounds = ISZ()
-              block = AST.IR.BasicBlock(m, grounds, block.jump)
+              blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.Goto(m, g.pos))
+              blocks = blocks :+ AST.IR.BasicBlock(m, ISZ(g), AST.IR.Jump.Goto(n, g.pos))
+            }
+            grounds = ISZ()
+            if (goto && !b.jump.isInstanceOf[AST.IR.Jump.Goto]) {
+              val l = fresh.label()
+              blocks = blocks :+ AST.IR.BasicBlock(n, ISZ(), AST.IR.Jump.Goto(l, block.jump.pos))
+              block = AST.IR.BasicBlock(l, ISZ(), block.jump)
+            } else {
+              block = AST.IR.BasicBlock(n, grounds, block.jump)
             }
           } else {
             grounds = grounds :+ g
@@ -1050,7 +1059,7 @@ import Anvil._
         }
       }
 
-      r = transformSplitTest(fresh, r, hasAssignTempUsage _)
+      r = transformSplitTest(F, fresh, r, hasAssignTempUsage _)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-temp"), r.prettyST)
       pass = pass + 1
 
@@ -1080,7 +1089,7 @@ import Anvil._
         case _ => F
       }
 
-      r = transformSplitTest(fresh, r, isInvoke _)
+      r = transformSplitTest(T, fresh, r, isInvoke _)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-invoke"), r.prettyST)
       pass = pass + 1
 

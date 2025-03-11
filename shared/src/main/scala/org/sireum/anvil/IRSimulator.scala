@@ -829,9 +829,9 @@ import IRSimulator._
             }
           case _: Intrinsic.Decl => return State.Edit.Idem()
         }
-      case _: AST.IR.Stmt.Expr => halt(s"Infeasible: ${stmt.prettyST}")
-      case _: AST.IR.Stmt.Decl => halt(s"Infeasible: ${stmt.prettyST}")
-      case _: AST.IR.Stmt.Assign => halt(s"Infeasible: ${stmt.prettyST}")
+      case _: AST.IR.Stmt.Expr => halt(s"Infeasible: ${stmt.prettyST.render}")
+      case _: AST.IR.Stmt.Decl => halt(s"Infeasible: ${stmt.prettyST.render}")
+      case _: AST.IR.Stmt.Assign => halt(s"Infeasible: ${stmt.prettyST.render}")
     }
   }
 

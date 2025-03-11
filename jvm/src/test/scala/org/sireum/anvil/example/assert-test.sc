@@ -2,10 +2,10 @@
 
 import org.sireum._
 
-def bar(x: Z, y: Z): Unit = {
+@anvil.hls def bar(x: Z, y: Z): Unit = {
   assert(x == y, "x is not equal to y")
 }
 
-@anvil.hls def foo(): Unit = {
+@anvil.test def foo(): Unit = {
   bar(3, 5)
 }
