@@ -71,6 +71,54 @@ object MemCopyLog {
           |import chisel3.util._
           |import chisel3.experimental._
           |
+          |class PipelinedDivMod(val N: Int) extends Module {
+          |  val io = IO(new Bundle {
+          |    val a = Input(UInt(N.W))
+          |    val b = Input(UInt(N.W))
+          |    val start = Input(Bool())   // 触发计算
+          |    val valid = Output(Bool())  // 计算完成信号
+          |    val quotient = Output(UInt(N.W))
+          |    val remainder = Output(UInt(N.W))
+          |  })
+          |
+          |  val dividend = RegInit(0.U(N.W))
+          |  val divisor = RegInit(0.U(N.W))
+          |  val quotient = RegInit(0.U(N.W))
+          |  val remainder = RegInit(0.U(N.W))
+          |  val count = RegInit((N - 1).U((1+log2Ceil(N)).W))  // 适应不同位宽
+          |  val busy = RegInit(false.B)
+          |
+          |  when(io.start && !busy) {
+          |    dividend := io.a
+          |    divisor := io.b
+          |    quotient := 0.U
+          |    remainder := 0.U
+          |    count := N.U
+          |    busy := true.B
+          |  }.elsewhen(busy) {
+          |    when(count === 0.U) {
+          |      busy := false.B
+          |    } .otherwise {
+          |      val shifted = remainder << 1 | (dividend >> (N - 1))
+          |      remainder := shifted
+          |
+          |      when (shifted >= divisor) {
+          |        remainder := shifted - divisor
+          |        quotient := (quotient << 1) | 1.U
+          |      } .otherwise {
+          |        quotient := quotient << 1
+          |      }
+          |
+          |      dividend := dividend << 1
+          |      count := count - 1.U
+          |    }
+          |  }
+          |
+          |  io.quotient := quotient
+          |  io.remainder := remainder
+          |  io.valid := !busy
+          |}
+          |
           |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 32,
           |               val C_S_AXI_ADDR_WIDTH:  Int = 32,
           |               val ARRAY_REG_WIDTH:     Int = 8,
@@ -107,6 +155,9 @@ object MemCopyLog {
           |    // reg for recording how many rounds needed for the left bytes
           |    val LeftByteRounds = RegInit(0.U(8.W))
           |    val IdxLeftByteRounds = RegInit(0.U(8.W))
+          |
+          |    // divider
+          |    val divider64 = Module(new PipelinedDivMod(64))
           |
           |    // write operation
           |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
@@ -283,13 +334,13 @@ object MemCopyLog {
     return intrinsicST
   }
 
+  @strictpure def isRhsIntType(exp: AST.IR.Exp): B = exp match {
+    case exp: AST.IR.Exp.Int => T
+    case _ => F
+  }
+
   @pure def processStmtIntrinsic(i: AST.IR.Stmt.Intrinsic): ST = {
     var intrinsicST = st""
-
-    @strictpure def isRhsIntType(exp: AST.IR.Exp): B = exp match {
-      case exp: AST.IR.Exp.Int => T
-      case _ => F
-    }
 
     i match {
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.TempLoad) => {
@@ -564,16 +615,16 @@ object MemCopyLog {
             exprST = st"(${leftST.render} < ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Shr => {
-            val right: ST = if(anvil.isSigned(exp.right.tipe)) st"(${rightST}).asUInt" else rightST
-            exprST = st"${leftST.render} >> ${right.render}(4,0)"
+            val right: ST = if(isRhsIntType(exp.right)) rightST else st"${rightST.render}(4,0)"
+            exprST = st"(${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} >> ${right.render}"
           }
           case AST.IR.Exp.Binary.Op.Ushr => {
-            val right: ST = if(anvil.isSigned(exp.right.tipe)) st"(${rightST}).asUInt" else rightST
-            exprST = st"(${leftST.render}).asUInt >> ${right.render}(4,0)"
+            val right: ST = if(isRhsIntType(exp.right)) rightST else st"${rightST.render}(4,0)"
+            exprST = st"(${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asUInt" else ""} >> ${right.render}"
           }
           case AST.IR.Exp.Binary.Op.Shl => {
-            val right: ST = if(anvil.isSigned(exp.right.tipe)) st"(${rightST}).asUInt" else rightST
-            exprST = st"${leftST.render} << ${right.render}(4,0)"
+            val right: ST = if(isRhsIntType(exp.right)) rightST else st"${rightST.render}(4,0)"
+            exprST = st"(${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} << ${right.render}"
           }
           case _ => {
             halt(s"processExpr AST.IR.Exp.Binary unimplemented")
