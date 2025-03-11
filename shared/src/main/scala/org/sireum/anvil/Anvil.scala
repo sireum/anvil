@@ -1069,6 +1069,10 @@ import Anvil._
             val tc = TempCollector(HashSSet.empty)
             tc.transform_langastIRExp(g.rhs)
             return tc.r.nonEmpty
+          case g: AST.IR.Stmt.Assign.Index =>
+            val rc = RegisterDetector(F, F)
+            rc.transform_langastIRExp(g.index)
+            return !rc.hasDP
           case _: AST.IR.Stmt.Assign => return T
           case _ => return F
         }
