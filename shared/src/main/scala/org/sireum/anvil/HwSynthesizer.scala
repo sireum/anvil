@@ -552,7 +552,7 @@ object MemCopyLog {
             exprST = st"(${leftST.render} =/= ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Ge => {
-            exprST = st"(${leftST.render} <= ${rightST.render}).asUInt"
+            exprST = st"(${leftST.render} >= ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Gt => {
             exprST = st"(${leftST.render} > ${rightST.render}).asUInt"
