@@ -154,9 +154,9 @@ object IRSimulator {
               addMemory(offset, values))
           if (DEBUG_EDIT) {
             if (values.size == 1) {
-              println(s"* memory(${shortenHexString(conversions.Z.toU64(offset))}) = ${values(0)}  (old ${r.values(0)})")
+              println(s"* memory($offset) = ${values(0)}  (old ${r.values(0)})")
             } else {
-              println(s"* memory(${shortenHexString(conversions.Z.toU64(offset))}, ...) <- $values  (old ${r.values})")
+              println(s"* memory($offset, ...) <- $values  (old ${r.values})")
             }
           }
           for (i <- values.indices) {
