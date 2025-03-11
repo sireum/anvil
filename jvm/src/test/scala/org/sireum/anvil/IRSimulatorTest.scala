@@ -35,7 +35,7 @@ class IRSimulatorTest extends SireumRcSpec {
   val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result-sim"
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith("assert-test.sc") }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith("-test.sc") }
     m
   }
 
@@ -75,8 +75,16 @@ class IRSimulatorTest extends SireumRcSpec {
           override def string: String = "AnvilTest.Output"
         }, reporter) match {
           case Some(ir) =>
-            val state = IRSimulator.State.create(ir.anvil.config.memory, ir.maxRegisters)
+            val state = IRSimulator.State.create(ir.anvil.config.memory, ir.maxRegisters, ir.globalInfoMap)
             val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.offset
+            var locals = ISZ[Intrinsic.Decl.Local]()
+            for (entry <- ir.anvil.procedureParamInfo(Util.PBox(ir.procedure))._2.entries) {
+              val (id, info) = entry
+              locals = locals :+ Intrinsic.Decl.Local(info.offset, info.totalSize, id, info.tipe)
+            }
+            IRSimulator.State.Edit.Temp(IRSimulator.State.Edit.Temp.Kind.SP, state.spIndex,
+              conversions.Z.toU64(ir.globalSize), IRSimulator.State.Accesses.empty).update(state)
+            IRSimulator.State.Edit.Decl(Intrinsic.Decl(F, F, locals, ir.procedure.pos)).update(state)
             IRSimulator.State.Edit.Memory(testNumInfoOffset,
               for (_ <- 0 until ir.anvil.typeByteSize(AST.Typed.z)) yield u8"0xFF",
               //ISZ(u8"1", u8"0", u8"0", u8"0", u8"0", u8"0", u8"0", u8"0"),

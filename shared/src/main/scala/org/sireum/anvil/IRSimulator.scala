@@ -30,12 +30,17 @@ import org.sireum._
 import org.sireum.lang.{ast => AST}
 import org.sireum.U8._
 import org.sireum.U64._
+import org.sireum.lang.symbol.Resolver.QName
 
 object IRSimulator {
   val DEBUG: B = T
-  val DEBUG_EDIT: B = T
+  var DEBUG_EDIT: B = T
+  var DEBUG_GLOBAL: B = T
+  var DEBUG_LOCAL: B = T
 
-  @record @unclonable class State(val memory: MSZ[U8], val temps: MSZ[U64]) {
+  @record @unclonable class State(val globalMap: HashSMap[QName, Anvil.VarInfo],
+                                  val memory: MSZ[U8], val temps: MSZ[U64],
+                                  var callFrames: Stack[HashSMap[String, Intrinsic.Decl.Local]]) {
     @pure def cpIndex: Z = {
       return temps.size - 3
     }
@@ -80,12 +85,57 @@ object IRSimulator {
 
     @strictpure def tempsST(temps: ISZ[Z]): ST = st"${(for (t <- temps) yield tempST(t), ", ")}"
 
-    @pure override def string: String = {
-      if (DEBUG) {
-        return st"CP = ${shortenHexString(temps(temps.size - 3))}, SP = ${shortenHexString(SP)}, DP = ${shortenHexString(DP)}, temps = [${(for (i <- 0 until temps.size - 3) yield shortenHexString(temps(i)), ", ")}]".render
+    @pure def prettyST(sim: IRSimulator): ST = {
+      val globalSTOpt: Option[ST] = if (DEBUG_GLOBAL) {
+        var globalSTs = ISZ[ST]()
+        for (entry <- globalMap.entries) {
+          val (name, info) = entry
+          if (info.isScalar) {
+            val v = sim.load(memory, info.offset, info.size)._1
+            globalSTs = globalSTs :+ st"${(name, ".")}@[${shortenHexString(conversions.Z.toU64(info.offset))} (${info.offset}), ${info.size}] = ${shortenHexString(v)} (${v.toZ})"
+          } else {
+            globalSTs = globalSTs :+ st"${(name, ".")}@[${shortenHexString(conversions.Z.toU64(info.offset))} (${info.offset}), ${info.size}] = ..."
+          }
+        }
+        Some(
+          st""", globals = {
+              |  ${(globalSTs, ",\n")}
+              |}""")
       } else {
-        return s"CP = ${temps(temps.size - 3).toZ}, SP = ${SP.toZ}, DP = ${DP.toZ}, temps = ${for (i <- 0 until temps.size - 3) yield temps(i).toZ}"
+        None()
       }
+      var localSTOpt: Option[ST] = if (DEBUG_LOCAL) {
+        var localSTs = ISZ[ST]()
+        for (entry <- callFrames.peek.get.entries) {
+          val (id, info) = entry
+          val offset = SP.toZ + info.offset
+          if (sim.anvil.isScalar(info.tipe)) {
+            val v = sim.load(memory, offset, info.size)._1
+            localSTs = localSTs :+ st"$id@[${shortenHexString(conversions.Z.toU64(offset))} ($offset), ${info.size}] = ${shortenHexString(v)} (${v.toZ})"
+          } else if (id == Util.sfDescId) {
+            val size = Z(info.tipe.asInstanceOf[AST.Typed.Name].args(0).string).get
+            val descOffset = offset + sim.anvil.typeShaSize + sim.anvil.typeByteSize(AST.Typed.z)
+            val desc = conversions.String.fromU8ms(ops.MSZOps(memory).slice(descOffset, descOffset + size))
+            val sz = sim.load(memory, offset + sim.anvil.typeShaSize, sim.anvil.typeByteSize(AST.Typed.z))._1
+            val index = st"[${shortenHexString(conversions.Z.toU64(offset))} ($offset), ${info.size}; .size = ${shortenHexString(sz)} (${sz.toZ})]"
+            //val t = sim.load(memory, offset, sim.anvil.typeShaSize)._1
+            //localSTs = localSTs :+ st"$id@$index.type = ${shortenHexString(t)} (${t.toZ})"
+            localSTs = localSTs :+ st"$id@$index = \"${ops.StringOps(desc).escapeST}\""
+          } else {
+            localSTs = localSTs :+ st"$id@[${shortenHexString(conversions.Z.toU64(offset))} ($offset), ${info.size}] = ..."
+          }
+        }
+        Some(
+          st""", locals = {
+              |  ${(localSTs, ",\n")}
+              |}""")
+      } else {
+        None()
+      }
+      val r =
+        st"""CP = ${shortenHexString(CP)} (${CP.toZ}), SP = ${shortenHexString(SP)} (${SP.toZ}), DP = ${shortenHexString(DP)} (${DP.toZ}),
+            |temps = [${(for (i <- 0 until temps.size - 3) yield shortenHexString(temps(i)), ", ")}]$globalSTOpt$localSTOpt"""
+      return r
     }
 
   }
@@ -110,11 +160,43 @@ object IRSimulator {
 
     object Edit {
 
-      @datatype class Idem extends Edit {
+      @datatype class CallFrame(val isPush: B) extends Edit {
         @strictpure def reads: Accesses = Accesses.empty
         @strictpure def writes: Accesses = Accesses.empty
         def update(state: State): Undo = {
-          return this
+          if (isPush) {
+            if (DEBUG_EDIT) {
+              println(s"* Push a new call frame")
+            }
+            state.callFrames = state.callFrames.push(HashSMap.empty)
+          } else {
+            if (DEBUG_EDIT) {
+              println(s"* Pop a call frame")
+            }
+            state.callFrames = state.callFrames.pop.get._2
+          }
+          return CallFrame(!isPush)
+        }
+      }
+
+      @datatype class Decl(val decl: Intrinsic.Decl) extends Edit {
+        @strictpure def reads: Accesses = Accesses.empty
+        @strictpure def writes: Accesses = Accesses.empty
+        def update(state: State): Undo = {
+          var top = state.callFrames.peek.get
+          if (DEBUG_EDIT) {
+            val slotSTs: ISZ[ST] = for (slot <- decl.slots) yield st"${slot.id}@[${shortenHexString(state.SP + conversions.Z.toU64(slot.offset))}, ${slot.size}]: ${slot.tipe}"
+            println(st"* ${if (decl.isAlloc) if (decl.undecl) "unalloc" else "alloc" else if (decl.undecl) "undecl" else "decl"} ${(slotSTs, ", ")}".render)
+          }
+          if (decl.undecl) {
+            top = top -- (for (l <- decl.slots) yield l.id)
+            state.callFrames = state.callFrames.pop.get._2.push(top)
+            return Decl(decl(undecl = F))
+          } else {
+            top = top ++ (for (l <- decl.slots) yield (l.id, l))
+            state.callFrames = state.callFrames.pop.get._2.push(top)
+            return Decl(decl(undecl = T))
+          }
         }
       }
 
@@ -154,9 +236,9 @@ object IRSimulator {
               addMemory(offset, values))
           if (DEBUG_EDIT) {
             if (values.size == 1) {
-              println(s"* memory($offset) = ${values(0)}  (old ${r.values(0)})")
+              println(s"* memory(${shortenHexString(conversions.Z.toU64(offset))} ($offset)) = ${values(0)}  (old ${r.values(0)})")
             } else {
-              println(s"* memory($offset, ...) <- $values  (old ${r.values})")
+              println(s"* memory(${shortenHexString(conversions.Z.toU64(offset))} ($offset), ...) <- $values  (old ${r.values})")
             }
           }
           for (i <- values.indices) {
@@ -197,7 +279,8 @@ object IRSimulator {
       @strictpure def empty: Accesses = Accesses(HashSMap.empty, HashSMap.empty)
     }
 
-    @strictpure def create(memory: Z, temps: Z): State = State(MSZ.create(memory, u8"0"), MSZ.create(temps + 3, u64"0"))
+    @strictpure def create(memory: Z, temps: Z, globalMap: HashSMap[QName, Anvil.VarInfo]): State =
+      State(globalMap, MSZ.create(memory, u8"0"), MSZ.create(temps + 3, u64"0"), Stack(ISZ(HashSMap.empty)))
 
   }
 
@@ -242,7 +325,7 @@ object IRSimulator {
     }
 
     @strictpure def +(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromU8(toU8 + other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 + other.toU16)
@@ -827,7 +910,7 @@ import IRSimulator._
               val dp: U64 = conversions.Z.toU64(if (in.isInc) conversions.U64.toZ(state.DP) + v.value else v.value)
               return State.Edit.Temp(State.Edit.Temp.Kind.DP, state.dpIndex, dp, acs)
             }
-          case _: Intrinsic.Decl => return State.Edit.Idem()
+          case stmt: Intrinsic.Decl => return State.Edit.Decl(stmt)
         }
       case _: AST.IR.Stmt.Expr => halt(s"Infeasible: ${stmt.prettyST.render}")
       case _: AST.IR.Stmt.Decl => halt(s"Infeasible: ${stmt.prettyST.render}")
@@ -919,7 +1002,25 @@ import IRSimulator._
   }
 
   @pure def evalBlock(state: State, b: AST.IR.BasicBlock): ISZ[State.Edit] = {
+    @strictpure def spInc(g: AST.IR.Stmt.Ground): Z = g match {
+      case AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(isSP, isInc, n: AST.IR.Exp.Int, _)) if isSP && isInc => n.value
+      case _ => 0
+    }
+    @pure def spIncBlock: Z = {
+      var r: Z = 0
+      for (g <- b.grounds) {
+        val n = spInc(g)
+        if (n != 0) {
+          r = n
+        }
+      }
+      return r
+    }
     var r = ISZ[State.Edit]()
+    val n = spIncBlock
+    if (n != 0) {
+      r = r :+ State.Edit.CallFrame(n > 0)
+    }
     for (g <- b.grounds) {
       r = r :+ evalStmt(state, g)
     }
@@ -947,7 +1048,9 @@ import IRSimulator._
       if (i >= 0) {
         file = ops.StringOps(file).substring(i + 1, file.size)
       }
-      println(s"$title block ${b.label}: $state")
+      println(
+        st"""$title block .${b.label}:
+            |  ${state.prettyST(this)}""".render)
     }
 
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
@@ -972,7 +1075,9 @@ import IRSimulator._
     }
 
     if (DEBUG) {
-      println(s"End state: $state")
+      println(
+        st"""End state:
+            |  ${state.prettyST(this)}""".render)
     }
   }
 

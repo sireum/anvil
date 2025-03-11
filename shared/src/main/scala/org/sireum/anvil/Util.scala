@@ -523,6 +523,7 @@ object Util {
   val typeFieldId: String = "$type"
   val sizeFieldId: String = "$size"
   val sfCallerId: String = "$sfCaller"
+  val sfCurrentId: String = "$sfCurrentId"
   val sfLocId: String = "$sfLoc"
   val sfDescId: String = "$sfDesc"
   val testId: String = "$test"
@@ -530,6 +531,7 @@ object Util {
   val sfLocType: AST.Typed.Name = AST.Typed.u32
   val objInitId: String = "<objinit>"
   val newInitId: String = "<init>"
+  val memName: ISZ[String] = ISZ("$memory")
   val memTypeName: ISZ[String] = ISZ(typeFieldId)
   val memSizeName: ISZ[String] = ISZ(sizeFieldId)
   val displayId: String = "$display"
@@ -555,7 +557,7 @@ object Util {
     "printF64_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.f64), AST.Typed.u64) +
     "printString" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.string), AST.Typed.u64) +
     "load" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType), displayIndexType) +
-    "printStackTrace" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayType, displayIndexType, displayIndexType, displayIndexType, displayIndexType, displayIndexType), AST.Typed.u64)
+    "printStackTrace" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayType, displayIndexType, displayIndexType, displayIndexType, displayIndexType, displayIndexType, displayIndexType), AST.Typed.u64)
 
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
   val syntheticMethodIds: HashSet[String] = HashSet.empty[String] + objInitId + newInitId + testId
