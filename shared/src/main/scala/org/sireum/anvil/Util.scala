@@ -30,6 +30,9 @@ import org.sireum.alir.MonotonicDataflowFramework
 import org.sireum.lang.symbol.Info
 import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.{ast => AST}
+import org.sireum.U64._
+import org.sireum.lang.ast.IR
+import org.sireum.lang.ast.IR.Exp
 
 object Util {
   @enum object PMod {
@@ -486,6 +489,124 @@ object Util {
     }
   }
 
+  @record class FloatEqualityTransformer(val anvil: Anvil) extends MAnvilIRTransformer {
+    override def post_langastIRExpBinary(o: AST.IR.Exp.Binary): MOption[AST.IR.Exp] = {
+      val ct: AST.Typed.Name = o.tipe match {
+        case AST.Typed.f32 => AST.Typed.u32
+        case AST.Typed.f64 => AST.Typed.u64
+        case _ => return MNone()
+      }
+      if (o.op == AST.IR.Exp.Binary.Op.Eq || o.op == AST.IR.Exp.Binary.Op.Ne) {
+        return MSome(o(
+          left = AST.IR.Exp.Type(F, o.left, ct, o.left.pos),
+          right = AST.IR.Exp.Type(F, o.right, ct, o.right.pos)))
+      }
+//      if (o.op == AST.IR.Exp.Binary.Op.FpEq) {
+//        return MSome(o(op = AST.IR.Exp.Binary.Op.Eq))
+//      }
+//      if (o.op == AST.IR.Exp.Binary.Op.FpNe) {
+//        return MSome(o(op = AST.IR.Exp.Binary.Op.Ne))
+//      }
+      return MNone()
+    }
+  }
+
+  @record class ShiftTransformer(val anvil: Anvil) extends MAnvilIRTransformer {
+    override def post_langastIRBasicBlock(o: AST.IR.BasicBlock): MOption[AST.IR.BasicBlock] = {
+      var changed = T
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      for (g <- o.grounds) {
+        g match {
+          case g@AST.IR.Stmt.Assign.Temp(lhs, rhs: AST.IR.Exp.Binary, pos) =>
+            processBinary(lhs, rhs, pos) match {
+              case Some((e, stmtOpt)) =>
+                changed = T
+                grounds = grounds :+ g(rhs = e)
+                stmtOpt match {
+                  case Some(stmt) => grounds = grounds :+ stmt
+                  case _ =>
+                }
+              case _ => grounds = grounds :+ g
+            }
+          case _ => grounds = grounds :+ g
+        }
+      }
+      return if (changed) MSome(o(grounds = grounds)) else MNone()
+    }
+
+    def processBinary(temp: Z, e: AST.IR.Exp.Binary, pos: message.Position): Option[(AST.IR.Exp, Option[AST.IR.Stmt.Ground])] = {
+      if (e.right.isInstanceOf[AST.IR.Exp.Int]) {
+        return None()
+      }
+      e.op match {
+        case AST.IR.Exp.Binary.Op.Shl =>
+        case AST.IR.Exp.Binary.Op.Shr =>
+        case AST.IR.Exp.Binary.Op.Ushr =>
+        case _ => return None()
+      }
+      val bitWidth = anvil.subZOpt(e.tipe).get.ast.bitWidth
+      if (bitWidth <= 20) {
+        return None()
+      }
+
+      val et = e.tipe.asInstanceOf[AST.Typed.Name]
+      if (anvil.isSigned(e.tipe)) {
+        val (id, ct): (String, AST.Typed.Name) = bitWidth match {
+          case z"32" =>
+            e.op match {
+              case AST.IR.Exp.Binary.Op.Shl => ("shlU32", AST.Typed.u32)
+              case AST.IR.Exp.Binary.Op.Shr => ("shrS32", AST.Typed.s32)
+              case AST.IR.Exp.Binary.Op.Ushr => ("shrU32", AST.Typed.u32)
+              case _ => halt("Infeasible")
+            }
+          case z"64" =>
+            e.op match {
+              case AST.IR.Exp.Binary.Op.Shl => ("shlU64", AST.Typed.u64)
+              case AST.IR.Exp.Binary.Op.Shr => ("shrS64", AST.Typed.s64)
+              case AST.IR.Exp.Binary.Op.Ushr => ("shrU64", AST.Typed.u64)
+              case _ => halt("Infeasible")
+            }
+          case _ => halt("Infeasible")
+        }
+        val exp = AST.IR.Exp.Apply(T, runtimeName, id, ISZ(
+          AST.IR.Exp.Type(F, e.left, ct, e.pos),
+          AST.IR.Exp.Type(F, e.right, ct, e.pos)),
+          runtimeMethodTypeMap.get(id).get, ct, e.pos)
+        return Some((exp, Some(AST.IR.Stmt.Assign.Temp(temp,
+          AST.IR.Exp.Type(F, AST.IR.Exp.Temp(temp, ct, e.pos), et, e.pos),
+          pos))))
+      } else {
+        def computeBitMask(bitWidth: U64): U64 = {
+          var mask: U64 = u64"0"
+          for (i <- u64"0" until bitWidth) {
+            mask = mask | (u64"1" << i)
+          }
+          return mask
+        }
+        val stmtOpt: Option[AST.IR.Stmt.Ground] = if (bitWidth == 64 || bitWidth == 32) {
+          None()
+        } else {
+          val mask = computeBitMask(conversions.Z.toU64(bitWidth))
+          Some(AST.IR.Stmt.Assign.Temp(temp, AST.IR.Exp.Type(F,
+            AST.IR.Exp.Binary(AST.Typed.u64, AST.IR.Exp.Temp(temp, AST.Typed.u64, e.pos), AST.IR.Exp.Binary.Op.And,
+              AST.IR.Exp.Int(AST.Typed.u64, mask.toZ, e.pos), e.pos),
+            et, pos), pos))
+        }
+        val (id, ct): (String, AST.Typed.Name) = e.op match {
+          case AST.IR.Exp.Binary.Op.Shl => if (bitWidth <= 32) ("shlU32", AST.Typed.u32) else ("shlU64", AST.Typed.u64)
+          case AST.IR.Exp.Binary.Op.Shr => if (bitWidth <= 32) ("shrU32", AST.Typed.u32) else ("shrU64", AST.Typed.u64)
+          case AST.IR.Exp.Binary.Op.Ushr => if (bitWidth <= 32) ("shrU32", AST.Typed.u32) else ("shrU64", AST.Typed.u64)
+          case _ => halt("Infeasible")
+        }
+        val exp = AST.IR.Exp.Apply(T, runtimeName, id, ISZ(
+          if (stmtOpt.isEmpty) e.left else AST.IR.Exp.Type(F, e.left, ct, e.pos),
+          if (stmtOpt.isEmpty) e.right else AST.IR.Exp.Type(F, e.right, ct, e.pos)),
+          runtimeMethodTypeMap.get(id).get, ct, e.pos)
+        return Some((exp, stmtOpt))
+      }
+    }
+  }
+
   @datatype class TempLV(val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[Z] {
     @strictpure def isForward: B = F
     @strictpure def isLUB: B = T
@@ -545,7 +666,7 @@ object Util {
   val runtimeName: QName = AST.Typed.sireumName :+ "anvil" :+ "Runtime"
   val mainAnnName: QName = AST.Typed.sireumName :+ "anvil" :+ "hls"
   val testAnnName: QName = AST.Typed.sireumName :+ "anvil" :+ "test"
-  val runtimeMethodTypeMap: HashSMap[String, AST.Typed.Fun] = HashSMap.empty[String, AST.Typed.Fun] +
+  val runtimePrintMethodTypeMap: HashSMap[String, AST.Typed.Fun] = HashSMap.empty[String, AST.Typed.Fun] +
     "printB" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.b), AST.Typed.u64) +
     "printC" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.c), AST.Typed.u64) +
     "printS64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.s64), AST.Typed.u64) +
@@ -558,6 +679,14 @@ object Util {
     "printString" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.string), AST.Typed.u64) +
     "load" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType), displayIndexType) +
     "printStackTrace" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayType, displayIndexType, displayIndexType, displayIndexType, displayIndexType, displayIndexType, displayIndexType), AST.Typed.u64)
+
+  val runtimeMethodTypeMap: HashSMap[String, AST.Typed.Fun] = HashSMap.empty[String, AST.Typed.Fun] +
+    "shlU32" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u32, AST.Typed.u32), AST.Typed.u32) +
+    "shrU32" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u32, AST.Typed.u32), AST.Typed.u32) +
+    "shrS32" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.s32, AST.Typed.s32), AST.Typed.s32) +
+    "shlU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u64, AST.Typed.u64), AST.Typed.u64)
+    "shrU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u64, AST.Typed.u64), AST.Typed.u64)
+    "shrS64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.s64, AST.Typed.s64), AST.Typed.s64)
 
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
   val syntheticMethodIds: HashSet[String] = HashSet.empty[String] + objInitId + newInitId + testId

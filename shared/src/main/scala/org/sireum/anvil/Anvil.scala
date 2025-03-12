@@ -267,7 +267,7 @@ import Anvil._
       }
       if (config.shouldPrint) {
         globals = globals :+ AST.IR.Global(displayType, displayName, startOpt.get.pos)
-        for (id <- runtimeMethodTypeMap.keys) {
+        for (id <- runtimePrintMethodTypeMap.keys) {
           val info = th.nameMap.get(runtimeName :+ id).get.asInstanceOf[Info.Method]
           procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
         }
@@ -1029,6 +1029,26 @@ import Anvil._
 
       r = IntTransformer(this).transform_langastIRProcedure(r).getOrElse(r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "int"), r.prettyST)
+      pass = pass + 1
+
+      r = FloatEqualityTransformer(this).transform_langastIRProcedure(r).getOrElse(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "float-eq"), r.prettyST)
+      pass = pass + 1
+
+      if (p.context.owner != runtimeName) {
+        r = ShiftTransformer(this).transform_langastIRProcedure(r).getOrElse(r)
+      }
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "shift"), r.prettyST)
+      pass = pass + 1
+
+      @strictpure def isDivMod(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
+        case AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.Binary, _) =>
+          rhs.op == AST.IR.Exp.Binary.Op.Div || rhs.op == AST.IR.Exp.Binary.Op.Rem
+        case _ => F
+      }
+
+      r = transformSplitTest(F, fresh, r, isDivMod _)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-div-mod"), r.prettyST)
       pass = pass + 1
 
       r = transformStackTraceLoc(r)
@@ -1888,7 +1908,7 @@ import Anvil._
               AST.IR.Exp.Int(displayIndexType, typeByteSize(sfLocType), pos),
               AST.IR.Exp.Int(displayIndexType, typeByteSize(AST.Typed.z), pos),
               AST.IR.Exp.Temp(0, displayIndexType, pos)
-            ), runtimeMethodTypeMap.get(id).get, AST.Typed.u64, pos), pos),
+            ), runtimePrintMethodTypeMap.get(id).get, AST.Typed.u64, pos), pos),
             AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T,
               AST.IR.Exp.Type(F, AST.IR.Exp.Temp(1, AST.Typed.u64, pos), dpType, pos), pos))
           ))
@@ -1981,33 +2001,33 @@ import Anvil._
                 val printApply: AST.IR.Exp.Apply = arg.tipe match {
                   case AST.Typed.b =>
                     val id = "printB"
-                    val mt = runtimeMethodTypeMap.get(id).get
+                    val mt = runtimePrintMethodTypeMap.get(id).get
                     AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
                   case AST.Typed.c =>
                     val id = "printC"
-                    val mt = runtimeMethodTypeMap.get(id).get
+                    val mt = runtimePrintMethodTypeMap.get(id).get
                     AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
                   case AST.Typed.z =>
                     val id = "printS64"
-                    val mt = runtimeMethodTypeMap.get(id).get
+                    val mt = runtimePrintMethodTypeMap.get(id).get
                     AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, AST.IR.Exp.Type(F, arg, AST.Typed.s64, pos)), mt, mt.ret, pos)
                   case AST.Typed.f32 =>
                     val id = "printF32_2"
-                    val mt = runtimeMethodTypeMap.get(id).get
+                    val mt = runtimePrintMethodTypeMap.get(id).get
                     AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
                   case AST.Typed.f64 =>
                     val id = "printF64_2"
-                    val mt = runtimeMethodTypeMap.get(id).get
+                    val mt = runtimePrintMethodTypeMap.get(id).get
                     AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
                   case AST.Typed.string =>
                     val id = "printString"
-                    val mt = runtimeMethodTypeMap.get(id).get
+                    val mt = runtimePrintMethodTypeMap.get(id).get
                     AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
                   case t if subZOpt(t).nonEmpty =>
                     if (isBitVector(t)) {
                       val digits = AST.IR.Exp.Int(AST.Typed.z, typeByteSize(t) * 2, pos)
                       val id = "printU64Hex"
-                      val mt = runtimeMethodTypeMap.get(id).get
+                      val mt = runtimePrintMethodTypeMap.get(id).get
                       var a = arg
                       if (a.tipe != AST.Typed.u64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.u64, pos)
@@ -2015,7 +2035,7 @@ import Anvil._
                       AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, a, digits), mt, mt.ret, pos)
                     } else if (isSigned(t)) {
                       val id = "printS64"
-                      val mt = runtimeMethodTypeMap.get(id).get
+                      val mt = runtimePrintMethodTypeMap.get(id).get
                       var a = arg
                       if (a.tipe != AST.Typed.s64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.s64, pos)
@@ -2023,7 +2043,7 @@ import Anvil._
                       AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, a), mt, mt.ret, pos)
                     } else {
                       val id = "printU64"
-                      val mt = runtimeMethodTypeMap.get(id).get
+                      val mt = runtimePrintMethodTypeMap.get(id).get
                       var a = arg
                       if (a.tipe != AST.Typed.u64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.u64, pos)
