@@ -535,6 +535,13 @@ object Util {
     }
 
     def processBinary(temp: Z, e: AST.IR.Exp.Binary, pos: message.Position): Option[(AST.IR.Exp, Option[AST.IR.Stmt.Ground])] = {
+      def computeBitMask(bitWidth: U64): U64 = {
+        var mask: U64 = u64"0"
+        for (i <- u64"0" until bitWidth) {
+          mask = mask | (u64"1" << i)
+        }
+        return mask
+      }
       if (e.right.isInstanceOf[AST.IR.Exp.Int]) {
         return None()
       }
@@ -576,13 +583,6 @@ object Util {
           AST.IR.Exp.Type(F, AST.IR.Exp.Temp(temp, ct, e.pos), et, e.pos),
           pos))))
       } else {
-        def computeBitMask(bitWidth: U64): U64 = {
-          var mask: U64 = u64"0"
-          for (i <- u64"0" until bitWidth) {
-            mask = mask | (u64"1" << i)
-          }
-          return mask
-        }
         val stmtOpt: Option[AST.IR.Stmt.Ground] = if (bitWidth == 64 || bitWidth == 32) {
           None()
         } else {
