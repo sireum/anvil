@@ -69,6 +69,10 @@ object cli {
       Opt(name = "output", longKey = "output-dir", shortKey = Some('o'),
         tpe = Type.Path(F, Some("out")),
         description = "Output directory synthesized files"),
+      Opt(name = "axi4", longKey = "axi4", shortKey = None(),
+        tpe = Type.Flag(F), description = "Enable AXI4 interface"),
+      Opt(name = "customDivRem", longKey = "custom-div-rem", shortKey = None(),
+        tpe = Type.Flag(F), description = "Enable custom division and remainder implementations"),
       Opt(name = "verbose", longKey = "verbose", shortKey = None(),
         tpe = Type.Flag(F), description = "Enable verbose mode")
     ),
