@@ -234,7 +234,7 @@ import Anvil._
               AST.IR.Exp.Binary(AST.Typed.z, temp, AST.IR.Exp.Binary.Op.Eq, AST.IR.Exp.Int(AST.Typed.z, i, pos), pos),
               pos),
             AST.IR.Stmt.Block(ISZ(
-              AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, p.context.owner, p.context.id, ISZ(), p.tipe, AST.Typed.unit, pos))
+              AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, p.context.owner, p.context.id, ISZ(), p.tipe, pos))
             ), pos), AST.IR.Stmt.Block(ISZ(), pos), pos)
           i = i + 1
         }
@@ -514,7 +514,6 @@ import Anvil._
     for (b <- body.blocks if b.grounds.isEmpty) {
       b.jump match {
         case j: AST.IR.Jump.Goto => map = map + b.label ~> j
-        case j@AST.IR.Jump.Intrinsic(_: Intrinsic.GotoLocal) => map = map + b.label ~> j
         case _ =>
       }
     }
@@ -824,7 +823,7 @@ import Anvil._
             }
             if (classInit(rhs.tipe).nonEmpty) {
               grounds = grounds :+ AST.IR.Stmt.Expr(AST.IR.Exp.Apply(F, rhs.tipe.ids, newInitId,
-                ISZ(temp), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(rhs.tipe), AST.Typed.unit), AST.Typed.unit, rhs.pos))
+                ISZ(temp), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(rhs.tipe), AST.Typed.unit), rhs.pos))
             }
           case _ => grounds = grounds :+ g
         }
@@ -932,7 +931,7 @@ import Anvil._
               blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.If(AST.IR.Exp.GlobalVarRef(
                 owner, AST.Typed.b, pos), label2, label1, pos))
               blocks = blocks :+ AST.IR.BasicBlock(label1, ISZ(AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, owner, objInitId,
-                ISZ(), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), AST.Typed.unit, pos))),
+                ISZ(), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), pos))),
                 AST.IR.Jump.Goto(label2, pos))
               grounds = ISZ(g)
               block = b(label = label2, grounds = grounds)
@@ -1908,7 +1907,7 @@ import Anvil._
               AST.IR.Exp.Int(displayIndexType, typeByteSize(sfLocType), pos),
               AST.IR.Exp.Int(displayIndexType, typeByteSize(AST.Typed.z), pos),
               AST.IR.Exp.Temp(0, displayIndexType, pos)
-            ), runtimePrintMethodTypeMap.get(id).get, AST.Typed.u64, pos), pos),
+            ), runtimePrintMethodTypeMap.get(id).get, pos), pos),
             AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T,
               AST.IR.Exp.Type(F, AST.IR.Exp.Temp(1, AST.Typed.u64, pos), dpType, pos), pos))
           ))
@@ -2002,27 +2001,27 @@ import Anvil._
                   case AST.Typed.b =>
                     val id = "printB"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, pos)
                   case AST.Typed.c =>
                     val id = "printC"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, pos)
                   case AST.Typed.z =>
                     val id = "printS64"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, AST.IR.Exp.Type(F, arg, AST.Typed.s64, pos)), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, AST.IR.Exp.Type(F, arg, AST.Typed.s64, pos)), mt, pos)
                   case AST.Typed.f32 =>
                     val id = "printF32_2"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, pos)
                   case AST.Typed.f64 =>
                     val id = "printF64_2"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, pos)
                   case AST.Typed.string =>
                     val id = "printString"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, mt.ret, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, pos)
                   case t if subZOpt(t).nonEmpty =>
                     if (isBitVector(t)) {
                       val digits = AST.IR.Exp.Int(AST.Typed.z, typeByteSize(t) * 2, pos)
@@ -2032,7 +2031,7 @@ import Anvil._
                       if (a.tipe != AST.Typed.u64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.u64, pos)
                       }
-                      AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, a, digits), mt, mt.ret, pos)
+                      AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, a, digits), mt, pos)
                     } else if (isSigned(t)) {
                       val id = "printS64"
                       val mt = runtimePrintMethodTypeMap.get(id).get
@@ -2040,7 +2039,7 @@ import Anvil._
                       if (a.tipe != AST.Typed.s64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.s64, pos)
                       }
-                      AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, a), mt, mt.ret, pos)
+                      AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, a), mt, pos)
                     } else {
                       val id = "printU64"
                       val mt = runtimePrintMethodTypeMap.get(id).get
@@ -2048,7 +2047,7 @@ import Anvil._
                       if (a.tipe != AST.Typed.u64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.u64, pos)
                       }
-                      AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, a), mt, mt.ret, pos)
+                      AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, a), mt, pos)
                     }
                   case AST.Typed.r => halt(s"TODO: $arg")
                   case t => halt(s"TODO: $t, $arg")

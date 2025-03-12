@@ -578,7 +578,7 @@ object Util {
         val exp = AST.IR.Exp.Apply(T, runtimeName, id, ISZ(
           AST.IR.Exp.Type(F, e.left, ct, e.pos),
           AST.IR.Exp.Type(F, e.right, ct, e.pos)),
-          runtimeMethodTypeMap.get(id).get, ct, e.pos)
+          runtimeMethodTypeMap.get(id).get, e.pos)
         return Some((exp, Some(AST.IR.Stmt.Assign.Temp(temp,
           AST.IR.Exp.Type(F, AST.IR.Exp.Temp(temp, ct, e.pos), et, e.pos),
           pos))))
@@ -601,7 +601,7 @@ object Util {
         val exp = AST.IR.Exp.Apply(T, runtimeName, id, ISZ(
           if (stmtOpt.isEmpty) e.left else AST.IR.Exp.Type(F, e.left, ct, e.pos),
           if (stmtOpt.isEmpty) e.right else AST.IR.Exp.Type(F, e.right, ct, e.pos)),
-          runtimeMethodTypeMap.get(id).get, ct, e.pos)
+          runtimeMethodTypeMap.get(id).get, e.pos)
         return Some((exp, stmtOpt))
       }
     }
