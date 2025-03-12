@@ -620,7 +620,7 @@ object MemCopyLog {
           }
           case AST.IR.Exp.Binary.Op.Ushr => {
             val right: ST = if(isRhsIntType(exp.right)) rightST else st"${rightST.render}(4,0)"
-            exprST = st"(${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asUInt" else ""} >> ${right.render}"
+            exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asUInt" else ""} >> ${right.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ""}"
           }
           case AST.IR.Exp.Binary.Op.Shl => {
             val right: ST = if(isRhsIntType(exp.right)) rightST else st"${rightST.render}(4,0)"
