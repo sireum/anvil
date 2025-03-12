@@ -78,8 +78,6 @@ class IRSimulatorTest extends SireumRcSpec {
       System.out.flush()
       System.err.flush()
       output.up.mkdirAll()
-      output.writeOver(bout.toString("UTF-8"))
-      output.writeAppend(berr.toString("UTF-8"))
       return r
     } catch {
       case t: Throwable =>
@@ -90,6 +88,8 @@ class IRSimulatorTest extends SireumRcSpec {
         System.err.flush()
         throw t
     } finally {
+      output.writeOver(bout.toString("UTF-8"))
+      output.writeAppend(berr.toString("UTF-8"))
       System.setErr(oldErr)
       System.setOut(oldOut)
     }
