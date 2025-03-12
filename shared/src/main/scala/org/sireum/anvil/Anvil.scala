@@ -641,34 +641,15 @@ import Anvil._
     for (i <- 0 until startingLabel) {
       cpSubstMap = cpSubstMap + i ~> i
     }
-    var blockMap = HashSMap.empty[Z, AST.IR.BasicBlock] ++ (for (b <- body.blocks) yield (b.label, b))
-    var blocks = ISZ[AST.IR.BasicBlock]()
-    var work = ISZ(body.blocks(0))
-    while (work.nonEmpty || blockMap.nonEmpty) {
-      if (work.isEmpty) {
-        val bs = blockMap.entries
-        work = ISZ(bs(0)._2)
-        blockMap = HashSMap.empty[Z, AST.IR.BasicBlock] ++ ops.ISZOps(bs).drop(1)
-      }
-      val b = work(work.size - 1)
-      work = ops.ISZOps(work).dropRight(1)
-      blocks = blocks :+ b
-      blockMap = blockMap -- ISZ(b.label)
-      for (target <- ops.ISZOps(b.jump.targets).reverse) {
-        blockMap.get(target) match {
-          case Some(b2) => work = work :+ b2
-          case _ =>
-        }
-      }
-    }
 
-    for (b <- blocks) {
+    for (b <- body.blocks) {
       if (b.label >= startingLabel) {
         cpSubstMap = cpSubstMap + b.label ~> cpSubstMap.size
       }
     }
+
     return transformEmptyBlock(CPSubstitutor(cpSubstMap).
-      transform_langastIRProcedure(p(body = body(blocks = blocks))).getOrElse(p))
+      transform_langastIRProcedure(p).getOrElse(p))
   }
 
   def transformSplitReadWrite(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -2041,7 +2022,7 @@ import Anvil._
                     val mt = runtimePrintMethodTypeMap.get(id).get
                     AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, pos)
                   case t if subZOpt(t).nonEmpty =>
-                    if (isBitVector(t)) {
+                    if (isBitVector(t) && !isSigned(t)) {
                       val digits = AST.IR.Exp.Int(AST.Typed.z, typeByteSize(t) * 2, pos)
                       val id = "printU64Hex"
                       val mt = runtimePrintMethodTypeMap.get(id).get

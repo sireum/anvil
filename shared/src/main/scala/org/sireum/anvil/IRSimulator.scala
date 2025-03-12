@@ -833,7 +833,7 @@ import IRSimulator._
       case exp: AST.IR.Exp.Type =>
         val (v, acs) = evalExp(state, exp.exp)
         val n: U64 =
-          if (anvil.isSigned(exp.t)) conversions.S64.toRawU64(conversions.Z.toS64(v.value))
+          if (anvil.isSigned(exp.exp.tipe)) conversions.S64.toRawU64(conversions.Z.toS64(v.value))
           else conversions.Z.toU64(v.value)
         return (Value.fromRawU64(n, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe)), acs)
       case exp: AST.IR.Exp.Intrinsic =>
@@ -886,7 +886,7 @@ import IRSimulator._
             return State.Edit.Temp(State.Edit.Temp.Kind.Register, in.temp, n, acs)
           case in: Intrinsic.Store =>
             val (v, eacs) = evalExp(state, in.rhs)
-            val n: U64 = if (in.isSigned) conversions.S64.toRawU64(conversions.Z.toS64(v.value)) else v.toU64
+            val n: U64 = if (anvil.isSigned(in.rhs.tipe)) conversions.S64.toRawU64(conversions.Z.toS64(v.value)) else v.toU64
             val (offset, oacs) = evalExp(state, in.lhsOffset)
             val acs = eacs + oacs
             return store(offset.value, anvil.typeByteSize(in.tipe), n, acs)

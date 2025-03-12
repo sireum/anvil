@@ -29,10 +29,10 @@ import org.sireum.test._
 
 object AnvilTest {
   val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "construct.sc" ~> 2048
-  val printFileSet: HashSet[String] = HashSet.empty[String] + "print.sc" + "assert-test.sc" + "add-test.sc" + "printU64-test.sc"
+  val printFileSet: HashSet[String] = HashSet.empty[String] + "print.sc" + "assert-test.sc" + "add-test.sc" + "printU64-test.sc" + "bubble-test.sc"
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert-test.sc" + "add-test.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add-test.sc"
-  val testFileSet: HashSet[String] = HashSet.empty[String] + "add-test.sc" + "assert-test.sc" + "printU64-test.sc"
+  val testFileSet: HashSet[String] = HashSet.empty[String] + "add-test.sc" + "assert-test.sc" + "printU64-test.sc" + "bubble-test.sc"
 }
 
 class AnvilTest extends SireumRcSpec {

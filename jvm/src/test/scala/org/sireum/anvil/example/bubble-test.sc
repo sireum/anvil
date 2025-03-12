@@ -1,5 +1,6 @@
 // #Sireum
 import org.sireum._
+import org.sireum.S16._
 
 def swap(a: MSZ[S16], i: Z, j: Z): Unit = {
   val t = a(i)
@@ -19,4 +20,25 @@ def swap(a: MSZ[S16], i: Z, j: Z): Unit = {
     }
     i = i + 1
   }
+}
+
+def printMSZ16(a: MSZ[S16]): Unit = {
+  print('[')
+  val size = a.size
+  if (size > 0) {
+    print(a(0))
+    var i: Z = 1
+    while (i < size) {
+      print(", ")
+      print(a(i))
+      i = i + 1
+    }
+  }
+  print(']')
+}
+
+@anvil.test def test0(): Unit = {
+  val a = MSZ(s16"-4")
+  bubble(a)
+  printMSZ16(a)
 }
