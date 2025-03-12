@@ -516,6 +516,7 @@ import Anvil._
     for (b <- body.blocks if b.grounds.isEmpty) {
       b.jump match {
         case j: AST.IR.Jump.Goto => map = map + b.label ~> j
+        case j@AST.IR.Jump.Intrinsic(_: Intrinsic.GotoLocal) => map = map + b.label ~> j
         case _ =>
       }
     }
@@ -540,7 +541,22 @@ import Anvil._
         case j: AST.IR.Jump.Goto =>
           val l = getTarget(j.label)
           map.get(l) match {
-            case Some(j2) => j2
+            case Some(j2) =>
+              j2 match {
+                case _: AST.IR.Jump.Intrinsic =>
+                  var found = F
+                  for (g <- b.grounds if !found) {
+                    g match {
+                      case AST.IR.Stmt.Intrinsic(in: Intrinsic.Store) if in.lhsOffset.isInstanceOf[AST.IR.Exp.Intrinsic] =>
+                        found = T
+                      case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isSP =>
+                        found = T
+                      case _ =>
+                    }
+                  }
+                  if (found) j(label = l) else j2
+                case _ => j2
+              }
             case _ => j(label = l)
           }
         case j: AST.IR.Jump.Return => j
