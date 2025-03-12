@@ -157,7 +157,7 @@ object MemCopyLog {
           |    val IdxLeftByteRounds = RegInit(0.U(8.W))
           |
           |    // divider
-          |    val divider64 = Module(new PipelinedDivMod(64))
+          |    //val divider64 = Module(new PipelinedDivMod(64))
           |
           |    // write operation
           |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
