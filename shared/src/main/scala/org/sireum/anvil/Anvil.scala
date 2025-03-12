@@ -2176,8 +2176,8 @@ import Anvil._
   @memoize def subZOpt(t: AST.Typed): Option[TypeInfo.SubZ] = {
     t match {
       case t: AST.Typed.Name =>
-        th.typeMap.get(t.ids).get match {
-          case ti: TypeInfo.SubZ => return Some(ti)
+        th.typeMap.get(t.ids) match {
+          case Some(ti: TypeInfo.SubZ) => return Some(ti)
           case _ =>
         }
       case _ =>

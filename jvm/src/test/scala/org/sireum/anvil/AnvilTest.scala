@@ -25,14 +25,19 @@
 package org.sireum.anvil
 
 import org.sireum._
+import org.sireum.anvil.AnvilTest.maxArrayFileMap
 import org.sireum.test._
 
 object AnvilTest {
-  val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "construct.sc" ~> 2048
-  val printFileSet: HashSet[String] = HashSet.empty[String] + "print.sc" + "assert-test.sc" + "add-test.sc" + "printU64-test.sc" + "bubble-test.sc"
-  val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert-test.sc" + "add-test.sc"
-  val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add-test.sc"
-  val testFileSet: HashSet[String] = HashSet.empty[String] + "add-test.sc" + "assert-test.sc" + "printU64-test.sc" + "bubble-test.sc"
+  val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
+    "construct.sc" ~> (3 * 1024) +
+    "factorial.sc" ~> (2 * 1024) +
+    "assert.sc" ~> (2 * 1024)
+  val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "sum.sc" ~> 3
+  val dontPrintFileSet: HashSet[String] = HashSet.empty[String]
+  val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
+  val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add.sc"
+  val dontTestFileSet: HashSet[String] = HashSet.empty[String]
 }
 
 class AnvilTest extends SireumRcSpec {
@@ -55,12 +60,13 @@ class AnvilTest extends SireumRcSpec {
         val file = path(path.size - 1)
         config = config(
           memory = AnvilTest.memoryFileMap.get(file).getOrElse(1024),
-          printSize = if (AnvilTest.printFileSet.contains(file)) 128 else 0,
+          printSize = if (!AnvilTest.dontPrintFileSet.contains(file)) 128 else 0,
           stackTrace = AnvilTest.stackTraceFileSet.contains(file),
           erase = AnvilTest.eraseFileSet.contains(file),
+          maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(100),
           runtimeCheck = T)
         val out = dir /+ ISZ(path.map(String(_)): _*)
-        Anvil.synthesize(AnvilTest.testFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
+        Anvil.synthesize(!AnvilTest.dontTestFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
           new Anvil.Output {
             def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
               val f = out /+ p

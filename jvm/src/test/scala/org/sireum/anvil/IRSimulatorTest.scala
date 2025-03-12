@@ -36,7 +36,7 @@ class IRSimulatorTest extends SireumRcSpec {
   val errAsOut: Boolean = T
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith("-test.sc") }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith("assert.sc") }
     m
   }
 
@@ -118,9 +118,10 @@ class IRSimulatorTest extends SireumRcSpec {
           //          runtimeCheck = T)
           config = config(
             memory = AnvilTest.memoryFileMap.get(file).getOrElse(1024),
-            printSize = if (AnvilTest.printFileSet.contains(file)) 128 else 0,
+            printSize = if (!AnvilTest.dontPrintFileSet.contains(file)) 128 else 0,
             stackTrace = AnvilTest.stackTraceFileSet.contains(file),
             erase = AnvilTest.eraseFileSet.contains(file),
+            maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(100),
             runtimeCheck = T)
           val out = dir /+ ISZ(path.map(String(_)): _*)
           Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, new Anvil.Output {

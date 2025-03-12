@@ -111,7 +111,14 @@ object IRSimulator {
           val offset = SP.toZ + info.offset
           if (sim.anvil.isScalar(info.tipe)) {
             val v = sim.load(memory, offset, info.size)._1
-            localSTs = localSTs :+ st"$id@[${shortenHexString(conversions.Z.toU64(offset))} ($offset), ${info.size}] = ${shortenHexString(v)} (${v.toZ})"
+            val vh = shortenHexString(v)
+            val value: String = info.tipe match {
+              case AST.Typed.f32 => conversions.U32.toRawF32(conversions.U64.toU32(v & u64"0xFFFFFFFFFFFFFFFF")).string
+              case AST.Typed.f64 => conversions.U64.toRawF64(v).string
+              case _ if sim.anvil.isBitVector(info.tipe) && !sim.anvil.isSigned(info.tipe) => vh
+              case _ => v.toZ.string
+            }
+            localSTs = localSTs :+ st"$id@[${shortenHexString(conversions.Z.toU64(offset))} ($offset), ${info.size}] = $vh ($value)"
           } else if (id == Util.sfDescId) {
             val size = Z(info.tipe.asInstanceOf[AST.Typed.Name].args(0).string).get
             val descOffset = offset + sim.anvil.typeShaSize + sim.anvil.typeByteSize(AST.Typed.z)
@@ -357,7 +364,7 @@ object IRSimulator {
     }
 
     @strictpure def *(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromU8(toU8 * other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 * other.toU16)
@@ -373,7 +380,7 @@ object IRSimulator {
     }
 
     @strictpure def /(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromU8(toU8 / other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 / other.toU16)
@@ -389,7 +396,7 @@ object IRSimulator {
     }
 
     @strictpure def %(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromU8(toU8 % other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 % other.toU16)
@@ -405,7 +412,7 @@ object IRSimulator {
     }
 
     @strictpure def >>(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromU8(toU8 >> other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 >> other.toU16)
@@ -421,7 +428,7 @@ object IRSimulator {
     }
 
     @strictpure def ~~(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => halt("Infeasible")
         case Value.Kind.U16 => halt("Infeasible")
@@ -437,7 +444,7 @@ object IRSimulator {
     }
 
     @strictpure def !~(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => halt("Infeasible")
         case Value.Kind.U16 => halt("Infeasible")
@@ -453,7 +460,7 @@ object IRSimulator {
     }
 
     @strictpure def >>>(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromU8(toU8 >>> other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 >>> other.toU16)
@@ -469,7 +476,7 @@ object IRSimulator {
     }
 
     @strictpure def <<(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromU8(toU8 << other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 << other.toU16)
@@ -485,7 +492,7 @@ object IRSimulator {
     }
 
     @strictpure def &(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromU8(toU8 & other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 & other.toU16)
@@ -501,7 +508,7 @@ object IRSimulator {
     }
 
     @strictpure def |(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromU8(toU8 | other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 | other.toU16)
@@ -517,7 +524,7 @@ object IRSimulator {
     }
 
     @strictpure def |^(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromU8(toU8 |^ other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 |^ other.toU16)
@@ -533,7 +540,7 @@ object IRSimulator {
     }
 
     @strictpure def __>:(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromB(!toB | other.toB)
         case Value.Kind.U16 => halt("Infeasible")
@@ -549,7 +556,7 @@ object IRSimulator {
     }
 
     @strictpure def <(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromB(toU8 < other.toU8)
         case Value.Kind.U16 => Value.fromB(toU16 < other.toU16)
@@ -565,7 +572,7 @@ object IRSimulator {
     }
 
     @strictpure def <=(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromB(toU8 <= other.toU8)
         case Value.Kind.U16 => Value.fromB(toU16 <= other.toU16)
@@ -581,7 +588,7 @@ object IRSimulator {
     }
 
     @strictpure def >(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromB(toU8 > other.toU8)
         case Value.Kind.U16 => Value.fromB(toU16 > other.toU16)
@@ -597,7 +604,7 @@ object IRSimulator {
     }
 
     @strictpure def >=(other: Value): Value = {
-      assert(kind == other.kind)
+      assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
         case Value.Kind.U8 => Value.fromB(toU8 >= other.toU8)
         case Value.Kind.U16 => Value.fromB(toU16 >= other.toU16)
@@ -786,7 +793,14 @@ import IRSimulator._
         val v = state.temps(exp.n)
         val acs = State.Accesses.empty.addTemp(exp.n, v)
         if (anvil.isScalar(exp.tipe)) {
-          return (Value.fromRawU64(v, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe)), acs)
+          val n = Value.fromRawU64(v, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
+          exp.tipe match {
+            case AST.Typed.f32 =>
+              return (Value.fromF32(conversions.U32.toRawF32(conversions.S32.toRawU32(conversions.Z.toS32(n.value)))), acs)
+            case AST.Typed.f64 =>
+              return (Value.fromF64(conversions.U64.toRawF64(conversions.S64.toRawU64(conversions.Z.toS64(n.value)))), acs)
+            case _ => return (n, acs)
+          }
         } else {
           return (Value.fromRawU64(v, anvil.isSigned(anvil.spType), anvil.typeByteSize(anvil.spType)), acs)
         }

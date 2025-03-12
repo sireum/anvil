@@ -8,3 +8,15 @@ import org.sireum._
     return acc
   }
 }
+
+@anvil.test def test0(): Unit = {
+  println(sum(ISZ(), 0, 0))
+}
+
+@anvil.test def test1(): Unit = {
+  println(sum(ISZ(1, 2), 0, 0))
+}
+
+@anvil.test def test2(): Unit = {
+  println(sum(ISZ(1, 2, 3), 1, 0))
+}

@@ -11,3 +11,7 @@ import org.sireum._
   }
   return 0
 }
+
+@anvil.test def test0(): Unit = {
+  println(instanceof(B(3)))
+}

@@ -8,3 +8,7 @@ object Foo {
 @anvil.hls def global(): Z = {
   return Foo.x
 }
+
+@anvil.test def test0(): Unit = {
+  println(global())
+}
