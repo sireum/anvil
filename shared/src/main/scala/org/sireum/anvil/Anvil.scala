@@ -1183,10 +1183,7 @@ import Anvil._
         val body = p.body.asInstanceOf[AST.IR.Body.Basic]
         for (b <- body.blocks) {
           def processInvoke(g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, label: Z): Unit = {
-            val numOfRegisters: Z = lhsOpt match {
-              case Some(lhs) => lhs
-              case _ => maxRegisters
-            }
+            val numOfRegisters: Z = maxRegisters
             val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
             val called = procedureMap.get(mc).get
             if (!seen.contains(mc)) {
@@ -1272,7 +1269,7 @@ import Anvil._
                 isSigned(t), typeByteSize(t), parg, st"$pid = ${parg.prettyST}", t, parg.pos))
             }
             var rgrounds = ISZ[AST.IR.Stmt.Ground]()
-            for (i <- 0 until numOfRegisters if lhsOpt.isEmpty || lhsOpt.get > i) {
+            for (i <- 0 until numOfRegisters if lhsOpt.isEmpty || lhsOpt.get != i) {
               val tempOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
                 AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -(-(numOfRegisters * 8) + i * 8), e.pos), e.pos)
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
@@ -1290,13 +1287,15 @@ import Anvil._
             lhsOpt match {
               case Some(lhs) =>
                 val t: AST.Typed = if(isScalar(called.tipe.ret)) called.tipe.ret else spType
-                val rhsOffset = AST.IR.Exp.Intrinsic(Intrinsic.Load(
-                  AST.IR.Exp.Binary(spType,
-                    AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
-                    AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeByteSize(cpType), g.pos), g.pos),
-                  isSigned(spType), typeByteSize(spType), st"", t, g.pos))
+                var rhsOffset: AST.IR.Exp = AST.IR.Exp.Binary(spType,
+                  AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
+                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeByteSize(cpType), g.pos), g.pos)
+                if (isScalar(called.tipe.ret)) {
+                  rhsOffset = AST.IR.Exp.Intrinsic(Intrinsic.Load(rhsOffset,
+                    isSigned(spType), typeByteSize(spType), st"", t, g.pos))
+                }
                 bgrounds = (rgrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(lhs, rhsOffset, F,
-                  typeByteSize(t), st"$$$lhs = $returnLocalId", t, g.pos))) ++ bgrounds
+                  typeByteSize(t), st"$$$lhs = $resultLocalId", t, g.pos))) ++ bgrounds
               case _ =>
                 bgrounds = rgrounds ++ bgrounds
             }
