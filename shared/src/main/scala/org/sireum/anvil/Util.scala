@@ -684,8 +684,8 @@ object Util {
     "shlU32" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u32, AST.Typed.u32), AST.Typed.u32) +
     "shrU32" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u32, AST.Typed.u32), AST.Typed.u32) +
     "shrS32" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.s32, AST.Typed.s32), AST.Typed.s32) +
-    "shlU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u64, AST.Typed.u64), AST.Typed.u64)
-    "shrU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u64, AST.Typed.u64), AST.Typed.u64)
+    "shlU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u64, AST.Typed.u64), AST.Typed.u64) +
+    "shrU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u64, AST.Typed.u64), AST.Typed.u64) +
     "shrS64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.s64, AST.Typed.s64), AST.Typed.s64)
 
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
