@@ -51,13 +51,15 @@ object Anvil {
                          val runtimeCheck: B,
                          val printSize: Z,
                          val copySize: Z,
-                         val erase: B) {
+                         val erase: B,
+                         val axi4: B,
+                         val customDivRem: B) {
     val shouldPrint: B = printSize > 0
   }
 
   object Config {
     @strictpure def empty(projectName: String): Config =
-      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, F, 0, 8, F)
+      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, F, 0, 8, F, F, F)
   }
 
   @sig trait Output {
