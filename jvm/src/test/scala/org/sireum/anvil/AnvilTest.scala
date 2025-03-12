@@ -32,7 +32,7 @@ object AnvilTest {
   val printFileSet: HashSet[String] = HashSet.empty[String] + "print.sc" + "assert-test.sc" + "add-test.sc"
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert-test.sc" + "add-test.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add-test.sc"
-  val testFileSet: HashSet[String] = HashSet.empty[String] + "add-test.sc"
+  val testFileSet: HashSet[String] = HashSet.empty[String] + "add-test.sc" + "assert-test.sc"
 }
 
 class AnvilTest extends SireumRcSpec {
