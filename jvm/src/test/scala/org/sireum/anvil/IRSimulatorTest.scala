@@ -119,7 +119,7 @@ class IRSimulatorTest extends SireumRcSpec {
           //          runtimeCheck = T)
           config = config(
             memory = AnvilTest.memoryFileMap.get(file).getOrElse(AnvilTest.defaultMemory),
-            printSize = if (!AnvilTest.dontPrintFileSet.contains(file)) AnvilTest.defaultPrintSize else 0,
+            printSize = AnvilTest.printFileMap.get(file).getOrElse(AnvilTest.defaultPrintSize),
             stackTrace = AnvilTest.stackTraceFileSet.contains(file),
             erase = AnvilTest.eraseFileSet.contains(file),
             maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(AnvilTest.defaultMaxArraySize),

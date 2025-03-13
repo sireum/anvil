@@ -30,20 +30,32 @@ import org.sireum.test._
 
 object AnvilTest {
   val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
-    "add.sc" ~> 384 +
-    "assert.sc" ~> 768 +
-    "bubble.sc" ~> 384 +
-    "construct.sc" ~> 512 +
-    "factorial.sc" ~> 384 +
-    "global.sc" ~> 384 +
-    "instanceof.sc" ~> 256 +
-    "mult.sc" ~> 384 +
-    "print.sc" ~> 768 +
-    "printU64.sc" ~> 384 +
-    "seq.sc" ~> 512 +
-    "sum.sc" ~> 512
+    "add.sc" ~> (128 + 8 * 3) +
+    "assert.sc" ~> (512 + 8 * 20) +
+    "bubble.sc" ~> (128 + 8 * 10) +
+    "construct.sc" ~> (256 + 8) +
+    "factorial.sc" ~> (128 + 8 * 5) +
+    "global.sc" ~> (128 + 8) +
+    "instanceof.sc" ~> 128 +
+    "mult.sc" ~> (128 + 8 * 9) +
+    "print.sc" ~> (512 + 8 * 4) +
+    "printU64.sc" ~> (128 + 8 * 10) +
+    "seq.sc" ~> 256
+    "sum.sc" ~> (256 + 8 * 6)
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "sum.sc" ~> 3
-  val dontPrintFileSet: HashSet[String] = HashSet.empty[String]
+  val printFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
+    "add.sc" ~> 16 +
+    "assert.sc" ~> 128 +
+    "bubble.sc" ~> 16 +
+    "construct.sc" ~> 16 +
+    "factorial.sc" ~> 32 +
+    "global.sc" ~> 2 +
+    "instanceof.sc" ~> 2 +
+    "mult.sc" ~> 64 +
+    "print.sc" ~> 64 +
+    "printU64.sc" ~> 64 +
+    "seq.sc" ~> 32 +
+    "sum.sc" ~> 8
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add.sc"
   val dontTestFileSet: HashSet[String] = HashSet.empty[String]
@@ -72,7 +84,7 @@ class AnvilTest extends SireumRcSpec {
         val file = path(path.size - 1)
         config = config(
           memory = AnvilTest.memoryFileMap.get(file).getOrElse(AnvilTest.defaultMemory),
-          printSize = if (!AnvilTest.dontPrintFileSet.contains(file)) AnvilTest.defaultPrintSize else 0,
+          printSize = AnvilTest.printFileMap.get(file).getOrElse(AnvilTest.defaultPrintSize),
           stackTrace = AnvilTest.stackTraceFileSet.contains(file),
           erase = AnvilTest.eraseFileSet.contains(file),
           maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(AnvilTest.defaultMaxArraySize),
