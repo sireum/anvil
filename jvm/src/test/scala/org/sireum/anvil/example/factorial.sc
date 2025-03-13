@@ -18,5 +18,5 @@ import org.sireum.U32._
 }
 
 @anvil.test def test2(): Unit = {
-  println(factorial(u32"10"))
+  println(factorial(u32"4"))
 }

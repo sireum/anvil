@@ -1181,9 +1181,21 @@ import Anvil._
         var addBeginningMap = HashSMap.empty[Z, ISZ[AST.IR.Stmt.Ground]]
         var blocks = ISZ[AST.IR.BasicBlock]()
         val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+        val exitSet = MBox(HashSMap.empty[Z, ISZ[HashSSet[Z]]])
+        TempLV(ControlFlowGraph.buildBasic(body)).compute(body, MBox(HashSMap.empty), exitSet)
         for (b <- body.blocks) {
-          def processInvoke(g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, label: Z): Unit = {
-            val numOfRegisters: Z = maxRegisters
+          def processInvoke(stmtIndex: Z, g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, label: Z): Unit = {
+            val liveTemps = exitSet.value.get(b.label).get(stmtIndex)
+            val numOfRegisters: Z = {
+              var regs: Z = 0
+              for (i <- 0 until maxRegisters if liveTemps.contains(i)) {
+                regs = regs + 1
+              }
+              if (lhsOpt.nonEmpty) {
+                regs = regs - 1
+              }
+              regs
+            }
             val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
             val called = procedureMap.get(mc).get
             if (!seen.contains(mc)) {
@@ -1270,12 +1282,14 @@ import Anvil._
             }
             var rgrounds = ISZ[AST.IR.Stmt.Ground]()
             for (i <- 0 until numOfRegisters if lhsOpt.isEmpty || lhsOpt.get != i) {
-              val tempOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
-                AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -(-(numOfRegisters * 8) + i * 8), e.pos), e.pos)
-              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-                tempOffset, F, 8, AST.IR.Exp.Temp(i, AST.Typed.u64, e.pos), st"save $$$i", AST.Typed.u64, e.pos))
-              rgrounds = rgrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(i, tempOffset, F, 8, st"restore $$$i",
-                AST.Typed.u64, e.pos))
+              if (liveTemps.contains(i)) {
+                val tempOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
+                  AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -(-(numOfRegisters * 8) + i * 8), e.pos), e.pos)
+                grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+                  tempOffset, F, 8, AST.IR.Exp.Temp(i, AST.Typed.u64, e.pos), st"save $$$i", AST.Typed.u64, e.pos))
+                rgrounds = rgrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(i, tempOffset, F, 8, st"restore $$$i",
+                  AST.Typed.u64, e.pos))
+              }
             }
 
             var bgrounds = ISZ[AST.IR.Stmt.Ground]()
@@ -1303,7 +1317,7 @@ import Anvil._
             blocks = blocks :+ b(grounds = grounds,
               jump = AST.IR.Jump.Goto(called.body.asInstanceOf[AST.IR.Body.Basic].blocks(0).label, e.pos))
           }
-          def processInvokeH(g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, lbl: Z): Unit = {
+          def processInvokeH(stmtIndex: Z, g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, lbl: Z): Unit = {
             th.nameMap.get(e.owner :+ e.id) match {
               case Some(_: Info.ExtMethod) =>
                 blocks = blocks :+ b
@@ -1311,7 +1325,7 @@ import Anvil._
               case _ =>
             }
             val label = fresh.label()
-            processInvoke(g, lhsOpt, e, label)
+            processInvoke(stmtIndex, g, lhsOpt, e, label)
             blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(lbl, e.pos))
           }
 
@@ -1319,9 +1333,9 @@ import Anvil._
             case j: AST.IR.Jump.Goto if b.grounds.size == 1 =>
               b.grounds(0) match {
                 case g: AST.IR.Stmt.Expr =>
-                  processInvokeH(g, None(), g.exp, j.label)
+                  processInvokeH(0, g, None(), g.exp, j.label)
                 case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Apply] =>
-                  processInvokeH(g, Some(g.lhs), g.rhs.asInstanceOf[AST.IR.Exp.Apply], j.label)
+                  processInvokeH(0, g, Some(g.lhs), g.rhs.asInstanceOf[AST.IR.Exp.Apply], j.label)
                 case _ => blocks = blocks :+ b
               }
             case j: AST.IR.Jump.Return =>

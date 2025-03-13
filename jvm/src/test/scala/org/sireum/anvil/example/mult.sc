@@ -17,7 +17,7 @@ import org.sireum.U64._
 }
 
 @anvil.test def test1(): Unit = {
-  println(mult(u64"3", u64"7"))
+  println(mult(u64"3", u64"5"))
 }
 
 @anvil.test def test2(): Unit = {

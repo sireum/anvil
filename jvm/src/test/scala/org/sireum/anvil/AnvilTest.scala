@@ -30,14 +30,26 @@ import org.sireum.test._
 
 object AnvilTest {
   val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
-    "construct.sc" ~> (3 * 1024) +
-    "factorial.sc" ~> (2 * 1024) +
-    "assert.sc" ~> (2 * 1024)
+    "add.sc" ~> 384 +
+    "assert.sc" ~> 768 +
+    "bubble.sc" ~> 384 +
+    "construct.sc" ~> 512 +
+    "factorial.sc" ~> 384 +
+    "global.sc" ~> 384 +
+    "instanceof.sc" ~> 256 +
+    "mult.sc" ~> 384 +
+    "print.sc" ~> 768 +
+    "printU64.sc" ~> 384 +
+    "seq.sc" ~> 512 +
+    "sum.sc" ~> 512
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "sum.sc" ~> 3
   val dontPrintFileSet: HashSet[String] = HashSet.empty[String]
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add.sc"
   val dontTestFileSet: HashSet[String] = HashSet.empty[String]
+  val defaultMemory: Z = 256
+  val defaultPrintSize: Z = 128
+  val defaultMaxArraySize: Z = 5
 }
 
 class AnvilTest extends SireumRcSpec {
@@ -59,11 +71,11 @@ class AnvilTest extends SireumRcSpec {
         var config = Anvil.Config.empty(path.mkString("/"))
         val file = path(path.size - 1)
         config = config(
-          memory = AnvilTest.memoryFileMap.get(file).getOrElse(1024),
-          printSize = if (!AnvilTest.dontPrintFileSet.contains(file)) 128 else 0,
+          memory = AnvilTest.memoryFileMap.get(file).getOrElse(AnvilTest.defaultMemory),
+          printSize = if (!AnvilTest.dontPrintFileSet.contains(file)) AnvilTest.defaultPrintSize else 0,
           stackTrace = AnvilTest.stackTraceFileSet.contains(file),
           erase = AnvilTest.eraseFileSet.contains(file),
-          maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(100),
+          maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(AnvilTest.defaultMaxArraySize),
           runtimeCheck = T)
         val out = dir /+ ISZ(path.map(String(_)): _*)
         Anvil.synthesize(!AnvilTest.dontTestFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
