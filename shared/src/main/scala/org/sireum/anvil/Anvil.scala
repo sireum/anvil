@@ -1281,14 +1281,16 @@ import Anvil._
                 isSigned(t), typeByteSize(t), parg, st"$pid = ${parg.prettyST}", t, parg.pos))
             }
             var rgrounds = ISZ[AST.IR.Stmt.Ground]()
-            for (i <- 0 until numOfRegisters if lhsOpt.isEmpty || lhsOpt.get != i) {
-              if (liveTemps.contains(i)) {
+            var i: Z = 0
+            for (j <- 0 until maxRegisters if lhsOpt.isEmpty || lhsOpt.get != j) {
+              if (liveTemps.contains(j)) {
                 val tempOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
                   AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -(-(numOfRegisters * 8) + i * 8), e.pos), e.pos)
                 grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-                  tempOffset, F, 8, AST.IR.Exp.Temp(i, AST.Typed.u64, e.pos), st"save $$$i", AST.Typed.u64, e.pos))
-                rgrounds = rgrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(i, tempOffset, F, 8, st"restore $$$i",
+                  tempOffset, F, 8, AST.IR.Exp.Temp(j, AST.Typed.u64, e.pos), st"save $$$j", AST.Typed.u64, e.pos))
+                rgrounds = rgrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(j, tempOffset, F, 8, st"restore $$$j",
                   AST.Typed.u64, e.pos))
+                i = i + 1
               }
             }
 

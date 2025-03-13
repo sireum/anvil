@@ -623,6 +623,7 @@ object Util {
     @pure def killGround(g: AST.IR.Stmt.Ground): HashSSet[Z] = {
       g match {
         case g: AST.IR.Stmt.Assign.Temp => return HashSSet.empty[Z] + g.lhs
+        case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return HashSSet.empty[Z] + in.temp
         case _ => return HashSSet.empty
       }
     }
