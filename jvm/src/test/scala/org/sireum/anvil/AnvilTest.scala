@@ -40,7 +40,7 @@ object AnvilTest {
     "mult.sc" ~> (128 + 8 * 9) +
     "print.sc" ~> (512 + 8 * 4) +
     "printU64.sc" ~> (128 + 8 * 10) +
-    "seq.sc" ~> 256
+    "seq.sc" ~> 256 +
     "sum.sc" ~> (256 + 8 * 6)
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "sum.sc" ~> 3
   val printFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
