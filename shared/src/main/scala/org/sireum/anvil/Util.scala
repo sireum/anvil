@@ -31,8 +31,6 @@ import org.sireum.lang.symbol.Info
 import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.{ast => AST}
 import org.sireum.U64._
-import org.sireum.lang.ast.IR
-import org.sireum.lang.ast.IR.Exp
 
 object Util {
   @enum object PMod {
@@ -633,6 +631,40 @@ object Util {
       return tc.r
     }
     @strictpure def killJump(j: AST.IR.Jump): HashSSet[Z] = HashSSet.empty
+  }
+
+  @record class LocalCollector(var r: HashSSet[(String, AST.Typed)]) extends MAnvilIRTransformer {
+    override def post_langastIRExpLocalVarRef(o: AST.IR.Exp.LocalVarRef): MOption[AST.IR.Exp] = {
+      r = r + (o.id, o.tipe)
+      return MNone()
+    }
+  }
+
+  @datatype class LocalLV(val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[(String, AST.Typed)] {
+    @strictpure def isForward: B = F
+    @strictpure def isLUB: B = T
+    @strictpure def iota: HashSSet[(String, AST.Typed)] = HashSSet.empty
+    @strictpure def init: HashSSet[(String, AST.Typed)] = HashSSet.empty
+    @pure def genGround(g: AST.IR.Stmt.Ground): HashSSet[(String, AST.Typed)] = {
+      val lc = LocalCollector(HashSSet.empty)
+      g match {
+        case g: AST.IR.Stmt.Assign.Local => lc.transform_langastIRExp(g.rhs)
+        case _ => lc.transform_langastIRStmtGround(g)
+      }
+      return lc.r
+    }
+    @pure def killGround(g: AST.IR.Stmt.Ground): HashSSet[(String, AST.Typed)] = {
+      g match {
+        case g: AST.IR.Stmt.Assign.Local => return HashSSet.empty[(String, AST.Typed)] + (g.lhs, g.tipe)
+        case _ => return HashSSet.empty
+      }
+    }
+    @pure def genJump(j: AST.IR.Jump): HashSSet[(String, AST.Typed)] = {
+      val tc = LocalCollector(HashSSet.empty)
+      tc.transform_langastIRJump(j)
+      return tc.r
+    }
+    @strictpure def killJump(j: AST.IR.Jump): HashSSet[(String, AST.Typed)] = HashSSet.empty
   }
 
   val kind: String = "Anvil"

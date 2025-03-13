@@ -1004,7 +1004,9 @@ import Anvil._
           AST.IR.Exp.Int(sfLocType, currentLine, pos), pos)
       }
       for (g <- b.grounds) {
-        assignLoc(g.pos)
+        if (!g.isInstanceOf[AST.IR.Stmt.Decl]) {
+          assignLoc(g.pos)
+        }
         grounds = grounds :+ g
       }
       assignLoc(b.jump.pos)
@@ -1019,6 +1021,10 @@ import Anvil._
       var pass: Z = 0
 
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "basic"), r.prettyST)
+      pass = pass + 1
+
+      r = transformUndecl(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "undecl"), r.prettyST)
       pass = pass + 1
 
       r = transformGlobalVarRef(fresh, r)
@@ -1853,14 +1859,11 @@ import Anvil._
           jump = OffsetSubsitutor(this, m, globalMap).transform_langastIRJump(b.jump).getOrElse(b.jump))
         for (target <- b.jump.targets) {
           blockLocalOffsetMap.get(target) match {
-            case Some((po, pm)) =>
-              assert(offset >= po && m.size >= pm.size, s"$target: offset = $offset, po = $po, m = $m, pm = $pm")
-              if (m.size > pm.size) {
-                for (entry <- pm.entries) {
-                  val (k, pv) = entry
-                  val v = m.get(k).get
-                  assert(v == pv, s"m($k) = $v, pm($k) = $pv")
-                }
+            case Some((_, pm)) =>
+              for (k <- pm.keySet.intersect(m.keySet).elements) {
+                val pv = pm.get(k).get
+                val v = m.get(k).get
+                assert(v == pv, s"m($k) = $v, pm($k) = $pv, m = $m, pm = $pm")
               }
             case _ =>
               blockLocalOffsetMap = blockLocalOffsetMap + target ~> (offset, m)
@@ -2078,6 +2081,49 @@ import Anvil._
       blocks = blocks :+ b(grounds = grounds)
     }
     return p(body = body(blocks = blocks))
+  }
+
+  def transformUndecl(p: AST.IR.Procedure): AST.IR.Procedure = {
+    val params = HashSet ++ p.paramNames
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    val exitSet = MBox(HashSMap.empty[Z, ISZ[HashSSet[(String, AST.Typed)]]])
+    LocalLV(ControlFlowGraph.buildBasic(body)).compute(body, MBox(HashSMap.empty), exitSet)
+    var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+    var undeclMap = HashSMap.empty[(String, AST.Typed), AST.IR.Stmt.Decl]
+    for (b <- blockMap.values) {
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      for (g <- b.grounds) {
+        g match {
+          case g: AST.IR.Stmt.Decl if !g.isAlloc =>
+            if (!g.undecl) {
+              undeclMap = undeclMap ++ (for (l <- g.locals) yield (l.id, l.tipe) ~> g.undeclare)
+              grounds = grounds :+ g
+            }
+          case _ => grounds = grounds :+ g
+        }
+      }
+      blockMap = blockMap + b.label ~> b(grounds = grounds)
+    }
+    for (b <- blockMap.values) {
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      for (i <- b.grounds.indices) {
+        val g = b.grounds(i)
+        grounds = grounds :+ g
+        val lc = LocalCollector(HashSSet.empty)
+        lc.transform_langastIRStmtGround(g)
+        for (idt <- lc.r.elements if !exitSet.value.get(b.label).get(i).contains(idt)) {
+          undeclMap.get(idt) match {
+            case Some(undecl) => grounds = grounds :+ undecl
+            case _ =>
+              if (!params.contains(idt._1)) {
+                println(undeclMap)
+                halt(s"${p.id} @ ${b.label}: $idt")
+              }
+          }
+        }
+      }
+    }
+    return p(body = body(blocks = blockMap.values))
   }
 
   def transformInstanceOf(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
