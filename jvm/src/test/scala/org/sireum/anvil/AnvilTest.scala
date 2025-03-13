@@ -38,7 +38,7 @@ object AnvilTest {
     "global.sc" ~> (128 + 8) +
     "instanceof.sc" ~> 128 +
     "mult.sc" ~> (128 + 8 * 9) +
-    "print.sc" ~> (512 + 8 * 4) +
+    "print.sc" ~> (512 + 8 * 19) +
     "printU64.sc" ~> (128 + 8 * 10) +
     "seq.sc" ~> 256 +
     "sum.sc" ~> (256 + 8 * 6)

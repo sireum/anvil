@@ -131,6 +131,7 @@ import Anvil._
   val typeShaType: AST.Typed.Name = AST.Typed.u32
   val typeShaSize: Z = typeByteSize(typeShaType)
   val spType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "SP"), ISZ())
+  val stringISType: AST.Typed.Name = AST.Typed.Name(AST.Typed.isName, ISZ(spType, AST.Typed.u8))
   val cpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "CP"), ISZ())
   val dpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "DP"), ISZ())
   val dpMask: Z = {
@@ -777,6 +778,31 @@ import Anvil._
     return p(body = body(blocks = blockMap.values))
   }
 
+  def transformString(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      val sc = StringCollector(HashSSet.empty)
+      sc.transform_langastIRBasicBlock(b)
+      if (sc.r.nonEmpty) {
+        var temp = nextBlockTemp(b)
+        var stringTempMap = HashMap.empty[AST.IR.Exp, AST.IR.Exp]
+        var grounds = ISZ[AST.IR.Stmt.Ground]()
+        for (str <- sc.r.elements) {
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, str, str.pos)
+          stringTempMap = stringTempMap + str ~> AST.IR.Exp.Temp(temp, stringISType, str.pos)
+          temp = temp + 1
+        }
+        val label = fresh.label()
+        blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds, AST.IR.Jump.Goto(label, b.grounds(0).pos))
+        blocks = blocks :+ ExpSubstitutor(stringTempMap).transform_langastIRBasicBlock(b(label = label)).get
+      } else {
+        blocks = blocks :+ b
+      }
+    }
+    return p(body = body(blocks = blocks))
+  }
+
   def transformConstruct(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
     var body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
@@ -786,44 +812,60 @@ import Anvil._
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       for (g <- b.grounds) {
         g match {
-          case g@AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.Construct, _) =>
+          case g@AST.IR.Stmt.Assign.Temp(_, rhs, _) if rhs.isInstanceOf[AST.IR.Exp.Construct] || rhs.isInstanceOf[AST.IR.Exp.String] =>
+            val allocType: AST.Typed = rhs match {
+              case rhs: AST.IR.Exp.String => allocTypeNamed(T, rhs.value.size)
+              case _ => rhs.tipe
+            }
             val decl = AST.IR.Stmt.Decl(F, T, T, p.context, ISZ(
-              AST.IR.Stmt.Decl.Local(constructResultId(rhs.pos), rhs.tipe)), g.pos)
+              AST.IR.Stmt.Decl.Local(constructResultId(rhs.pos), allocType)), g.pos)
             grounds = grounds :+ decl
             grounds = grounds :+ g
             val label = fresh.label()
             blocks = blocks :+ block(block.label, grounds, AST.IR.Jump.Goto(label, g.pos))
             grounds = ISZ()
             block = block(label, grounds, block.jump)
-            val temp = AST.IR.Exp.Temp(g.lhs, rhs.tipe, rhs.pos)
-            if (rhs.tipe.ids == AST.Typed.isName || rhs.tipe.ids == AST.Typed.msName) {
-              val indexType = rhs.tipe.args(0)
-              val min: Z = indexType match {
-                case AST.Typed.z => 0
-                case _ =>
-                  val subz = subZOpt(indexType).get.ast
-                  if (subz.isIndex) subz.min
-                  else if (subz.isZeroIndex) 0
-                  else subz.min
-              }
-              for (i <- rhs.args.indices) {
-                val arg = rhs.args(i)
-                grounds = grounds :+ AST.IR.Stmt.Assign.Index(temp, AST.IR.Exp.Int(indexType, min + i, arg.pos), arg,
-                  arg.pos)
-              }
-            } else {
-              val info = th.typeMap.get(rhs.tipe.ids).get.asInstanceOf[TypeInfo.Adt]
-              val sm = TypeChecker.buildTypeSubstMap(rhs.tipe.ids, None(), info.ast.typeParams, rhs.tipe.args,
-                message.Reporter.create).get
-              for (pair <- ops.ISZOps(info.ast.params).zip(rhs.args)) {
-                grounds = grounds :+ AST.IR.Stmt.Assign.Field(temp, pair._1.id.value,
-                  pair._1.tipe.typedOpt.get.subst(sm), pair._2, pair._2.pos)
-              }
+            val temp = AST.IR.Exp.Temp(g.lhs, if (rhs.tipe == AST.Typed.string) stringISType else rhs.tipe, rhs.pos)
+            val t = rhs.tipe.asInstanceOf[AST.Typed.Name]
+            rhs match {
+              case rhs: AST.IR.Exp.Construct =>
+                if (t.ids == AST.Typed.isName || t.ids == AST.Typed.msName) {
+                  val indexType = t.args(0)
+                  val min: Z = indexType match {
+                    case AST.Typed.z => 0
+                    case _ =>
+                      val subz = subZOpt(indexType).get.ast
+                      if (subz.isIndex) subz.min
+                      else if (subz.isZeroIndex) 0
+                      else subz.min
+                  }
+                  for (i <- rhs.args.indices) {
+                    val arg = rhs.args(i)
+                    grounds = grounds :+ AST.IR.Stmt.Assign.Index(temp, AST.IR.Exp.Int(indexType, min + i, arg.pos), arg,
+                      arg.pos)
+                  }
+                } else {
+                  val info = th.typeMap.get(rhs.tipe.ids).get.asInstanceOf[TypeInfo.Adt]
+                  val sm = TypeChecker.buildTypeSubstMap(rhs.tipe.ids, None(), info.ast.typeParams, rhs.tipe.args,
+                    message.Reporter.create).get
+                  for (pair <- ops.ISZOps(info.ast.params).zip(rhs.args)) {
+                    grounds = grounds :+ AST.IR.Stmt.Assign.Field(temp, pair._1.id.value,
+                      pair._1.tipe.typedOpt.get.subst(sm), pair._2, pair._2.pos)
+                  }
+                }
+                if (classInit(rhs.tipe).nonEmpty) {
+                  grounds = grounds :+ AST.IR.Stmt.Expr(AST.IR.Exp.Apply(F, rhs.tipe.ids, newInitId,
+                    ISZ(temp), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(rhs.tipe), AST.Typed.unit), rhs.pos))
+                }
+              case rhs: AST.IR.Exp.String =>
+                val u8is = conversions.String.toU8is(rhs.value)
+                for (i <- u8is.indices) {
+                  val arg = AST.IR.Exp.Int(AST.Typed.u8, u8is(i).toZ, rhs.pos)
+                  grounds = grounds :+ AST.IR.Stmt.Assign.Index(temp, AST.IR.Exp.Int(spType, i, arg.pos), arg, arg.pos)
+                }
+              case _ =>
             }
-            if (classInit(rhs.tipe).nonEmpty) {
-              grounds = grounds :+ AST.IR.Stmt.Expr(AST.IR.Exp.Apply(F, rhs.tipe.ids, newInitId,
-                ISZ(temp), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(rhs.tipe), AST.Typed.unit), rhs.pos))
-            }
+
           case _ => grounds = grounds :+ g
         }
       }
@@ -856,10 +898,23 @@ import Anvil._
       for (i <- b.grounds.indices) {
         val g = b.grounds(i)
         g match {
-          case AST.IR.Stmt.Assign.Temp(temp, rhs: AST.IR.Exp.Construct, _) =>
-            val undecl = AST.IR.Stmt.Decl(T, T, T, p.context, ISZ(
-              AST.IR.Stmt.Decl.Local(constructResultId(rhs.pos), rhs.tipe)), g.pos)
-            rec(b.label, i + 1, temp, undecl)
+          case AST.IR.Stmt.Assign.Temp(temp, rhs, _) =>
+            var shouldUndecl = F
+            val allocType: AST.Typed = rhs match {
+              case _: AST.IR.Exp.Construct =>
+                shouldUndecl = T
+                rhs.tipe
+              case rhs: AST.IR.Exp.String =>
+                shouldUndecl = T
+                allocTypeNamed(T, rhs.value.size)
+              case _=>
+                rhs.tipe
+            }
+            if (shouldUndecl) {
+              val undecl = AST.IR.Stmt.Decl(T, T, T, p.context, ISZ(
+                AST.IR.Stmt.Decl.Local(constructResultId(rhs.pos), allocType)), g.pos)
+              rec(b.label, i + 1, temp, undecl)
+            }
           case _ =>
         }
       }
@@ -1108,6 +1163,10 @@ import Anvil._
 
       r = transformSplitTempJump(fresh, r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-temp-jump"), r.prettyST)
+      pass = pass + 1
+
+      r = transformString(fresh, r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "string"), r.prettyST)
       pass = pass + 1
 
       r = transformConstruct(fresh, r)
@@ -1601,7 +1660,7 @@ import Anvil._
       maxOffset = maxOffset + typeByteSize(sfLocType)
 
       val mdesc = procedureDesc(p)
-      val mdescType = AST.Typed.Name(AST.Typed.isName, ISZ(AST.Typed.Name(ISZ(s"${mdesc.size}"), ISZ()), AST.Typed.u8))
+      val mdescType = allocTypeNamed(T, mdesc.size)
       m = m + sfDescId ~> VarInfo(isScalar(mdescType), maxOffset, typeByteSize(mdescType), 0, mdescType, p.pos)
       maxOffset = maxOffset + typeByteSize(mdescType)
 
@@ -1715,14 +1774,7 @@ import Anvil._
                   val seqType = rcv.tipe.asInstanceOf[AST.Typed.Name]
                   val indexType = seqType.args(0)
                   val elementType = seqType.args(1)
-                  val min: Z = indexType match {
-                    case AST.Typed.z => 0
-                    case _ =>
-                      val subz = subZOpt(indexType).get.ast
-                      if (subz.isIndex) subz.min
-                      else if (subz.isZeroIndex) 0
-                      else subz.min
-                  }
+                  val min = minIndex(indexType)
                   val os = OffsetSubsitutor(this, m, globalMap)
                   var index = os.transform_langastIRExp(idx).getOrElse(idx)
                   if (index.tipe != spType) {
@@ -1817,7 +1869,7 @@ import Anvil._
                       } else {
                         grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, rhsOffset, pos)
                       }
-                    case rhs: AST.IR.Exp.Construct =>
+                    case rhs if rhs.isInstanceOf[AST.IR.Exp.Construct] || rhs.isInstanceOf[AST.IR.Exp.String] =>
                       val loffset = m.get(constructResultId(rhs.pos)).get
                       val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
                         AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset, g.pos),
@@ -1827,12 +1879,17 @@ import Anvil._
                       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset, F, typeShaSize,
                         AST.IR.Exp.Int(AST.Typed.u32, sha.toZ, g.pos),
                         st"sha3 type signature of ${rhs.tipe}: 0x$sha", AST.Typed.u32, g.pos))
-                      if (rhs.tipe.ids == AST.Typed.isName || rhs.tipe.ids == AST.Typed.msName) {
+                      if (isSeq(rhs.tipe) || rhs.tipe == AST.Typed.string) {
+                        val size: Z = rhs match {
+                          case rhs: AST.IR.Exp.String => conversions.String.toU8is(rhs.value).size
+                          case rhs: AST.IR.Exp.Construct => rhs.args.size
+                          case _ => halt(s"Infeasible")
+                        }
                         val sizeOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
                           AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset + 4, g.pos),
                           g.pos)
                         grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(sizeOffset,
-                          isSigned(AST.Typed.z), typeByteSize(AST.Typed.z), AST.IR.Exp.Int(AST.Typed.z, rhs.args.size, g.pos),
+                          isSigned(AST.Typed.z), typeByteSize(AST.Typed.z), AST.IR.Exp.Int(AST.Typed.z, size, g.pos),
                           st"size of ${rhs.prettyST}", AST.Typed.z, g.pos))
                       }
                     case _: AST.IR.Exp.If => halt(s"Infeasible: $rhs")
@@ -1938,17 +1995,7 @@ import Anvil._
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
-      val maxTemp: Z = {
-        val tc = TempCollector(HashSSet.empty)
-        tc.transform_langastIRBasicBlock(b)
-        var max: Z = 0
-        for (t <- tc.r.elements) {
-          if (max <= t) {
-            max = max + 1
-          }
-        }
-        max
-      }
+      val nextTemp = nextBlockTemp(b)
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       for (g <- b.grounds) {
         g match {
@@ -2009,7 +2056,7 @@ import Anvil._
               case arg: AST.IR.Exp.R => halt(s"TODO: $arg")
               case arg: AST.IR.Exp.String => grounds = grounds ++ printStringLit(T, arg.value, arg.pos)
               case arg =>
-                fresh.setTemp(maxTemp)
+                fresh.setTemp(nextTemp)
                 val pos = g.pos
                 val buffer = AST.IR.Exp.GlobalVarRef(displayName, displayType, pos)
                 val index = AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos))
@@ -2558,6 +2605,7 @@ import Anvil._
   @memoize def minIndex(indexType: AST.Typed): Z = {
     val min: Z = indexType match {
       case AST.Typed.z => 0
+      case `spType` => 0
       case AST.Typed.Name(ISZ(index), ISZ()) if Z(index).nonEmpty => return 0
       case _ =>
         val subz = subZOpt(indexType).get.ast
@@ -2637,5 +2685,27 @@ import Anvil._
     r = r :+ context.id
     return r
   }
+
+  @pure def nextBlockTemp(b: AST.IR.BasicBlock): Z = {
+    val tc = TempCollector(HashSSet.empty)
+    tc.transform_langastIRBasicBlock(b)
+    for (g <- b.grounds) {
+      g match {
+        case g: AST.IR.Stmt.Assign.Temp => tc.r = tc.r + g.lhs
+        case _ =>
+      }
+    }
+    var max: Z = 0
+    for (t <- tc.r.elements) {
+      if (max <= t) {
+        max = max + 1
+      }
+    }
+    return max
+  }
+
+  @strictpure def allocTypeNamed(isImmutable: B, numOfBytes: Z): AST.Typed.Name = AST.Typed.Name(
+    if (isImmutable) AST.Typed.isName else AST.Typed.msName,
+    ISZ(AST.Typed.Name(ISZ(s"$numOfBytes"), ISZ()), AST.Typed.u8))
 
 }

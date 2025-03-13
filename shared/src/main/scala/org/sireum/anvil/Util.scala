@@ -667,6 +667,22 @@ object Util {
     @strictpure def killJump(j: AST.IR.Jump): HashSSet[(String, AST.Typed)] = HashSSet.empty
   }
 
+  @record class StringCollector(var r: HashSSet[AST.IR.Exp.String]) extends MAnvilIRTransformer {
+    override def post_langastIRExpString(o: AST.IR.Exp.String): MOption[AST.IR.Exp] = {
+      r = r + o
+      return MNone()
+    }
+  }
+
+  @record class ExpSubstitutor(val m: HashMap[AST.IR.Exp, AST.IR.Exp]) extends MAnvilIRTransformer {
+    override def pre_langastIRExp(o: AST.IR.Exp): MAnvilIRTransformer.PreResult[AST.IR.Exp] = {
+      m.get(o) match {
+        case Some(e) => return MAnvilIRTransformer.PreResult(F, MSome(e))
+        case _ => return MAnvilIRTransformer.PreResult(T, MNone())
+      }
+    }
+  }
+
   val kind: String = "Anvil"
   val exitLabel: Z = 0
   val errorLabel: Z = 1
