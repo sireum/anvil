@@ -65,12 +65,8 @@ object MemCopyLog {
   }
   @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Z): ST = {
 
-    @strictpure def procedureST(stateMachineST: ST): ST =
+    @strictpure def dividerST(): ST =
       st"""
-          |import chisel3._
-          |import chisel3.util._
-          |import chisel3.experimental._
-          |
           |class PipelinedDivMod(val N: Int) extends Module {
           |  val io = IO(new Bundle {
           |    val a = Input(UInt(N.W))
@@ -118,6 +114,15 @@ object MemCopyLog {
           |  io.remainder := remainder
           |  io.valid := !busy
           |}
+        """
+
+    @strictpure def procedureST(stateMachineST: ST): ST =
+      st"""
+          |import chisel3._
+          |import chisel3.util._
+          |import chisel3.experimental._
+          |
+          |${if(anvil.config.customDivRem) dividerST().render else ""}
           |
           |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 32,
           |               val C_S_AXI_ADDR_WIDTH:  Int = 32,
@@ -156,8 +161,8 @@ object MemCopyLog {
           |    val LeftByteRounds = RegInit(0.U(8.W))
           |    val IdxLeftByteRounds = RegInit(0.U(8.W))
           |
-          |    // divider
-          |    //val divider64 = Module(new PipelinedDivMod(64))
+          |    ${if(anvil.config.customDivRem) "// divider" else ""}
+          |    ${if(anvil.config.customDivRem) "val divider64 = Module(new PipelinedDivMod(64))" else ""}
           |
           |    // write operation
           |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
@@ -180,11 +185,11 @@ object MemCopyLog {
 
     val basicBlockST = processBasicBlock(o.body.asInstanceOf[AST.IR.Body.Basic].blocks)
 
-    println(
-      st"""
-          |${(procedureST(basicBlockST),"")}
-          |""".render
-    )
+    //println(
+    //  st"""
+    //      |${(procedureST(basicBlockST),"")}
+    //      |""".render
+    //)
 
     return procedureST(basicBlockST)
   }
