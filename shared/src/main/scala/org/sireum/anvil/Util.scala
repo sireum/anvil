@@ -52,11 +52,24 @@ object Util {
       var fcs = ISZ[LocalOffsetInfo.FreeCell]()
       var added = F
       for (fc <- freeCells) {
-        if (!added && newFC.size < fc.size) {
-          added = T
-          fcs = fcs :+ newFC
+        if (!added) {
+          if (newFC.size < fc.size) {
+            added = T
+            fcs = fcs :+ newFC
+            fcs = fcs :+ fc
+          } else if (newFC.size == fc.size) {
+            if (newFC.offset < fc.offset) {
+              fcs = fcs :+ newFC
+              fcs = fcs :+ fc
+            } else {
+              fcs = fcs :+ fc
+              fcs = fcs :+ newFC
+            }
+          }
         }
-        fcs = fcs :+ fc
+      }
+      if (!added) {
+        fcs = fcs :+ newFC
       }
       return LocalOffsetInfo(offsetMap, fcs)
     }
@@ -680,6 +693,38 @@ object Util {
       }
     }
   }
+
+  @datatype class LocalDeclLV(val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[(String, AST.Typed)] {
+    @strictpure def isForward: B = F
+    @strictpure def isLUB: B = T
+    @strictpure def iota: HashSSet[(String, AST.Typed)] = HashSSet.empty
+    @strictpure def init: HashSSet[(String, AST.Typed)] = HashSSet.empty
+    @pure def genGround(g: AST.IR.Stmt.Ground): HashSSet[(String, AST.Typed)] = {
+      val lc = LocalCollector(HashSSet.empty)
+      g match {
+        case g: AST.IR.Stmt.Assign.Local =>
+          lc.transform_langastIRExp(g.rhs)
+          lc.r = lc.r + (g.lhs, g.tipe)
+        case _ => lc.transform_langastIRStmtGround(g)
+      }
+      return lc.r
+    }
+    @pure def killGround(g: AST.IR.Stmt.Ground): HashSSet[(String, AST.Typed)] = {
+      g match {
+        case g: AST.IR.Stmt.Decl if !g.undecl =>
+          assert(!g.isAlloc)
+          return HashSSet.empty[(String, AST.Typed)] ++ (for (slot <- g.locals) yield (slot.id, slot.tipe))
+        case _ => return HashSSet.empty
+      }
+    }
+    @pure def genJump(j: AST.IR.Jump): HashSSet[(String, AST.Typed)] = {
+      val tc = LocalCollector(HashSSet.empty)
+      tc.transform_langastIRJump(j)
+      return tc.r
+    }
+    @strictpure def killJump(j: AST.IR.Jump): HashSSet[(String, AST.Typed)] = HashSSet.empty
+  }
+
 
   val kind: String = "Anvil"
   val exitLabel: Z = 0

@@ -31,15 +31,15 @@ import org.sireum.test._
 object AnvilTest {
   val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "add.sc" ~> (128 + 8 * 3) +
-    "assert.sc" ~> (512 + 8 * 20) +
+    "assert.sc" ~> (512 + 8 * 17) +
     "bubble.sc" ~> (128 + 8 * 10) +
     "construct.sc" ~> (256 + 8) +
     "factorial.sc" ~> (128 + 8 * 5) +
     "global.sc" ~> (128 + 8) +
     "instanceof.sc" ~> 128 +
-    "local-reuse.sc" ~> 128 +
+    "local-reuse.sc" ~> (128 + 8) +
     "mult.sc" ~> (128 + 8 * 9) +
-    "print.sc" ~> (512 + 8 * 19) +
+    "print.sc" ~> (512 + 8 * 15) +
     "printU64.sc" ~> (128 + 8 * 10) +
     "seq.sc" ~> 256 +
     "sum.sc" ~> (256 + 8 * 6)
@@ -52,7 +52,7 @@ object AnvilTest {
     "factorial.sc" ~> 32 +
     "global.sc" ~> 2 +
     "instanceof.sc" ~> 2 +
-    "local-reuse.sc" ~> 4 +
+    "local-reuse.sc" ~> 8 +
     "mult.sc" ~> 64 +
     "print.sc" ~> 64 +
     "printU64.sc" ~> 64 +

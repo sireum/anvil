@@ -1082,6 +1082,47 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
+  def transformUndecl(p: AST.IR.Procedure): AST.IR.Procedure = {
+    val params = HashSet ++ p.paramNames
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    val exitSet = MBox(HashSMap.empty[Z, ISZ[HashSSet[(String, AST.Typed)]]])
+    LocalDeclLV(ControlFlowGraph.buildBasic(body)).compute(body, MBox(HashSMap.empty), exitSet)
+    var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+    var undeclMap = HashSMap.empty[(String, AST.Typed), AST.IR.Stmt.Decl]
+    for (b <- blockMap.values) {
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      for (i <- b.grounds.indices) {
+        val g = b.grounds(i)
+        g match {
+          case g: AST.IR.Stmt.Decl if !g.isAlloc =>
+            if (!g.undecl) {
+              undeclMap = undeclMap ++ (for (l <- g.locals) yield (l.id, l.tipe) ~> g.undeclare)
+              grounds = grounds :+ g
+            }
+          case _ =>
+            grounds = grounds :+ g
+            val lc = LocalCollector(HashSSet.empty)
+            lc.transform_langastIRStmtGround(g)
+            g match {
+              case g: AST.IR.Stmt.Assign.Local => lc.r = lc.r + (g.lhs, g.tipe)
+              case _ =>
+            }
+            for (idt <- lc.r.elements if !exitSet.value.get(b.label).get(i).contains(idt)) {
+              undeclMap.get(idt) match {
+                case Some(undecl) => grounds = grounds :+ undecl
+                case _ =>
+                  if (!params.contains(idt._1)) {
+                    halt(s"${p.id} @ ${b.label}: $idt, $undeclMap")
+                  }
+              }
+            }
+        }
+      }
+      blockMap = blockMap + b.label ~> b(grounds = grounds)
+    }
+    return p(body = body(blocks = blockMap.values))
+  }
+
   def transformMainStackFrame(p: AST.IR.Procedure): AST.IR.Procedure = {
     if (!config.stackTrace) {
       return p
@@ -1129,9 +1170,9 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "basic"), r.prettyST)
       pass = pass + 1
 
-//      r = transformUndecl(r)
-//      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "undecl"), r.prettyST)
-//      pass = pass + 1
+      r = transformUndecl(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "undecl"), r.prettyST)
+      pass = pass + 1
 
       r = transformGlobalVarRef(fresh, r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "global"), r.prettyST)
@@ -1735,25 +1776,24 @@ import Anvil._
   def transformOffset(globalMap: HashSMap[ISZ[String], VarInfo],
                       proc: AST.IR.Procedure): (Z, AST.IR.Procedure, HashMap[String, Z]) = {
     val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
-    val blocks = body.blocks
-    var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- blocks) yield (b.label, b))
-    var blockLocalOffsetMap = HashMap.empty[Z, (Z, LocalOffsetInfo)]
+    var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+    var blockLocalOffsetMap = HashMap.empty[Z, (Z, Z, LocalOffsetInfo)]
     var callResultIdOffsetMap = HashMap.empty[String, Z]
     val offsetParamInfo = procedureParamInfo(PBox(proc))
     var maxOffset = offsetParamInfo._1
-    blockLocalOffsetMap = blockLocalOffsetMap + blocks(0).label ~> (maxOffset, LocalOffsetInfo(
+    val incomingMap = countNumOfIncomingJumps(body.blocks)
+    blockLocalOffsetMap = blockLocalOffsetMap + body.blocks(0).label ~> (maxOffset, 0, LocalOffsetInfo(
       HashMap.empty[String, Z] ++ (for (entry <- offsetParamInfo._2.entries) yield (entry._1, entry._2.offset)), ISZ()))
-    var work = ISZ(blocks(0))
+    var work = ISZ(body.blocks(0))
     while (work.nonEmpty) {
       var next = ISZ[AST.IR.BasicBlock]()
       for (b <- work) {
-        var (offset, m) = blockLocalOffsetMap.get(b.label).get
+        var (offset, _, m) = blockLocalOffsetMap.get(b.label).get
         var grounds = ISZ[AST.IR.Stmt.Ground]()
         for (g <- b.grounds) {
           g match {
             case g: AST.IR.Stmt.Decl =>
               var locals = ISZ[Intrinsic.Decl.Local]()
-              var mult: Z = if (g.undecl) -1 else 1
               var assignSPs = ISZ[AST.IR.Stmt.Ground]()
               for (l <- g.locals) {
                 val (size, assignSP): (Z, B) =
@@ -1763,28 +1803,39 @@ import Anvil._
                   locals = locals :+ Intrinsic.Decl.Local(m.get(l.id).get, size, l.id, l.tipe)
                   val loffset = m.get(l.id).get
                   m = m -- ISZ(l.id)
-                  m = m.addFreeCell(LocalOffsetInfo.FreeCell(loffset, size))
+                  if (loffset + size == offset) {
+                    offset = offset - size
+                  } else {
+                    m = m.addFreeCell(LocalOffsetInfo.FreeCell(loffset, size))
+                  }
                 } else {
                   var loffset = offset
                   var found = F
-                  for (fc <- m.freeCells if !found && fc.size >= size) {
-                    found = T
-                    loffset = fc.offset
-                    mult = 0
+                  for (i <- m.freeCells.indices if !found) {
+                    val fc = m.freeCells(i)
+                    if (fc.size >= size) {
+                      found = T
+                      loffset = fc.offset
+                      val fcsOps = ops.ISZOps(m.freeCells)
+                      m = m(freeCells = fcsOps.slice(0, i) ++ fcsOps.slice(i + 1, fcsOps.s.size))
+                    }
                   }
                   m = m + l.id ~> loffset
+                  if (!found) {
+                    offset = offset + size
+                  }
                   locals = locals :+ Intrinsic.Decl.Local(loffset, size, l.id, l.tipe)
                 }
                 if (assignSP) {
+                  val loffset = m.get(l.id).get
                   assignSPs = assignSPs :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
                     AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
-                      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, offset, g.pos), g.pos),
+                      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset, g.pos), g.pos),
                     isSigned(spType), typeByteSize(spType),
                     AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
-                      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, offset + typeByteSize(spType), g.pos), g.pos),
+                      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset + typeByteSize(spType), g.pos), g.pos),
                     st"address of ${l.id}", spType, g.pos))
                 }
-                offset = offset + size * mult
               }
               if (maxOffset < offset) {
                 maxOffset = offset
@@ -1976,15 +2027,22 @@ import Anvil._
           jump = OffsetSubsitutor(this, m, globalMap).transform_langastIRJump(b.jump).getOrElse(b.jump))
         for (target <- b.jump.targets) {
           blockLocalOffsetMap.get(target) match {
-            case Some((_, pm)) =>
+            case Some((po, jumps, pm)) =>
+              var om = HashMap.empty[String, Z]
               for (k <- pm.offsetMap.keySet.intersect(m.offsetMap.keySet).elements) {
                 val pv = pm.get(k).get
                 val v = m.get(k).get
                 assert(v == pv, s"m($k) = $v, pm($k) = $pv, m = $m, pm = $pm")
+                om = om + k ~> v
               }
+              val fcs = (HashSSet ++ m.freeCells).intersect(HashSSet ++ pm.freeCells).elements
+              val targetOffset: Z = if (offset < po) po else offset
+              blockLocalOffsetMap = blockLocalOffsetMap + target ~> (targetOffset, jumps + 1, LocalOffsetInfo(om, fcs))
             case _ =>
-              blockLocalOffsetMap = blockLocalOffsetMap + target ~> (offset, m)
-              next = next :+ blockMap.get(target).get
+              blockLocalOffsetMap = blockLocalOffsetMap + target ~> (offset, 1, m)
+          }
+          if (blockLocalOffsetMap.get(target).get._2 <= incomingMap.get(target).get) {
+            next = next :+ blockMap.get(target).get
           }
         }
       }
