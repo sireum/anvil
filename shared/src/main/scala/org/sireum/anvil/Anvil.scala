@@ -313,6 +313,14 @@ import Anvil._
         }
         globalSize = globalSize + size
       }
+      val smc = ShiftMethodCollector(this, HashSSet.empty)
+      for (p <- procedures) {
+        smc.transform_langastIRProcedure(p)
+      }
+      for (id <- smc.ids.elements) {
+        val info = th.nameMap.get(runtimeName :+ id).get.asInstanceOf[Info.Method]
+        procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
+      }
       (startOpt.get.context, AST.IR.Program(threeAddressCode, globals, procedures), globalSize, globalMap)
     }
 
@@ -935,13 +943,21 @@ import Anvil._
     for (b <- body.blocks) {
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       var undeclMap = HashMap.empty[Z, AST.IR.Stmt.Decl]
-      def insertUndecl(): ISZ[AST.IR.Stmt.Ground] = {
+      def insertUndecl(tempOpt: Option[Z]): ISZ[AST.IR.Stmt.Ground] = {
         var r = ISZ[AST.IR.Stmt.Ground]()
         for (i <- grounds.size - 1 to 0 by -1) {
           val g = grounds(i)
+          tempOpt match {
+            case Some(temp) =>
+              g match {
+                case g: AST.IR.Stmt.Assign.Temp if g.lhs == temp => return grounds
+                case _ =>
+              }
+            case _ =>
+          }
           val tc = TempCollector(HashSSet.empty)
           tc.transform_langastIRStmtGround(g)
-          for (temp <- tc.r.elements) {
+          for (temp <- tc.r.elements if tempOpt.isEmpty || tempOpt.get == temp) {
             undeclMap.get(temp) match {
               case Some(undecl) =>
                 r = r :+ undecl
@@ -957,7 +973,7 @@ import Anvil._
         g match {
           case g: AST.IR.Stmt.Assign.Temp =>
             undeclMap.get(g.lhs) match {
-              case Some(_) => grounds = insertUndecl()
+              case Some(_) => grounds = insertUndecl(Some(g.lhs))
               case _ =>
             }
           case _ =>
@@ -980,7 +996,7 @@ import Anvil._
             grounds = grounds :+ g
         }
       }
-      blocks = blocks :+ b(grounds = insertUndecl())
+      blocks = blocks :+ b(grounds = insertUndecl(None()))
     }
 
     return p(body = body(blocks = blocks))
@@ -2409,7 +2425,9 @@ import Anvil._
       case Some(subz) =>
         if (subz.ast.hasMax && subz.ast.hasMin) {
           val size = subz.ast.max - subz.ast.min + 1
-          if (size < config.maxArraySize) {
+          if (subz.ast.isBitVector) {
+            return if (size < config.maxArraySize) size else config.maxStringSize
+          } else {
             return size
           }
         }

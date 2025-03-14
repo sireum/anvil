@@ -104,7 +104,7 @@ object IRSimulator {
       } else {
         None()
       }
-      var localSTOpt: Option[ST] = if (DEBUG_LOCAL) {
+      val localSTOpt: Option[ST] = if (DEBUG_LOCAL) {
         var localSTs = ISZ[ST]()
         for (entry <- callFrames.peek.get.entries) {
           val (id, info) = entry

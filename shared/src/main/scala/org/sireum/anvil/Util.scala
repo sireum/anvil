@@ -725,6 +725,26 @@ object Util {
     @strictpure def killJump(j: AST.IR.Jump): HashSSet[(String, AST.Typed)] = HashSSet.empty
   }
 
+  @record class ShiftMethodCollector(val anvil: Anvil, var ids: HashSSet[String]) extends MAnvilIRTransformer {
+    override def post_langastIRExpBinary(o: AST.IR.Exp.Binary): MOption[AST.IR.Exp] = {
+      if (o.right.isInstanceOf[AST.IR.Exp.Int]) {
+        return MNone()
+      }
+      (o.op, anvil.isSigned(o.tipe), anvil.typeByteSize(o.tipe)) match {
+        case (AST.IR.Exp.Binary.Op.Shr, T, bytes) if bytes > 32 => ids = ids + "shrS32"
+        case (AST.IR.Exp.Binary.Op.Shr, T, _) => ids = ids + "shrS64"
+        case (AST.IR.Exp.Binary.Op.Shr, F, bytes) if bytes > 32 => ids = ids + "shrU32"
+        case (AST.IR.Exp.Binary.Op.Shr, F, _) => ids = ids + "shrU64"
+        case (AST.IR.Exp.Binary.Op.Ushr, _, bytes) if bytes > 32 => ids = ids + "shrU32"
+        case (AST.IR.Exp.Binary.Op.Ushr, _, _) => ids = ids + "shrU64"
+        case (AST.IR.Exp.Binary.Op.Shl, _, bytes) if bytes > 32 => ids = ids + "shlU32"
+        case (AST.IR.Exp.Binary.Op.Shl, _, _) => ids = ids + "shlU64"
+        case _ =>
+      }
+      return MNone()
+    }
+  }
+
 
   val kind: String = "Anvil"
   val exitLabel: Z = 0
@@ -773,12 +793,12 @@ object Util {
     "printStackTrace" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayType, displayIndexType, displayIndexType, displayIndexType, displayIndexType, displayIndexType, displayIndexType), AST.Typed.u64)
 
   val runtimeMethodTypeMap: HashSMap[String, AST.Typed.Fun] = HashSMap.empty[String, AST.Typed.Fun] +
-    "shlU32" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u32, AST.Typed.u32), AST.Typed.u32) +
-    "shrU32" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u32, AST.Typed.u32), AST.Typed.u32) +
-    "shrS32" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.s32, AST.Typed.s32), AST.Typed.s32) +
-    "shlU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u64, AST.Typed.u64), AST.Typed.u64) +
-    "shrU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.u64, AST.Typed.u64), AST.Typed.u64) +
-    "shrS64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(AST.Typed.s64, AST.Typed.s64), AST.Typed.s64)
+    "shlU32" ~> AST.Typed.Fun(AST.Purity.Pure, F, ISZ(AST.Typed.u32, AST.Typed.u32), AST.Typed.u32) +
+    "shrU32" ~> AST.Typed.Fun(AST.Purity.Pure, F, ISZ(AST.Typed.u32, AST.Typed.u32), AST.Typed.u32) +
+    "shrS32" ~> AST.Typed.Fun(AST.Purity.Pure, F, ISZ(AST.Typed.s32, AST.Typed.s32), AST.Typed.s32) +
+    "shlU64" ~> AST.Typed.Fun(AST.Purity.Pure, F, ISZ(AST.Typed.u64, AST.Typed.u64), AST.Typed.u64) +
+    "shrU64" ~> AST.Typed.Fun(AST.Purity.Pure, F, ISZ(AST.Typed.u64, AST.Typed.u64), AST.Typed.u64) +
+    "shrS64" ~> AST.Typed.Fun(AST.Purity.Pure, F, ISZ(AST.Typed.s64, AST.Typed.s64), AST.Typed.s64)
 
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
   val syntheticMethodIds: HashSet[String] = HashSet.empty[String] + objInitId + newInitId + testId
