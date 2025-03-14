@@ -400,6 +400,12 @@ import Anvil._
       var p = program.procedures(0)
       var pass: Z = 0
 
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "merged"), p.prettyST)
+
+      p = anvil.transformErase(fresh, p)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "erase"), p.prettyST)
+      pass = pass + 1
+
       @strictpure def isRegisterInc(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
         case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isInc =>
           grounds.isEmpty ||
@@ -1040,6 +1046,40 @@ import Anvil._
         AST.IR.Exp.Int(AST.Typed.u8, desc(i).toZ, p.pos), st"'${ops.COps(conversions.U32.toC(conversions.U8.toU32(desc(i)))).escapeString}'", AST.Typed.u8, p.pos))
     }
     return p(body = body(blocks = body.blocks(0 ~> first(grounds = grounds ++ first.grounds))))
+  }
+
+  def transformErase(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    if (!config.erase) {
+      return p
+    }
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      var block = b
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      for (g <- b.grounds) {
+        g match {
+          case AST.IR.Stmt.Intrinsic(in: Intrinsic.Decl) if in.undecl =>
+            val label = fresh.label()
+            blocks = blocks :+ block(grounds = grounds, jump = AST.IR.Jump.Goto(label, g.pos))
+            grounds = ISZ()
+            block = AST.IR.BasicBlock(label, grounds, b.jump)
+            for (slot <- in.slots) {
+              for (i <- 0 until slot.size) {
+                val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
+                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, slot.offset + i, g.pos), g.pos)
+                grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset, isSigned(AST.Typed.u8),
+                  typeByteSize(AST.Typed.u8), AST.IR.Exp.Int(AST.Typed.u8, 0, g.pos), st"// erasing ${slot.id} byte $i",
+                  AST.Typed.u8, g.pos))
+              }
+            }
+          case _ =>
+        }
+        grounds = grounds :+ g
+      }
+      blocks = blocks :+ block(grounds = grounds)
+    }
+    return p(body = body(blocks = blocks))
   }
 
   def transformMainStackFrame(p: AST.IR.Procedure): AST.IR.Procedure = {
