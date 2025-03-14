@@ -929,7 +929,33 @@ import Anvil._
     for (b <- body.blocks) {
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       var undeclMap = HashMap.empty[Z, AST.IR.Stmt.Decl]
+      def insertUndecl(): ISZ[AST.IR.Stmt.Ground] = {
+        var r = ISZ[AST.IR.Stmt.Ground]()
+        for (i <- grounds.size - 1 to 0 by -1) {
+          val g = grounds(i)
+          val tc = TempCollector(HashSSet.empty)
+          tc.transform_langastIRStmtGround(g)
+          for (temp <- tc.r.elements) {
+            undeclMap.get(temp) match {
+              case Some(undecl) =>
+                r = r :+ undecl
+                undeclMap = undeclMap -- ISZ(temp)
+              case _ =>
+            }
+          }
+          r = r :+ g
+        }
+        return for (i <- r.size - 1 to 0 by -1) yield r(i)
+      }
       for (g <- b.grounds) {
+        g match {
+          case g: AST.IR.Stmt.Assign.Temp =>
+            undeclMap.get(g.lhs) match {
+              case Some(_) => grounds = insertUndecl()
+              case _ =>
+            }
+          case _ =>
+        }
         g match {
           case g: AST.IR.Stmt.Expr if g.exp.methodType.ret != AST.Typed.unit =>
             val decl = AST.IR.Stmt.Decl(F, T, T, p.context, ISZ(
@@ -948,22 +974,7 @@ import Anvil._
             grounds = grounds :+ g
         }
       }
-      var grounds2 = ISZ[AST.IR.Stmt.Ground]()
-      for (i <- grounds.size - 1 to 0 by -1) {
-        val g = grounds(i)
-        val tc = TempCollector(HashSSet.empty)
-        tc.transform_langastIRStmtGround(g)
-        for (temp <- tc.r.elements) {
-          undeclMap.get(temp) match {
-            case Some(undecl) =>
-              grounds2 = grounds2 :+ undecl
-              undeclMap = undeclMap -- ISZ(temp)
-            case _ =>
-          }
-        }
-        grounds2 = grounds2 :+ g
-      }
-      blocks = blocks :+ b(grounds = for (i <- grounds2.size - 1 to 0 by - 1) yield grounds2(i))
+      blocks = blocks :+ b(grounds = insertUndecl())
     }
 
     return p(body = body(blocks = blocks))
@@ -1078,9 +1089,9 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "basic"), r.prettyST)
       pass = pass + 1
 
-      r = transformUndecl(r)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "undecl"), r.prettyST)
-      pass = pass + 1
+//      r = transformUndecl(r)
+//      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "undecl"), r.prettyST)
+//      pass = pass + 1
 
       r = transformGlobalVarRef(fresh, r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "global"), r.prettyST)
@@ -1686,12 +1697,12 @@ import Anvil._
     val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
     val blocks = body.blocks
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- blocks) yield (b.label, b))
-    var blockLocalOffsetMap = HashMap.empty[Z, (Z, HashMap[String, Z])]
+    var blockLocalOffsetMap = HashMap.empty[Z, (Z, LocalOffsetInfo)]
     var callResultIdOffsetMap = HashMap.empty[String, Z]
     val offsetParamInfo = procedureParamInfo(PBox(proc))
     var maxOffset = offsetParamInfo._1
-    blockLocalOffsetMap = blockLocalOffsetMap + blocks(0).label ~> (maxOffset, HashMap.empty[String, Z] ++
-      (for (entry <- offsetParamInfo._2.entries) yield (entry._1, entry._2.offset)))
+    blockLocalOffsetMap = blockLocalOffsetMap + blocks(0).label ~> (maxOffset, LocalOffsetInfo(
+      HashMap.empty[String, Z] ++ (for (entry <- offsetParamInfo._2.entries) yield (entry._1, entry._2.offset)), ISZ()))
     var work = ISZ(blocks(0))
     while (work.nonEmpty) {
       var next = ISZ[AST.IR.BasicBlock]()
@@ -1702,7 +1713,7 @@ import Anvil._
           g match {
             case g: AST.IR.Stmt.Decl =>
               var locals = ISZ[Intrinsic.Decl.Local]()
-              val mult: Z = if (g.undecl) -1 else 1
+              var mult: Z = if (g.undecl) -1 else 1
               var assignSPs = ISZ[AST.IR.Stmt.Ground]()
               for (l <- g.locals) {
                 val (size, assignSP): (Z, B) =
@@ -1710,10 +1721,19 @@ import Anvil._
                   else (typeByteSize(spType) + typeByteSize(l.tipe), !g.undecl)
                 if (g.undecl) {
                   locals = locals :+ Intrinsic.Decl.Local(m.get(l.id).get, size, l.id, l.tipe)
+                  val loffset = m.get(l.id).get
                   m = m -- ISZ(l.id)
+                  m = m.addFreeCell(LocalOffsetInfo.FreeCell(loffset, size))
                 } else {
-                  m = m + l.id ~> offset
-                  locals = locals :+ Intrinsic.Decl.Local(offset, size, l.id, l.tipe)
+                  var loffset = offset
+                  var found = F
+                  for (fc <- m.freeCells if !found && fc.size >= size) {
+                    found = T
+                    loffset = fc.offset
+                    mult = 0
+                  }
+                  m = m + l.id ~> loffset
+                  locals = locals :+ Intrinsic.Decl.Local(loffset, size, l.id, l.tipe)
                 }
                 if (assignSP) {
                   assignSPs = assignSPs :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
@@ -1917,7 +1937,7 @@ import Anvil._
         for (target <- b.jump.targets) {
           blockLocalOffsetMap.get(target) match {
             case Some((_, pm)) =>
-              for (k <- pm.keySet.intersect(m.keySet).elements) {
+              for (k <- pm.offsetMap.keySet.intersect(m.offsetMap.keySet).elements) {
                 val pv = pm.get(k).get
                 val v = m.get(k).get
                 assert(v == pv, s"m($k) = $v, pm($k) = $pv, m = $m, pm = $pm")
@@ -2128,49 +2148,6 @@ import Anvil._
       blocks = blocks :+ b(grounds = grounds)
     }
     return p(body = body(blocks = blocks))
-  }
-
-  def transformUndecl(p: AST.IR.Procedure): AST.IR.Procedure = {
-    val params = HashSet ++ p.paramNames
-    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-    val exitSet = MBox(HashSMap.empty[Z, ISZ[HashSSet[(String, AST.Typed)]]])
-    LocalLV(ControlFlowGraph.buildBasic(body)).compute(body, MBox(HashSMap.empty), exitSet)
-    var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
-    var undeclMap = HashSMap.empty[(String, AST.Typed), AST.IR.Stmt.Decl]
-    for (b <- blockMap.values) {
-      var grounds = ISZ[AST.IR.Stmt.Ground]()
-      for (g <- b.grounds) {
-        g match {
-          case g: AST.IR.Stmt.Decl if !g.isAlloc =>
-            if (!g.undecl) {
-              undeclMap = undeclMap ++ (for (l <- g.locals) yield (l.id, l.tipe) ~> g.undeclare)
-              grounds = grounds :+ g
-            }
-          case _ => grounds = grounds :+ g
-        }
-      }
-      blockMap = blockMap + b.label ~> b(grounds = grounds)
-    }
-    for (b <- blockMap.values) {
-      var grounds = ISZ[AST.IR.Stmt.Ground]()
-      for (i <- b.grounds.indices) {
-        val g = b.grounds(i)
-        grounds = grounds :+ g
-        val lc = LocalCollector(HashSSet.empty)
-        lc.transform_langastIRStmtGround(g)
-        for (idt <- lc.r.elements if !exitSet.value.get(b.label).get(i).contains(idt)) {
-          undeclMap.get(idt) match {
-            case Some(undecl) => grounds = grounds :+ undecl
-            case _ =>
-              if (!params.contains(idt._1)) {
-                println(undeclMap)
-                halt(s"${p.id} @ ${b.label}: $idt")
-              }
-          }
-        }
-      }
-    }
-    return p(body = body(blocks = blockMap.values))
   }
 
   def transformInstanceOf(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {

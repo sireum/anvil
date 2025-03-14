@@ -37,6 +37,7 @@ object AnvilTest {
     "factorial.sc" ~> (128 + 8 * 5) +
     "global.sc" ~> (128 + 8) +
     "instanceof.sc" ~> 128 +
+    "local-reuse.sc" ~> 128 +
     "mult.sc" ~> (128 + 8 * 9) +
     "print.sc" ~> (512 + 8 * 19) +
     "printU64.sc" ~> (128 + 8 * 10) +
@@ -51,6 +52,7 @@ object AnvilTest {
     "factorial.sc" ~> 32 +
     "global.sc" ~> 2 +
     "instanceof.sc" ~> 2 +
+    "local-reuse.sc" ~> 4 +
     "mult.sc" ~> 64 +
     "print.sc" ~> 64 +
     "printU64.sc" ~> 64 +
