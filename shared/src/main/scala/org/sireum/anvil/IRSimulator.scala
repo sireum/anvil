@@ -163,6 +163,7 @@ object IRSimulator {
       @pure def reads: Accesses
       @pure def writes: Accesses
       def update(state: State): Undo
+      @strictpure def approxCycles(config: Anvil.Config): Z = 1
     }
 
     object Edit {
@@ -235,12 +236,13 @@ object IRSimulator {
         }
       }
 
-      @datatype class Memory(val offset: Z, val values: ISZ[U8], val reads: Accesses) extends Edit {
+      @datatype class Memory(val offset: Z, val values: ISZ[U8], val reads: Accesses, val cycles: Z) extends Edit {
+        @strictpure override def approxCycles(config: Anvil.Config): Z = (cycles / config.copySize) + (cycles % config.copySize)
         @strictpure def writes: Accesses = Accesses.empty.addMemory(offset, values)
         def update(state: State): Undo = {
           val r = Memory(offset, for (i <- values.indices) yield state.memory(offset + i),
             Accesses(reads.temps, reads.memory -- (for (i <- values.indices) yield offset + i)).
-              addMemory(offset, values))
+              addMemory(offset, values), cycles)
           if (DEBUG_EDIT) {
             if (values.size == 1) {
               println(s"* memory(${shortenHexString(conversions.Z.toU64(offset))} ($offset)) = ${values(0)}  (old ${r.values(0)})")
@@ -913,7 +915,7 @@ import IRSimulator._
             for (i <- 0 until size.value) {
               bs = bs :+ state.memory(rhsOffset.value + i)
             }
-            return State.Edit.Memory(lhsOffset.value, bs, acs)
+            return State.Edit.Memory(lhsOffset.value, bs, acs, size.value)
           case in: Intrinsic.RegisterAssign =>
             val (v, acs) = evalExp(state, in.value)
             if (in.isSP) {
@@ -1042,19 +1044,26 @@ import IRSimulator._
     return r
   }
 
-  def executeBlock(state: State, b: AST.IR.BasicBlock): ISZ[State.Undo] = {
+  def executeBlock(state: State, b: AST.IR.BasicBlock): (Z, ISZ[State.Undo]) = {
     var r = ISZ[State.Undo]()
     val edits = evalBlock(state, b)
     var i: Z = 0
+    var cycles: Z = 1
     while (i < edits.size) {
+      val ec = edits(i).approxCycles(anvil.config)
+      if (ec > cycles) {
+        cycles = ec
+      }
       r = r :+ edits(i).update(state)
       i = i + 1
     }
     checkAccesses(state, b.label, r)
-    return r
+    return (cycles, r)
   }
 
   def evalProcedure(state: State, p: AST.IR.Procedure): Unit = {
+    var approxCycles: Z = 0
+
     def log(title: String, b: AST.IR.BasicBlock): Unit = {
       val pos: message.Position = if (b.grounds.nonEmpty) b.grounds(0).pos else b.jump.pos
       var file = pos.uriOpt.get
@@ -1063,7 +1072,7 @@ import IRSimulator._
         file = ops.StringOps(file).substring(i + 1, file.size)
       }
       println(
-        st"""$title block .${b.label}:
+        st"""$title block .${b.label} (approx. cycles = $approxCycles):
             |  ${state.prettyST(this)}""".render)
     }
 
@@ -1077,21 +1086,13 @@ import IRSimulator._
       println()
     }
 
-    var approxCycles: Z = 0
-
     while (state.CP != u64"0" && state.CP != u64"1") {
       val b = blockMap.get(state.CP).get
       if (DEBUG) {
         log("Evaluating", b)
       }
-      executeBlock(state, b)
-      b.grounds match {
-        case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.Copy)) if in.rhsBytes.isInstanceOf[AST.IR.Exp.Int] =>
-          val rhsBytes = in.rhsBytes.asInstanceOf[AST.IR.Exp.Int].value
-          approxCycles = approxCycles + (rhsBytes / anvil.config.copySize) + (rhsBytes % anvil.config.copySize)
-        case _ =>
-          approxCycles = approxCycles + 1
-      }
+      val cycles = executeBlock(state, b)._1
+      approxCycles = approxCycles + cycles
       if (DEBUG && DEBUG_EDIT) {
         println()
       }
@@ -1125,6 +1126,6 @@ import IRSimulator._
       val b = conversions.U64.toU8((value >> conversions.Z.toU64(i * 8)) & u64"0xFF")
       bs = bs :+ b
     }
-    return State.Edit.Memory(offset, bs, acs)
+    return State.Edit.Memory(offset, bs, acs, 1)
   }
 }
