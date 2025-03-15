@@ -554,6 +554,20 @@ object MemCopyLog {
       case exp: AST.IR.Exp.Type => {
         exprST = st"${processExpr(exp.exp, F)}${if(anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}"
       }
+      case exp: AST.IR.Exp.Unary => {
+        val variable = processExpr(exp.exp, F)
+        val isUnsigned = !anvil.isSigned(exp.tipe)
+        val opString: String = exp.op match {
+          case lang.ast.Exp.UnaryOp.Not => "!"
+          case lang.ast.Exp.UnaryOp.Plus => "+"
+          case lang.ast.Exp.UnaryOp.Minus => "-"
+          case lang.ast.Exp.UnaryOp.Complement => "~"
+        }
+        exprST = opString match {
+          case "-" => st"${opString}${if(isUnsigned) s"${variable}.asSInt" else s"${variable}"}"
+          case _ => st"${opString}${variable}"
+        }
+      }
       case exp: AST.IR.Exp.Binary => {
         val isSIntOperation = isSignedExp(exp.left) || isSignedExp(exp.right)
         val leftST = st"${processExpr(exp.left, F).render}${if(isSIntOperation && (!isSignedExp(exp.left))) ".asSInt" else ""}"
