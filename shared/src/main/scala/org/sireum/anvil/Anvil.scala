@@ -39,7 +39,7 @@ import org.sireum.anvil.Util._
 
 object Anvil {
 
-  @datatype class Config(val projectName: String,
+  @datatype class Config(val nameOpt: Option[String],
                          val memory: Z,
                          val defaultBitWidth: Z,
                          val maxStringSize: Z,
@@ -58,8 +58,8 @@ object Anvil {
   }
 
   object Config {
-    @strictpure def empty(projectName: String): Config =
-      Config(projectName, 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, F, 0, 8, F, F, F)
+    @strictpure def empty: Config =
+      Config(None(), 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, F, 0, 8, F, F, F)
   }
 
   @sig trait Output {
@@ -76,6 +76,7 @@ object Anvil {
   }
 
   @datatype class IR(val anvil: Anvil,
+                     val name: String,
                      val procedure: AST.IR.Procedure,
                      val maxRegisters: Z,
                      val globalSize: Z,
@@ -84,7 +85,7 @@ object Anvil {
   def synthesize(isTest: B, fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, name: QName, config: Config,
                  output: Output, reporter: Reporter): Unit = {
     generateIR(isTest, fresh, th, name, config, output, reporter) match {
-      case Some(ir) => HwSynthesizer(ir.anvil).printProcedure(ir.procedure.id, ir.procedure, output, ir.maxRegisters)
+      case Some(ir) => HwSynthesizer(ir.anvil).printProcedure(ir.name, ir.procedure, output, ir.maxRegisters)
       case _ =>
     }
   }
@@ -166,14 +167,14 @@ import Anvil._
 
     var stage: Z = 0
 
+    var testProcs = ISZ[AST.IR.Procedure]()
+    var mainProcs = ISZ[AST.IR.Procedure]()
     val mq: (AST.IR.MethodContext, AST.IR.Program, Z, HashSMap[ISZ[String], VarInfo]) = {
       var globals = ISZ[AST.IR.Global]()
       var procedures = ISZ[AST.IR.Procedure]()
       var globalSize: Z = 0
 
       var startOpt = Option.none[AST.IR.Procedure]()
-      var testProcs = ISZ[AST.IR.Procedure]()
-      var mainProcs = ISZ[AST.IR.Procedure]()
       for (ms <- tsr.methods.values; m <- ms.elements) {
         val receiverOpt: Option[AST.Typed] = m.receiverOpt match {
           case Some(t) => Some(t)
@@ -499,7 +500,18 @@ import Anvil._
       val cpMax = pow(2, anvil.typeByteSize(cpType) * 8)
       assert(nlocs <= cpMax, s"nlocs ($nlocs) > cpMax (2 ** (${anvil.typeByteSize(cpType) * 8}) == $cpMax)")
     }
-    return Some(IR(anvil, program.procedures(0), maxRegisters, globalSize, globalMap))
+
+    val name: String = config.nameOpt match {
+      case Some(id) => id
+      case _ =>
+        var id = st"${(for (p <- mainProcs) yield ops.StringOps(p.id).firstToUpper, "")}".render
+        if (isTest) {
+          id = s"${id}Test"
+        }
+        id
+    }
+
+    return Some(IR(anvil, name, program.procedures(0), maxRegisters, globalSize, globalMap))
   }
 
   @pure def transformBlock(stage: Z, output: Output, p: AST.IR.Procedure): AST.IR.Procedure = {

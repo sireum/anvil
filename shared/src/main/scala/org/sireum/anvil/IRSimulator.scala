@@ -1077,12 +1077,21 @@ import IRSimulator._
       println()
     }
 
+    var approxCycles: Z = 0
+
     while (state.CP != u64"0" && state.CP != u64"1") {
       val b = blockMap.get(state.CP).get
       if (DEBUG) {
         log("Evaluating", b)
       }
       executeBlock(state, b)
+      b.grounds match {
+        case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.Copy)) if in.rhsBytes.isInstanceOf[AST.IR.Exp.Int] =>
+          val rhsBytes = in.rhsBytes.asInstanceOf[AST.IR.Exp.Int].value
+          approxCycles = approxCycles + (rhsBytes / anvil.config.copySize) + (rhsBytes % anvil.config.copySize)
+        case _ =>
+          approxCycles = approxCycles + 1
+      }
       if (DEBUG && DEBUG_EDIT) {
         println()
       }
@@ -1090,7 +1099,7 @@ import IRSimulator._
 
     if (DEBUG) {
       println(
-        st"""End state:
+        st"""End state (approx. cycles = $approxCycles):
             |  ${state.prettyST(this)}""".render)
     }
   }

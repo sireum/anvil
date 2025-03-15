@@ -82,7 +82,7 @@ object cli {
           tpe = Type.NumChoice(None(), ISZ(64, 32, 16, 8)),
           description = "Default bit-width for unbounded integer types (e.g., Z)"),
         Opt(name = "projectName", longKey = "name", shortKey = Some('n'),
-          tpe = Type.Str(None(), Some("main")),
+          tpe = Type.Str(sep = None(), default = None()),
           description = "Project name")
       )),
       OptGroup(name = "Array Bounds", opts = ISZ(

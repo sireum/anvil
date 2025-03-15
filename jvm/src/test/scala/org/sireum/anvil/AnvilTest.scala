@@ -84,9 +84,9 @@ class AnvilTest extends SireumRcSpec {
     val reporter = message.Reporter.create
     lang.parser.Parser.parseTopUnit[lang.ast.TopUnit.Program](content, T, F, Some(path.mkString("/")), reporter) match {
       case Some(p) if !reporter.hasError =>
-        val (th2, p2) = lang.FrontEnd.checkWorksheet(100, Some(th), p, reporter)
+        val (th2, _) = lang.FrontEnd.checkWorksheet(100, Some(th), p, reporter)
         (dir / path(0)).removeAll()
-        var config = Anvil.Config.empty(path.mkString("/"))
+        var config = Anvil.Config.empty
         val file = path(path.size - 1)
         config = config(
           memory = AnvilTest.memoryFileMap.get(file).getOrElse(AnvilTest.defaultMemory),

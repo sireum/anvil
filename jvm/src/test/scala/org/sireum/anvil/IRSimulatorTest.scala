@@ -111,12 +111,7 @@ class IRSimulatorTest extends SireumRcSpec {
             }
           }
           (dir / path(0)).removeAll()
-          var config = Anvil.Config.empty(path.mkString("/"))
-          //        config = config(
-          //          printSize = 4096,
-          //          stackTrace = T,
-          //          erase = T,
-          //          runtimeCheck = T)
+          var config = Anvil.Config.empty
           config = config(
             memory = AnvilTest.memoryFileMap.get(file).getOrElse(AnvilTest.defaultMemory),
             printSize = AnvilTest.printFileMap.get(file).getOrElse(AnvilTest.defaultPrintSize),
