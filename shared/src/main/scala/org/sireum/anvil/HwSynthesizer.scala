@@ -366,7 +366,7 @@ object MemCopyLog {
               |val ${tmpWire} = (${rhsOffsetST.render}).asUInt
               |${generalRegName}(${intrinsic.temp}.U) := Cat(
               |  ${(internalST, "\n")}
-              |).asUInt
+              |)${if(intrinsic.isSigned) ".asSInt.pad(GENERAL_REG_WIDTH)" else ""}.asUInt
             """
         TmpWireCount.incCount()
       }
