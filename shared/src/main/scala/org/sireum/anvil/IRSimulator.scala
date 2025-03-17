@@ -1058,6 +1058,21 @@ import IRSimulator._
       r = r :+ edits(i).update(state)
       i = i + 1
     }
+    @strictpure def isDivRem(op: AST.IR.Exp.Binary.Op.Type): B =
+      op == AST.IR.Exp.Binary.Op.Div || op == AST.IR.Exp.Binary.Op.Rem
+
+    if (anvil.config.customDivRem) {
+      b.grounds match {
+        case ISZ(AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.Binary, _)) if isDivRem(rhs.op) =>
+          if (anvil.typeByteSize(rhs.tipe) <= 32) {
+            cycles = 33
+          } else {
+            cycles = 65
+          }
+          cycles = cycles + 2
+        case _ =>
+      }
+    }
     checkAccesses(state, b.label, r)
     return (cycles, r)
   }
