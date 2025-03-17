@@ -1113,31 +1113,62 @@ import Anvil._
   def transformUndecl(p: AST.IR.Procedure): AST.IR.Procedure = {
     val params = HashSet ++ p.paramNames
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-    val exitSet = MBox(HashSMap.empty[Z, ISZ[HashSSet[(String, AST.Typed)]]])
-    LocalDeclLV(ControlFlowGraph.buildBasic(body)).compute(body, MBox(HashSMap.empty), exitSet)
+    val localExitSet = MBox(HashSMap.empty[Z, ISZ[HashSSet[(String, AST.Typed)]]])
+    val tempExitSet = MBox(HashSMap.empty[Z, ISZ[HashSSet[Z]]])
+    val cfg = ControlFlowGraph.buildBasic(body)
+    LocalDeclLV(cfg).compute(body, MBox(HashSMap.empty), localExitSet)
+    TempLV(cfg).compute(body, MBox(HashSMap.empty), tempExitSet)
     var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
     var undeclMap = HashSMap.empty[(String, AST.Typed), AST.IR.Stmt.Decl]
+    var blockUndecls = HashMap.empty[Z, ISZ[AST.IR.Stmt.Ground]]
     for (b <- blockMap.values) {
-      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      var undecls = HashMap.empty[Z, ISZ[AST.IR.Stmt.Ground]]
+      def findTempUseIndex(i: Z, temp: Z): Option[Z] = {
+        for (j <- i until b.grounds.size) {
+          val tc = TempCollector(HashSSet.empty)
+          tc.transform_langastIRStmtGround(b.grounds(j))
+          if (tc.r.contains(temp)) {
+            return Some(j)
+          }
+        }
+        return None()
+      }
       for (i <- b.grounds.indices) {
         val g = b.grounds(i)
         g match {
           case g: AST.IR.Stmt.Decl if !g.isAlloc =>
             if (!g.undecl) {
               undeclMap = undeclMap ++ (for (l <- g.locals) yield (l.id, l.tipe) ~> g.undeclare)
-              grounds = grounds :+ g
             }
           case _ =>
-            grounds = grounds :+ g
             val lc = LocalCollector(HashSSet.empty)
             lc.transform_langastIRStmtGround(g)
             g match {
               case g: AST.IR.Stmt.Assign.Local => lc.r = lc.r + (g.lhs, g.tipe)
               case _ =>
             }
-            for (idt <- lc.r.elements if !exitSet.value.get(b.label).get(i).contains(idt)) {
+            for (idt <- lc.r.elements if !localExitSet.value.get(b.label).get(i).contains(idt)) {
               undeclMap.get(idt) match {
-                case Some(undecl) => grounds = grounds :+ undecl
+                case Some(undecl) =>
+                  val scalarUndecl = undecl(locals = for (l <- undecl.locals if isScalar(l.tipe)) yield l)
+                  val nonScalarUndecl = undecl(locals = for (l <- undecl.locals if !isScalar(l.tipe)) yield l)
+                  if (scalarUndecl.locals.nonEmpty) {
+                    undecls = undecls + i ~> (undecls.get(i).getOrElse(ISZ()) :+ scalarUndecl)
+                  }
+                  if (nonScalarUndecl.locals.nonEmpty) {
+                    val temp = g.asInstanceOf[AST.IR.Stmt.Assign.Temp].lhs
+                    findTempUseIndex(i + 1, temp) match {
+                      case Some(j) =>
+                        undecls = undecls + j ~> (undecls.get(j).getOrElse(ISZ()) :+ nonScalarUndecl)
+                      case _ =>
+                        val tc = TempCollector(HashSSet.empty)
+                        tc.transform_langastIRJump(b.jump)
+                        assert(tc.r.contains(temp))
+                        for (target <- b.jump.targets) {
+                          blockUndecls = blockUndecls + target ~> (blockUndecls.get(target).getOrElse(ISZ()) :+ nonScalarUndecl)
+                        }
+                    }
+                  }
                 case _ =>
                   if (!params.contains(idt._1)) {
                     halt(s"${p.id} @ ${b.label}: $idt, $undeclMap")
@@ -1146,7 +1177,24 @@ import Anvil._
             }
         }
       }
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      for (i <- b.grounds.indices) {
+        val g = b.grounds(i)
+        g match {
+          case g: AST.IR.Stmt.Decl if g.undecl =>
+          case _ =>
+            grounds = grounds :+ g
+            undecls.get(i) match {
+              case Some(ds) => grounds = grounds ++ ds
+              case _ =>
+            }
+        }
+      }
       blockMap = blockMap + b.label ~> b(grounds = grounds)
+    }
+    for (p <- blockUndecls.entries) {
+      val b = blockMap.get(p._1).get
+      blockMap = blockMap + b.label ~> b(grounds = p._2 ++ b.grounds)
     }
     return p(body = body(blocks = blockMap.values))
   }
