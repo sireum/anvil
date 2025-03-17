@@ -48,6 +48,15 @@ object MemCopyLog {
   var isMemCopyInBlock: B = F
 }
 
+object DivRemLog {
+  var currentBlock: MOption[AST.IR.BasicBlock] = MNone()
+  var customDivRemST: ST = st""
+  var isCustomDivRem: B = F
+  var byteNum: Z = 0
+  var isDiv: B = F
+  var isSigned: B = F
+}
+
 @datatype class HwSynthesizer(val anvil: Anvil) {
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
@@ -71,8 +80,8 @@ object MemCopyLog {
           |  val io = IO(new Bundle {
           |    val a = Input(UInt(N.W))
           |    val b = Input(UInt(N.W))
-          |    val start = Input(Bool())   // 触发计算
-          |    val valid = Output(Bool())  // 计算完成信号
+          |    val start = Input(Bool())
+          |    val valid = Output(Bool())
           |    val quotient = Output(UInt(N.W))
           |    val remainder = Output(UInt(N.W))
           |  })
@@ -81,7 +90,7 @@ object MemCopyLog {
           |  val divisor = RegInit(0.U(N.W))
           |  val quotient = RegInit(0.U(N.W))
           |  val remainder = RegInit(0.U(N.W))
-          |  val count = RegInit((N - 1).U((1+log2Ceil(N)).W))  // 适应不同位宽
+          |  val count = RegInit((N - 1).U((1+log2Ceil(N)).W))
           |  val busy = RegInit(false.B)
           |
           |  when(io.start && !busy) {
@@ -163,6 +172,14 @@ object MemCopyLog {
           |
           |    ${if(anvil.config.customDivRem) "// divider" else ""}
           |    ${if(anvil.config.customDivRem) "val divider64 = Module(new PipelinedDivMod(64))" else ""}
+          |    ${if(anvil.config.customDivRem) "divider64.io.a := 1.U" else ""}
+          |    ${if(anvil.config.customDivRem) "divider64.io.b := 1.U" else ""}
+          |    ${if(anvil.config.customDivRem) "divider64.io.start := false.B" else ""}
+          |    ${if(anvil.config.customDivRem) "val divider32 = Module(new PipelinedDivMod(32))" else ""}
+          |    ${if(anvil.config.customDivRem) "divider32.io.a := 1.U" else ""}
+          |    ${if(anvil.config.customDivRem) "divider32.io.b := 1.U" else ""}
+          |    ${if(anvil.config.customDivRem) "divider32.io.start := false.B" else ""}
+          |    ${if(anvil.config.customDivRem) "val dividerStart = RegInit(false.B)" else ""}
           |
           |    // write operation
           |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
@@ -219,7 +236,7 @@ object MemCopyLog {
                    |  ${(commentST, "\n")}
                    |  */
                    |  ${(ground, "")}
-                   |  ${if(!MemCopyLog.isMemCopyInBlock) jump.render else st""}
+                   |  ${if(!MemCopyLog.isMemCopyInBlock & !DivRemLog.isCustomDivRem) jump.render else st""}
                    |}
                  """
       } else {
@@ -231,17 +248,19 @@ object MemCopyLog {
 
     for (b <- bs) {
       MemCopyLog.currentBlock = MSome(b)
+      DivRemLog.currentBlock = MSome(b)
 
       if(b.label != 0) {
         val jump = processJumpIntrinsic(b)
         groundsST = groundsST :+ groundST(b, processGround(b.grounds), jump)
       }
 
-      if(MemCopyLog.isMemCopyInBlock) {
-        MemCopyLog.isMemCopyInBlock = F
-      } else {
-        MemCopyLog.isMemCopyInBlock = F
-      }
+      MemCopyLog.isMemCopyInBlock = F
+      DivRemLog.isCustomDivRem = F
+      DivRemLog.isDiv = F
+      DivRemLog.customDivRemST = st""
+      DivRemLog.byteNum = 0
+      DivRemLog.isSigned = F
     }
 
     return basicBlockST(groundsST)
@@ -402,7 +421,7 @@ object MemCopyLog {
               |val ${tmpWireRhsST.render} = ${rhsAddrST.render}
               |val ${totalSizeWireST.render} = ${rhsBytesSt.render}
               |
-              |when(Idx < ${totalSizeWireST.render}) {
+              |when(Idx <= ${totalSizeWireST.render}) {
               |  ${(BytesTransferST, "\n")}
               |  Idx := Idx + ${anvil.config.copySize}.U
               |  LeftByteRounds := ${totalSizeWireST.render} - Idx
@@ -449,7 +468,7 @@ object MemCopyLog {
         val targetReg: String = if(intrinsic.isSP) "SP" else "DP"
         val updateContentST: ST = intrinsic.value match {
           case AST.IR.Exp.Int(_, v, _) => if (intrinsic.isInc) if (v < 0) st"${targetReg} - ${-v}.U" else st"${targetReg} + ${v}.U" else st"${processExpr(intrinsic.value, F)}"
-          case _ => processExpr(intrinsic.value, F)
+          case _ => if(intrinsic.isInc) st"${targetReg} + ${processExpr(intrinsic.value, F)}" else st"${processExpr(intrinsic.value, F)}"
         }
 
         intrinsicST =
@@ -493,9 +512,61 @@ object MemCopyLog {
                 |  ${rhsST.render}
                 |}"""
         } else {
+          var targetST = st""
+          var finalST = st""
+          if(DivRemLog.isCustomDivRem) {
+            if(DivRemLog.isDiv) {
+              if(DivRemLog.byteNum == 4) {
+                targetST = if(DivRemLog.isSigned) st"Mux(a_neg ^ b_neg, -divider32.io.quotient.asSInt.pad(64), divider32.io.quotient.asSInt.pad(64))" else st"divider32.io.quotient"
+              } else if(DivRemLog.byteNum == 8) {
+                targetST = if(DivRemLog.isSigned) st"Mux(a_neg ^ b_neg, -divider64.io.quotient.asSInt, divider64.io.quotient.asSInt)" else st"divider64.io.quotient"
+              } else {
+                targetST = st""
+              }
+            } else {
+              if(DivRemLog.byteNum == 4) {
+                targetST = if(DivRemLog.isSigned) st"Mux(a_neg, -divider32.io.remainder.asSInt.pad(64), divider32.io.remainder.asSInt.pad(64))" else st"divider32.io.remainder"
+              } else if(DivRemLog.byteNum == 8) {
+                targetST = if(DivRemLog.isSigned) st"Mux(a_neg, -divider64.io.remainder.asSInt, divider64.io.remainder.asSInt)" else st"divider64.io.remainder"
+              } else {
+                targetST = st""
+              }
+            }
+          } else {
+            targetST = rhsST
+          }
+
+          if(DivRemLog.isCustomDivRem) {
+            if(DivRemLog.byteNum == 4) {
+              finalST =
+                st"""
+                    |when(dividerStart & divider32.io.valid) {
+                    |  ${lhsST} := ${if(isSignedExp(a.rhs)) "(" else ""}${targetST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}
+                    |  ${processJumpIntrinsic(DivRemLog.currentBlock.get).render}
+                    |  dividerStart := false.B
+                    |}
+                  """
+            } else if(DivRemLog.byteNum == 8) {
+              finalST =
+                st"""
+                    |when(dividerStart & divider64.io.valid) {
+                    |  ${lhsST} := ${if(isSignedExp(a.rhs)) "(" else ""}${targetST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}
+                    |  ${processJumpIntrinsic(DivRemLog.currentBlock.get).render}
+                    |  dividerStart := false.B
+                    |}
+                  """
+            } else {
+              finalST = st""
+            }
+          } else {
+            finalST = st"${lhsST} := ${if(isSignedExp(a.rhs)) "(" else ""}${targetST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
+          }
+
           assignST =
             st"""
-                |${lhsST} := ${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"""
+                |${if(DivRemLog.isCustomDivRem) DivRemLog.customDivRemST.render else ""}
+                |${finalST.render}
+                """
         }
       }
       case _ => {
@@ -574,28 +645,150 @@ object MemCopyLog {
         val rightST = st"${processExpr(exp.right, F).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
         exp.op match {
           case AST.IR.Exp.Binary.Op.Add => {
-            exprST = st"${leftST.render} + ${rightST.render}"
+            exprST = st"(${leftST.render} + ${rightST.render})"
           }
           case AST.IR.Exp.Binary.Op.Sub => {
-            exprST = st"${leftST.render} - ${rightST.render}"
+            exprST = st"(${leftST.render} - ${rightST.render})"
           }
           case AST.IR.Exp.Binary.Op.Mul => {
-            exprST = st"${leftST.render} * ${rightST.render}"
+            exprST = st"(${leftST.render} * ${rightST.render})"
           }
           case AST.IR.Exp.Binary.Op.Div => {
-            exprST = st"${leftST.render} / ${rightST.render}"
+            if(anvil.config.customDivRem) {
+              var signedNumberExtraST = st""
+              if(anvil.isSigned(exp.left.tipe)) {
+                if(anvil.typeByteSize(exp.left.tipe) == 4) {
+                  signedNumberExtraST =
+                    st"""
+                      |val a_neg = ${leftST.render}(31)
+                      |val b_neg = ${rightST.render}(31)
+                      |val a_abs = Mux(a_neg, -${leftST.render}, ${leftST.render}).asUInt
+                      |val b_abs = Mux(b_neg, -${rightST.render}, ${rightST.render}).asUInt
+                    """
+                } else if(anvil.typeByteSize(exp.left.tipe) == 8) {
+                  signedNumberExtraST =
+                    st"""
+                        |val a_neg = ${leftST.render}(63)
+                        |val b_neg = ${rightST.render}(63)
+                        |val a_abs = Mux(a_neg, -${leftST.render}, ${leftST.render}).asUInt
+                        |val b_abs = Mux(b_neg, -${rightST.render}, ${rightST.render}).asUInt
+                    """
+                } else {
+                  signedNumberExtraST = st""
+                }
+              } else {
+                signedNumberExtraST = st""
+              }
+
+              if(anvil.typeByteSize(exp.left.tipe) == 4) {
+                DivRemLog.customDivRemST =
+                  st"""
+                      |${signedNumberExtraST.render}
+                      |when(!dividerStart) {
+                      |  divider32.io.a := ${if(anvil.isSigned(exp.left.tipe)) "a_abs" else s"${leftST.render}(31,0)"}
+                      |  divider32.io.b := ${if(anvil.isSigned(exp.right.tipe)) "b_abs" else s"${rightST.render}(31,0)"}
+                      |  divider32.io.start := true.B
+                      |  dividerStart := true.B
+                      |}
+                    """
+                DivRemLog.isCustomDivRem = T
+                DivRemLog.byteNum = 4
+                DivRemLog.isDiv = T
+                DivRemLog.isSigned = anvil.isSigned(exp.left.tipe) | anvil.isSigned(exp.right.tipe)
+              } else if(anvil.typeByteSize(exp.left.tipe) == 8) {
+                DivRemLog.customDivRemST =
+                  st"""
+                      |${signedNumberExtraST.render}
+                      |when(!dividerStart) {
+                      |  divider64.io.a := ${if(anvil.isSigned(exp.left.tipe)) "a_abs" else s"${leftST.render}"}
+                      |  divider64.io.b := ${if(anvil.isSigned(exp.right.tipe)) "b_abs" else s"${rightST.render}"}
+                      |  divider64.io.start := true.B
+                      |  dividerStart := true.B
+                      |}
+                    """
+                DivRemLog.isCustomDivRem = T
+                DivRemLog.byteNum = 8
+                DivRemLog.isDiv = T
+                DivRemLog.isSigned = anvil.isSigned(exp.left.tipe) | anvil.isSigned(exp.right.tipe)
+              } else {
+                halt(s"processExpr, you got an error about customDivRem")
+              }
+            } else {
+              exprST = st"(${leftST.render} / ${rightST.render})"
+            }
           }
           case AST.IR.Exp.Binary.Op.Rem => {
-            exprST = st"${leftST.render} % ${rightST.render}"
+            if(anvil.config.customDivRem) {
+              var signedNumberExtraST = st""
+              if(anvil.isSigned(exp.left.tipe)) {
+                if(anvil.typeByteSize(exp.left.tipe) == 4) {
+                  signedNumberExtraST =
+                    st"""
+                        |val a_neg = ${leftST.render}(31)
+                        |val b_neg = ${rightST.render}(31)
+                        |val a_abs = Mux(a_neg, -${leftST.render}, ${leftST.render}).asUInt
+                        |val b_abs = Mux(b_neg, -${rightST.render}, ${rightST.render}).asUInt
+                    """
+                } else if(anvil.typeByteSize(exp.left.tipe) == 8) {
+                  signedNumberExtraST =
+                    st"""
+                        |val a_neg = ${leftST.render}(63)
+                        |val b_neg = ${rightST.render}(63)
+                        |val a_abs = Mux(a_neg, -${leftST.render}, ${leftST.render}).asUInt
+                        |val b_abs = Mux(b_neg, -${rightST.render}, ${rightST.render}).asUInt
+                    """
+                } else {
+                  signedNumberExtraST = st""
+                }
+              } else {
+                signedNumberExtraST = st""
+              }
+
+              if(anvil.typeByteSize(exp.left.tipe) == 4) {
+                DivRemLog.customDivRemST =
+                  st"""
+                      |${signedNumberExtraST.render}
+                      |when(!dividerStart) {
+                      |  divider32.io.a := ${if(anvil.isSigned(exp.left.tipe)) "a_abs" else s"${leftST.render}(31,0)"}
+                      |  divider32.io.b := ${if(anvil.isSigned(exp.right.tipe)) "b_abs" else s"${rightST.render}(31,0)"}
+                      |  divider32.io.start := true.B
+                      |  dividerStart := true.B
+                      |}
+                    """
+                DivRemLog.isCustomDivRem = T
+                DivRemLog.byteNum = 4
+                DivRemLog.isDiv = F
+                DivRemLog.isSigned = anvil.isSigned(exp.left.tipe) | anvil.isSigned(exp.right.tipe)
+              } else if(anvil.typeByteSize(exp.left.tipe) == 8) {
+                DivRemLog.customDivRemST =
+                  st"""
+                      |${signedNumberExtraST.render}
+                      |when(!dividerStart) {
+                      |  divider64.io.a := ${if(anvil.isSigned(exp.left.tipe)) "a_abs" else s"${leftST.render}"}
+                      |  divider64.io.b := ${if(anvil.isSigned(exp.right.tipe)) "b_abs" else s"${rightST.render}"}
+                      |  divider64.io.start := true.B
+                      |  dividerStart := true.B
+                      |}
+                    """
+                DivRemLog.isCustomDivRem = T
+                DivRemLog.byteNum = 8
+                DivRemLog.isDiv = F
+                DivRemLog.isSigned = anvil.isSigned(exp.left.tipe) | anvil.isSigned(exp.right.tipe)
+              } else {
+                halt(s"processExpr, you got an error about customDivRem")
+              }
+            } else {
+              exprST = st"(${leftST.render} % ${rightST.render})"
+            }
           }
           case AST.IR.Exp.Binary.Op.And => {
-            exprST = st"${leftST.render} & ${rightST.render}"
+            exprST = st"(${leftST.render} & ${rightST.render})"
           }
           case AST.IR.Exp.Binary.Op.Or  => {
-            exprST = st"${leftST.render} | ${rightST.render}"
+            exprST = st"(${leftST.render} | ${rightST.render})"
           }
           case AST.IR.Exp.Binary.Op.Xor => {
-            exprST = st"${leftST.render} ^ ${rightST.render}"
+            exprST = st"(${leftST.render} ^ ${rightST.render})"
           }
           case AST.IR.Exp.Binary.Op.CondAnd => {
             if(isBoolType(exp.tipe)) {
@@ -635,15 +828,15 @@ object MemCopyLog {
           }
           case AST.IR.Exp.Binary.Op.Shr => {
             val right: ST = if(isRhsIntType(exp.right)) rightST else st"${rightST.render}(4,0)"
-            exprST = st"(${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} >> ${right.render}"
+            exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} >> ${right.render})"
           }
           case AST.IR.Exp.Binary.Op.Ushr => {
             val right: ST = if(isRhsIntType(exp.right)) rightST else st"${rightST.render}(4,0)"
-            exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asUInt" else ""} >> ${right.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ""}"
+            exprST = st"(((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asUInt" else ""} >> ${right.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ""})"
           }
           case AST.IR.Exp.Binary.Op.Shl => {
             val right: ST = if(isRhsIntType(exp.right)) rightST else st"${rightST.render}(4,0)"
-            exprST = st"(${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} << ${right.render}"
+            exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} << ${right.render})"
           }
           case _ => {
             halt(s"processExpr AST.IR.Exp.Binary unimplemented")
