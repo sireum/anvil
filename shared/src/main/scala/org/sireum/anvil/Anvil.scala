@@ -276,6 +276,12 @@ import Anvil._
           procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
         }
       }
+      if (config.stackTrace && !config.shouldPrint) {
+        for (id <- ISZ("printStackTrace", "load")) {
+          val info = th.nameMap.get(runtimeName :+ id).get.asInstanceOf[Info.Method]
+          procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
+        }
+      }
       for (vs <- tsr.objectVars.entries) {
         val (owner, ids) = vs
         var objPosOpt: Option[message.Position] = th.nameMap.get(owner) match {
@@ -2152,7 +2158,7 @@ import Anvil._
   }
 
   def transformHalt(p: AST.IR.Procedure): AST.IR.Procedure = {
-    if (!config.stackTrace || !config.shouldPrint) {
+    if (!config.stackTrace) {
       return p
     }
     val id = "printStackTrace"
@@ -2165,19 +2171,14 @@ import Anvil._
           val callerOffset = AST.IR.Exp.LocalVarRef(T, p.context, sfCurrentId, spType, pos)
           blocks = blocks :+ b(grounds = b.grounds ++ ISZ[AST.IR.Stmt.Ground](
             AST.IR.Stmt.Assign.Temp(0, AST.IR.Exp.Type(F, callerOffset, displayIndexType, pos), pos),
-            AST.IR.Stmt.Assign.Temp(1, AST.IR.Exp.Apply(T, runtimeName, id, ISZ(
-              AST.IR.Exp.GlobalVarRef(displayName, displayType, pos),
-              AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos)),
+            AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, runtimeName, id, ISZ(
               AST.IR.Exp.Int(spType, 0, pos),
-              AST.IR.Exp.Int(dpType, dpMask, pos),
               AST.IR.Exp.Int(displayIndexType, typeByteSize(spType), pos),
               AST.IR.Exp.Int(displayIndexType, typeShaSize, pos),
               AST.IR.Exp.Int(displayIndexType, typeByteSize(sfLocType), pos),
               AST.IR.Exp.Int(displayIndexType, typeByteSize(AST.Typed.z), pos),
               AST.IR.Exp.Temp(0, displayIndexType, pos)
-            ), runtimePrintMethodTypeMap.get(id).get, pos), pos),
-            AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T,
-              AST.IR.Exp.Type(F, AST.IR.Exp.Temp(1, AST.Typed.u64, pos), dpType, pos), pos))
+            ), runtimePrintMethodTypeMap.get(id).get, pos))
           ))
         case _ => blocks = blocks :+ b
       }
