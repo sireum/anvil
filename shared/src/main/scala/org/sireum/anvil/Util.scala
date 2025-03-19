@@ -121,7 +121,12 @@ object Util {
     }
     override def post_langastIRExpGlobalVarRef(o: AST.IR.Exp.GlobalVarRef): MOption[AST.IR.Exp] = {
       val globalOffset = AST.IR.Exp.Int(anvil.spType, globalMap.get(o.name).get.offset, o.pos)
-      return MSome(globalOffset)
+      if (anvil.isScalar(o.tipe)) {
+        return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(globalOffset, anvil.isSigned(o.tipe),
+          anvil.typeByteSize(o.tipe), st"", o.tipe, o.pos)))
+      } else {
+        return MSome(globalOffset)
+      }
     }
     override def post_langastIRExpFieldVarRef(o: AST.IR.Exp.FieldVarRef): MOption[AST.IR.Exp] = {
       if (anvil.isSeq(o.receiver.tipe)) {

@@ -309,10 +309,9 @@ import Anvil._
         procedures = procedures :+ objInit(body = body)
       }
       var globalMap = HashSMap.empty[ISZ[String], VarInfo]
-      val spSize = typeByteSize(spType)
       for (g <- globals) {
         val size = typeByteSize(g.tipe)
-        globalMap = globalMap + g.name ~> VarInfo(F, globalSize, size, 0, g.tipe, g.pos)
+        globalMap = globalMap + g.name ~> VarInfo(isScalar(g.tipe), globalSize, size, 0, g.tipe, g.pos)
         globalSize = globalSize + size
       }
       val smc = ShiftMethodCollector(this, HashSSet.empty)

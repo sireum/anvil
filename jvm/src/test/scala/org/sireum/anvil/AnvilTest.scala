@@ -36,7 +36,7 @@ object AnvilTest {
     "construct.sc" ~> (256 + 8 * 3) +
     "divrem.sc" ~> (128 + 8 * 7) +
     "factorial.sc" ~> (128 + 8 * 6) +
-    "global.sc" ~> (64 + 8 * 2) +
+    "global.sc" ~> (128 + 8 * 3) +
     "instanceof.sc" ~> (128 + 8 * 2) +
     "local-reuse.sc" ~> (128 + 8 * 4) +
     "mult.sc" ~> (128 + 8 * 10) +
