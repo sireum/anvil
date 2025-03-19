@@ -31,18 +31,18 @@ import org.sireum.test._
 object AnvilTest {
   val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "add.sc" ~> (128 + 8 * 4) +
-    "assert.sc" ~> (512 + 8 * 21) +
-    "bubble.sc" ~> (128 + 8 * 12) +
+    "assert.sc" ~> (512 + 8 * 15) +
+    "bubble.sc" ~> (128 + 8 * 11) +
     "construct.sc" ~> (256 + 8 * 3) +
     "divrem.sc" ~> (128 + 8 * 7) +
     "factorial.sc" ~> (128 + 8 * 6) +
-    "global.sc" ~> (128 + 8 * 3) +
-    "instanceof.sc" ~> (128 + 8 * 3) +
+    "global.sc" ~> (64 + 8 * 2) +
+    "instanceof.sc" ~> (128 + 8 * 2) +
     "local-reuse.sc" ~> (128 + 8 * 4) +
-    "mult.sc" ~> (128 + 8 * 11) +
-    "print.sc" ~> (512 + 8 * 57) +
+    "mult.sc" ~> (128 + 8 * 10) +
+    "print.sc" ~> (768 + 8 * 24) +
     "printU64.sc" ~> (128 + 8 * 11) +
-    "seq.sc" ~> (256 + 8 * 3) +
+    "seq.sc" ~> (256 + 8 * 2) +
     "shift.sc" ~> (256 + 8 * 11) +
     "sum.sc" ~> (256 + 8 * 6)
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "sum.sc" ~> 3

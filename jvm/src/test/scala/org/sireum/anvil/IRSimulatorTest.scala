@@ -149,7 +149,7 @@ class IRSimulatorTest extends SireumRcSpec {
               IRSimulator(ir.anvil).evalProcedure(state, ir.procedure)
               val displaySize = ir.anvil.config.printSize
               if (ir.anvil.config.shouldPrint) {
-                val offset = ir.globalInfoMap.get(Util.displayName).get.offset + ir.anvil.spTypeByteSize +
+                val offset = ir.globalInfoMap.get(Util.displayName).get.offset +
                   ir.anvil.typeShaSize + ir.anvil.typeByteSize(AST.Typed.z)
                 val dp = state.DP.toZ
                 val (lo, hi): (Z, Z) = if (dp < displaySize) (0, dp) else (dp, displaySize + dp - 1)

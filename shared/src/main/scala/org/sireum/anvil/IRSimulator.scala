@@ -164,6 +164,15 @@ object IRSimulator {
       @pure def writes: Accesses
       def update(state: State): Undo
       @strictpure def approxCycles(config: Anvil.Config): Z = 1
+      @pure def maxMemoryOffset: Z = {
+        var r: Z = 0
+        for (offset <- reads.memory.keys ++ writes.memory.keys) {
+          if (r < offset) {
+            r = offset
+          }
+        }
+        return r
+      }
     }
 
     object Edit {
@@ -1045,7 +1054,7 @@ import IRSimulator._
     return r
   }
 
-  def executeBlock(state: State, b: AST.IR.BasicBlock): (Z, ISZ[State.Undo]) = {
+  def executeBlock(state: State, b: AST.IR.BasicBlock, blockCycles: MBox[Z], maxMemory: MBox[Z]): ISZ[State.Undo] = {
     var r = ISZ[State.Undo]()
     val edits = evalBlock(state, b)
     var i: Z = 0
@@ -1054,6 +1063,10 @@ import IRSimulator._
       val ec = edits(i).approxCycles(anvil.config)
       if (ec > cycles) {
         cycles = ec
+      }
+      val offset = edits(i).maxMemoryOffset
+      if (offset > maxMemory.value) {
+        maxMemory.value = offset
       }
       r = r :+ edits(i).update(state)
       i = i + 1
@@ -1074,7 +1087,8 @@ import IRSimulator._
       }
     }
     checkAccesses(state, b.label, r)
-    return (cycles, r)
+    blockCycles.value = cycles
+    return r
   }
 
   def evalProcedure(state: State, p: AST.IR.Procedure): Unit = {
@@ -1102,13 +1116,15 @@ import IRSimulator._
       println()
     }
 
+    val blockCyclesBox = MBox[Z](0)
+    val maxMemoryBox = MBox[Z](0)
     while (state.CP != u64"0" && state.CP != u64"1") {
       val b = blockMap.get(state.CP).get
       if (DEBUG) {
         log("Evaluating", b)
       }
-      val cycles = executeBlock(state, b)._1
-      approxCycles = approxCycles + cycles
+      executeBlock(state, b, blockCyclesBox, maxMemoryBox)
+      approxCycles = approxCycles + blockCyclesBox.value
       if (DEBUG && DEBUG_EDIT) {
         println()
       }
@@ -1116,7 +1132,7 @@ import IRSimulator._
 
     if (DEBUG) {
       println(
-        st"""End state (approx. cycles = $approxCycles):
+        st"""End state (approx. cycles = $approxCycles, max memory offset touched: ${maxMemoryBox.value}):
             |  ${state.prettyST(this)}""".render)
     }
   }

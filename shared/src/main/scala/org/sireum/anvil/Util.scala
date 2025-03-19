@@ -103,16 +103,21 @@ object Util {
   }
 
   @record class OffsetSubsitutor(val anvil: Anvil,
+                                 val paramSet: HashSet[String],
                                  val localOffsetInfo: LocalOffsetInfo,
                                  val globalMap: HashSMap[QName, Anvil.VarInfo]) extends MAnvilIRTransformer {
     @strictpure def localOffsetMap: HashMap[String, Z] = localOffsetInfo.offsetMap
     override def post_langastIRExpLocalVarRef(o: AST.IR.Exp.LocalVarRef): MOption[AST.IR.Exp] = {
       val localOffset = localOffsetMap.get(o.id).get
-      val t: AST.Typed = if (anvil.isScalar(o.tipe)) o.tipe else anvil.spType
-      return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(
-        AST.IR.Exp.Binary(anvil.spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, anvil.spType, o.pos)),
-          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType, localOffset, o.pos), o.pos),
-        anvil.isSigned(t), anvil.typeByteSize(t), o.prettyST, o.tipe, o.pos)))
+      val lhsOffset = AST.IR.Exp.Binary(anvil.spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, anvil.spType, o.pos)),
+        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType, localOffset, o.pos), o.pos)
+      if (anvil.isScalar(o.tipe) || paramSet.contains(o.id)) {
+        val t: AST.Typed = if (anvil.isScalar(o.tipe)) o.tipe else anvil.spType
+        return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(
+          lhsOffset, anvil.isSigned(t), anvil.typeByteSize(t), o.prettyST, t, o.pos)))
+      } else {
+        return MSome(lhsOffset)
+      }
     }
     override def post_langastIRExpGlobalVarRef(o: AST.IR.Exp.GlobalVarRef): MOption[AST.IR.Exp] = {
       val globalOffset = AST.IR.Exp.Int(anvil.spType, globalMap.get(o.name).get.offset, o.pos)

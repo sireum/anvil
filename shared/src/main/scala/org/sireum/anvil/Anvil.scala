@@ -1859,6 +1859,7 @@ import Anvil._
     val offsetParamInfo = procedureParamInfo(PBox(proc))
     var maxOffset = offsetParamInfo._1
     val incomingMap = countNumOfIncomingJumps(body.blocks)
+    val paramSet = HashSet ++ proc.paramNames
     blockLocalOffsetMap = blockLocalOffsetMap + body.blocks(0).label ~> (maxOffset, 0, LocalOffsetInfo(
       HashMap.empty[String, Z] ++ (for (entry <- offsetParamInfo._2.entries) yield (entry._1, entry._2.offset)), ISZ()))
     var work = ISZ(body.blocks(0))
@@ -1873,9 +1874,7 @@ import Anvil._
               var locals = ISZ[Intrinsic.Decl.Local]()
               var assignSPs = ISZ[AST.IR.Stmt.Ground]()
               for (l <- g.locals) {
-                val (size, assignSP): (Z, B) =
-                  if (g.isAlloc || isScalar(l.tipe)) (typeByteSize(l.tipe), F)
-                  else (typeByteSize(spType) + typeByteSize(l.tipe), !g.undecl)
+                val size = typeByteSize(l.tipe)
                 if (g.undecl) {
                   locals = locals :+ Intrinsic.Decl.Local(m.get(l.id).get, size, l.id, l.tipe)
                   val loffset = m.get(l.id).get
@@ -1903,16 +1902,6 @@ import Anvil._
                   }
                   locals = locals :+ Intrinsic.Decl.Local(loffset, size, l.id, l.tipe)
                 }
-                if (assignSP) {
-                  val loffset = m.get(l.id).get
-                  assignSPs = assignSPs :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-                    AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
-                      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset, g.pos), g.pos),
-                    isSigned(spType), typeByteSize(spType),
-                    AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
-                      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset + typeByteSize(spType), g.pos), g.pos),
-                    st"address of ${l.id}", spType, g.pos))
-                }
               }
               if (maxOffset < offset) {
                 maxOffset = offset
@@ -1922,7 +1911,7 @@ import Anvil._
             case _ =>
               g match {
                 case AST.IR.Stmt.Assign.Global(name, tipe, rhs, pos) =>
-                  val newRhs = OffsetSubsitutor(this, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
+                  val newRhs = OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
                   val globalOffset = AST.IR.Exp.Int(spType, globalMap.get(name).get.offset, pos)
                   if (isScalar(tipe)) {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(globalOffset, isSigned(tipe),
@@ -1932,19 +1921,22 @@ import Anvil._
                       copySize(newRhs), newRhs, g.prettyST, tipe, newRhs.tipe, g.pos))
                   }
                 case AST.IR.Stmt.Assign.Local(_, lhs, t, rhs, pos) =>
-                  val newRhs = OffsetSubsitutor(this, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
+                  val newRhs = OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
                   val localOffset = m.get(lhs).get
+                  val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, newRhs.pos)),
+                    AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, newRhs.pos), newRhs.pos)
                   if (isScalar(t)) {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-                      AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, newRhs.pos)),
-                        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, newRhs.pos), newRhs.pos),
-                      T, typeByteSize(t), newRhs, st"$lhs = ${newRhs.prettyST}", t, pos))
+                      lhsOffset, T, typeByteSize(t), newRhs, st"$lhs = ${newRhs.prettyST}", t, pos))
                   } else {
-                    val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, newRhs.pos)),
-                      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, newRhs.pos), newRhs.pos)
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(
-                      AST.IR.Exp.Intrinsic(Intrinsic.Load(lhsOffset, isSigned(spType), typeByteSize(spType), st"", spType, pos)),
-                      typeByteSize(t), copySize(newRhs), newRhs, st"$lhs = ${newRhs.prettyST}", t, newRhs.tipe, pos))
+                    if (paramSet.contains(lhs)) {
+                      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(AST.IR.Exp.Intrinsic(
+                        Intrinsic.Load(lhsOffset, isSigned(spType), typeByteSize(spType), st"", spType, pos)),
+                        typeByteSize(t), copySize(newRhs), newRhs, st"$lhs = ${newRhs.prettyST}", t, newRhs.tipe, pos))
+                    } else {
+                      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset,
+                        typeByteSize(t), copySize(newRhs), newRhs, st"$lhs = ${newRhs.prettyST}", t, newRhs.tipe, pos))
+                    }
                   }
                 case AST.IR.Stmt.Assign.Field(receiver, id, _, rhs, pos) =>
                   val (ft, offset) = classSizeFieldOffsets(receiver.tipe.asInstanceOf[AST.Typed.Name])._2.get(id).get
@@ -1958,12 +1950,12 @@ import Anvil._
                       copySize(rhs), rhs, g.prettyST, ft, rhs.tipe, pos))
                   }
                 case AST.IR.Stmt.Assign.Index(rcv, idx, rhs, pos) =>
-                  val newRhs = OffsetSubsitutor(this, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
+                  val newRhs = OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
                   val seqType = rcv.tipe.asInstanceOf[AST.Typed.Name]
                   val indexType = seqType.args(0)
                   val elementType = seqType.args(1)
                   val min = minIndex(indexType)
-                  val os = OffsetSubsitutor(this, m, globalMap)
+                  val os = OffsetSubsitutor(this, paramSet, m, globalMap)
                   var index = os.transform_langastIRExp(idx).getOrElse(idx)
                   if (index.tipe != spType) {
                     index = AST.IR.Exp.Type(F, index, spType, index.pos)
@@ -1989,11 +1981,16 @@ import Anvil._
                     case rhs: AST.IR.Exp.LocalVarRef =>
                       val localOffset = m.get(rhs.id).get
                       val temp = n
-                      val t: AST.Typed = if (isScalar(rhs.tipe)) rhs.tipe else spType
-                      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp,
-                        AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, rhs.pos)),
-                          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, rhs.pos), rhs.pos),
-                        isSigned(t), typeByteSize(t), g.prettyST, rhs.tipe, pos))
+                      val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(
+                        Intrinsic.Register(T, spType, rhs.pos)), AST.IR.Exp.Binary.Op.Add,
+                        AST.IR.Exp.Int(spType, localOffset, rhs.pos), rhs.pos)
+                      if (isScalar(rhs.tipe) || paramSet.contains(rhs.id)) {
+                        val t: AST.Typed = if (isScalar(rhs.tipe)) rhs.tipe else spType
+                        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp,
+                          lhsOffset, isSigned(t), typeByteSize(t), g.prettyST, t, pos))
+                      } else {
+                        grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, lhsOffset, pos)
+                      }
                     case rhs: AST.IR.Exp.GlobalVarRef =>
                       val temp = n
                       val globalOffset = AST.IR.Exp.Int(spType, globalMap.get(rhs.name).get.offset, rhs.pos)
@@ -2005,7 +2002,7 @@ import Anvil._
                         grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, globalOffset, rhs.pos)
                       }
                     case rhs: AST.IR.Exp.FieldVarRef =>
-                      val receiver = OffsetSubsitutor(this, m, globalMap).transform_langastIRExp(rhs.receiver).
+                      val receiver = OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRExp(rhs.receiver).
                         getOrElse(rhs.receiver)
                       if (isSeq(rhs.receiver.tipe)) {
                         assert(rhs.id == "size")
@@ -2039,7 +2036,7 @@ import Anvil._
                           else if (subz.isZeroIndex) 0
                           else subz.min
                       }
-                      val os = OffsetSubsitutor(this, m, globalMap)
+                      val os = OffsetSubsitutor(this, paramSet, m, globalMap)
                       var index = os.transform_langastIRExp(rhs.index).getOrElse(rhs.index)
                       if (index.tipe != spType) {
                         index = AST.IR.Exp.Type(F, index, spType, index.pos)
@@ -2087,10 +2084,10 @@ import Anvil._
                     case _: AST.IR.Exp.If => halt(s"Infeasible: $rhs")
                     case _: AST.IR.Exp.Intrinsic => halt(s"Infeasible: $rhs")
                     case _ =>
-                      grounds = grounds :+ OffsetSubsitutor(this, m, globalMap).transform_langastIRStmtGround(g).getOrElse(g)
+                      grounds = grounds :+ OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRStmtGround(g).getOrElse(g)
                   }
                 case _ =>
-                  grounds = grounds :+ OffsetSubsitutor(this, m, globalMap).transform_langastIRStmtGround(g).getOrElse(g)
+                  grounds = grounds :+ OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRStmtGround(g).getOrElse(g)
               }
               g match {
                 case g: AST.IR.Stmt.Expr if g.exp.methodType.ret != AST.Typed.unit =>
@@ -2105,7 +2102,7 @@ import Anvil._
           }
         }
         blockMap = blockMap + b.label ~> b(grounds = grounds,
-          jump = OffsetSubsitutor(this, m, globalMap).transform_langastIRJump(b.jump).getOrElse(b.jump))
+          jump = OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRJump(b.jump).getOrElse(b.jump))
         for (target <- b.jump.targets) {
           blockLocalOffsetMap.get(target) match {
             case Some((po, jumps, pm)) =>
