@@ -35,6 +35,12 @@ class IRSimulatorTest extends SireumRcSpec {
   val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result-sim"
   val errAsOut: Boolean = T
 
+  {
+    IRSimulator.DEBUG_EDIT = Os.env("GITHUB_ACTIONS").isEmpty
+    IRSimulator.DEBUG_GLOBAL = Os.env("GITHUB_ACTIONS").isEmpty
+    IRSimulator.DEBUG_LOCAL = Os.env("GITHUB_ACTIONS").isEmpty
+  }
+
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
     val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith(".sc")
     }

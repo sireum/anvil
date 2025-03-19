@@ -41,6 +41,7 @@ object AnvilTest {
     "local-reuse.sc" ~> (128 + 8 * 4) +
     "mult.sc" ~> (128 + 8 * 10) +
     "print.sc" ~> (768 + 8 * 24) +
+    "print-no-float.sc" ~> (256 + 8 * 11) +
     "printU64.sc" ~> (128 + 8 * 11) +
     "seq.sc" ~> (256 + 8 * 2) +
     "shift.sc" ~> (256 + 8 * 11) +
@@ -58,6 +59,7 @@ object AnvilTest {
     "local-reuse.sc" ~> 8 +
     "mult.sc" ~> 64 +
     "print.sc" ~> 64 +
+    "print-no-float.sc" ~> 64 +
     "printU64.sc" ~> 64 +
     "seq.sc" ~> 32 +
     "shift.sc" ~> 128 +
@@ -76,7 +78,7 @@ class AnvilTest extends SireumRcSpec {
   val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result"
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith(".sc") }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => !p.last.endsWith("print.sc") }
     m
   }
 
