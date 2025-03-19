@@ -312,12 +312,7 @@ import Anvil._
       val spSize = typeByteSize(spType)
       for (g <- globals) {
         val size = typeByteSize(g.tipe)
-        if (!isScalar(g.tipe)) {
-          globalMap = globalMap + g.name ~> VarInfo(F, globalSize, spSize, size, g.tipe, g.pos)
-          globalSize = globalSize + spSize
-        } else {
-          globalMap = globalMap + g.name ~> VarInfo(T, globalSize, size, 0, g.tipe, g.pos)
-        }
+        globalMap = globalMap + g.name ~> VarInfo(F, globalSize, size, 0, g.tipe, g.pos)
         globalSize = globalSize + size
       }
       val smc = ShiftMethodCollector(this, HashSSet.empty)
@@ -2003,8 +1998,12 @@ import Anvil._
                       val temp = n
                       val globalOffset = AST.IR.Exp.Int(spType, globalMap.get(rhs.name).get.offset, rhs.pos)
                       val t: AST.Typed = if (isScalar(rhs.tipe)) rhs.tipe else spType
-                      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp, globalOffset, isSigned(t),
-                        typeByteSize(t), g.prettyST, t, pos))
+                      if (isScalar(rhs.tipe)) {
+                        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp, globalOffset, isSigned(t),
+                          typeByteSize(t), g.prettyST, t, pos))
+                      } else {
+                        grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, globalOffset, rhs.pos)
+                      }
                     case rhs: AST.IR.Exp.FieldVarRef =>
                       val receiver = OffsetSubsitutor(this, m, globalMap).transform_langastIRExp(rhs.receiver).
                         getOrElse(rhs.receiver)
@@ -2404,14 +2403,6 @@ import Anvil._
         AST.IR.Exp.Int(spType, displayInfo.offset + typeByteSize(spType) + typeByteSize(typeShaType), p.pos),
         isSigned(AST.Typed.z), typeByteSize(AST.Typed.z),
         AST.IR.Exp.Int(AST.Typed.z, dpMask + 1, p.pos), st"$displayId.size", AST.Typed.z, p.pos))
-    }
-    for (ge <- globalMap.entries) {
-      val (name, info) = ge
-      if (!info.isScalar) {
-        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-          AST.IR.Exp.Int(spType, info.offset, p.pos), isSigned(spType), typeByteSize(spType),
-          AST.IR.Exp.Int(spType, info.offset + typeByteSize(spType), p.pos), st"data address of ${(name, ".")} (size = ${typeByteSize(info.tipe)})", spType, p.pos))
-      }
     }
     val paramInfo = procedureParamInfo(PBox(p))._2
     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
