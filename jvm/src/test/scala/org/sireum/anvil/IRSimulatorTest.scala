@@ -36,9 +36,11 @@ class IRSimulatorTest extends SireumRcSpec {
   val errAsOut: Boolean = T
 
   {
-    IRSimulator.DEBUG_EDIT = Os.env("GITHUB_ACTIONS").isEmpty
-    IRSimulator.DEBUG_GLOBAL = Os.env("GITHUB_ACTIONS").isEmpty
-    IRSimulator.DEBUG_LOCAL = Os.env("GITHUB_ACTIONS").isEmpty
+    val notGitHubActions = Os.env("GITHUB_ACTIONS").isEmpty
+    IRSimulator.DEBUG_TEMP = notGitHubActions
+    IRSimulator.DEBUG_EDIT = notGitHubActions
+    IRSimulator.DEBUG_GLOBAL = notGitHubActions
+    IRSimulator.DEBUG_LOCAL = notGitHubActions
   }
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
@@ -138,15 +140,35 @@ class IRSimulatorTest extends SireumRcSpec {
             override def string: String = "AnvilTest.Output"
           }, reporter) match {
             case Some(ir) =>
-              val state = IRSimulator.State.create(ir.anvil.config.memory, ir.maxRegisters, ir.globalInfoMap)
+              val state = IRSimulator.State.create(
+                ir.anvil.config.memory,
+                ir.maxRegisters,
+                ir.maxRegisters,
+                ir.maxRegisters,
+                ir.maxRegisters,
+                ir.maxRegisters,
+                ir.maxRegisters,
+                ir.maxRegisters,
+                ir.maxRegisters,
+                ir.maxRegisters,
+                ir.maxRegisters,
+                ir.maxRegisters,
+                ir.globalInfoMap)
               val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.offset
               var locals = ISZ[Intrinsic.Decl.Local]()
               for (entry <- ir.anvil.procedureParamInfo(Util.PBox(ir.procedure))._2.entries) {
                 val (id, info) = entry
                 locals = locals :+ Intrinsic.Decl.Local(info.offset, info.totalSize, id, info.tipe)
               }
-              IRSimulator.State.Edit.Temp(IRSimulator.State.Edit.Temp.Kind.SP, state.spIndex,
-                conversions.Z.toU64(ir.globalSize), IRSimulator.State.Accesses.empty).update(state)
+              IRSimulator.State.Edit.Temp(
+                IRSimulator.State.Edit.Temp.Kind.SP,
+                ir.anvil.isFP(ir.anvil.spType),
+                ir.anvil.isSigned(ir.anvil.spType),
+                ir.anvil.typeBitSize(ir.anvil.spType),
+                0,
+                IRSimulator.Value.fromZ(ir.globalSize, ir.anvil.typeBitSize(ir.anvil.spType),
+                  ir.anvil.isSigned(ir.anvil.spType)),
+                IRSimulator.State.Accesses.empty).update(state)
               IRSimulator.State.Edit.Decl(Intrinsic.Decl(F, F, locals, ir.procedure.pos)).update(state)
               IRSimulator.State.Edit.Memory(testNumInfoOffset,
                 for (_ <- 0 until ir.anvil.typeByteSize(AST.Typed.z)) yield u8"0xFF",

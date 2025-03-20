@@ -81,9 +81,9 @@ object Util {
     @strictpure def empty: LocalOffsetInfo = LocalOffsetInfo(HashMap.empty, ISZ())
   }
 
-  @record class TempCollector(var r: HashSSet[Z]) extends MAnvilIRTransformer {
+  @record class TempCollector(var r: HashSMap[Z, AST.Typed]) extends MAnvilIRTransformer {
     override def post_langastIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
-      r = r + o.n
+      r = r + o.n ~> o.tipe
       return MNone()
     }
   }
@@ -114,7 +114,7 @@ object Util {
       if (anvil.isScalar(o.tipe) || paramSet.contains(o.id)) {
         val t: AST.Typed = if (anvil.isScalar(o.tipe)) o.tipe else anvil.spType
         return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(
-          lhsOffset, anvil.isSigned(t), anvil.typeByteSize(t), o.prettyST, t, o.pos)))
+          lhsOffset, anvil.isSigned(t), anvil.typeByteSize(t), o.prettyST(anvil.printer), t, o.pos)))
       } else {
         return MSome(lhsOffset)
       }
@@ -134,7 +134,7 @@ object Util {
         return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(
           AST.IR.Exp.Binary(anvil.spType, o.receiver,
             AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType, anvil.typeShaSize, o.pos), o.pos),
-          T, anvil.typeByteSize(o.tipe), o.prettyST, o.tipe, o.pos)))
+          T, anvil.typeByteSize(o.tipe), o.prettyST(anvil.printer), o.tipe, o.pos)))
       } else {
         val (ft, offset) = anvil.classSizeFieldOffsets(o.receiver.tipe.asInstanceOf[AST.Typed.Name]).
           _2.get(o.id).get
@@ -166,7 +166,7 @@ object Util {
       val rhsOffset = AST.IR.Exp.Binary(anvil.spType, o.exp, AST.IR.Exp.Binary.Op.Add, elementOffset, o.exp.pos)
       if (anvil.isScalar(elementType)) {
         return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(rhsOffset,
-          anvil.isSigned(elementType), anvil.typeByteSize(elementType), o.prettyST, elementType, o.pos)))
+          anvil.isSigned(elementType), anvil.typeByteSize(elementType), o.prettyST(anvil.printer), elementType, o.pos)))
       } else {
         return MSome(rhsOffset)
       }
@@ -346,7 +346,7 @@ object Util {
                 arg, pos)
               stmts = stmts :+ AST.IR.Stmt.Assertume(F, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
                 st"Out of bound ${rhs.tipe} value".render, pos))), pos)
-              stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, rhs.args(0), AST.Typed.z, pos))
+              stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, rhs.args(0), displayIndexType, pos))
             } else if (idOps.s == "u2z") {
               stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, rhs.args(0), AST.Typed.z, pos))
             } else if (idOps.startsWith("toRaw")) {
@@ -368,13 +368,13 @@ object Util {
                 case string"String" =>
                   idOps.s match {
                     case string"toU8is" => stmts = stmts :+ stmt(rhs = rhs.args(0))
-                    case _ => halt(s"TODO: ${stmt.prettyST.render}")
+                    case _ => halt(s"TODO: ${stmt.prettyST(AST.IR.Printer.Empty()).render}")
                   }
-                case string"ISB" => halt(s"TODO: ${stmt.prettyST.render}")
-                case string"MSB" => halt(s"TODO: ${stmt.prettyST.render}")
+                case string"ISB" => halt(s"TODO: ${stmt.prettyST(AST.IR.Printer.Empty()).render}")
+                case string"MSB" => halt(s"TODO: ${stmt.prettyST(AST.IR.Printer.Empty()).render}")
                 case _ =>
                   if (idOps.s == "toCodePoints") {
-                    halt(s"TODO: ${stmt.prettyST.render}")
+                    halt(s"TODO: ${stmt.prettyST(AST.IR.Printer.Empty()).render}")
                   } else if (idOps.startsWith("to")) {
                     if (rhs.tipe == AST.Typed.z) {
                       stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, arg, AST.Typed.z, pos))
@@ -528,7 +528,7 @@ object Util {
     override def post_langastIRExpInt(o: AST.IR.Exp.Int): MOption[AST.IR.Exp] = {
       val isSigned = anvil.isSigned(o.tipe)
       val n: U64 = conversions.Z.toU64(if (o.value < 0) o.value + anvil.pow(2, 64) else o.value)
-      val v = IRSimulator.Value.fromRawU64(n, isSigned, anvil.typeByteSize(o.tipe)).value
+      val v = IRSimulator.Value.fromRawU64(anvil, n, o.tipe).value
       return if (v != o.value) MSome(o(value = v)) else MNone()
     }
   }
@@ -623,9 +623,10 @@ object Util {
           AST.IR.Exp.Type(F, e.left, ct, e.pos),
           AST.IR.Exp.Type(F, e.right, ct, e.pos)),
           runtimeMethodTypeMap.get(id).get, e.pos)
-        return Some((exp, Some(AST.IR.Stmt.Assign.Temp(temp,
-          AST.IR.Exp.Type(F, AST.IR.Exp.Temp(temp, ct, e.pos), et, e.pos),
-          pos))))
+        val stmt = AST.IR.Stmt.Assign.Temp(temp,
+          AST.IR.Exp.Type(F, AST.IR.Exp.Temp(temp, exp.tipe, e.pos), et, e.pos),
+          pos)
+        return Some((exp, Some(stmt)))
       } else {
         val stmtOpt: Option[AST.IR.Stmt.Ground] = if (bitWidth == 64 || bitWidth == 32) {
           None()
@@ -651,32 +652,32 @@ object Util {
     }
   }
 
-  @datatype class TempLV(val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[Z] {
+  @datatype class TempLV(val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[(Z, AST.Typed)] {
     @strictpure def isForward: B = F
     @strictpure def isLUB: B = T
-    @strictpure def iota: HashSSet[Z] = HashSSet.empty
-    @strictpure def init: HashSSet[Z] = HashSSet.empty
-    @pure def genGround(g: AST.IR.Stmt.Ground): HashSSet[Z] = {
-      val tc = TempCollector(HashSSet.empty)
+    @strictpure def iota: HashSSet[(Z, AST.Typed)] = HashSSet.empty
+    @strictpure def init: HashSSet[(Z, AST.Typed)] = HashSSet.empty
+    @pure def genGround(g: AST.IR.Stmt.Ground): HashSSet[(Z, AST.Typed)] = {
+      val tc = TempCollector(HashSMap.empty)
       g match {
         case g: AST.IR.Stmt.Assign.Temp => tc.transform_langastIRExp(g.rhs)
         case _ => tc.transform_langastIRStmtGround(g)
       }
-      return tc.r
+      return HashSSet ++ tc.r.entries
     }
-    @pure def killGround(g: AST.IR.Stmt.Ground): HashSSet[Z] = {
+    @pure def killGround(g: AST.IR.Stmt.Ground): HashSSet[(Z, AST.Typed)] = {
       g match {
-        case g: AST.IR.Stmt.Assign.Temp => return HashSSet.empty[Z] + g.lhs
-        case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return HashSSet.empty[Z] + in.temp
+        case g: AST.IR.Stmt.Assign.Temp => return HashSSet.empty[(Z, AST.Typed)] + (g.lhs, g.rhs.tipe)
+        case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return HashSSet.empty[(Z, AST.Typed)] + (in.temp, in.tipe)
         case _ => return HashSSet.empty
       }
     }
-    @pure def genJump(j: AST.IR.Jump): HashSSet[Z] = {
-      val tc = TempCollector(HashSSet.empty)
+    @pure def genJump(j: AST.IR.Jump): HashSSet[(Z, AST.Typed)] = {
+      val tc = TempCollector(HashSMap.empty)
       tc.transform_langastIRJump(j)
-      return tc.r
+      return HashSSet ++ tc.r.entries
     }
-    @strictpure def killJump(j: AST.IR.Jump): HashSSet[Z] = HashSSet.empty
+    @strictpure def killJump(j: AST.IR.Jump): HashSSet[(Z, AST.Typed)] = HashSSet.empty
   }
 
   @record class LocalCollector(var r: HashSSet[(String, AST.Typed)]) extends MAnvilIRTransformer {
@@ -753,6 +754,17 @@ object Util {
     }
   }
 
+  @datatype class AnvilIRPrinter(val anvil: Anvil) extends AST.IR.Printer {
+    @strictpure def exp(e: AST.IR.Exp): Option[ST] = e match {
+      case e: AST.IR.Exp.Temp => Some(tempST(anvil, e.tipe, e.n))
+      case _ => None()
+    }
+    @strictpure def stmt(stmt: AST.IR.Stmt): Option[ST] = stmt match {
+      case stmt: AST.IR.Stmt.Assign.Temp => Some(st"${tempST(anvil, stmt.rhs.tipe, stmt.lhs)} = ${stmt.rhs.prettyST(anvil.printer)}")
+      case _ => None()
+    }
+    @strictpure def jump(j: AST.IR.Jump): Option[ST] = None()
+  }
 
   val kind: String = "Anvil"
   val exitLabel: Z = 0
@@ -810,4 +822,13 @@ object Util {
 
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
   val syntheticMethodIds: HashSet[String] = HashSet.empty[String] + objInitId + newInitId + testId
+
+  @strictpure def tempST(anvil: Anvil, tipe: AST.Typed, n: Z): ST = {
+    val t: AST.Typed = if (anvil.isScalar(tipe)) tipe else anvil.spType
+    st"$$${anvil.typeBitSize(t)}${if (anvil.isSigned(t)) "S" else "U"}.$n"
+  }
+
+  @strictpure def tempST2(isSigned: B, bitSize: Z, n: Z): ST = {
+    st"$$$bitSize${if (isSigned) "S" else "U"}.$n"
+  }
 }

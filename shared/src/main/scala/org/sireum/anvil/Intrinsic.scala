@@ -39,7 +39,7 @@ object Intrinsic {
                            val comment: ST,
                            val tipe: AST.Typed,
                            val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"$$$temp = *${rhsOffset.prettyST} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
+    @strictpure def prettyST(p: AST.IR.Printer): ST = st"${p.exp(AST.IR.Exp.Temp(temp, tipe, pos))} = *${rhsOffset.prettyST(p)} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
   }
 
   // Replaces AST.IR.Exp.LocalVarRef, AST.IR.Exp.GlobalVarRef, AST.IR.Exp.Field, AST.IR.Exp.Index
@@ -49,7 +49,7 @@ object Intrinsic {
                        val comment: ST,
                        val tipe: AST.Typed,
                        val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"*${rhsOffset.prettyST}"
+    @strictpure def prettyST(p: AST.IR.Printer): ST = st"*${rhsOffset.prettyST(p)}"
     @strictpure def numOfTemps: Z = rhsOffset.numOfTemps
     @strictpure def depth: Z = 1 + rhsOffset.depth
   }
@@ -62,7 +62,7 @@ object Intrinsic {
                         val comment: ST,
                         val tipe: AST.Typed,
                         val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"*${lhsOffset.prettyST} = ${rhs.prettyST} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
+    @strictpure def prettyST(p: AST.IR.Printer): ST = st"*${lhsOffset.prettyST(p)} = ${rhs.prettyST(p)} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
   }
 
   // Replaces AST.IR.Stmt.Assign.Local, AST.IR.Stmt.Assign.Field, AST.IR.Stmt.Assign.Global, AST.IR.Stmt.Assign.Index
@@ -74,12 +74,12 @@ object Intrinsic {
                        val tipe: AST.Typed,
                        val rhsTipe: AST.Typed,
                        val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"${lhsOffset.prettyST} [$tipe, $lhsBytes]  <-  ${rhs.prettyST} [$rhsTipe, ${rhsBytes.prettyST}]  // $comment"
+    @strictpure def prettyST(p: AST.IR.Printer): ST = st"${lhsOffset.prettyST(p)} [$tipe, $lhsBytes]  <-  ${rhs.prettyST(p)} [$rhsTipe, ${rhsBytes.prettyST(p)}]  // $comment"
   }
 
   // Replaces AST.IR.Stmt.Decl
   @datatype class Decl(val undecl: B, val isAlloc: B, val slots: ISZ[Decl.Local], val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"${if (isAlloc) if (undecl) "unalloc" else "alloc" else if (undecl) "undecl" else "decl"} ${(for (slot <- slots) yield slot.prettyST, ", ")}"
+    @strictpure def prettyST(p: AST.IR.Printer): ST = st"${if (isAlloc) if (undecl) "unalloc" else "alloc" else if (undecl) "undecl" else "decl"} ${(for (slot <- slots) yield slot.prettyST, ", ")}"
   }
 
   object Decl {
@@ -89,17 +89,17 @@ object Intrinsic {
   }
 
   @datatype class Register(val isSP: B, val tipe: AST.Typed, val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
-    @strictpure def prettyST: ST = if (isSP) st"SP" else st"DP"
+    @strictpure def prettyST(p: AST.IR.Printer): ST = if (isSP) st"SP" else st"DP"
     @strictpure def numOfTemps: Z = 0
     @strictpure def depth: Z = 1
   }
 
   @datatype class RegisterAssign(val isSP: B, val isInc: B, val value: AST.IR.Exp, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST: ST = {
+    @strictpure def prettyST(p: AST.IR.Printer): ST = {
       val reg: String = if (isSP) "SP" else "DP"
       value match {
         case AST.IR.Exp.Int(_, v, _) => if (isInc) if (v < 0) st"$reg = $reg - ${-v}" else st"$reg = $reg + $v" else st"$reg = $v"
-        case _ => if (isInc) st"$reg = $reg + ${value.prettyST}" else st"$reg = ${value.prettyST}"
+        case _ => if (isInc) st"$reg = $reg + ${value.prettyST(p)}" else st"$reg = ${value.prettyST(p)}"
       }
     }
   }
@@ -109,7 +109,7 @@ object Intrinsic {
                             val context: AST.IR.MethodContext,
                             val id: String,
                             val pos: Position) extends AST.IR.Jump.Intrinsic.Type {
-    @strictpure def prettyST: ST = st"goto $id@0"
+    @strictpure def prettyST(p: AST.IR.Printer): ST = st"goto $id@0"
 
     @strictpure def targets: ISZ[Z] = ISZ()
   }

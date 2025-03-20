@@ -93,11 +93,11 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
-    @pure def pre_langastIRExpF64(ctx: Context, o: org.sireum.lang.ast.IR.Exp.F64): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def preIntrinsicStore(ctx: Context, o: Intrinsic.Store): PreResult[Context, Intrinsic.Store] = {
       return PreResult(ctx, T, None())
     }
 
-    @pure def preIntrinsicStore(ctx: Context, o: Intrinsic.Store): PreResult[Context, Intrinsic.Store] = {
+    @pure def pre_langastIRExpF64(ctx: Context, o: org.sireum.lang.ast.IR.Exp.F64): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
@@ -133,19 +133,19 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
-    @pure def pre_langastIRExpEnumElementRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.EnumElementRef): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
-      return PreResult(ctx, T, None())
-    }
-
     @pure def preIntrinsicRegister(ctx: Context, o: Intrinsic.Register): PreResult[Context, Intrinsic.Register] = {
       return PreResult(ctx, T, None())
     }
 
-    @pure def pre_langastIRExpFieldVarRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.FieldVarRef): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def pre_langastIRExpEnumElementRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.EnumElementRef): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
     @pure def preIntrinsicRegisterAssign(ctx: Context, o: Intrinsic.RegisterAssign): PreResult[Context, Intrinsic.RegisterAssign] = {
+      return PreResult(ctx, T, None())
+    }
+
+    @pure def pre_langastIRExpFieldVarRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.FieldVarRef): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
@@ -549,6 +549,22 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
+    @pure def pre_langastIRPrinter(ctx: Context, o: org.sireum.lang.ast.IR.Printer): PreResult[Context, org.sireum.lang.ast.IR.Printer] = {
+      o match {
+        case o: org.sireum.lang.ast.IR.Printer.Empty =>
+          val r: PreResult[Context, org.sireum.lang.ast.IR.Printer] = pre_langastIRPrinterEmpty(ctx, o) match {
+           case PreResult(preCtx, continu, Some(r: org.sireum.lang.ast.IR.Printer)) => PreResult(preCtx, continu, Some[org.sireum.lang.ast.IR.Printer](r))
+           case PreResult(_, _, Some(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Printer")
+           case PreResult(preCtx, continu, _) => PreResult(preCtx, continu, None[org.sireum.lang.ast.IR.Printer]())
+          }
+          return r
+      }
+    }
+
+    @pure def pre_langastIRPrinterEmpty(ctx: Context, o: org.sireum.lang.ast.IR.Printer.Empty): PreResult[Context, org.sireum.lang.ast.IR.Printer.Empty] = {
+      return PreResult(ctx, T, None())
+    }
+
     @pure def post_langastIRMethodContext(ctx: Context, o: org.sireum.lang.ast.IR.MethodContext): TPostResult[Context, org.sireum.lang.ast.IR.MethodContext] = {
       return TPostResult(ctx, None())
     }
@@ -597,11 +613,11 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
-    @pure def post_langastIRExpF64(ctx: Context, o: org.sireum.lang.ast.IR.Exp.F64): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def postIntrinsicStore(ctx: Context, o: Intrinsic.Store): TPostResult[Context, Intrinsic.Store] = {
       return TPostResult(ctx, None())
     }
 
-    @pure def postIntrinsicStore(ctx: Context, o: Intrinsic.Store): TPostResult[Context, Intrinsic.Store] = {
+    @pure def post_langastIRExpF64(ctx: Context, o: org.sireum.lang.ast.IR.Exp.F64): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
@@ -637,19 +653,19 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
-    @pure def post_langastIRExpEnumElementRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.EnumElementRef): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
-      return TPostResult(ctx, None())
-    }
-
     @pure def postIntrinsicRegister(ctx: Context, o: Intrinsic.Register): TPostResult[Context, Intrinsic.Register] = {
       return TPostResult(ctx, None())
     }
 
-    @pure def post_langastIRExpFieldVarRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.FieldVarRef): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def post_langastIRExpEnumElementRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.EnumElementRef): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
     @pure def postIntrinsicRegisterAssign(ctx: Context, o: Intrinsic.RegisterAssign): TPostResult[Context, Intrinsic.RegisterAssign] = {
+      return TPostResult(ctx, None())
+    }
+
+    @pure def post_langastIRExpFieldVarRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.FieldVarRef): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
@@ -1050,6 +1066,22 @@ object AnvilIRTransformer {
     }
 
     @pure def post_langastIRProgram(ctx: Context, o: org.sireum.lang.ast.IR.Program): TPostResult[Context, org.sireum.lang.ast.IR.Program] = {
+      return TPostResult(ctx, None())
+    }
+
+    @pure def post_langastIRPrinter(ctx: Context, o: org.sireum.lang.ast.IR.Printer): TPostResult[Context, org.sireum.lang.ast.IR.Printer] = {
+      o match {
+        case o: org.sireum.lang.ast.IR.Printer.Empty =>
+          val r: TPostResult[Context, org.sireum.lang.ast.IR.Printer] = post_langastIRPrinterEmpty(ctx, o) match {
+           case TPostResult(postCtx, Some(result: org.sireum.lang.ast.IR.Printer)) => TPostResult(postCtx, Some[org.sireum.lang.ast.IR.Printer](result))
+           case TPostResult(_, Some(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Printer")
+           case TPostResult(postCtx, _) => TPostResult(postCtx, None[org.sireum.lang.ast.IR.Printer]())
+          }
+          return r
+      }
+    }
+
+    @pure def post_langastIRPrinterEmpty(ctx: Context, o: org.sireum.lang.ast.IR.Printer.Empty): TPostResult[Context, org.sireum.lang.ast.IR.Printer.Empty] = {
       return TPostResult(ctx, None())
     }
 
@@ -1935,12 +1967,11 @@ import AnvilIRTransformer._
       val hasChanged: B = preR.resultOpt.nonEmpty
       val rOpt: TPostResult[Context, org.sireum.lang.ast.IR.Stmt.For.Range] = o2 match {
         case o2: org.sireum.lang.ast.IR.Stmt.For.Range.Expr =>
-          val r0: TPostResult[Context, IS[Z, org.sireum.lang.ast.IR.Stmt]] = transformISZ(preR.ctx, o2.expStmts, transform_langastIRStmt _)
-          val r1: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(r0.ctx, o2.exp)
-          if (hasChanged || r0.resultOpt.nonEmpty || r1.resultOpt.nonEmpty)
-            TPostResult(r1.ctx, Some(o2(expStmts = r0.resultOpt.getOrElse(o2.expStmts), exp = r1.resultOpt.getOrElse(o2.exp))))
+          val r0: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(preR.ctx, o2.exp)
+          if (hasChanged || r0.resultOpt.nonEmpty)
+            TPostResult(r0.ctx, Some(o2(exp = r0.resultOpt.getOrElse(o2.exp))))
           else
-            TPostResult(r1.ctx, None())
+            TPostResult(r0.ctx, None())
         case o2: org.sireum.lang.ast.IR.Stmt.For.Range.Step =>
           val r0: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(preR.ctx, o2.start)
           val r1: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(r0.ctx, o2.end)
@@ -2251,6 +2282,62 @@ import AnvilIRTransformer._
     val hasChanged: B = r.resultOpt.nonEmpty
     val o2: org.sireum.lang.ast.IR.Program = r.resultOpt.getOrElse(o)
     val postR: TPostResult[Context, org.sireum.lang.ast.IR.Program] = pp.post_langastIRProgram(r.ctx, o2)
+    if (postR.resultOpt.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return TPostResult(postR.ctx, Some(o2))
+    } else {
+      return TPostResult(postR.ctx, None())
+    }
+  }
+
+  @pure def transform_langastIRPrinter(ctx: Context, o: org.sireum.lang.ast.IR.Printer): TPostResult[Context, org.sireum.lang.ast.IR.Printer] = {
+    val preR: PreResult[Context, org.sireum.lang.ast.IR.Printer] = pp.pre_langastIRPrinter(ctx, o)
+    val r: TPostResult[Context, org.sireum.lang.ast.IR.Printer] = if (preR.continu) {
+      val o2: org.sireum.lang.ast.IR.Printer = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      val rOpt: TPostResult[Context, org.sireum.lang.ast.IR.Printer] = o2 match {
+        case o2: org.sireum.lang.ast.IR.Printer.Empty =>
+          if (hasChanged)
+            TPostResult(preR.ctx, Some(o2))
+          else
+            TPostResult(preR.ctx, None())
+      }
+      rOpt
+    } else if (preR.resultOpt.nonEmpty) {
+      TPostResult(preR.ctx, Some(preR.resultOpt.getOrElse(o)))
+    } else {
+      TPostResult(preR.ctx, None())
+    }
+    val hasChanged: B = r.resultOpt.nonEmpty
+    val o2: org.sireum.lang.ast.IR.Printer = r.resultOpt.getOrElse(o)
+    val postR: TPostResult[Context, org.sireum.lang.ast.IR.Printer] = pp.post_langastIRPrinter(r.ctx, o2)
+    if (postR.resultOpt.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return TPostResult(postR.ctx, Some(o2))
+    } else {
+      return TPostResult(postR.ctx, None())
+    }
+  }
+
+  @pure def transform_langastIRPrinterEmpty(ctx: Context, o: org.sireum.lang.ast.IR.Printer.Empty): TPostResult[Context, org.sireum.lang.ast.IR.Printer.Empty] = {
+    val preR: PreResult[Context, org.sireum.lang.ast.IR.Printer.Empty] = pp.pre_langastIRPrinterEmpty(ctx, o)
+    val r: TPostResult[Context, org.sireum.lang.ast.IR.Printer.Empty] = if (preR.continu) {
+      val o2: org.sireum.lang.ast.IR.Printer.Empty = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      if (hasChanged)
+        TPostResult(preR.ctx, Some(o2))
+      else
+        TPostResult(preR.ctx, None())
+    } else if (preR.resultOpt.nonEmpty) {
+      TPostResult(preR.ctx, Some(preR.resultOpt.getOrElse(o)))
+    } else {
+      TPostResult(preR.ctx, None())
+    }
+    val hasChanged: B = r.resultOpt.nonEmpty
+    val o2: org.sireum.lang.ast.IR.Printer.Empty = r.resultOpt.getOrElse(o)
+    val postR: TPostResult[Context, org.sireum.lang.ast.IR.Printer.Empty] = pp.post_langastIRPrinterEmpty(r.ctx, o2)
     if (postR.resultOpt.nonEmpty) {
       return postR
     } else if (hasChanged) {

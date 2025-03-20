@@ -77,13 +77,13 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRExpF32: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
-  val PreResult_langastIRExpF64: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
-
-  val PostResult_langastIRExpF64: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
-
   val PreResultIntrinsicStore: PreResult[Intrinsic.Store] = PreResult(T, MNone())
 
   val PostResultIntrinsicStore: MOption[Intrinsic.Store] = MNone()
+
+  val PreResult_langastIRExpF64: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
+
+  val PostResult_langastIRExpF64: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
   val PreResult_langastIRExpR: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
@@ -117,21 +117,21 @@ object MAnvilIRTransformer {
 
   val PostResultIntrinsicDeclLocal: MOption[Intrinsic.Decl.Local] = MNone()
 
-  val PreResult_langastIRExpEnumElementRef: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
-
-  val PostResult_langastIRExpEnumElementRef: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
-
   val PreResultIntrinsicRegister: PreResult[Intrinsic.Register] = PreResult(T, MNone())
 
   val PostResultIntrinsicRegister: MOption[Intrinsic.Register] = MNone()
 
-  val PreResult_langastIRExpFieldVarRef: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
+  val PreResult_langastIRExpEnumElementRef: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
-  val PostResult_langastIRExpFieldVarRef: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
+  val PostResult_langastIRExpEnumElementRef: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
   val PreResultIntrinsicRegisterAssign: PreResult[Intrinsic.RegisterAssign] = PreResult(T, MNone())
 
   val PostResultIntrinsicRegisterAssign: MOption[Intrinsic.RegisterAssign] = MNone()
+
+  val PreResult_langastIRExpFieldVarRef: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
+
+  val PostResult_langastIRExpFieldVarRef: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
   val PreResult_langastIRExpUnary: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
@@ -325,6 +325,10 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRProgram: MOption[org.sireum.lang.ast.IR.Program] = MNone()
 
+  val PreResult_langastIRPrinterEmpty: PreResult[org.sireum.lang.ast.IR.Printer.Empty] = PreResult(T, MNone())
+
+  val PostResult_langastIRPrinterEmpty: MOption[org.sireum.lang.ast.IR.Printer.Empty] = MNone()
+
 }
 
 import MAnvilIRTransformer._
@@ -379,12 +383,12 @@ import MAnvilIRTransformer._
     return PreResult_langastIRExpF32
   }
 
-  def pre_langastIRExpF64(o: org.sireum.lang.ast.IR.Exp.F64): PreResult[org.sireum.lang.ast.IR.Exp] = {
-    return PreResult_langastIRExpF64
-  }
-
   def preIntrinsicStore(o: Intrinsic.Store): PreResult[Intrinsic.Store] = {
     return PreResultIntrinsicStore
+  }
+
+  def pre_langastIRExpF64(o: org.sireum.lang.ast.IR.Exp.F64): PreResult[org.sireum.lang.ast.IR.Exp] = {
+    return PreResult_langastIRExpF64
   }
 
   def pre_langastIRExpR(o: org.sireum.lang.ast.IR.Exp.R): PreResult[org.sireum.lang.ast.IR.Exp] = {
@@ -419,20 +423,20 @@ import MAnvilIRTransformer._
     return PreResultIntrinsicDeclLocal
   }
 
-  def pre_langastIRExpEnumElementRef(o: org.sireum.lang.ast.IR.Exp.EnumElementRef): PreResult[org.sireum.lang.ast.IR.Exp] = {
-    return PreResult_langastIRExpEnumElementRef
-  }
-
   def preIntrinsicRegister(o: Intrinsic.Register): PreResult[Intrinsic.Register] = {
     return PreResultIntrinsicRegister
   }
 
-  def pre_langastIRExpFieldVarRef(o: org.sireum.lang.ast.IR.Exp.FieldVarRef): PreResult[org.sireum.lang.ast.IR.Exp] = {
-    return PreResult_langastIRExpFieldVarRef
+  def pre_langastIRExpEnumElementRef(o: org.sireum.lang.ast.IR.Exp.EnumElementRef): PreResult[org.sireum.lang.ast.IR.Exp] = {
+    return PreResult_langastIRExpEnumElementRef
   }
 
   def preIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): PreResult[Intrinsic.RegisterAssign] = {
     return PreResultIntrinsicRegisterAssign
+  }
+
+  def pre_langastIRExpFieldVarRef(o: org.sireum.lang.ast.IR.Exp.FieldVarRef): PreResult[org.sireum.lang.ast.IR.Exp] = {
+    return PreResult_langastIRExpFieldVarRef
   }
 
   def pre_langastIRExpUnary(o: org.sireum.lang.ast.IR.Exp.Unary): PreResult[org.sireum.lang.ast.IR.Exp] = {
@@ -835,6 +839,22 @@ import MAnvilIRTransformer._
     return PreResult_langastIRProgram
   }
 
+  def pre_langastIRPrinter(o: org.sireum.lang.ast.IR.Printer): PreResult[org.sireum.lang.ast.IR.Printer] = {
+    o match {
+      case o: org.sireum.lang.ast.IR.Printer.Empty =>
+        val r: PreResult[org.sireum.lang.ast.IR.Printer] = pre_langastIRPrinterEmpty(o) match {
+         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Printer)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Printer](r))
+         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Printer")
+         case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Printer]())
+        }
+        return r
+    }
+  }
+
+  def pre_langastIRPrinterEmpty(o: org.sireum.lang.ast.IR.Printer.Empty): PreResult[org.sireum.lang.ast.IR.Printer.Empty] = {
+    return PreResult_langastIRPrinterEmpty
+  }
+
   def post_langastIRMethodContext(o: org.sireum.lang.ast.IR.MethodContext): MOption[org.sireum.lang.ast.IR.MethodContext] = {
     return PostResult_langastIRMethodContext
   }
@@ -883,12 +903,12 @@ import MAnvilIRTransformer._
     return PostResult_langastIRExpF32
   }
 
-  def post_langastIRExpF64(o: org.sireum.lang.ast.IR.Exp.F64): MOption[org.sireum.lang.ast.IR.Exp] = {
-    return PostResult_langastIRExpF64
-  }
-
   def postIntrinsicStore(o: Intrinsic.Store): MOption[Intrinsic.Store] = {
     return PostResultIntrinsicStore
+  }
+
+  def post_langastIRExpF64(o: org.sireum.lang.ast.IR.Exp.F64): MOption[org.sireum.lang.ast.IR.Exp] = {
+    return PostResult_langastIRExpF64
   }
 
   def post_langastIRExpR(o: org.sireum.lang.ast.IR.Exp.R): MOption[org.sireum.lang.ast.IR.Exp] = {
@@ -923,20 +943,20 @@ import MAnvilIRTransformer._
     return PostResultIntrinsicDeclLocal
   }
 
-  def post_langastIRExpEnumElementRef(o: org.sireum.lang.ast.IR.Exp.EnumElementRef): MOption[org.sireum.lang.ast.IR.Exp] = {
-    return PostResult_langastIRExpEnumElementRef
-  }
-
   def postIntrinsicRegister(o: Intrinsic.Register): MOption[Intrinsic.Register] = {
     return PostResultIntrinsicRegister
   }
 
-  def post_langastIRExpFieldVarRef(o: org.sireum.lang.ast.IR.Exp.FieldVarRef): MOption[org.sireum.lang.ast.IR.Exp] = {
-    return PostResult_langastIRExpFieldVarRef
+  def post_langastIRExpEnumElementRef(o: org.sireum.lang.ast.IR.Exp.EnumElementRef): MOption[org.sireum.lang.ast.IR.Exp] = {
+    return PostResult_langastIRExpEnumElementRef
   }
 
   def postIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): MOption[Intrinsic.RegisterAssign] = {
     return PostResultIntrinsicRegisterAssign
+  }
+
+  def post_langastIRExpFieldVarRef(o: org.sireum.lang.ast.IR.Exp.FieldVarRef): MOption[org.sireum.lang.ast.IR.Exp] = {
+    return PostResult_langastIRExpFieldVarRef
   }
 
   def post_langastIRExpUnary(o: org.sireum.lang.ast.IR.Exp.Unary): MOption[org.sireum.lang.ast.IR.Exp] = {
@@ -1337,6 +1357,22 @@ import MAnvilIRTransformer._
 
   def post_langastIRProgram(o: org.sireum.lang.ast.IR.Program): MOption[org.sireum.lang.ast.IR.Program] = {
     return PostResult_langastIRProgram
+  }
+
+  def post_langastIRPrinter(o: org.sireum.lang.ast.IR.Printer): MOption[org.sireum.lang.ast.IR.Printer] = {
+    o match {
+      case o: org.sireum.lang.ast.IR.Printer.Empty =>
+        val r: MOption[org.sireum.lang.ast.IR.Printer] = post_langastIRPrinterEmpty(o) match {
+         case MSome(result: org.sireum.lang.ast.IR.Printer) => MSome[org.sireum.lang.ast.IR.Printer](result)
+         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Printer")
+         case _ => MNone[org.sireum.lang.ast.IR.Printer]()
+        }
+        return r
+    }
+  }
+
+  def post_langastIRPrinterEmpty(o: org.sireum.lang.ast.IR.Printer.Empty): MOption[org.sireum.lang.ast.IR.Printer.Empty] = {
+    return PostResult_langastIRPrinterEmpty
   }
 
   def transform_langastIRMethodContext(o: org.sireum.lang.ast.IR.MethodContext): MOption[org.sireum.lang.ast.IR.MethodContext] = {
@@ -2183,10 +2219,9 @@ import MAnvilIRTransformer._
       val hasChanged: B = preR.resultOpt.nonEmpty
       val rOpt: MOption[org.sireum.lang.ast.IR.Stmt.For.Range] = o2 match {
         case o2: org.sireum.lang.ast.IR.Stmt.For.Range.Expr =>
-          val r0: MOption[IS[Z, org.sireum.lang.ast.IR.Stmt]] = transformISZ(o2.expStmts, transform_langastIRStmt _)
-          val r1: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.exp)
-          if (hasChanged || r0.nonEmpty || r1.nonEmpty)
-            MSome(o2(expStmts = r0.getOrElse(o2.expStmts), exp = r1.getOrElse(o2.exp)))
+          val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.exp)
+          if (hasChanged || r0.nonEmpty)
+            MSome(o2(exp = r0.getOrElse(o2.exp)))
           else
             MNone()
         case o2: org.sireum.lang.ast.IR.Stmt.For.Range.Step =>
@@ -2499,6 +2534,62 @@ import MAnvilIRTransformer._
     val hasChanged: B = r.nonEmpty
     val o2: org.sireum.lang.ast.IR.Program = r.getOrElse(o)
     val postR: MOption[org.sireum.lang.ast.IR.Program] = post_langastIRProgram(o2)
+    if (postR.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return MSome(o2)
+    } else {
+      return MNone()
+    }
+  }
+
+  def transform_langastIRPrinter(o: org.sireum.lang.ast.IR.Printer): MOption[org.sireum.lang.ast.IR.Printer] = {
+    val preR: PreResult[org.sireum.lang.ast.IR.Printer] = pre_langastIRPrinter(o)
+    val r: MOption[org.sireum.lang.ast.IR.Printer] = if (preR.continu) {
+      val o2: org.sireum.lang.ast.IR.Printer = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      val rOpt: MOption[org.sireum.lang.ast.IR.Printer] = o2 match {
+        case o2: org.sireum.lang.ast.IR.Printer.Empty =>
+          if (hasChanged)
+            MSome(o2)
+          else
+            MNone()
+      }
+      rOpt
+    } else if (preR.resultOpt.nonEmpty) {
+      MSome(preR.resultOpt.getOrElse(o))
+    } else {
+      MNone()
+    }
+    val hasChanged: B = r.nonEmpty
+    val o2: org.sireum.lang.ast.IR.Printer = r.getOrElse(o)
+    val postR: MOption[org.sireum.lang.ast.IR.Printer] = post_langastIRPrinter(o2)
+    if (postR.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return MSome(o2)
+    } else {
+      return MNone()
+    }
+  }
+
+  def transform_langastIRPrinterEmpty(o: org.sireum.lang.ast.IR.Printer.Empty): MOption[org.sireum.lang.ast.IR.Printer.Empty] = {
+    val preR: PreResult[org.sireum.lang.ast.IR.Printer.Empty] = pre_langastIRPrinterEmpty(o)
+    val r: MOption[org.sireum.lang.ast.IR.Printer.Empty] = if (preR.continu) {
+      val o2: org.sireum.lang.ast.IR.Printer.Empty = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      if (hasChanged)
+        MSome(o2)
+      else
+        MNone()
+    } else if (preR.resultOpt.nonEmpty) {
+      MSome(preR.resultOpt.getOrElse(o))
+    } else {
+      MNone()
+    }
+    val hasChanged: B = r.nonEmpty
+    val o2: org.sireum.lang.ast.IR.Printer.Empty = r.getOrElse(o)
+    val postR: MOption[org.sireum.lang.ast.IR.Printer.Empty] = post_langastIRPrinterEmpty(o2)
     if (postR.nonEmpty) {
       return postR
     } else if (hasChanged) {

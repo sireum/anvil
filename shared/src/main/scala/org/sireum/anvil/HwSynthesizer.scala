@@ -68,7 +68,7 @@ object DivRemLog {
   def printProcedure(name: String, o: AST.IR.Procedure, output: Anvil.Output, maxRegisters: Z): Unit = {
     var r = HashSMap.empty[ISZ[String], ST]
     val processedProcedureST = processProcedure(name, o, maxRegisters)
-    r = r + ISZ(name) ~> o.prettyST
+    r = r + ISZ(name) ~> o.prettyST(anvil.printer)
     output.add(T, ISZ("ir", s"chisel-${name}.scala"), processedProcedureST)
     return
   }
@@ -508,9 +508,9 @@ object DivRemLog {
       var commentST = ISZ[ST]()
 
       for(g <- b.grounds) {
-        commentST = commentST :+ g.prettyST
+        commentST = commentST :+ g.prettyST(anvil.printer)
       }
-      commentST = commentST :+ b.jump.prettyST
+      commentST = commentST :+ b.jump.prettyST(anvil.printer)
 
       if(b.label > 1) {
         return st"""
@@ -1127,7 +1127,7 @@ object DivRemLog {
         }
       }
       case _ => {
-        halt(s"processExpr unimplemented, ${exp.prettyST.render}")
+        halt(s"processExpr unimplemented, ${exp.prettyST(anvil.printer).render}")
       }
     }
 

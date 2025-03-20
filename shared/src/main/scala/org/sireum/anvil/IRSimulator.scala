@@ -29,62 +29,39 @@ package org.sireum.anvil
 import org.sireum._
 import org.sireum.lang.{ast => AST}
 import org.sireum.U8._
+import org.sireum.U16._
+import org.sireum.U32._
 import org.sireum.U64._
+import org.sireum.S8._
+import org.sireum.S16._
+import org.sireum.S32._
+import org.sireum.S64._
 import org.sireum.lang.symbol.Resolver.QName
 
 object IRSimulator {
   val DEBUG: B = T
+  var DEBUG_TEMP: B = T
   var DEBUG_EDIT: B = T
   var DEBUG_GLOBAL: B = T
   var DEBUG_LOCAL: B = T
 
   @record @unclonable class State(val globalMap: HashSMap[QName, Anvil.VarInfo],
-                                  val memory: MSZ[U8], val temps: MSZ[U64],
+                                  var CP: Value,
+                                  var SP: Value,
+                                  var DP: U64,
+                                  val memory: MSZ[U8],
+                                  val temps1: MSZ[B],
+                                  val tempsU8: MSZ[U8],
+                                  val tempsU16: MSZ[U16],
+                                  val tempsU32: MSZ[U32],
+                                  val tempsU64: MSZ[U64],
+                                  val tempsS8: MSZ[S8],
+                                  val tempsS16: MSZ[S16],
+                                  val tempsS32: MSZ[S32],
+                                  val tempsS64: MSZ[S64],
+                                  val tempsF32: MSZ[F32],
+                                  val tempsF64: MSZ[F64],
                                   var callFrames: Stack[HashSMap[String, Intrinsic.Decl.Local]]) {
-    @pure def cpIndex: Z = {
-      return temps.size - 3
-    }
-
-    @pure def spIndex: Z = {
-      return temps.size - 2
-    }
-
-    @pure def dpIndex: Z = {
-      return temps.size - 1
-    }
-
-    def CP: U64 = {
-      return temps(cpIndex)
-    }
-
-    def upCP(cp: U64): Unit = {
-      temps(cpIndex) = cp
-    }
-
-    def SP: U64 = {
-      return temps(spIndex)
-    }
-
-    def upSP(sp: U64): Unit = {
-      temps(spIndex) = sp
-    }
-
-    def DP: U64 = {
-      return temps(dpIndex)
-    }
-
-    def upDP(dp: U64): Unit = {
-      temps(dpIndex) = dp
-    }
-
-    @strictpure def tempST(temp: Z): ST =
-      if (temp == spIndex) st"SP"
-      else if (temp == cpIndex) st"CP"
-      else if (temp == dpIndex) st"DP"
-      else st"$$$temp"
-
-    @strictpure def tempsST(temps: ISZ[Z]): ST = st"${(for (t <- temps) yield tempST(t), ", ")}"
-
     @pure def prettyST(sim: IRSimulator): ST = {
       val globalSTOpt: Option[ST] = if (DEBUG_GLOBAL) {
         var globalSTs = ISZ[ST]()
@@ -108,7 +85,7 @@ object IRSimulator {
         var localSTs = ISZ[ST]()
         for (entry <- callFrames.peek.get.entries) {
           val (id, info) = entry
-          val offset = SP.toZ + info.offset
+          val offset = SP.value + info.offset
           if (sim.anvil.isScalar(info.tipe)) {
             val v = sim.load(memory, offset, info.size)._1
             val vh = shortenHexString(v)
@@ -139,9 +116,23 @@ object IRSimulator {
       } else {
         None()
       }
+      var tempsSTs = ISZ[ST]()
+      if (DEBUG_TEMP) {
+        tempsSTs = tempsSTs :+ st"$$64U. = [${(for (t <- tempsU64) yield st"${shortenHexString(t)} (${t.toZ})", ", ")}]"
+        tempsSTs = tempsSTs :+ st"$$64S. = [${(for (t <- tempsS64) yield st"${shortenHexString(conversions.S64.toRawU64(t))} (${t.toZ})", ", ")}]"
+        tempsSTs = tempsSTs :+ st"$$64F. = [${(for (t <- tempsF64) yield st"${shortenHexString(conversions.F64.toRawU64(t))} ($t)", ", ")}]"
+        tempsSTs = tempsSTs :+ st"$$32U. = [${(for (t <- tempsU32) yield st"${shortenHexString(conversions.U32.toU64(t))} (${t.toZ})", ", ")}]"
+        tempsSTs = tempsSTs :+ st"$$32S. = [${(for (t <- tempsS32) yield st"${shortenHexString(conversions.U32.toU64(conversions.S32.toRawU32(t)))} (${t.toZ})", ", ")}]"
+        tempsSTs = tempsSTs :+ st"$$32F. = [${(for (t <- tempsF32) yield st"${shortenHexString(conversions.U32.toU64(conversions.F32.toRawU32(t)))} ($t)", ", ")}]"
+        tempsSTs = tempsSTs :+ st"$$16U. = [${(for (t <- tempsU16) yield st"${shortenHexString(conversions.U16.toU64(t))} (${t.toZ})", ", ")}]"
+        tempsSTs = tempsSTs :+ st"$$16S. = [${(for (t <- tempsS16) yield st"${shortenHexString(conversions.U16.toU64(conversions.S16.toRawU16(t)))} (${t.toZ})", ", ")}]"
+        tempsSTs = tempsSTs :+ st"$$8U. = [${(for (t <- tempsU8) yield st"${shortenHexString(conversions.U8.toU64(t))} (${t.toZ})", ", ")}]"
+        tempsSTs = tempsSTs :+ st"$$8S. = [${(for (t <- tempsS8) yield st"${shortenHexString(conversions.U8.toU64(conversions.S8.toRawU8(t)))} (${t.toZ})", ", ")}]"
+        tempsSTs = tempsSTs :+ st"$$1. = [${(for (t <- temps1) yield if (t) "1" else "0", ", ")}]"
+      }
       val r =
-        st"""CP = ${shortenHexString(CP)} (${CP.toZ}), SP = ${shortenHexString(SP)} (${SP.toZ}), DP = ${shortenHexString(DP)} (${DP.toZ}),
-            |temps = [${(for (i <- 0 until temps.size - 3) yield shortenHexString(temps(i)), ", ")}]$globalSTOpt$localSTOpt"""
+        st"""CP = ${shortenHexString(conversions.Z.toU64(CP.value))} (${CP.value}), SP = ${shortenHexString(conversions.Z.toU64(SP.value))} (${SP.value}), DP = ${shortenHexString(DP)} (${DP.toZ}),
+            |${(tempsSTs, ",\n")}$globalSTOpt$localSTOpt"""
       return r
     }
 
@@ -202,7 +193,7 @@ object IRSimulator {
         def update(state: State): Undo = {
           var top = state.callFrames.peek.get
           if (DEBUG_EDIT) {
-            val slotSTs: ISZ[ST] = for (slot <- decl.slots) yield st"${slot.id}@[${shortenHexString(state.SP + conversions.Z.toU64(slot.offset))}, ${slot.size}]: ${slot.tipe}"
+            val slotSTs: ISZ[ST] = for (slot <- decl.slots) yield st"${slot.id}@[${shortenHexString(conversions.Z.toU64(state.SP.value + slot.offset))}, ${slot.size}]: ${slot.tipe}"
             println(st"* ${if (decl.isAlloc) if (decl.undecl) "unalloc" else "alloc" else if (decl.undecl) "undecl" else "decl"} ${(slotSTs, ", ")}".render)
           }
           if (decl.undecl) {
@@ -217,21 +208,105 @@ object IRSimulator {
         }
       }
 
-      @datatype class Temp(val kind: Temp.Kind.Type, val temp: Z, val value: U64, val reads: Accesses) extends Edit {
-        @strictpure def writes: Accesses = Accesses.empty.addTemp(temp, value)
+      @datatype class Temp(val kind: Temp.Kind.Type, val isFP: B, val isSigned: B, val bitSize: Z, val temp: Z, val value: Value, val reads: Accesses) extends Edit {
+        @strictpure def id: Accesses.TempId = Accesses.TempId(kind, isSigned, bitSize, temp)
+        @strictpure def writes: Accesses = Accesses.empty.addTemp(kind, isSigned, bitSize, temp, value)
         def update(state: State): Undo = {
-          val r = Temp(kind, temp, state.temps(temp), Accesses(reads.temps -- ISZ(temp), reads.memory).
-            addTemp(temp, value))
-          if (DEBUG_EDIT) {
-            val tempString: String = kind match {
-              case Temp.Kind.CP => "CP"
-              case Temp.Kind.SP => "SP"
-              case Temp.Kind.DP => "DP"
-              case Temp.Kind.Register => s"$$$temp"
-            }
-            println(s"* $tempString = ${shortenHexString(value)} (old: ${shortenHexString(r.value)})")
+          val oldValue: Value = kind match {
+            case Temp.Kind.CP =>
+              val r = state.CP
+              state.CP = value
+              r
+            case Temp.Kind.SP =>
+              val r = state.SP
+              state.SP = value
+              r
+            case Temp.Kind.DP =>
+              val r = Value.fromU64(state.DP)
+              assert(value.kind == Value.Kind.U64)
+              state.DP = value.toU64
+              r
+            case Temp.Kind.Register =>
+              if (isFP) {
+                bitSize match {
+                  case z"32" =>
+                    val r = Value.fromF32(state.tempsF32(temp))
+                    assert(value.kind == Value.Kind.F32)
+                    state.tempsF32(temp) = value.toF32
+                    r
+                  case z"64" =>
+                    val r = Value.fromF64(state.tempsF64(temp))
+                    assert(value.kind == Value.Kind.F64)
+                    state.tempsF64(temp) = value.toF64
+                    r
+                  case _ => halt("Infeasible")
+                }
+              } else if (isSigned) {
+                bitSize match {
+                  case z"8" =>
+                    val r = Value.fromS8(state.tempsS8(temp))
+                    assert(value.kind == Value.Kind.S8)
+                    state.tempsS8(temp) = value.toS8
+                    r
+                  case z"16" =>
+                    val r = Value.fromS16(state.tempsS16(temp))
+                    assert(value.kind == Value.Kind.S16)
+                    state.tempsS16(temp) = value.toS16
+                    r
+                  case z"32" =>
+                    val r = Value.fromS32(state.tempsS32(temp))
+                    assert(value.kind == Value.Kind.S32)
+                    state.tempsS32(temp) = value.toS32
+                    r
+                  case z"64" =>
+                    val r = Value.fromS64(state.tempsS64(temp))
+                    assert(value.kind == Value.Kind.S64)
+                    state.tempsS64(temp) = value.toS64
+                    r
+                  case _ => halt("Infeasible")
+                }
+              } else {
+                bitSize match {
+                  case z"1" =>
+                    val r = Value.fromB(state.temps1(temp))
+                    assert(value.kind == Value.Kind.B)
+                    state.temps1(temp) = value.toB
+                    r
+                  case z"8" =>
+                    val r = Value.fromU8(state.tempsU8(temp))
+                    assert(value.kind == Value.Kind.U8)
+                    state.tempsU8(temp) = value.toU8
+                    r
+                  case z"16" =>
+                    val r = Value.fromU16(state.tempsU16(temp))
+                    assert(value.kind == Value.Kind.U16)
+                    state.tempsU16(temp) = value.toU16
+                    r
+                  case z"32" =>
+                    val r = Value.fromU32(state.tempsU32(temp))
+                    assert(value.kind == Value.Kind.U32)
+                    state.tempsU32(temp) = value.toU32
+                    r
+                  case z"64" =>
+                    val r = Value.fromU64(state.tempsU64(temp))
+                    assert(value.kind == Value.Kind.U64)
+                    state.tempsU64(temp) = value.toU64
+                    r
+                  case _ => halt(s"Infeasible: $kind, $isSigned, $bitSize, $temp, $value")
+                }
+              }
           }
-          state.temps(temp) = value
+          val r = Temp(kind, isFP, isSigned, bitSize, temp, oldValue, Accesses(reads.temps -- ISZ(id), reads.memory).
+            addTemp(kind, isSigned, bitSize, temp, value))
+          if (DEBUG_EDIT) {
+            val tempST: ST = kind match {
+              case Temp.Kind.CP => st"CP"
+              case Temp.Kind.SP => st"SP"
+              case Temp.Kind.DP => st"DP"
+              case Temp.Kind.Register => Util.tempST2(isSigned, bitSize, temp)
+            }
+            println(st"* $tempST = ${value.debugST} [old: ${r.value.debugST}]".render)
+          }
           return r
         }
       }
@@ -267,11 +342,16 @@ object IRSimulator {
       }
     }
 
-    @datatype class Accesses(val temps: HashSMap[Z, U64], val memory: HashSMap[Z, U8]) {
+    @datatype class Accesses(val temps: HashSMap[Accesses.TempId, Value], val memory: HashSMap[Z, U8]) {
 
-      @pure def addTemp(temp: Z, readValue: U64): Accesses = {
-        assert(temps.get(temp).getOrElse(readValue) == readValue)
-        return Accesses(temps + temp ~> readValue, memory)
+      @pure def addTemp(kind: State.Edit.Temp.Kind.Type, isSigned: B, bitSize: Z, temp: Z, value: Value): Accesses = {
+        val id = Accesses.TempId(kind, isSigned, bitSize, temp)
+        return addTempId(id, value)
+      }
+
+      @pure def addTempId(id: Accesses.TempId, value: Value): Accesses = {
+        assert(temps.get(id).getOrElse(value) == value)
+        return Accesses(temps + id ~> value, memory)
       }
 
       @pure def addMemory(offset: Z, readValues: ISZ[U8]): Accesses = {
@@ -284,7 +364,7 @@ object IRSimulator {
       @pure def +(other: Accesses): Accesses = {
         var r = this
         for (entry <- other.temps.entries) {
-          r = r.addTemp(entry._1, entry._2)
+          r = r.addTempId(entry._1, entry._2)
         }
         for (entry <- other.memory.entries) {
           r = r.addMemory(entry._1, IS(entry._2))
@@ -294,16 +374,70 @@ object IRSimulator {
     }
 
     object Accesses {
+      @datatype class TempId(val kind: State.Edit.Temp.Kind.Type, val isSigned: B, val bitSize: Z, val n: Z) {
+        @strictpure override def hash: Z = string.hash
+        @strictpure def isEqual(other: TempId): B = string == other.string
+        @strictpure override def string: String = kind match {
+          case State.Edit.Temp.Kind.CP => "CP"
+          case State.Edit.Temp.Kind.SP => "SP"
+          case State.Edit.Temp.Kind.DP => "DP"
+          case State.Edit.Temp.Kind.Register => s"$$$bitSize${if (isSigned) "S" else "U"}.$n"
+        }
+      }
       @strictpure def empty: Accesses = Accesses(HashSMap.empty, HashSMap.empty)
     }
 
-    @strictpure def create(memory: Z, temps: Z, globalMap: HashSMap[QName, Anvil.VarInfo]): State =
-      State(globalMap, MSZ.create(memory, u8"0"), MSZ.create(temps + 3, u64"0"), Stack(ISZ(HashSMap.empty)))
+    @strictpure def create(memory: Z,
+                           temps1: Z,
+                           tempsU8: Z,
+                           tempsU16: Z,
+                           tempsU32: Z,
+                           tempsU64: Z,
+                           tempsS8: Z,
+                           tempsS16: Z,
+                           tempsS32: Z,
+                           tempsS64: Z,
+                           tempsF32: Z,
+                           tempsF64: Z,
+                           globalMap: HashSMap[QName, Anvil.VarInfo]): State =
+      State(
+        globalMap,
+        Value.fromU64(u64"0"),
+        Value.fromU64(u64"0"),
+        u64"0",
+        MSZ.create(memory, u8"0"),
+        MSZ.create(temps1, F),
+        MSZ.create(tempsU8, u8"0"),
+        MSZ.create(tempsU16, u16"0"),
+        MSZ.create(tempsU32, u32"0"),
+        MSZ.create(tempsU64, u64"0"),
+        MSZ.create(tempsS8, s8"0"),
+        MSZ.create(tempsS16, s16"0"),
+        MSZ.create(tempsS32, s32"0"),
+        MSZ.create(tempsS64, s64"0"),
+        MSZ.create(tempsF32, 0f),
+        MSZ.create(tempsF64, 0d),
+        Stack(ISZ(HashSMap.empty)))
 
   }
 
   @datatype class Value(val kind: Value.Kind.Type, val value: Z) {
+    @strictpure def debugST: ST = kind match {
+      case Value.Kind.B => st"$toB"
+      case Value.Kind.U8 => st"${shortenHexString(toU64)} ($value)"
+      case Value.Kind.U16 => st"${shortenHexString(toU64)} ($value)"
+      case Value.Kind.U32 => st"${shortenHexString(toU64)} ($value)"
+      case Value.Kind.U64 => st"${shortenHexString(toU64)} ($value)"
+      case Value.Kind.S8 => st"${shortenHexString(conversions.S64.toRawU64(toS64))} ($value)"
+      case Value.Kind.S16 => st"${shortenHexString(conversions.S64.toRawU64(toS64))} ($value)"
+      case Value.Kind.S32 => st"${shortenHexString(conversions.S64.toRawU64(toS64))} ($value)"
+      case Value.Kind.S64 => st"${shortenHexString(conversions.S64.toRawU64(toS64))} ($value)"
+      case Value.Kind.F32 => st"${shortenHexString(conversions.S64.toRawU64(toS64))} ($value)"
+      case Value.Kind.F64 => st"${shortenHexString(conversions.S64.toRawU64(toS64))} ($value)"
+    }
+
     @strictpure override def string: String = kind match {
+      case Value.Kind.B => toB.string
       case Value.Kind.U8 => toU8.string
       case Value.Kind.U16 => toU16.string
       case Value.Kind.U32 => toU32.string
@@ -316,20 +450,22 @@ object IRSimulator {
       case Value.Kind.F64 => toF64.string
     }
 
-    @strictpure def bytes: Z = kind match {
-      case Value.Kind.U8 => 1
-      case Value.Kind.U16 => 2
-      case Value.Kind.U32 => 4
-      case Value.Kind.U64 => 8
-      case Value.Kind.S8 => 1
-      case Value.Kind.S16 => 2
-      case Value.Kind.S32 => 4
-      case Value.Kind.S64 => 8
-      case Value.Kind.F32 => 4
-      case Value.Kind.F64 => 8
+    @strictpure def bits: Z = kind match {
+      case Value.Kind.B => 1
+      case Value.Kind.U8 => 8
+      case Value.Kind.U16 => 16
+      case Value.Kind.U32 => 32
+      case Value.Kind.U64 => 64
+      case Value.Kind.S8 => 8
+      case Value.Kind.S16 => 16
+      case Value.Kind.S32 => 32
+      case Value.Kind.S64 => 64
+      case Value.Kind.F32 => 32
+      case Value.Kind.F64 => 64
     }
 
     @strictpure def signed: B = kind match {
+      case Value.Kind.B => F
       case Value.Kind.U8 => F
       case Value.Kind.U16 => F
       case Value.Kind.U32 => F
@@ -345,6 +481,7 @@ object IRSimulator {
     @strictpure def +(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromU8(toU8 + other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 + other.toU16)
         case Value.Kind.U32 => Value.fromU32(toU32 + other.toU32)
@@ -361,6 +498,7 @@ object IRSimulator {
     @strictpure def -(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromU8(toU8 - other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 - other.toU16)
         case Value.Kind.U32 => Value.fromU32(toU32 - other.toU32)
@@ -377,6 +515,7 @@ object IRSimulator {
     @strictpure def *(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromU8(toU8 * other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 * other.toU16)
         case Value.Kind.U32 => Value.fromU32(toU32 * other.toU32)
@@ -393,6 +532,7 @@ object IRSimulator {
     @strictpure def /(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromU8(toU8 / other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 / other.toU16)
         case Value.Kind.U32 => Value.fromU32(toU32 / other.toU32)
@@ -409,6 +549,7 @@ object IRSimulator {
     @strictpure def %(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromU8(toU8 % other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 % other.toU16)
         case Value.Kind.U32 => Value.fromU32(toU32 % other.toU32)
@@ -425,6 +566,7 @@ object IRSimulator {
     @strictpure def >>(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromU8(toU8 >> other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 >> other.toU16)
         case Value.Kind.U32 => Value.fromU32(toU32 >> other.toU32)
@@ -441,6 +583,7 @@ object IRSimulator {
     @strictpure def ~~(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => halt("Infeasible")
         case Value.Kind.U16 => halt("Infeasible")
         case Value.Kind.U32 => halt("Infeasible")
@@ -457,6 +600,7 @@ object IRSimulator {
     @strictpure def !~(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => halt("Infeasible")
         case Value.Kind.U16 => halt("Infeasible")
         case Value.Kind.U32 => halt("Infeasible")
@@ -473,6 +617,7 @@ object IRSimulator {
     @strictpure def >>>(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromU8(toU8 >>> other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 >>> other.toU16)
         case Value.Kind.U32 => Value.fromU32(toU32 >>> other.toU32)
@@ -489,6 +634,7 @@ object IRSimulator {
     @strictpure def <<(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromU8(toU8 << other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 << other.toU16)
         case Value.Kind.U32 => Value.fromU32(toU32 << other.toU32)
@@ -505,6 +651,7 @@ object IRSimulator {
     @strictpure def &(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => Value.fromB(toB & other.toB)
         case Value.Kind.U8 => Value.fromU8(toU8 & other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 & other.toU16)
         case Value.Kind.U32 => Value.fromU32(toU32 & other.toU32)
@@ -521,6 +668,7 @@ object IRSimulator {
     @strictpure def |(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => Value.fromB(toB | other.toB)
         case Value.Kind.U8 => Value.fromU8(toU8 | other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 | other.toU16)
         case Value.Kind.U32 => Value.fromU32(toU32 | other.toU32)
@@ -537,6 +685,7 @@ object IRSimulator {
     @strictpure def |^(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => Value.fromB(toB |^ other.toB)
         case Value.Kind.U8 => Value.fromU8(toU8 |^ other.toU8)
         case Value.Kind.U16 => Value.fromU16(toU16 |^ other.toU16)
         case Value.Kind.U32 => Value.fromU32(toU32 |^ other.toU32)
@@ -553,7 +702,8 @@ object IRSimulator {
     @strictpure def __>:(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
-        case Value.Kind.U8 => Value.fromB(!toB | other.toB)
+        case Value.Kind.B => Value.fromB(!toB | other.toB)
+        case Value.Kind.U8 => halt("Infeasible")
         case Value.Kind.U16 => halt("Infeasible")
         case Value.Kind.U32 => halt("Infeasible")
         case Value.Kind.U64 => halt("Infeasible")
@@ -569,6 +719,7 @@ object IRSimulator {
     @strictpure def <(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromB(toU8 < other.toU8)
         case Value.Kind.U16 => Value.fromB(toU16 < other.toU16)
         case Value.Kind.U32 => Value.fromB(toU32 < other.toU32)
@@ -585,6 +736,7 @@ object IRSimulator {
     @strictpure def <=(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromB(toU8 <= other.toU8)
         case Value.Kind.U16 => Value.fromB(toU16 <= other.toU16)
         case Value.Kind.U32 => Value.fromB(toU32 <= other.toU32)
@@ -601,6 +753,7 @@ object IRSimulator {
     @strictpure def >(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromB(toU8 > other.toU8)
         case Value.Kind.U16 => Value.fromB(toU16 > other.toU16)
         case Value.Kind.U32 => Value.fromB(toU32 > other.toU32)
@@ -617,6 +770,7 @@ object IRSimulator {
     @strictpure def >=(other: Value): Value = {
       assert(kind == other.kind, s"$kind != ${other.kind}")
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromB(toU8 >= other.toU8)
         case Value.Kind.U16 => Value.fromB(toU16 >= other.toU16)
         case Value.Kind.U32 => Value.fromB(toU32 >= other.toU32)
@@ -632,7 +786,8 @@ object IRSimulator {
 
     @strictpure def not: Value = {
       kind match {
-        case Value.Kind.U8 => Value.fromB(!toB)
+        case Value.Kind.B => Value.fromB(!toB)
+        case Value.Kind.U8 => halt(s"Infeasible")
         case Value.Kind.U16 => halt("Infeasible")
         case Value.Kind.U32 => halt("Infeasible")
         case Value.Kind.U64 => halt("Infeasible")
@@ -647,6 +802,7 @@ object IRSimulator {
 
     @strictpure def complement: Value = {
       kind match {
+        case Value.Kind.B => Value.fromB(~toB)
         case Value.Kind.U8 => Value.fromU8(~toU8)
         case Value.Kind.U16 => Value.fromU16(~toU16)
         case Value.Kind.U32 => Value.fromU32(~toU32)
@@ -662,6 +818,7 @@ object IRSimulator {
 
     @strictpure def minus: Value = {
       kind match {
+        case Value.Kind.B => halt(s"Infeasible")
         case Value.Kind.U8 => Value.fromU8(-toU8)
         case Value.Kind.U16 => Value.fromU16(-toU16)
         case Value.Kind.U32 => Value.fromU32(-toU32)
@@ -700,6 +857,7 @@ object IRSimulator {
 
   object Value {
     @enum object Kind {
+      "B"
       "S8"
       "S16"
       "S32"
@@ -712,7 +870,7 @@ object IRSimulator {
       "F64"
     }
 
-    @strictpure def fromB(n: B): Value = Value(Kind.U8, if (n) 1 else 0)
+    @strictpure def fromB(n: B): Value = Value(Kind.B, if (n) 1 else 0)
 
     @strictpure def fromU8(n: U8): Value = Value(Kind.U8, n.toZ)
 
@@ -734,57 +892,67 @@ object IRSimulator {
 
     @strictpure def fromF64(n: F64): Value = Value(Kind.F64, conversions.F64.toRawU64(n).toZ)
 
-    @strictpure def fromZ(n: Z, isSigned: B, bytes: Z): Value =
+    @strictpure def fromZ(n: Z, bits: Z, isSigned: B): Value =
       if (isSigned) {
-        if (bytes == 1) {
+        if (bits == 8) {
           Value(Value.Kind.S8, n)
-        } else if (bytes == 2) {
+        } else if (bits == 16) {
           Value(Value.Kind.S16, n)
-        } else if (bytes <= 4) {
+        } else if (bits <= 32) {
           Value(Value.Kind.S32, n)
-        } else if (bytes <= 8) {
+        } else if (bits <= 64) {
           Value(Value.Kind.S64, n)
         } else {
-          halt(s"Infeasible: $n, $isSigned, $bytes")
+          halt(s"Infeasible: $n, $isSigned, $bits")
         }
       } else {
-        if (bytes == 1) {
+        if (bits == 1) {
+          Value(Value.Kind.B, n)
+        } else if (bits == 8) {
           Value(Value.Kind.U8, n)
-        } else if (bytes == 2) {
+        } else if (bits == 16) {
           Value(Value.Kind.U16, n)
-        } else if (bytes <= 4) {
+        } else if (bits <= 32) {
           Value(Value.Kind.U32, n)
-        } else if (bytes <= 8) {
+        } else if (bits <= 64) {
           Value(Value.Kind.U64, n)
         } else {
-          halt(s"Infeasible: $n, $isSigned, $bytes")
+          halt(s"Infeasible: $n, $isSigned, $bits")
         }
       }
 
-    @strictpure def fromRawU64(n: U64, isSigned: B, bytes: Z): Value = if (isSigned) {
-      if (bytes == 1) {
-        fromS8(conversions.U8.toRawS8(conversions.U64.toU8(n & u64"0xFF")))
-      } else if (bytes == 2) {
-        fromS16(conversions.U16.toRawS16(conversions.U64.toU16(n & u64"0xFFFF")))
-      } else if (bytes == 4) {
-        fromS32(conversions.U32.toRawS32(conversions.U64.toU32(n & u64"0xFFFFFFFF")))
-      } else if (bytes == 8) {
-        fromS64(conversions.U64.toRawS64(n))
-      } else {
-        halt(s"Infeasible: $bytes")
-      }
-    } else {
-      bytes match {
-        case z"1" => fromU8(conversions.U64.toU8(n & u64"0xFF"))
-        case z"2" => fromU16(conversions.U64.toU16(n & u64"0xFFFF"))
-        case z"3" => fromU32(conversions.U64.toU32(n & u64"0xFFFFFF"))
-        case z"4" => fromU32(conversions.U64.toU32(n & u64"0xFFFFFFFF"))
-        case z"5" => fromU64(n & u64"0xFFFFFFFFFF")
-        case z"6" => fromU64(n & u64"0xFFFFFFFFFFFF")
-        case z"7" => fromU64(n & u64"0xFFFFFFFFFFFFFF")
-        case z"8" => fromU64(n)
-        case _ => halt(s"Infeasible: $bytes")
-      }
+    @strictpure def fromRawU64(anvil: Anvil, n: U64, t: AST.Typed): Value = t match {
+      case AST.Typed.f32 => fromF32(conversions.U32.toRawF32(conversions.U64.toU32(n & u64"0xFFFFFFFF")))
+      case AST.Typed.f64 => fromF64(conversions.U64.toRawF64(n))
+      case _ =>
+        val isSigned = anvil.isSigned(t)
+        val bits = anvil.typeBitSize(t)
+        if (isSigned) {
+          if (bits == 8) {
+            fromS8(conversions.U8.toRawS8(conversions.U64.toU8(n & u64"0xFF")))
+          } else if (bits == 16) {
+            fromS16(conversions.U16.toRawS16(conversions.U64.toU16(n & u64"0xFFFF")))
+          } else if (bits == 32) {
+            fromS32(conversions.U32.toRawS32(conversions.U64.toU32(n & u64"0xFFFFFFFF")))
+          } else if (bits == 64) {
+            fromS64(conversions.U64.toRawS64(n))
+          } else {
+            halt(s"Infeasible: $bits")
+          }
+        } else {
+          bits match {
+            case z"1" => fromB(conversions.U64.toB(n & u64"0x1"))
+            case z"8" => fromU8(conversions.U64.toU8(n & u64"0xFF"))
+            case z"16" => fromU16(conversions.U64.toU16(n & u64"0xFFFF"))
+            case z"24" => fromU32(conversions.U64.toU32(n & u64"0xFFFFFF"))
+            case z"32" => fromU32(conversions.U64.toU32(n & u64"0xFFFFFFFF"))
+            case z"40" => fromU64(n & u64"0xFFFFFFFFFF")
+            case z"48" => fromU64(n & u64"0xFFFFFFFFFFFF")
+            case z"56" => fromU64(n & u64"0xFFFFFFFFFFFFFF")
+            case z"64" => fromU64(n)
+            case _ => halt(s"Infeasible: $bits")
+          }
+        }
     }
   }
 }
@@ -797,24 +965,38 @@ import IRSimulator._
     exp match {
       case exp: AST.IR.Exp.Bool => return (Value.fromB(exp.value), State.Accesses.empty)
       case exp: AST.IR.Exp.Int =>
-        return (Value.fromZ(exp.value, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe)), State.Accesses.empty)
+        return (Value.fromZ(exp.value, anvil.typeBitSize(exp.tipe), anvil.isSigned(exp.tipe)), State.Accesses.empty)
       case exp: AST.IR.Exp.F32 => return (Value.fromF32(exp.value), State.Accesses.empty)
       case exp: AST.IR.Exp.F64 => return (Value.fromF64(exp.value), State.Accesses.empty)
       case exp: AST.IR.Exp.Temp =>
-        val v = state.temps(exp.n)
-        val acs = State.Accesses.empty.addTemp(exp.n, v)
-        if (anvil.isScalar(exp.tipe)) {
-          val n = Value.fromRawU64(v, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe))
-          exp.tipe match {
-            case AST.Typed.f32 =>
-              return (Value.fromF32(conversions.U32.toRawF32(conversions.S32.toRawU32(conversions.Z.toS32(n.value)))), acs)
-            case AST.Typed.f64 =>
-              return (Value.fromF64(conversions.U64.toRawF64(conversions.S64.toRawU64(conversions.Z.toS64(n.value)))), acs)
-            case _ => return (n, acs)
-          }
-        } else {
-          return (Value.fromRawU64(v, anvil.isSigned(anvil.spType), anvil.typeByteSize(anvil.spType)), acs)
+        val t: AST.Typed = if (anvil.isScalar(exp.tipe)) exp.tipe else anvil.spType
+        val isSigned = anvil.isSigned(t)
+        val bitSize = anvil.typeBitSize(t)
+        val v: Value = t match {
+          case AST.Typed.f32 => Value.fromF32(state.tempsF32(exp.n))
+          case AST.Typed.f64 => Value.fromF64(state.tempsF64(exp.n))
+          case _ =>
+            if (isSigned) {
+              bitSize match {
+                case z"8" => Value.fromS8(state.tempsS8(exp.n))
+                case z"16" => Value.fromS16(state.tempsS16(exp.n))
+                case z"32" => Value.fromS32(state.tempsS32(exp.n))
+                case z"64" => Value.fromS64(state.tempsS64(exp.n))
+                case _ => halt(s"Infeasible: $bitSize, ${exp.tipe}")
+              }
+            } else {
+              bitSize match {
+                case z"1" => Value.fromB(state.temps1(exp.n))
+                case z"8" => Value.fromU8(state.tempsU8(exp.n))
+                case z"16" => Value.fromU16(state.tempsU16(exp.n))
+                case z"32" => Value.fromU32(state.tempsU32(exp.n))
+                case z"64" => Value.fromU64(state.tempsU64(exp.n))
+                case _ => halt(s"Infeasible: $bitSize, ${exp.tipe}")
+              }
+            }
         }
+        val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.Register, isSigned, bitSize, exp.n, v)
+        return (v, acs)
       case exp: AST.IR.Exp.Binary =>
         val (left, lacs) = evalExp(state, exp.left)
         val (right, racs) = evalExp(state, exp.right)
@@ -860,33 +1042,36 @@ import IRSimulator._
         val n: U64 =
           if (anvil.isSigned(exp.exp.tipe)) conversions.S64.toRawU64(conversions.Z.toS64(v.value))
           else conversions.Z.toU64(v.value)
-        return (Value.fromRawU64(n, anvil.isSigned(exp.tipe), anvil.typeByteSize(exp.tipe)), acs)
+        return (Value.fromRawU64(anvil, n, exp.tipe), acs)
       case exp: AST.IR.Exp.Intrinsic =>
         exp.intrinsic match {
           case in: Intrinsic.Load =>
             val (offset, eacs) = evalExp(state, in.rhsOffset)
             val (n, lacs) = load(state.memory, offset.value, in.bytes)
             val acs = eacs + lacs
-            return (Value.fromRawU64(conversions.Z.toU64(n.toZ), in.isSigned, in.bytes), acs)
+            return (Value.fromRawU64(anvil, conversions.Z.toU64(n.toZ), in.tipe), acs)
           case in: Intrinsic.Register =>
             if (in.isSP) {
-              val acs = State.Accesses.empty.addTemp(state.spIndex, state.SP)
-              return (Value.fromRawU64(state.SP, anvil.isSigned(in.tipe), anvil.typeByteSize(in.tipe)), acs)
+              val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.SP, anvil.isSigned(anvil.spType),
+                anvil.spTypeByteSize * 8, 0, state.SP)
+              return (state.SP, acs)
             } else {
-              val acs = State.Accesses.empty.addTemp(state.dpIndex, state.DP)
-              return (Value.fromU64(state.DP), acs)
+              val v = Value.fromU64(state.DP)
+              val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.DP, anvil.isSigned(anvil.dpType),
+                anvil.dpTypeByteSize * 8, 0, v)
+              return (v, acs)
             }
         }
-      case exp: AST.IR.Exp.R => halt(s"TODO: ${exp.prettyST.render}")
-      case exp: AST.IR.Exp.Construct => halt(s"Infeasible: ${exp.prettyST.render}")
-      case _: AST.IR.Exp.String => halt(s"Infeasible: ${exp.prettyST.render}")
-      case _: AST.IR.Exp.Indexing => halt(s"Infeasible: ${exp.prettyST.render}")
-      case _: AST.IR.Exp.LocalVarRef => halt(s"Infeasible: ${exp.prettyST.render}")
-      case _: AST.IR.Exp.GlobalVarRef => halt(s"Infeasible: ${exp.prettyST.render}")
-      case _: AST.IR.Exp.FieldVarRef => halt(s"Infeasible: ${exp.prettyST.render}")
-      case _: AST.IR.Exp.EnumElementRef => halt(s"Infeasible: ${exp.prettyST.render}")
-      case _: AST.IR.Exp.If => halt(s"Infeasible: ${exp.prettyST.render}")
-      case _: AST.IR.Exp.Apply => halt(s"Infeasible: ${exp.prettyST.render}")
+      case exp: AST.IR.Exp.R => halt(s"TODO: ${exp.prettyST(anvil.printer).render}")
+      case exp: AST.IR.Exp.Construct => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
+      case _: AST.IR.Exp.String => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
+      case _: AST.IR.Exp.Indexing => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
+      case _: AST.IR.Exp.LocalVarRef => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
+      case _: AST.IR.Exp.GlobalVarRef => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
+      case _: AST.IR.Exp.FieldVarRef => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
+      case _: AST.IR.Exp.EnumElementRef => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
+      case _: AST.IR.Exp.If => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
+      case _: AST.IR.Exp.Apply => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
     }
   }
 
@@ -894,24 +1079,23 @@ import IRSimulator._
     stmt match {
       case stmt: AST.IR.Stmt.Assign.Temp =>
         val (rhs, acs) = evalExp(state, stmt.rhs)
-        val n: U64 =
-          if (anvil.isSigned(stmt.rhs.tipe)) conversions.S64.toRawU64(conversions.Z.toS64(rhs.value))
-          else conversions.Z.toU64(rhs.value)
-        return State.Edit.Temp(State.Edit.Temp.Kind.Register, stmt.lhs, n, acs)
+        val t: AST.Typed = if (anvil.isScalar(stmt.rhs.tipe)) stmt.rhs.tipe else anvil.spType
+        return State.Edit.Temp(State.Edit.Temp.Kind.Register, anvil.isFP(t), anvil.isSigned(t),
+          anvil.typeBitSize(t), stmt.lhs, rhs, acs)
       case stmt: AST.IR.Stmt.Intrinsic =>
         stmt.intrinsic match {
           case in: Intrinsic.TempLoad =>
             val (offset, eacs) = evalExp(state, in.rhsOffset)
             val (m, lacs) = load(state.memory, offset.value, in.bytes)
             val acs = eacs + lacs
-            val v = Value.fromRawU64(m, in.isSigned, in.bytes)
-            val n: U64 =
-              if (in.isSigned) conversions.S64.toRawU64(conversions.Z.toS64(v.value))
-              else conversions.Z.toU64(v.value)
-            return State.Edit.Temp(State.Edit.Temp.Kind.Register, in.temp, n, acs)
+            val t: AST.Typed = if (anvil.isScalar(in.tipe)) in.tipe else anvil.spType
+            val v = Value.fromRawU64(anvil, m, t)
+            return State.Edit.Temp(State.Edit.Temp.Kind.Register, anvil.isFP(t), anvil.isSigned(t),
+              anvil.typeBitSize(t), in.temp, v, acs)
           case in: Intrinsic.Store =>
             val (v, eacs) = evalExp(state, in.rhs)
-            val n: U64 = if (anvil.isSigned(in.rhs.tipe)) conversions.S64.toRawU64(conversions.Z.toS64(v.value)) else v.toU64
+            val n: U64 =
+              if (anvil.isSigned(in.rhs.tipe)) conversions.S64.toRawU64(conversions.Z.toS64(v.value)) else v.toU64
             val (offset, oacs) = evalExp(state, in.lhsOffset)
             val acs = eacs + oacs
             return store(offset.value, anvil.typeByteSize(in.tipe), n, acs)
@@ -929,31 +1113,37 @@ import IRSimulator._
           case in: Intrinsic.RegisterAssign =>
             val (v, acs) = evalExp(state, in.value)
             if (in.isSP) {
-              val sp: U64 = conversions.Z.toU64(if (in.isInc) conversions.U64.toZ(state.SP) + v.value else v.value)
-              return State.Edit.Temp(State.Edit.Temp.Kind.SP, state.spIndex, sp, acs)
+              val sp: Value = if (in.isInc) Value.fromZ(state.SP.value + v.value, anvil.typeBitSize(anvil.spType),
+                anvil.isSigned(anvil.spType)) else v
+              return State.Edit.Temp(State.Edit.Temp.Kind.SP, anvil.isFP(anvil.spType), anvil.isSigned(anvil.spType),
+                anvil.typeBitSize(anvil.spType), 0, sp, acs)
             } else {
               assert(v.value >= 0)
-              val dp: U64 = conversions.Z.toU64(if (in.isInc) conversions.U64.toZ(state.DP) + v.value else v.value)
-              return State.Edit.Temp(State.Edit.Temp.Kind.DP, state.dpIndex, dp, acs)
+              val dp: Value = if (in.isInc) Value.fromU64(state.DP) + v else v
+              return State.Edit.Temp(State.Edit.Temp.Kind.DP, anvil.isFP(anvil.spType), anvil.isSigned(anvil.dpType),
+                anvil.typeBitSize(anvil.dpType), 0, dp, acs)
             }
           case stmt: Intrinsic.Decl => return State.Edit.Decl(stmt)
         }
-      case _: AST.IR.Stmt.Expr => halt(s"Infeasible: ${stmt.prettyST.render}")
-      case _: AST.IR.Stmt.Decl => halt(s"Infeasible: ${stmt.prettyST.render}")
-      case _: AST.IR.Stmt.Assign => halt(s"Infeasible: ${stmt.prettyST.render}")
+      case _: AST.IR.Stmt.Expr => halt(s"Infeasible: ${stmt.prettyST(anvil.printer).render}")
+      case _: AST.IR.Stmt.Decl => halt(s"Infeasible: ${stmt.prettyST(anvil.printer).render}")
+      case _: AST.IR.Stmt.Assign => halt(s"Infeasible: ${stmt.prettyST(anvil.printer).render}")
     }
   }
 
   @pure def evalJump(state: State, jump: AST.IR.Jump): State.Edit.Temp = {
+    val isSigned = anvil.isSigned(anvil.cpType)
+    val bitSize = anvil.typeBitSize(anvil.cpType)
+    val isFP = anvil.isFP(anvil.cpType)
     jump match {
       case jump: AST.IR.Jump.Goto =>
-        val cp = conversions.Z.toU64(jump.label)
-        return State.Edit.Temp(State.Edit.Temp.Kind.CP, state.cpIndex, cp, State.Accesses.empty)
+        val cp = Value.fromZ(jump.label, bitSize, isSigned)
+        return State.Edit.Temp(State.Edit.Temp.Kind.CP, isFP, isSigned, bitSize, 0, cp, State.Accesses.empty)
       case jump: AST.IR.Jump.If =>
         val (cond, acs) = evalExp(state, jump.cond)
         val label: Z = if (cond.toB) jump.thenLabel else jump.elseLabel
-        val cp = conversions.Z.toU64(label)
-        return State.Edit.Temp(State.Edit.Temp.Kind.CP, state.cpIndex, cp, acs)
+        val cp = Value.fromZ(label, bitSize, isSigned)
+        return State.Edit.Temp(State.Edit.Temp.Kind.CP, isFP, isSigned, bitSize, 0, cp, acs)
       case jump: AST.IR.Jump.Switch =>
         val (v, cacs) = evalExp(state, jump.exp)
         var label: Z = 1
@@ -976,27 +1166,28 @@ import IRSimulator._
           }
         }
         assert(found)
-        val cp = conversions.Z.toU64(label)
-        return State.Edit.Temp(State.Edit.Temp.Kind.CP, state.cpIndex, cp, acs)
+        val cp = Value.fromZ(label, bitSize, isSigned)
+        return State.Edit.Temp(State.Edit.Temp.Kind.CP, isFP, isSigned, bitSize, 0, cp, acs)
       case jump: AST.IR.Jump.Intrinsic =>
         jump.intrinsic match {
           case in: Intrinsic.GotoLocal =>
-            val offset = state.SP.toZ + in.offset
+            val offset = state.SP.value + in.offset
             val (cp, acs) = load(state.memory, offset, anvil.cpTypeByteSize)
-            return State.Edit.Temp(State.Edit.Temp.Kind.CP, state.cpIndex, cp, acs)
+            return State.Edit.Temp(State.Edit.Temp.Kind.CP, isFP, isSigned, bitSize, 0,
+              Value.fromRawU64(anvil, cp, anvil.cpType), acs)
         }
-      case _: AST.IR.Jump.Return => halt(s"Infeasible: ${jump.prettyST}")
-      case _: AST.IR.Jump.Halt => halt(s"Infeasible: ${jump.prettyST}")
+      case _: AST.IR.Jump.Return => halt(s"Infeasible: ${jump.prettyST(anvil.printer)}")
+      case _: AST.IR.Jump.Halt => halt(s"Infeasible: ${jump.prettyST(anvil.printer)}")
     }
   }
 
-  @pure def checkRAW(label: Z, edits: ISZ[State.Edit], index: Z, tsf: ISZ[Z] => ST): Unit = {
+  @pure def checkRAW(label: Z, edits: ISZ[State.Edit], index: Z): Unit = {
     for (i <- edits.indices if i != index) {
       if (edits(index).writes.temps.keySet.intersect(edits(i).reads.temps.keySet).nonEmpty) {
         halt(
           st"""Detected temp RAW hazard in block .$label
-              |* Temp Writes = ${tsf(edits(index).writes.temps.keySet.elements)}
-              |* Temp Reads = ${tsf(edits(i).reads.temps.keySet.elements)}""".render)
+              |* Temp Writes = ${(edits(index).writes.temps.keySet.elements, ", ")}
+              |* Temp Reads = ${(edits(i).reads.temps.keySet.elements, ", ")}""".render)
       }
       if (edits(index).writes.memory.keySet.intersect(edits(i).reads.memory.keySet).nonEmpty) {
         halt(
@@ -1007,11 +1198,11 @@ import IRSimulator._
     }
   }
 
-  @pure def checkWrites(label: Z, edits: ISZ[State.Edit], index: Z, tsf: ISZ[Z] => ST): Unit = {
+  @pure def checkWrites(label: Z, edits: ISZ[State.Edit], index: Z): Unit = {
     for (i <- index + 1 until edits.size) {
       val tempSet = edits(index).writes.temps.keySet.intersect(edits(i).reads.temps.keySet)
       if (tempSet.nonEmpty) {
-        halt(st"Detected same multiple temp writes hazard in block .$label (${tsf(tempSet.elements)})".render)
+        halt(st"Detected same multiple temp writes hazard in block .$label (${(tempSet.elements, ", ")})".render)
       }
       val memSet = edits(index).writes.memory.keySet.intersect(edits(i).reads.memory.keySet)
       if (memSet.nonEmpty) {
@@ -1022,8 +1213,8 @@ import IRSimulator._
 
   @pure def checkAccesses(state: State, label: Z, edits: ISZ[State.Edit]): Unit = {
     ops.ISZOps(for (i <- edits.indices) yield i).parMap((i: Z) => {
-      checkRAW(label, edits, i, state.tempsST _)
-      checkWrites(label, edits, i, state.tempsST _)
+      checkRAW(label, edits, i)
+      checkWrites(label, edits, i)
     })
   }
 
@@ -1107,19 +1298,20 @@ import IRSimulator._
     }
 
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-    val blockMap: HashMap[U64, AST.IR.BasicBlock] = HashMap ++
-      (for (b <- body.blocks) yield (conversions.Z.toU64(b.label), b))
+    val blockMap: HashMap[Z, AST.IR.BasicBlock] = HashMap ++
+      (for (b <- body.blocks) yield (b.label, b))
 
-    State.Edit.Temp(State.Edit.Temp.Kind.CP, state.cpIndex, conversions.Z.toU64(body.blocks(0).label),
-      State.Accesses.empty).update(state)
+    State.Edit.Temp(State.Edit.Temp.Kind.CP, anvil.isFP(anvil.cpType), anvil.isSigned(anvil.cpType),
+      anvil.typeBitSize(anvil.cpType), 0, Value.fromZ(body.blocks(0).label, anvil.typeBitSize(anvil.cpType),
+        anvil.isSigned(anvil.cpType)), State.Accesses.empty).update(state)
     if (DEBUG_EDIT) {
       println()
     }
 
     val blockCyclesBox = MBox[Z](0)
     val maxMemoryBox = MBox[Z](0)
-    while (state.CP != u64"0" && state.CP != u64"1") {
-      val b = blockMap.get(state.CP).get
+    while (state.CP.value != 0 && state.CP.value != 1) {
+      val b = blockMap.get(state.CP.value).get
       if (DEBUG) {
         log("Evaluating", b)
       }
