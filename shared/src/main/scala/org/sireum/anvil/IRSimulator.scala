@@ -39,7 +39,7 @@ import org.sireum.S64._
 import org.sireum.lang.symbol.Resolver.QName
 
 object IRSimulator {
-  val DEBUG: B = T
+  var DEBUG: B = T
   var DEBUG_TEMP: B = T
   var DEBUG_EDIT: B = T
   var DEBUG_GLOBAL: B = T

@@ -37,6 +37,7 @@ class IRSimulatorTest extends SireumRcSpec {
 
   {
     val notGitHubActions = Os.env("GITHUB_ACTIONS").isEmpty
+    IRSimulator.DEBUG = notGitHubActions
     IRSimulator.DEBUG_TEMP = notGitHubActions
     IRSimulator.DEBUG_EDIT = notGitHubActions
     IRSimulator.DEBUG_GLOBAL = notGitHubActions
