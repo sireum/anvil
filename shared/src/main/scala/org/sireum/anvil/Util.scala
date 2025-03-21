@@ -31,6 +31,9 @@ import org.sireum.lang.symbol.Info
 import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.{ast => AST}
 import org.sireum.U64._
+import org.sireum.lang.ast.IR
+import org.sireum.lang.ast.IR.{Exp, Stmt}
+import org.sireum.lang.ast.IR.Stmt.Assign
 
 object Util {
   @enum object PMod {
@@ -719,6 +722,24 @@ object Util {
     }
   }
 
+  @record class LocalTempSubstutitor(val m: HashSMap[String, Z]) extends MAnvilIRTransformer {
+    override def post_langastIRExpLocalVarRef(o: Exp.LocalVarRef): MOption[IR.Exp] = {
+      m.get(o.id) match {
+        case Some(n) => return MSome(AST.IR.Exp.Temp(n, o.tipe, o.pos))
+        case _ =>
+      }
+      return MNone()
+    }
+
+    override def post_langastIRStmtAssignLocal(o: Assign.Local): MOption[Stmt.Assign] = {
+      m.get(o.lhs) match {
+        case Some(n) => return MSome(AST.IR.Stmt.Assign.Temp(n, o.rhs, o.pos))
+        case _ =>
+      }
+      return MNone()
+    }
+  }
+
   @datatype class LocalDeclLV(val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[(String, AST.Typed)] {
     @strictpure def isForward: B = F
     @strictpure def isLUB: B = T
@@ -737,7 +758,6 @@ object Util {
     @pure def killGround(g: AST.IR.Stmt.Ground): HashSSet[(String, AST.Typed)] = {
       g match {
         case g: AST.IR.Stmt.Decl if !g.undecl =>
-          assert(!g.isAlloc)
           return HashSSet.empty[(String, AST.Typed)] ++ (for (slot <- g.locals) yield (slot.id, slot.tipe))
         case _ => return HashSSet.empty
       }

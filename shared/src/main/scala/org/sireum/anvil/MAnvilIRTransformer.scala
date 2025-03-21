@@ -117,13 +117,13 @@ object MAnvilIRTransformer {
 
   val PostResultIntrinsicDeclLocal: MOption[Intrinsic.Decl.Local] = MNone()
 
-  val PreResultIntrinsicRegister: PreResult[Intrinsic.Register] = PreResult(T, MNone())
-
-  val PostResultIntrinsicRegister: MOption[Intrinsic.Register] = MNone()
-
   val PreResult_langastIRExpEnumElementRef: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
   val PostResult_langastIRExpEnumElementRef: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
+
+  val PreResultIntrinsicRegister: PreResult[Intrinsic.Register] = PreResult(T, MNone())
+
+  val PostResultIntrinsicRegister: MOption[Intrinsic.Register] = MNone()
 
   val PreResultIntrinsicRegisterAssign: PreResult[Intrinsic.RegisterAssign] = PreResult(T, MNone())
 
@@ -423,12 +423,12 @@ import MAnvilIRTransformer._
     return PreResultIntrinsicDeclLocal
   }
 
-  def preIntrinsicRegister(o: Intrinsic.Register): PreResult[Intrinsic.Register] = {
-    return PreResultIntrinsicRegister
-  }
-
   def pre_langastIRExpEnumElementRef(o: org.sireum.lang.ast.IR.Exp.EnumElementRef): PreResult[org.sireum.lang.ast.IR.Exp] = {
     return PreResult_langastIRExpEnumElementRef
+  }
+
+  def preIntrinsicRegister(o: Intrinsic.Register): PreResult[Intrinsic.Register] = {
+    return PreResultIntrinsicRegister
   }
 
   def preIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): PreResult[Intrinsic.RegisterAssign] = {
@@ -943,12 +943,12 @@ import MAnvilIRTransformer._
     return PostResultIntrinsicDeclLocal
   }
 
-  def postIntrinsicRegister(o: Intrinsic.Register): MOption[Intrinsic.Register] = {
-    return PostResultIntrinsicRegister
-  }
-
   def post_langastIRExpEnumElementRef(o: org.sireum.lang.ast.IR.Exp.EnumElementRef): MOption[org.sireum.lang.ast.IR.Exp] = {
     return PostResult_langastIRExpEnumElementRef
+  }
+
+  def postIntrinsicRegister(o: Intrinsic.Register): MOption[Intrinsic.Register] = {
+    return PostResultIntrinsicRegister
   }
 
   def postIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): MOption[Intrinsic.RegisterAssign] = {

@@ -1113,7 +1113,7 @@ import Anvil._
             for (slot <- in.slots) {
               for (i <- 0 until slot.size) {
                 val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
-                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, slot.offset + i, g.pos), g.pos)
+                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, slot.loc + i, g.pos), g.pos)
                 grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset, isSigned(AST.Typed.u8),
                   typeByteSize(AST.Typed.u8), AST.IR.Exp.Int(AST.Typed.u8, 0, g.pos), st"// erasing ${slot.id} byte $i",
                   AST.Typed.u8, g.pos))
@@ -1141,11 +1141,11 @@ import Anvil._
     var blockUndecls = HashMap.empty[Z, ISZ[AST.IR.Stmt.Ground]]
     for (b <- blockMap.values) {
       var undecls = HashMap.empty[Z, ISZ[AST.IR.Stmt.Ground]]
-      def findTempUseIndex(i: Z, temp: Z): Option[Z] = {
+      def findTempUseIndex(i: Z, temp: Z, t: AST.Typed): Option[Z] = {
         for (j <- i until b.grounds.size) {
           val tc = TempCollector(F, HashSMap.empty)
           tc.transform_langastIRStmtGround(b.grounds(j))
-          if (tc.r.contains(temp)) {
+          for (tipe <- tc.r.get(temp).getOrElse(HashSSet.empty).elements if tipe == t) {
             return Some(j)
           }
         }
@@ -1174,8 +1174,9 @@ import Anvil._
                     undecls = undecls + i ~> (undecls.get(i).getOrElse(ISZ()) :+ scalarUndecl)
                   }
                   if (nonScalarUndecl.locals.nonEmpty) {
-                    val temp = g.asInstanceOf[AST.IR.Stmt.Assign.Temp].lhs
-                    findTempUseIndex(i + 1, temp) match {
+                    val stmt = g.asInstanceOf[AST.IR.Stmt.Assign.Temp]
+                    val temp = stmt.lhs
+                    findTempUseIndex(i + 1, temp, stmt.rhs.tipe) match {
                       case Some(j) =>
                         undecls = undecls + j ~> (undecls.get(j).getOrElse(ISZ()) :+ nonScalarUndecl)
                       case _ =>
@@ -1188,7 +1189,7 @@ import Anvil._
                     }
                   }
                 case _ =>
-                  if (!params.contains(idt._1)) {
+                  if (!params.contains(idt._1) && !ignoredTempLocal.contains(idt._1)) {
                     halt(s"${p.id} @ ${b.label}: $idt, $undeclMap")
                   }
               }
@@ -1275,10 +1276,6 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "basic"), r.prettyST(printer))
       pass = pass + 1
 
-      r = transformUndecl(r)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "undecl"), r.prettyST(printer))
-      pass = pass + 1
-
       r = transformGlobalVarRef(fresh, r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "global"), r.prettyST(printer))
       pass = pass + 1
@@ -1295,16 +1292,6 @@ import Anvil._
         r = ShiftTransformer(this).transform_langastIRProcedure(r).getOrElse(r)
       }
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "shift"), r.prettyST(printer))
-      pass = pass + 1
-
-      @strictpure def isDivMod(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
-        case AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.Binary, _) =>
-          rhs.op == AST.IR.Exp.Binary.Op.Div || rhs.op == AST.IR.Exp.Binary.Op.Rem
-        case _ => F
-      }
-
-      r = transformSplitTest(F, fresh, r, isDivMod _)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-div-mod"), r.prettyST(printer))
       pass = pass + 1
 
       r = transformStackTraceLoc(r)
@@ -1353,6 +1340,20 @@ import Anvil._
           case _ => return F
         }
       }
+
+      r = transformUndecl(r)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "undecl"), r.prettyST(printer))
+      pass = pass + 1
+
+      @strictpure def isDivMod(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
+        case AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.Binary, _) =>
+          rhs.op == AST.IR.Exp.Binary.Op.Div || rhs.op == AST.IR.Exp.Binary.Op.Rem
+        case _ => F
+      }
+
+      r = transformSplitTest(F, fresh, r, isDivMod _)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-div-mod"), r.prettyST(printer))
+      pass = pass + 1
 
       r = transformSplitTest(F, fresh, r, hasAssignTempUsage _)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-temp"), r.prettyST(printer))
@@ -1752,6 +1753,9 @@ import Anvil._
                 case rhs: AST.IR.Exp.Temp =>
                   substMap = substMap + g.lhs ~> substMap.get(rhs.n).get
                   grounds = grounds :+ g
+                case rhs: AST.IR.Exp.LocalVarRef if isScalar(rhs.tipe) =>
+                  substMap = substMap + g.lhs ~> rhs
+                  grounds = grounds :+ g
                 case rhs: AST.IR.Exp.Unary =>
                   val newRhs = rhs(exp = TempExpSubstitutor(substMap, T).transform_langastIRExp(rhs.exp).getOrElse(rhs.exp))
                   if (newRhs.depth <= config.maxExpDepth) {
@@ -1903,25 +1907,78 @@ import Anvil._
   def transformLocal(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
     var body = p.body.asInstanceOf[AST.IR.Body.Basic]
     val paramInfo = procedureParamInfo(PBox(p))._2
-    var localTempMap: HashSMap[Z, HashSMap[String, (Z, AST.Typed)]] = {
-      var m = HashSMap.empty[String, (Z, AST.Typed)]
+    var tv = TempVector.empty
+    var localTempMap: HashSMap[Z, HashSMap[String, Z]] = {
+      var m = HashSMap.empty[String, Z]
       var stmts = ISZ[AST.IR.Stmt.Ground]()
       for (entry <- paramInfo.entries if !ignoredTempLocal.contains(entry._1)) {
-        val temp = m.size
-        m = m + entry._1 ~> (temp, entry._2.tipe)
-        val t: AST.Typed = if (isScalar(entry._2.tipe)) entry._2.tipe else spType
+        val id = entry._1
+        val tipe = entry._2.tipe
+        val temp = tv.typeCount(this, tipe)
+        tv = tv.incType(this, tipe)
+        m = m + id ~> temp
+        val t: AST.Typed = if (isScalar(tipe)) tipe else spType
         stmts = stmts :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp,
           AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)),
             AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, entry._2.offset, p.pos), p.pos),
-          isSigned(t), typeByteSize(t), st"${entry._1}", entry._2.tipe, p.pos))
+          isSigned(t), typeByteSize(t), st"$id", tipe, p.pos))
       }
       val label = fresh.label()
       val first = body.blocks(0)
       body = body(blocks = AST.IR.BasicBlock(first.label, stmts, AST.IR.Jump.Goto(label, p.pos)) +: body.blocks(0 ~> first(label = label)))
-      HashSMap.empty[Z, HashSMap[String, (Z, AST.Typed)]] + label ~> m
+      HashSMap.empty[Z, HashSMap[String, Z]] + first.label ~> m
     }
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
-
+    var work = ISZ(body.blocks(0).label)
+    var seen = HashSet.empty[Z] ++ work
+    while (work.nonEmpty) {
+      var next = ISZ[Z]()
+      for (label <- work) {
+        val b = blockMap.get(label).get
+        var map = localTempMap.get(label).get
+        var grounds = ISZ[AST.IR.Stmt.Ground]()
+        for (g <- b.grounds) {
+          g match {
+            case g: AST.IR.Stmt.Decl if !g.isAlloc =>
+              var localTemps = ISZ[Intrinsic.Decl.Local]()
+              var otherLocals = ISZ[AST.IR.Stmt.Decl.Local]()
+              for (l <- g.locals) {
+                if (isScalar(l.tipe) && !ignoredTempLocal.contains(l.id)) {
+                  val loc: Z = if (g.undecl) {
+                    val r = map.get(l.id).get
+                    map = map -- ISZ(l.id)
+                    r
+                  } else {
+                    val r = tv.typeCount(this, l.tipe)
+                    tv = tv.incType(this, l.tipe)
+                    map = map + l.id ~> r
+                    r
+                  }
+                  localTemps = localTemps :+ Intrinsic.Decl.Local(loc, 0, l.id, l.tipe)
+                } else {
+                  otherLocals = otherLocals :+ l
+                }
+              }
+              if (otherLocals.nonEmpty) {
+                grounds = grounds :+ g(locals = otherLocals)
+              }
+              if (localTemps.nonEmpty) {
+                grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(g.undecl, g.isAlloc, localTemps, g.pos))
+              }
+            case _ =>
+              grounds = grounds :+ LocalTempSubstutitor(map).transform_langastIRStmtGround(g).getOrElse(g)
+          }
+        }
+        blockMap = blockMap + b.label ~> b(grounds = grounds,
+          jump = LocalTempSubstutitor(map).transform_langastIRJump(b.jump).getOrElse(b.jump))
+        for (target <- b.jump.targets if !seen.contains(target)) {
+          seen = seen + target
+          localTempMap = localTempMap + target ~> map
+          next = next :+ target
+        }
+      }
+      work = next
+    }
     return p(body = body(blocks = blockMap.values))
   }
 

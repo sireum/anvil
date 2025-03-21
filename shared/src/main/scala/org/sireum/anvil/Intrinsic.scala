@@ -83,8 +83,10 @@ object Intrinsic {
   }
 
   object Decl {
-    @datatype class Local(val offset: Z, val size: Z, val id: String, val tipe: AST.Typed) {
-      @strictpure def prettyST: ST = st"$id: $tipe [@$offset, $size]"
+    @datatype class Local(val loc: Z, val size: Z, val id: String, val tipe: AST.Typed) {
+      @strictpure def prettyST: ST =
+        if (size == 0) st"$id: $tipe @$$$loc"
+        else st"$id: $tipe [@$loc, $size]"
     }
   }
 

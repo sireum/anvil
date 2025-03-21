@@ -133,11 +133,11 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
-    @pure def preIntrinsicRegister(ctx: Context, o: Intrinsic.Register): PreResult[Context, Intrinsic.Register] = {
+    @pure def pre_langastIRExpEnumElementRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.EnumElementRef): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
-    @pure def pre_langastIRExpEnumElementRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.EnumElementRef): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def preIntrinsicRegister(ctx: Context, o: Intrinsic.Register): PreResult[Context, Intrinsic.Register] = {
       return PreResult(ctx, T, None())
     }
 
@@ -653,11 +653,11 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
-    @pure def postIntrinsicRegister(ctx: Context, o: Intrinsic.Register): TPostResult[Context, Intrinsic.Register] = {
+    @pure def post_langastIRExpEnumElementRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.EnumElementRef): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
-    @pure def post_langastIRExpEnumElementRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.EnumElementRef): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def postIntrinsicRegister(ctx: Context, o: Intrinsic.Register): TPostResult[Context, Intrinsic.Register] = {
       return TPostResult(ctx, None())
     }
 

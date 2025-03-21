@@ -85,17 +85,21 @@ object IRSimulator {
         var localSTs = ISZ[ST]()
         for (entry <- callFrames.peek.get.entries) {
           val (id, info) = entry
-          val offset = SP.value + info.offset
+          val offset = SP.value + info.loc
           if (sim.anvil.isScalar(info.tipe)) {
-            val v = sim.load(memory, offset, info.size)._1
-            val vh = shortenHexString(v)
-            val value: String = info.tipe match {
-              case AST.Typed.f32 => conversions.U32.toRawF32(conversions.U64.toU32(v & u64"0xFFFFFFFFFFFFFFFF")).string
-              case AST.Typed.f64 => conversions.U64.toRawF64(v).string
-              case _ if sim.anvil.isBitVector(info.tipe) && !sim.anvil.isSigned(info.tipe) => vh
-              case _ => v.toZ.string
+            if (info.size == 0) {
+              localSTs = localSTs :+ st"$id = ${Util.tempST(sim.anvil, info.tipe, info.loc)}"
+            } else {
+              val v = sim.load(memory, offset, info.size)._1
+              val vh = shortenHexString(v)
+              val value: String = info.tipe match {
+                case AST.Typed.f32 => conversions.U32.toRawF32(conversions.U64.toU32(v & u64"0xFFFFFFFFFFFFFFFF")).string
+                case AST.Typed.f64 => conversions.U64.toRawF64(v).string
+                case _ if sim.anvil.isBitVector(info.tipe) && !sim.anvil.isSigned(info.tipe) => vh
+                case _ => v.toZ.string
+              }
+              localSTs = localSTs :+ st"$id@[${shortenHexString(conversions.Z.toU64(offset))} ($offset), ${info.size}] = $vh ($value)"
             }
-            localSTs = localSTs :+ st"$id@[${shortenHexString(conversions.Z.toU64(offset))} ($offset), ${info.size}] = $vh ($value)"
           } else if (id == Util.sfDescId) {
             val size = Z(info.tipe.asInstanceOf[AST.Typed.Name].args(0).string).get
             val descOffset = offset + sim.anvil.typeShaSize + sim.anvil.typeByteSize(AST.Typed.z)
@@ -215,7 +219,7 @@ object IRSimulator {
         def update(state: State): Undo = {
           var top = state.callFrames.peek.get
           if (DEBUG_EDIT) {
-            val slotSTs: ISZ[ST] = for (slot <- decl.slots) yield st"${slot.id}@[${shortenHexString(conversions.Z.toU64(state.SP.value + slot.offset))}, ${slot.size}]: ${slot.tipe}"
+            val slotSTs: ISZ[ST] = for (slot <- decl.slots) yield st"${slot.id}@[${shortenHexString(conversions.Z.toU64(state.SP.value + slot.loc))}, ${slot.size}]: ${slot.tipe}"
             println(st"* ${if (decl.isAlloc) if (decl.undecl) "unalloc" else "alloc" else if (decl.undecl) "undecl" else "decl"} ${(slotSTs, ", ")}".render)
           }
           if (decl.undecl) {
