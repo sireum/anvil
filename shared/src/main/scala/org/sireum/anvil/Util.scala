@@ -766,6 +766,207 @@ object Util {
     @strictpure def jump(j: AST.IR.Jump): Option[ST] = None()
   }
 
+  @datatype class TempVector(val unsigneds: ISZ[Z], val signeds: HashMap[Z, Z], val fp32Count: Z, val fp64Count: Z) {
+    @strictpure def unsignedCount(bitWidth: Z): Z = {
+      assert(1 <= bitWidth & bitWidth <= 64)
+      unsigneds(bitWidth - 1)
+    }
+    @strictpure def setUnsignedCount(bitWidth: Z, count: Z): TempVector = {
+      assert(1 <= bitWidth & bitWidth <= 64)
+      val thiz = this
+      thiz(unsigneds = thiz.unsigneds((bitWidth - 1) ~> count))
+    }
+    @strictpure def signedCount(bitWidth: Z): Z = {
+      assert(bitWidth == 8 | bitWidth == 16 | bitWidth == 32 | bitWidth == 64)
+      signeds.get(bitWidth).get
+    }
+    @strictpure def setSignedCount(bitWidth: Z, count: Z): TempVector = {
+      assert(bitWidth == 8 | bitWidth == 16 | bitWidth == 32 | bitWidth == 64)
+      val thiz = this
+      thiz(signeds = thiz.signeds + bitWidth ~> count)
+    }
+    @strictpure def incUnsigned(bitWidth: Z): TempVector = setUnsignedCount(bitWidth, unsignedCount(bitWidth) + 1)
+    @strictpure def incSigned(bitWidth: Z): TempVector = setSignedCount(bitWidth, signedCount(bitWidth) + 1)
+    @strictpure def setFP32Count(count: Z): TempVector = {
+      val thiz = this
+      thiz(fp32Count = count)
+    }
+    @strictpure def setFP64Count(count: Z): TempVector = {
+      val thiz = this
+      thiz(fp64Count = count)
+    }
+    @strictpure def incFP32(): TempVector = setFP32Count(fp32Count + 1)
+    @strictpure def incFP64(): TempVector = setFP64Count(fp64Count + 1)
+    @strictpure def typeCount(anvil: Anvil, tipe: AST.Typed): Z = {
+      val t: AST.Typed = if (anvil.isScalar(tipe)) tipe else anvil.spType
+      t match {
+        case AST.Typed.f32 => fp32Count
+        case AST.Typed.f64 => fp64Count
+        case _ => if (anvil.isSigned(t)) signedCount(anvil.typeBitSize(t)) else unsignedCount(anvil.typeBitSize(t))
+      }
+    }
+    @pure def incType(anvil: Anvil, tipe: AST.Typed): TempVector = {
+      var r = this
+      val t: AST.Typed = if (anvil.isScalar(tipe)) tipe else anvil.spType
+      t match {
+        case AST.Typed.f32 => r = r.incFP32()
+        case AST.Typed.f64 => r = r.incFP64()
+        case _ =>
+          if (anvil.isSigned(t)) {
+            r = r.incSigned(anvil.typeBitSize(t))
+          } else {
+            r = r.incUnsigned(anvil.typeBitSize(t))
+          }
+      }
+      return r
+    }
+    @pure def incParams(anvil: Anvil, m: HashSMap[String, Anvil.VarInfo]): TempVector = {
+      var r = this
+      for (info <- m.values) {
+        r = r.incType(anvil, info.tipe)
+      }
+      return r
+    }
+    @pure def maxCount: Z = {
+      var r: Z = fp32Count
+      if (r < fp64Count) {
+        r = fp64Count
+      }
+      for (u <- unsigneds if r < u) {
+        r = u
+      }
+      for (s <- signeds.values if r < s) {
+        r = s
+      }
+      return r
+    }
+    @pure def setType(anvil: Anvil, tipe: AST.Typed, n: Z): TempVector = {
+      val count = n + 1
+      val t: AST.Typed = if (anvil.isScalar(tipe)) tipe else anvil.spType
+      t match {
+        case AST.Typed.f32 if count > fp32Count => return setFP32Count(count)
+        case AST.Typed.f64 if count > fp64Count => return setFP64Count(count)
+        case _ =>
+          val i = anvil.typeBitSize(t)
+          if (anvil.isSigned(t)) {
+            if (signedCount(i) < count) {
+              return setSignedCount(i, count)
+            }
+          } else {
+            if (unsignedCount(i) < count) {
+              return setUnsignedCount(i, count)
+            }
+          }
+      }
+      return this
+    }
+    @pure override def string: String = {
+      var sts = ISZ[ST]()
+      sts = sts :+ st"${(for (i <- unsigneds.indices if unsigneds(i) != 0) yield st"$$${i + 1}U = ${unsigneds(i)}", ", ")}"
+      sts = sts :+ st"${(for (pair <- signeds.entries if pair._2 != 0) yield st"$$${pair._1}S = ${pair._2}", ", ")}"
+      var fpOpt = Option.none[ST]()
+      if (fp32Count > 0) {
+        fpOpt = Some(st"$$FP32 = $fp32Count")
+      }
+      if (fp64Count > 0) {
+        val fp64ST = st"$$FP64 = $fp64Count"
+        fpOpt match {
+          case Some(fp) => fpOpt = Some(st"$fp, $fp64ST")
+          case _ => fpOpt = Some(fp64ST)
+        }
+      }
+      fpOpt match {
+        case Some(fp) => sts = sts :+ fp
+        case _ =>
+      }
+      val r =
+        st"""{
+            |  ${(sts, ", ")}
+            |}"""
+      return r.render
+    }
+  }
+
+  object TempVector {
+    @strictpure def empty: TempVector = TempVector(ISZ.create(64, 0),
+      HashMap.empty[Z, Z] ++ (for (i <- ISZ(8, 16, 32, 64)) yield (i, 0)), 0, 0)
+  }
+
+  @record class ScalarLocalTempCounter(val anvil: Anvil, var r: TempVector) extends MAnvilIRTransformer {
+    override def post_langastIRStmtDecl(o: AST.IR.Stmt.Decl): MOption[AST.IR.Stmt.Ground] = {
+      if (o.undecl) {
+        return MNone()
+      }
+      for (l <- o.locals if anvil.isScalar(l.tipe)) {
+        r = r.incType(anvil, l.tipe)
+      }
+      return MNone()
+    }
+  }
+
+  @record class TempIncrementer(val anvil: Anvil, val maxLocalTemps: TempVector) extends MAnvilIRTransformer {
+    @strictpure def maxLocalTemp(tipe: AST.Typed): Z = {
+      val t: AST.Typed = if (anvil.isScalar(tipe)) tipe else anvil.spType
+      t match {
+        case AST.Typed.f32 => maxLocalTemps.fp32Count
+        case AST.Typed.f64 => maxLocalTemps.fp64Count
+        case _ =>
+          if (anvil.isSigned(t)) {
+            maxLocalTemps.signedCount(anvil.typeBitSize(t))
+          } else {
+            maxLocalTemps.unsignedCount(anvil.typeBitSize(t))
+          }
+      }
+    }
+
+    override def post_langastIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
+      return MSome(o(n = maxLocalTemp(o.tipe) + o.n))
+    }
+
+    override def post_langastIRStmtAssignTemp(o: AST.IR.Stmt.Assign.Temp): MOption[AST.IR.Stmt.Assign] = {
+      return MSome(o(lhs = maxLocalTemp(o.rhs.tipe) + o.lhs))
+    }
+
+    override def postIntrinsicTempLoad(o: Intrinsic.TempLoad): MOption[Intrinsic.TempLoad] = {
+      return MSome(o(temp = maxLocalTemp(o.tipe) + o.temp))
+    }
+  }
+
+  @record class TempMaxCounter(val anvil: Anvil, var seen: HashSet[(Z, AST.Typed)], var r: TempVector) extends MAnvilIRTransformer {
+    override def post_langastIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
+      val t = o.tipe
+      val key = (o.n, t)
+      if (seen.contains(key)) {
+        return MNone()
+      }
+      r = r.setType(anvil, t, key._1)
+      seen = seen + key
+      return MNone()
+    }
+
+    override def post_langastIRStmtAssignTemp(o: AST.IR.Stmt.Assign.Temp): MOption[AST.IR.Stmt.Assign] = {
+      val t = o.rhs.tipe
+      val key = (o.lhs, t)
+      if (seen.contains(key)) {
+        return MNone()
+      }
+      r = r.setType(anvil, t, key._1)
+      seen = seen + key
+      return MNone()
+    }
+
+    override def postIntrinsicTempLoad(o: Intrinsic.TempLoad): MOption[Intrinsic.TempLoad] = {
+      val t = o.tipe
+      val key = (o.temp, t)
+      if (seen.contains(key)) {
+        return MNone()
+      }
+      r = r.setType(anvil, t, key._1)
+      seen = seen + key
+      return MNone()
+    }
+  }
+
   val kind: String = "Anvil"
   val exitLabel: Z = 0
   val errorLabel: Z = 1

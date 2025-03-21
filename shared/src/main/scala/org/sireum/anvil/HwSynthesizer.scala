@@ -65,9 +65,9 @@ object DivRemLog {
     * Slang IR: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/IR.scala
     * Anvil IR Intrinsic: https://github.com/sireum/anvil/blob/master/shared/src/main/scala/org/sireum/anvil/Intrinsic.scala
    */
-  def printProcedure(name: String, o: AST.IR.Procedure, output: Anvil.Output, maxRegisters: Z): Unit = {
+  def printProcedure(name: String, o: AST.IR.Procedure, output: Anvil.Output, maxRegisters: Util.TempVector): Unit = {
     var r = HashSMap.empty[ISZ[String], ST]
-    val processedProcedureST = processProcedure(name, o, maxRegisters)
+    val processedProcedureST = processProcedure(name, o, maxRegisters.maxCount)
     r = r + ISZ(name) ~> o.prettyST(anvil.printer)
     output.add(T, ISZ("ir", s"chisel-${name}.scala"), processedProcedureST)
     return

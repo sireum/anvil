@@ -141,20 +141,7 @@ class IRSimulatorTest extends SireumRcSpec {
             override def string: String = "AnvilTest.Output"
           }, reporter) match {
             case Some(ir) =>
-              val state = IRSimulator.State.create(
-                ir.anvil.config.memory,
-                ir.maxRegisters,
-                ir.maxRegisters,
-                ir.maxRegisters,
-                ir.maxRegisters,
-                ir.maxRegisters,
-                ir.maxRegisters,
-                ir.maxRegisters,
-                ir.maxRegisters,
-                ir.maxRegisters,
-                ir.maxRegisters,
-                ir.maxRegisters,
-                ir.globalInfoMap)
+              val state = IRSimulator.State.create(ir.anvil.config.memory, ir.maxRegisters, ir.globalInfoMap)
               val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.offset
               var locals = ISZ[Intrinsic.Decl.Local]()
               for (entry <- ir.anvil.procedureParamInfo(Util.PBox(ir.procedure))._2.entries) {

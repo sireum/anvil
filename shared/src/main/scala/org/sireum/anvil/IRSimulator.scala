@@ -118,17 +118,39 @@ object IRSimulator {
       }
       var tempsSTs = ISZ[ST]()
       if (DEBUG_TEMP) {
-        tempsSTs = tempsSTs :+ st"$$64U. = [${(for (t <- tempsU64) yield st"${shortenHexString(t)} (${t.toZ})", ", ")}]"
-        tempsSTs = tempsSTs :+ st"$$64S. = [${(for (t <- tempsS64) yield st"${shortenHexString(conversions.S64.toRawU64(t))} (${t.toZ})", ", ")}]"
-        tempsSTs = tempsSTs :+ st"$$64F. = [${(for (t <- tempsF64) yield st"${shortenHexString(conversions.F64.toRawU64(t))} ($t)", ", ")}]"
-        tempsSTs = tempsSTs :+ st"$$32U. = [${(for (t <- tempsU32) yield st"${shortenHexString(conversions.U32.toU64(t))} (${t.toZ})", ", ")}]"
-        tempsSTs = tempsSTs :+ st"$$32S. = [${(for (t <- tempsS32) yield st"${shortenHexString(conversions.U32.toU64(conversions.S32.toRawU32(t)))} (${t.toZ})", ", ")}]"
-        tempsSTs = tempsSTs :+ st"$$32F. = [${(for (t <- tempsF32) yield st"${shortenHexString(conversions.U32.toU64(conversions.F32.toRawU32(t)))} ($t)", ", ")}]"
-        tempsSTs = tempsSTs :+ st"$$16U. = [${(for (t <- tempsU16) yield st"${shortenHexString(conversions.U16.toU64(t))} (${t.toZ})", ", ")}]"
-        tempsSTs = tempsSTs :+ st"$$16S. = [${(for (t <- tempsS16) yield st"${shortenHexString(conversions.U16.toU64(conversions.S16.toRawU16(t)))} (${t.toZ})", ", ")}]"
-        tempsSTs = tempsSTs :+ st"$$8U. = [${(for (t <- tempsU8) yield st"${shortenHexString(conversions.U8.toU64(t))} (${t.toZ})", ", ")}]"
-        tempsSTs = tempsSTs :+ st"$$8S. = [${(for (t <- tempsS8) yield st"${shortenHexString(conversions.U8.toU64(conversions.S8.toRawU8(t)))} (${t.toZ})", ", ")}]"
-        tempsSTs = tempsSTs :+ st"$$1. = [${(for (t <- temps1) yield if (t) "1" else "0", ", ")}]"
+        if (tempsU64.nonEmpty) {
+          tempsSTs = tempsSTs :+ st"$$64U. = [${(for (t <- tempsU64) yield st"${shortenHexString(t)} (${t.toZ})", ", ")}]"
+        }
+        if (tempsS64.nonEmpty) {
+          tempsSTs = tempsSTs :+ st"$$64S. = [${(for (t <- tempsS64) yield st"${shortenHexString(conversions.S64.toRawU64(t))} (${t.toZ})", ", ")}]"
+        }
+        if (tempsF64.nonEmpty) {
+          tempsSTs = tempsSTs :+ st"$$64F. = [${(for (t <- tempsF64) yield st"${shortenHexString(conversions.F64.toRawU64(t))} ($t)", ", ")}]"
+        }
+        if (tempsU32.nonEmpty) {
+          tempsSTs = tempsSTs :+ st"$$32U. = [${(for (t <- tempsU32) yield st"${shortenHexString(conversions.U32.toU64(t))} (${t.toZ})", ", ")}]"
+        }
+        if (tempsS32.nonEmpty) {
+          tempsSTs = tempsSTs :+ st"$$32S. = [${(for (t <- tempsS32) yield st"${shortenHexString(conversions.U32.toU64(conversions.S32.toRawU32(t)))} (${t.toZ})", ", ")}]"
+        }
+        if (tempsF32.nonEmpty) {
+          tempsSTs = tempsSTs :+ st"$$32F. = [${(for (t <- tempsF32) yield st"${shortenHexString(conversions.U32.toU64(conversions.F32.toRawU32(t)))} ($t)", ", ")}]"
+        }
+        if (tempsU16.nonEmpty) {
+          tempsSTs = tempsSTs :+ st"$$16U. = [${(for (t <- tempsU16) yield st"${shortenHexString(conversions.U16.toU64(t))} (${t.toZ})", ", ")}]"
+        }
+        if (tempsS16.nonEmpty) {
+          tempsSTs = tempsSTs :+ st"$$16S. = [${(for (t <- tempsS16) yield st"${shortenHexString(conversions.U16.toU64(conversions.S16.toRawU16(t)))} (${t.toZ})", ", ")}]"
+        }
+        if (tempsU8.nonEmpty) {
+          tempsSTs = tempsSTs :+ st"$$8U. = [${(for (t <- tempsU8) yield st"${shortenHexString(conversions.U8.toU64(t))} (${t.toZ})", ", ")}]"
+        }
+        if (tempsS8.nonEmpty) {
+          tempsSTs = tempsSTs :+ st"$$8S. = [${(for (t <- tempsS8) yield st"${shortenHexString(conversions.U8.toU64(conversions.S8.toRawU8(t)))} (${t.toZ})", ", ")}]"
+        }
+        if (temps1.nonEmpty) {
+          tempsSTs = tempsSTs :+ st"$$1. = [${(for (t <- temps1) yield if (t) "1" else "0", ", ")}]"
+        }
       }
       val r =
         st"""CP = ${shortenHexString(conversions.Z.toU64(CP.value))} (${CP.value}), SP = ${shortenHexString(conversions.Z.toU64(SP.value))} (${SP.value}), DP = ${shortenHexString(DP)} (${DP.toZ}),
@@ -388,17 +410,7 @@ object IRSimulator {
     }
 
     @strictpure def create(memory: Z,
-                           temps1: Z,
-                           tempsU8: Z,
-                           tempsU16: Z,
-                           tempsU32: Z,
-                           tempsU64: Z,
-                           tempsS8: Z,
-                           tempsS16: Z,
-                           tempsS32: Z,
-                           tempsS64: Z,
-                           tempsF32: Z,
-                           tempsF64: Z,
+                           temps: Util.TempVector,
                            globalMap: HashSMap[QName, Anvil.VarInfo]): State =
       State(
         globalMap,
@@ -406,17 +418,17 @@ object IRSimulator {
         Value.fromU64(u64"0"),
         u64"0",
         MSZ.create(memory, u8"0"),
-        MSZ.create(temps1, F),
-        MSZ.create(tempsU8, u8"0"),
-        MSZ.create(tempsU16, u16"0"),
-        MSZ.create(tempsU32, u32"0"),
-        MSZ.create(tempsU64, u64"0"),
-        MSZ.create(tempsS8, s8"0"),
-        MSZ.create(tempsS16, s16"0"),
-        MSZ.create(tempsS32, s32"0"),
-        MSZ.create(tempsS64, s64"0"),
-        MSZ.create(tempsF32, 0f),
-        MSZ.create(tempsF64, 0d),
+        MSZ.create(temps.unsignedCount(1), F),
+        MSZ.create(temps.unsignedCount(8), u8"0"),
+        MSZ.create(temps.unsignedCount(16), u16"0"),
+        MSZ.create(temps.unsignedCount(32), u32"0"),
+        MSZ.create(temps.unsignedCount(64), u64"0"),
+        MSZ.create(temps.signedCount(8), s8"0"),
+        MSZ.create(temps.signedCount(16), s16"0"),
+        MSZ.create(temps.signedCount(32), s32"0"),
+        MSZ.create(temps.signedCount(64), s64"0"),
+        MSZ.create(temps.fp32Count, 0f),
+        MSZ.create(temps.fp64Count, 0d),
         Stack(ISZ(HashSMap.empty)))
 
   }

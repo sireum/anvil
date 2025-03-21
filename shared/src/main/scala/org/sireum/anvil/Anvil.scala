@@ -78,7 +78,7 @@ object Anvil {
   @datatype class IR(val anvil: Anvil,
                      val name: String,
                      val procedure: AST.IR.Procedure,
-                     val maxRegisters: Z,
+                     val maxRegisters: TempVector,
                      val globalSize: Z,
                      val globalInfoMap: HashSMap[QName, VarInfo])
 
@@ -359,11 +359,16 @@ import Anvil._
     var callResultOffsetMap = HashMap.empty[String, Z]
     program = {
       for (p <- program.procedures) {
-        val (maxOffset, p2, m) = anvil.transformOffset(globalMap, p)
-        callResultOffsetMap = callResultOffsetMap ++ m.entries
-        var proc = p2
+        var proc = p
         var pass: Z = 0
 
+        proc = anvil.transformTempNum(proc)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "temp-num"), proc.prettyST(printer))
+        pass = pass + 1
+
+        val (maxOffset, p2, m) = anvil.transformOffset(globalMap, p)
+        callResultOffsetMap = callResultOffsetMap ++ m.entries
+        proc = p2
         output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "offset"), proc.prettyST(printer))
         pass = pass + 1
 
@@ -388,12 +393,6 @@ import Anvil._
     output.add(F, ISZ("ir", s"$stage-offset.sir"), program.prettyST(printer))
 
     stage = stage + 1
-
-    val maxRegisters: Z = {
-      val tc = TempCollector(HashSMap.empty)
-      tc.transform_langastIRProgram(program)
-      tc.r.size
-    }
 
     val main = procedureMap.get(startContext).get
     program = {
@@ -458,6 +457,12 @@ import Anvil._
       }
     }
 
+    val maxRegisters: TempVector = {
+      val tmc = TempMaxCounter(this, HashSet.empty, TempVector.empty)
+      tmc.transform_langastIRProgram(program)
+      tmc.r
+    }
+
     val header: ST = {
       var globalParamSTs = ISZ[ST]()
       for (entry <- anvil.procedureParamInfo(PBox(main))._2.entries) {
@@ -468,7 +473,8 @@ import Anvil._
         globalParamSTs = globalParamSTs :+ st"- global ${(name, ".")}: ${info.tipe} @[offset = ${info.offset}, size = ${info.size}, data-size = ${info.dataSize}]"
       }
       st"""/*
-          |   Note that globalSize = $globalSize, max registers (beside SP and CP) = $maxRegisters, and initially:
+          |   Note that globalSize = $globalSize and maxRegisters = $maxRegisters
+          |   Initially:
           |   - register CP (code pointer) = 3 (${anvil.signedString(cpType)}, byte size = ${anvil.typeByteSize(cpType)})
           |   - register SP (stack pointer) = $globalSize (${anvil.signedString(spType)}, byte size = ${anvil.typeByteSize(spType)})
           |   - register DP (display pointer) = 0 (${anvil.signedString(dpType)}, byte size = ${anvil.typeByteSize(dpType)})
@@ -1204,6 +1210,17 @@ import Anvil._
       blockMap = blockMap + b.label ~> b(grounds = p._2 ++ b.grounds)
     }
     return p(body = body(blocks = blockMap.values))
+  }
+
+  def transformTempNum(proc: AST.IR.Procedure): AST.IR.Procedure = {
+    val paramInfo = procedureParamInfo(PBox(proc))._2
+    val maxLocalTemps: TempVector = {
+      val maxParamTemps = TempVector.empty.incParams(this, paramInfo)
+      val sltc = ScalarLocalTempCounter(this, maxParamTemps)
+      sltc.transform_langastIRProcedure(proc)
+      sltc.r
+    }
+    return TempIncrementer(this, maxLocalTemps).transform_langastIRProcedure(proc).getOrElse(proc)
   }
 
   def transformMainStackFrame(p: AST.IR.Procedure): AST.IR.Procedure = {
