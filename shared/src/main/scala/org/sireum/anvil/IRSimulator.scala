@@ -231,8 +231,8 @@ object IRSimulator {
       }
 
       @datatype class Temp(val kind: Temp.Kind.Type, val isFP: B, val isSigned: B, val bitSize: Z, val temp: Z, val value: Value, val reads: Accesses) extends Edit {
-        @strictpure def id: Accesses.TempId = Accesses.TempId(kind, isSigned, bitSize, temp)
-        @strictpure def writes: Accesses = Accesses.empty.addTemp(kind, isSigned, bitSize, temp, value)
+        @strictpure def id: Accesses.TempId = Accesses.TempId(kind, isFP, isSigned, bitSize, temp)
+        @strictpure def writes: Accesses = Accesses.empty.addTemp(kind, isFP, isSigned, bitSize, temp, value)
         def update(state: State): Undo = {
           val oldValue: Value = kind match {
             case Temp.Kind.CP =>
@@ -319,13 +319,13 @@ object IRSimulator {
               }
           }
           val r = Temp(kind, isFP, isSigned, bitSize, temp, oldValue, Accesses(reads.temps -- ISZ(id), reads.memory).
-            addTemp(kind, isSigned, bitSize, temp, value))
+            addTemp(kind, isFP, isSigned, bitSize, temp, value))
           if (DEBUG_EDIT) {
             val tempST: ST = kind match {
               case Temp.Kind.CP => st"CP"
               case Temp.Kind.SP => st"SP"
               case Temp.Kind.DP => st"DP"
-              case Temp.Kind.Register => Util.tempST2(isSigned, bitSize, temp)
+              case Temp.Kind.Register => Util.tempST2(isFP, isSigned, bitSize, temp)
             }
             println(st"* $tempST = ${value.debugST} [old: ${r.value.debugST}]".render)
           }
@@ -366,8 +366,8 @@ object IRSimulator {
 
     @datatype class Accesses(val temps: HashSMap[Accesses.TempId, Value], val memory: HashSMap[Z, U8]) {
 
-      @pure def addTemp(kind: State.Edit.Temp.Kind.Type, isSigned: B, bitSize: Z, temp: Z, value: Value): Accesses = {
-        val id = Accesses.TempId(kind, isSigned, bitSize, temp)
+      @pure def addTemp(kind: State.Edit.Temp.Kind.Type, isFP: B, isSigned: B, bitSize: Z, temp: Z, value: Value): Accesses = {
+        val id = Accesses.TempId(kind, isFP, isSigned, bitSize, temp)
         return addTempId(id, value)
       }
 
@@ -396,14 +396,14 @@ object IRSimulator {
     }
 
     object Accesses {
-      @datatype class TempId(val kind: State.Edit.Temp.Kind.Type, val isSigned: B, val bitSize: Z, val n: Z) {
+      @datatype class TempId(val kind: State.Edit.Temp.Kind.Type, val isFP: B, val isSigned: B, val bitSize: Z, val n: Z) {
         @strictpure override def hash: Z = string.hash
         @strictpure def isEqual(other: TempId): B = string == other.string
         @strictpure override def string: String = kind match {
           case State.Edit.Temp.Kind.CP => "CP"
           case State.Edit.Temp.Kind.SP => "SP"
           case State.Edit.Temp.Kind.DP => "DP"
-          case State.Edit.Temp.Kind.Register => s"$$$bitSize${if (isSigned) "S" else "U"}.$n"
+          case State.Edit.Temp.Kind.Register => s"$$$bitSize${if (isFP) "F" else if (isSigned) "S" else "U"}.$n"
         }
       }
       @strictpure def empty: Accesses = Accesses(HashSMap.empty, HashSMap.empty)
@@ -984,6 +984,7 @@ import IRSimulator._
         val t: AST.Typed = if (anvil.isScalar(exp.tipe)) exp.tipe else anvil.spType
         val isSigned = anvil.isSigned(t)
         val bitSize = anvil.typeBitSize(t)
+        val isFP = anvil.isFP(t)
         val v: Value = t match {
           case AST.Typed.f32 => Value.fromF32(state.tempsF32(exp.n))
           case AST.Typed.f64 => Value.fromF64(state.tempsF64(exp.n))
@@ -1007,7 +1008,7 @@ import IRSimulator._
               }
             }
         }
-        val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.Register, isSigned, bitSize, exp.n, v)
+        val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.Register, isFP, isSigned, bitSize, exp.n, v)
         return (v, acs)
       case exp: AST.IR.Exp.Binary =>
         val (left, lacs) = evalExp(state, exp.left)
@@ -1064,13 +1065,13 @@ import IRSimulator._
             return (Value.fromRawU64(anvil, conversions.Z.toU64(n.toZ), in.tipe), acs)
           case in: Intrinsic.Register =>
             if (in.isSP) {
-              val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.SP, anvil.isSigned(anvil.spType),
-                anvil.spTypeByteSize * 8, 0, state.SP)
+              val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.SP, anvil.isFP(anvil.spType),
+                anvil.isSigned(anvil.spType), anvil.spTypeByteSize * 8, 0, state.SP)
               return (state.SP, acs)
             } else {
               val v = Value.fromU64(state.DP)
-              val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.DP, anvil.isSigned(anvil.dpType),
-                anvil.dpTypeByteSize * 8, 0, v)
+              val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.DP, anvil.isFP(anvil.dpType),
+                anvil.isSigned(anvil.dpType), anvil.dpTypeByteSize * 8, 0, v)
               return (v, acs)
             }
         }

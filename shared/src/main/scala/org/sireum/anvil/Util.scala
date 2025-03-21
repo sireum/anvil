@@ -81,9 +81,23 @@ object Util {
     @strictpure def empty: LocalOffsetInfo = LocalOffsetInfo(HashMap.empty, ISZ())
   }
 
-  @record class TempCollector(var r: HashSMap[Z, AST.Typed]) extends MAnvilIRTransformer {
+  @record class TempCollector(val includeAssign: B, var r: HashSMap[Z, HashSSet[AST.Typed]]) extends MAnvilIRTransformer {
     override def post_langastIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
-      r = r + o.n ~> o.tipe
+      r = r + o.n ~> (r.get(o.n).getOrElse(HashSSet.empty[AST.Typed]) + o.tipe)
+      return MNone()
+    }
+
+    override def post_langastIRStmtAssignTemp(o: AST.IR.Stmt.Assign.Temp): MOption[AST.IR.Stmt.Assign] = {
+      if (includeAssign) {
+        r = r + o.lhs ~> (r.get(o.lhs).getOrElse(HashSSet.empty[AST.Typed]) + o.rhs.tipe)
+      }
+      return MNone()
+    }
+
+    override def postIntrinsicTempLoad(o: Intrinsic.TempLoad): MOption[Intrinsic.TempLoad] = {
+      if (includeAssign) {
+        r = r + o.temp ~> (r.get(o.temp).getOrElse(HashSSet.empty[AST.Typed]) + o.tipe)
+      }
       return MNone()
     }
   }
@@ -173,18 +187,20 @@ object Util {
     }
   }
 
-  @record class TempRenumberer(val map: HashMap[Z, Z]) extends MAnvilIRTransformer {
+  @record class TempRenumberer(val anvil: Anvil, val map: HashMap[(Z, AST.Typed), Z]) extends MAnvilIRTransformer {
     override def post_langastIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
-      map.get(o.n) match {
+      val key = (o.n, o.tipe)
+      map.get(key) match {
         case Some(n) => return MSome(o(n = n))
-        case _ => halt(s"Infeasible: ${o.n}, $map")
+        case _ => halt(s"Infeasible: ${o.n}, ${o.tipe}, $map")
       }
     }
 
     override def post_langastIRStmtAssignTemp(o: AST.IR.Stmt.Assign.Temp): MOption[AST.IR.Stmt.Assign] = {
-      map.get(o.lhs) match {
+      val key = (o.lhs, o.rhs.tipe)
+      map.get(key) match {
         case Some(n) => return MSome(o(lhs = n))
-        case _ => halt(s"Infeasible: ${o.lhs}, $map")
+        case _ => halt(s"Infeasible: ${o.lhs}, ${o.rhs.tipe}, $map")
       }
     }
   }
@@ -658,12 +674,12 @@ object Util {
     @strictpure def iota: HashSSet[(Z, AST.Typed)] = HashSSet.empty
     @strictpure def init: HashSSet[(Z, AST.Typed)] = HashSSet.empty
     @pure def genGround(g: AST.IR.Stmt.Ground): HashSSet[(Z, AST.Typed)] = {
-      val tc = TempCollector(HashSMap.empty)
+      val tc = TempCollector(F, HashSMap.empty)
       g match {
         case g: AST.IR.Stmt.Assign.Temp => tc.transform_langastIRExp(g.rhs)
         case _ => tc.transform_langastIRStmtGround(g)
       }
-      return HashSSet ++ tc.r.entries
+      return HashSSet ++ (for (pair <- tc.r.entries; t <- pair._2.elements) yield (pair._1, t))
     }
     @pure def killGround(g: AST.IR.Stmt.Ground): HashSSet[(Z, AST.Typed)] = {
       g match {
@@ -673,9 +689,9 @@ object Util {
       }
     }
     @pure def genJump(j: AST.IR.Jump): HashSSet[(Z, AST.Typed)] = {
-      val tc = TempCollector(HashSMap.empty)
+      val tc = TempCollector(F, HashSMap.empty)
       tc.transform_langastIRJump(j)
-      return HashSSet ++ tc.r.entries
+      return HashSSet ++ (for (pair <- tc.r.entries; t <- pair._2.elements) yield (pair._1, t))
     }
     @strictpure def killJump(j: AST.IR.Jump): HashSSet[(Z, AST.Typed)] = HashSSet.empty
   }
@@ -1023,13 +1039,15 @@ object Util {
 
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
   val syntheticMethodIds: HashSet[String] = HashSet.empty[String] + objInitId + newInitId + testId
+  val ignoredTempLocal: HashSet[String] = HashSet.empty[String] + returnLocalId + sfLocId + sfDescId + sfCallerId + sfCurrentId + resultLocalId
 
   @strictpure def tempST(anvil: Anvil, tipe: AST.Typed, n: Z): ST = {
     val t: AST.Typed = if (anvil.isScalar(tipe)) tipe else anvil.spType
-    st"$$${anvil.typeBitSize(t)}${if (anvil.isSigned(t)) "S" else "U"}.$n"
+    tempST2(anvil.isFP(t), anvil.isSigned(t), anvil.typeBitSize(t), n)
   }
 
-  @strictpure def tempST2(isSigned: B, bitSize: Z, n: Z): ST = {
-    st"$$$bitSize${if (isSigned) "S" else "U"}.$n"
+  @strictpure def tempST2(isFP: B, isSigned: B, bitSize: Z, n: Z): ST = {
+    if (isFP) st"$$${bitSize}F.$n"
+    else st"$$$bitSize${if (isSigned) "S" else "U"}.$n"
   }
 }

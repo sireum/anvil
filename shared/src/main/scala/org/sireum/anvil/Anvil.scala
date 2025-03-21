@@ -363,26 +363,30 @@ import Anvil._
         var pass: Z = 0
 
         proc = anvil.transformTempNum(proc)
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "temp-num"), proc.prettyST(printer))
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "temp-num"), proc.prettyST(anvil.printer))
         pass = pass + 1
 
-        val (maxOffset, p2, m) = anvil.transformOffset(globalMap, p)
+        proc = anvil.transformLocal(fresh, proc)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "local"), proc.prettyST(anvil.printer))
+        pass = pass + 1
+
+        val (maxOffset, p2, m) = anvil.transformOffset(globalMap, proc)
         callResultOffsetMap = callResultOffsetMap ++ m.entries
         proc = p2
-        output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "offset"), proc.prettyST(printer))
+        output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "offset"), proc.prettyST(anvil.printer))
         pass = pass + 1
 
-        proc = anvil.transformStackTraceDesc(proc)
-        output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "stack-frame-desc"), proc.prettyST(printer))
+        proc = anvil.transformStackTraceDesc(fresh, proc)
+        output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "stack-frame-desc"), proc.prettyST(anvil.printer))
         pass = pass + 1
 
         if (config.maxExpDepth != 1) {
           proc = anvil.transformReduceExp(proc)
-          output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "reduce-exp"), proc.prettyST(printer))
+          output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "reduce-exp"), proc.prettyST(anvil.printer))
           pass = pass + 1
 
           proc = anvil.transformTempCompress(proc)
-          output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "temp-compress"), proc.prettyST(printer))
+          output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "temp-compress"), proc.prettyST(anvil.printer))
           pass = pass + 1
         }
         procedureMap = procedureMap + proc.context ~> proc
@@ -390,7 +394,7 @@ import Anvil._
       }
       program(procedures = procedureMap.values)
     }
-    output.add(F, ISZ("ir", s"$stage-offset.sir"), program.prettyST(printer))
+    output.add(F, ISZ("ir", s"$stage-offset.sir"), program.prettyST(anvil.printer))
 
     stage = stage + 1
 
@@ -398,10 +402,10 @@ import Anvil._
     program = {
       val p = transformMainStackFrame(main)(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
         anvil.mergeProcedures(main, fresh, procedureMap, procedureSizeMap, callResultOffsetMap)))
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, 0, "merged"), p.prettyST(printer))
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, 0, "merged"), p.prettyST(anvil.printer))
       program(procedures = ISZ(p))
     }
-    output.add(F, ISZ("ir", s"$stage-merged.sir"), program.prettyST(printer))
+    output.add(F, ISZ("ir", s"$stage-merged.sir"), program.prettyST(anvil.printer))
 
     stage = stage + 1
 
@@ -409,10 +413,10 @@ import Anvil._
       var p = program.procedures(0)
       var pass: Z = 0
 
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "merged"), p.prettyST(printer))
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "merged"), p.prettyST(anvil.printer))
 
       p = anvil.transformErase(fresh, p)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "erase"), p.prettyST(printer))
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "erase"), p.prettyST(anvil.printer))
       pass = pass + 1
 
       @strictpure def isRegisterInc(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
@@ -423,7 +427,7 @@ import Anvil._
       }
 
       p = anvil.transformSplitTest(F, fresh, p, isRegisterInc _)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "register-inc"), p.prettyST(printer))
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "register-inc"), p.prettyST(anvil.printer))
       pass = pass + 1
 
       @strictpure def isCopy(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
@@ -432,22 +436,22 @@ import Anvil._
       }
 
       p = anvil.transformSplitTest(F, fresh, p, isCopy _)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-copy"), p.prettyST(printer))
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-copy"), p.prettyST(anvil.printer))
       pass = pass + 1
 
       p = anvil.transformMain(fresh, p, globalSize, globalMap)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "main"), p.prettyST(printer))
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "main"), p.prettyST(anvil.printer))
       pass = pass + 1
 
       p = anvil.transformCP(p)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "cp"), p.prettyST(printer))
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "cp"), p.prettyST(anvil.printer))
       pass = pass + 1
 
       program(procedures = ISZ(p))
     }
 
     {
-      val emc = ExtMethodCollector(this, HashSMap.empty)
+      val emc = ExtMethodCollector(anvil, HashSMap.empty)
       emc.transform_langastIRProgram(program)
       for (pair <- emc.nameMap.entries) {
         val (name, poss) = pair
@@ -458,7 +462,7 @@ import Anvil._
     }
 
     val maxRegisters: TempVector = {
-      val tmc = TempMaxCounter(this, HashSet.empty, TempVector.empty)
+      val tmc = TempMaxCounter(anvil, HashSet.empty, TempVector.empty)
       tmc.transform_langastIRProgram(program)
       tmc.r
     }
@@ -498,7 +502,7 @@ import Anvil._
 
     output.add(F, ISZ("ir", s"$stage-reordered.sir"),
       st"""$header
-          |${program.prettyST(printer)}""")
+          |${program.prettyST(anvil.printer)}""")
 
     stage = stage + 1
 
@@ -611,7 +615,7 @@ import Anvil._
       if (b.grounds.isEmpty) {
         blocks = blocks :+ b
       } else {
-        val tc = TempCollector(HashSMap.empty)
+        val tc = TempCollector(F, HashSMap.empty)
         tc.transform_langastIRJump(b.jump)
         if (tc.r.nonEmpty) {
           val label = fresh.label()
@@ -920,7 +924,7 @@ import Anvil._
       val b = blockMap.get(label).get
       for (j <- i until b.grounds.size) {
         val g = b.grounds(j)
-        val tc = TempCollector(HashSMap.empty)
+        val tc = TempCollector(F, HashSMap.empty)
         tc.transform_langastIRStmtGround(g)
         if (tc.r.contains(temp) && !exitContainsTemp(b.label, i, temp)) {
           val bgOps = ops.ISZOps(b.grounds)
@@ -980,7 +984,7 @@ import Anvil._
               }
             case _ =>
           }
-          val tc = TempCollector(HashSMap.empty)
+          val tc = TempCollector(F, HashSMap.empty)
           tc.transform_langastIRStmtGround(g)
           for (temp <- tc.r.keys if tempOpt.isEmpty || tempOpt.get == temp) {
             undeclMap.get(temp) match {
@@ -1058,13 +1062,12 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformStackTraceDesc(p: AST.IR.Procedure): AST.IR.Procedure = {
+  def transformStackTraceDesc(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
     if (!config.stackTrace) {
       return p
     }
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     val descOffset = procedureParamInfo(PBox(p))._2.get(sfDescId).get.offset
-    val first = body.blocks(0)
     val desc = conversions.String.toU8is(procedureDesc(p))
     var grounds = ISZ[AST.IR.Stmt.Ground]()
 
@@ -1086,7 +1089,9 @@ import Anvil._
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(offset, F, 1,
         AST.IR.Exp.Int(AST.Typed.u8, desc(i).toZ, p.pos), st"'${ops.COps(conversions.U32.toC(conversions.U8.toU32(desc(i)))).escapeString}'", AST.Typed.u8, p.pos))
     }
-    return p(body = body(blocks = body.blocks(0 ~> first(grounds = grounds ++ first.grounds))))
+    val label = fresh.label()
+    val first = body.blocks(0)
+    return p(body = body(blocks = AST.IR.BasicBlock(first.label, grounds, AST.IR.Jump.Goto(label, p.pos)) +: body.blocks(0 ~> first(label = label))))
   }
 
   def transformErase(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1138,7 +1143,7 @@ import Anvil._
       var undecls = HashMap.empty[Z, ISZ[AST.IR.Stmt.Ground]]
       def findTempUseIndex(i: Z, temp: Z): Option[Z] = {
         for (j <- i until b.grounds.size) {
-          val tc = TempCollector(HashSMap.empty)
+          val tc = TempCollector(F, HashSMap.empty)
           tc.transform_langastIRStmtGround(b.grounds(j))
           if (tc.r.contains(temp)) {
             return Some(j)
@@ -1174,7 +1179,7 @@ import Anvil._
                       case Some(j) =>
                         undecls = undecls + j ~> (undecls.get(j).getOrElse(ISZ()) :+ nonScalarUndecl)
                       case _ =>
-                        val tc = TempCollector(HashSMap.empty)
+                        val tc = TempCollector(F, HashSMap.empty)
                         tc.transform_langastIRJump(b.jump)
                         assert(tc.r.contains(temp))
                         for (target <- b.jump.targets) {
@@ -1337,7 +1342,7 @@ import Anvil._
       @pure def hasAssignTempUsage(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
         g match {
           case g: AST.IR.Stmt.Assign.Temp =>
-            val tc = TempCollector(HashSMap.empty)
+            val tc = TempCollector(F, HashSMap.empty)
             tc.transform_langastIRExp(g.rhs)
             return tc.r.nonEmpty
           case g: AST.IR.Stmt.Assign.Index =>
@@ -1393,7 +1398,7 @@ import Anvil._
 
       return r
     }
-    return program(procedures = ops.ISZOps(program.procedures).mParMap(transform _))
+    return program(procedures = ops.ISZOps(program.procedures).map(transform _))
   }
 
   @memoize def callResultId(id: String, pos: message.Position): String = {
@@ -1441,12 +1446,13 @@ import Anvil._
         TempLV(ControlFlowGraph.buildBasic(body)).compute(body, MBox(HashSMap.empty), exitSet)
         for (b <- body.blocks) {
           def processInvoke(stmtIndex: Z, g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, label: Z): Unit = {
-            val liveTemps = HashSMap ++ (for (pair <- exitSet.value.get(b.label).get(stmtIndex).elements) yield pair)
+            val liveTemps = exitSet.value.get(b.label).get(stmtIndex).elements
             val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
             val called = procedureMap.get(mc).get
             val registerSpace: Z = {
               var regs: Z = 0
-              for (tipe <- liveTemps.values) {
+              for (liveTemp <- liveTemps) {
+                val tipe = liveTemp._2
                 val t: AST.Typed = if (isScalar(tipe)) tipe else spType
                 regs = regs + typeByteSize(t)
               }
@@ -1543,7 +1549,11 @@ import Anvil._
             }
             var rgrounds = ISZ[AST.IR.Stmt.Ground]()
             var i: Z = 0
-            for (pair <- liveTemps.entries if lhsOpt.isEmpty || lhsOpt.get != pair._1) {
+            val lhsPairOpt: Option[(Z, AST.Typed)] = lhsOpt match {
+              case Some(lhs) => Some((lhs, called.tipe.ret))
+              case _ => None()
+            }
+            for (pair <- liveTemps if lhsPairOpt != Some(pair)) {
               val (j, tipe) = pair
               val t: AST.Typed = if (isScalar(tipe)) tipe else spType
               val signed = isSigned(t)
@@ -1645,7 +1655,7 @@ import Anvil._
     val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
-      val tc = TempCollector(HashSMap.empty)
+      val tc = TempCollector(F, HashSMap.empty)
       tc.transform_langastIRBasicBlock(b)
       var m = HashMap.empty[Z, AST.IR.Exp]
       var grounds = ISZ[AST.IR.Stmt.Ground]()
@@ -1822,14 +1832,19 @@ import Anvil._
   }
 
   def transformTempCompress(proc: AST.IR.Procedure): AST.IR.Procedure = {
-    val tc = TempCollector(HashSMap.empty)
+    val tc = TempCollector(T, HashSMap.empty)
     tc.transform_langastIRProcedure(proc)
-    val temps = tc.r.keys
-    var tempMap = HashMap.empty[Z, Z]
+    val temps = tc.r.entries
+    var tempMap = HashMap.empty[(Z, AST.Typed), Z]
+    var tv = TempVector.empty
     for (i <- temps.indices) {
-      tempMap = tempMap + temps(i) ~> i
+      for (t <- temps(i)._2.elements) {
+        val count = tv.typeCount(this, t)
+        tv = tv.incType(this, t)
+        tempMap = tempMap + (temps(i)._1, t) ~> count
+      }
     }
-    return TempRenumberer(tempMap).transform_langastIRProcedure(proc).getOrElse(proc)
+    return TempRenumberer(this, tempMap).transform_langastIRProcedure(proc).getOrElse(proc)
   }
 
   @pure def procedureDesc(proc: AST.IR.Procedure): String = {
@@ -1885,6 +1900,31 @@ import Anvil._
     return (maxOffset, m)
   }
 
+  def transformLocal(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    var body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    val paramInfo = procedureParamInfo(PBox(p))._2
+    var localTempMap: HashSMap[Z, HashSMap[String, (Z, AST.Typed)]] = {
+      var m = HashSMap.empty[String, (Z, AST.Typed)]
+      var stmts = ISZ[AST.IR.Stmt.Ground]()
+      for (entry <- paramInfo.entries if !ignoredTempLocal.contains(entry._1)) {
+        val temp = m.size
+        m = m + entry._1 ~> (temp, entry._2.tipe)
+        val t: AST.Typed = if (isScalar(entry._2.tipe)) entry._2.tipe else spType
+        stmts = stmts :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp,
+          AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)),
+            AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, entry._2.offset, p.pos), p.pos),
+          isSigned(t), typeByteSize(t), st"${entry._1}", entry._2.tipe, p.pos))
+      }
+      val label = fresh.label()
+      val first = body.blocks(0)
+      body = body(blocks = AST.IR.BasicBlock(first.label, stmts, AST.IR.Jump.Goto(label, p.pos)) +: body.blocks(0 ~> first(label = label)))
+      HashSMap.empty[Z, HashSMap[String, (Z, AST.Typed)]] + label ~> m
+    }
+    var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+
+    return p(body = body(blocks = blockMap.values))
+  }
+
   def transformOffset(globalMap: HashSMap[ISZ[String], VarInfo],
                       proc: AST.IR.Procedure): (Z, AST.IR.Procedure, HashMap[String, Z]) = {
     val body = proc.body.asInstanceOf[AST.IR.Body.Basic]
@@ -1907,7 +1947,6 @@ import Anvil._
           g match {
             case g: AST.IR.Stmt.Decl =>
               var locals = ISZ[Intrinsic.Decl.Local]()
-              var assignSPs = ISZ[AST.IR.Stmt.Ground]()
               for (l <- g.locals) {
                 val size = typeByteSize(l.tipe)
                 if (g.undecl) {
@@ -1942,7 +1981,6 @@ import Anvil._
                 maxOffset = offset
               }
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(g.undecl, g.isAlloc, locals, g.pos))
-              grounds = grounds ++ assignSPs
             case _ =>
               g match {
                 case AST.IR.Stmt.Assign.Global(name, tipe, rhs, pos) =>
@@ -2867,21 +2905,12 @@ import Anvil._
     return PMod.None
   }
 
-  @memoize def procedureGlobalParamPrefix(context: AST.IR.MethodContext): QName = {
-    var r = context.owner
-    if (!context.isInObject) {
-      r = r :+ "this"
-    }
-    r = r :+ context.id
-    return r
-  }
-
   @pure def nextBlockTemp(b: AST.IR.BasicBlock): Z = {
-    val tc = TempCollector(HashSMap.empty)
+    val tc = TempCollector(F, HashSMap.empty)
     tc.transform_langastIRBasicBlock(b)
     for (g <- b.grounds) {
       g match {
-        case g: AST.IR.Stmt.Assign.Temp => tc.r = tc.r + (g.lhs, g.rhs.tipe)
+        case g: AST.IR.Stmt.Assign.Temp => tc.r = tc.r + g.lhs ~> (tc.r.get(g.lhs).getOrElse(HashSSet.empty[AST.Typed] + g.rhs.tipe))
         case _ =>
       }
     }
