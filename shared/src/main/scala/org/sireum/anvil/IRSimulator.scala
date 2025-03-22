@@ -1078,6 +1078,12 @@ import IRSimulator._
                 anvil.isSigned(anvil.dpType), anvil.dpTypeByteSize * 8, 0, v)
               return (v, acs)
             }
+          case in: Intrinsic.Indexing =>
+            val (base, bacs) = evalExp(state, in.baseOffset)
+            val (index, iacs) = evalExp(state, in.index)
+            val v = Value.fromZ(base.value + in.dataOffset + index.value * in.elementSize, anvil.typeBitSize(in.tipe),
+              anvil.isSigned(in.tipe))
+            return (v, bacs + iacs)
         }
       case exp: AST.IR.Exp.R => halt(s"TODO: ${exp.prettyST(anvil.printer).render}")
       case exp: AST.IR.Exp.Construct => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")

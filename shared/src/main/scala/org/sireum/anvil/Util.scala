@@ -1070,4 +1070,34 @@ object Util {
     if (isFP) st"$$${bitSize}F.$n"
     else st"$$$bitSize${if (isSigned) "S" else "U"}.$n"
   }
+
+  @pure def indexing(os: OffsetSubsitutor,
+                     receiver: AST.IR.Exp,
+                     index: AST.IR.Exp,
+                     pos: message.Position): AST.IR.Exp = {
+    val anvil = os.anvil
+    val receiverType = receiver.tipe.asInstanceOf[AST.Typed.Name]
+    val indexType = receiverType.args(0)
+    val elementType = receiverType.args(1)
+    val min = anvil.minIndex(indexType)
+    var idx = os.transform_langastIRExp(index).getOrElse(index)
+    val rcv = os.transform_langastIRExp(receiver).getOrElse(receiver)
+    if (idx.tipe != anvil.spType) {
+      idx = AST.IR.Exp.Type(F, idx, anvil.spType, idx.pos)
+    }
+    val indexOffset: AST.IR.Exp = if (min == 0) idx else AST.IR.Exp.Binary(
+      anvil.spType, idx, AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(anvil.spType, min, idx.pos), idx.pos)
+    val elementSize = anvil.typeByteSize(elementType)
+    val dataOffset = anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
+    if (anvil.config.arrayIntrinsic) {
+      return AST.IR.Exp.Intrinsic(Intrinsic.Indexing(rcv, dataOffset, indexOffset, elementSize, elementType, pos))
+    } else {
+      val baseDataOffset = AST.IR.Exp.Binary(anvil.spType, rcv, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType,
+        dataOffset, receiver.pos), receiver.pos)
+      val elementOffset: AST.IR.Exp = if (elementSize == 1) indexOffset else AST.IR.Exp.Binary(anvil.spType,
+        indexOffset, AST.IR.Exp.Binary.Op.Mul, AST.IR.Exp.Int(anvil.spType, anvil.typeByteSize(elementType),
+          idx.pos), idx.pos)
+      return AST.IR.Exp.Binary(anvil.spType, baseDataOffset, AST.IR.Exp.Binary.Op.Add, elementOffset, receiver.pos)
+    }
+  }
 }

@@ -53,13 +53,14 @@ object Anvil {
                          val copySize: Z,
                          val erase: B,
                          val axi4: B,
-                         val customDivRem: B) {
+                         val customDivRem: B,
+                         val arrayIntrinsic: B) {
     val shouldPrint: B = printSize > 0
   }
 
   object Config {
     @strictpure def empty: Config =
-      Config(None(), 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, F, 0, 8, F, F, F)
+      Config(None(), 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, F, 0, 8, F, F, F, F)
   }
 
   @sig trait Output {
@@ -2080,25 +2081,10 @@ import Anvil._
                       copySize(rhs), rhs, g.prettyST(printer), ft, rhs.tipe, pos))
                   }
                 case AST.IR.Stmt.Assign.Index(rcv, idx, rhs, pos) =>
-                  val newRhs = OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
-                  val seqType = rcv.tipe.asInstanceOf[AST.Typed.Name]
-                  val indexType = seqType.args(0)
-                  val elementType = seqType.args(1)
-                  val min = minIndex(indexType)
                   val os = OffsetSubsitutor(this, paramSet, m, globalMap)
-                  var index = os.transform_langastIRExp(idx).getOrElse(idx)
-                  if (index.tipe != spType) {
-                    index = AST.IR.Exp.Type(F, index, spType, index.pos)
-                  }
-                  val indexOffset: AST.IR.Exp = if (min == 0) index else AST.IR.Exp.Binary(
-                    spType, index, AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, min, index.pos), index.pos)
-                  val elementSize = typeByteSize(elementType)
-                  val elementOffset: AST.IR.Exp = if (elementSize == 1) indexOffset else AST.IR.Exp.Binary(spType,
-                    indexOffset, AST.IR.Exp.Binary.Op.Mul, AST.IR.Exp.Int(spType, typeByteSize(elementType),
-                      index.pos), index.pos)
-                  val receiver = AST.IR.Exp.Binary(spType, os.transform_langastIRExp(rcv).getOrElse(rcv),
-                    AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeShaSize + typeByteSize(AST.Typed.z), rcv.pos), rcv.pos)
-                  val receiverOffset = AST.IR.Exp.Binary(spType, receiver, AST.IR.Exp.Binary.Op.Add, elementOffset, pos)
+                  val newRhs = os.transform_langastIRExp(rhs).getOrElse(rhs)
+                  val receiverOffset = indexing(os, rcv, idx, pos)
+                  val elementType = rcv.tipe.asInstanceOf[AST.Typed.Name].args(1)
                   if (isScalar(elementType)) {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(receiverOffset,
                       isSigned(elementType), typeByteSize(elementType), newRhs, g.prettyST(printer), elementType, g.pos))
@@ -2155,38 +2141,13 @@ import Anvil._
                         }
                       }
                     case rhs: AST.IR.Exp.Indexing =>
-                      val seqType = rhs.exp.tipe.asInstanceOf[AST.Typed.Name]
-                      val indexType = seqType.args(0)
-                      val elementType = seqType.args(1)
-                      val min: Z = indexType match {
-                        case AST.Typed.z => 0
-                        case _ =>
-                          val subz = subZOpt(indexType).get.ast
-                          if (subz.isIndex) subz.min
-                          else if (subz.isZeroIndex) 0
-                          else subz.min
-                      }
-                      val os = OffsetSubsitutor(this, paramSet, m, globalMap)
-                      var index = os.transform_langastIRExp(rhs.index).getOrElse(rhs.index)
-                      if (index.tipe != spType) {
-                        index = AST.IR.Exp.Type(F, index, spType, index.pos)
-                      }
-                      val temp = n
-                      val indexOffset: AST.IR.Exp = if (min == 0) index else AST.IR.Exp.Binary(
-                        spType, index, AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, min, index.pos), index.pos)
-                      val elementSize = typeByteSize(elementType)
-                      val elementOffset: AST.IR.Exp = if (elementSize == 1) indexOffset else AST.IR.Exp.Binary(spType,
-                        indexOffset, AST.IR.Exp.Binary.Op.Mul, AST.IR.Exp.Int(spType, typeByteSize(elementType),
-                          index.pos), index.pos)
-                      val exp = AST.IR.Exp.Binary(spType, os.transform_langastIRExp(rhs.exp).getOrElse(rhs.exp),
-                        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeShaSize + typeByteSize(AST.Typed.z), rhs.exp.pos),
-                        rhs.exp.pos)
-                      val rhsOffset = AST.IR.Exp.Binary(spType, exp, AST.IR.Exp.Binary.Op.Add, elementOffset, rhs.exp.pos)
+                      val rhsOffset = indexing(OffsetSubsitutor(this, paramSet, m, globalMap), rhs.exp, rhs.index, rhs.pos)
+                      val elementType = rhs.tipe
                       if (isScalar(elementType)) {
-                        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp, rhsOffset,
+                        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(n, rhsOffset,
                           isSigned(elementType), typeByteSize(elementType), g.prettyST(printer), elementType, pos))
                       } else {
-                        grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, rhsOffset, pos)
+                        grounds = grounds :+ AST.IR.Stmt.Assign.Temp(n, rhsOffset, pos)
                       }
                     case rhs if rhs.isInstanceOf[AST.IR.Exp.Construct] || rhs.isInstanceOf[AST.IR.Exp.String] =>
                       val loffset = m.get(constructResultId(rhs.pos)).get

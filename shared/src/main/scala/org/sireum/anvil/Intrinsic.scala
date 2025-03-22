@@ -54,6 +54,21 @@ object Intrinsic {
     @strictpure def depth: Z = 1 + rhsOffset.depth
   }
 
+  @datatype class Indexing(val baseOffset: AST.IR.Exp,
+                           val dataOffset: Z,
+                           val index: AST.IR.Exp,
+                           val elementSize: Z,
+                           val tipe: AST.Typed,
+                           val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
+    @strictpure def prettyST(p: AST.IR.Printer): ST = st"${baseOffset.prettyST(p)}[+$dataOffset](${index.prettyST(p)}[*$elementSize])"
+    @strictpure def numOfTemps: Z = baseOffset.numOfTemps + index.numOfTemps
+    @strictpure def depth: Z = {
+      val bd = baseOffset.depth
+      val index = baseOffset.depth
+      1 + (if (bd < index) index else bd)
+    }
+  }
+
   // Replaces AST.IR.Stmt.Assign.Local, AST.IR.Stmt.Assign.Field, AST.IR.Stmt.Assign.Global, AST.IR.Stmt.Assign.Index
   @datatype class Store(val lhsOffset: AST.IR.Exp,
                         val isSigned: B,
@@ -62,7 +77,13 @@ object Intrinsic {
                         val comment: ST,
                         val tipe: AST.Typed,
                         val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST(p: AST.IR.Printer): ST = st"*${lhsOffset.prettyST(p)} = ${rhs.prettyST(p)} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
+    @strictpure def prettyST(p: AST.IR.Printer): ST = {
+      val rhsST = st"${rhs.prettyST(p)} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
+      lhsOffset match {
+        case AST.IR.Exp.Intrinsic(in: Indexing) => st"${lhsOffset.prettyST(p)} = $rhsST"
+        case _ => st"*${lhsOffset.prettyST(p)} = $rhsST"
+      }
+    }
   }
 
   // Replaces AST.IR.Stmt.Assign.Local, AST.IR.Stmt.Assign.Field, AST.IR.Stmt.Assign.Global, AST.IR.Stmt.Assign.Index
