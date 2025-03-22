@@ -39,7 +39,13 @@ object Intrinsic {
                            val comment: ST,
                            val tipe: AST.Typed,
                            val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def prettyST(p: AST.IR.Printer): ST = st"${p.exp(AST.IR.Exp.Temp(temp, tipe, pos))} = *${rhsOffset.prettyST(p)} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
+    @strictpure def prettyST(p: AST.IR.Printer): ST = {
+      val lhs: ST =
+        if (p.asInstanceOf[Util.AnvilIRPrinter].anvil.config.splitTempSizes)
+          st"${p.exp(AST.IR.Exp.Temp(temp, tipe, pos))}"
+        else st"$$$temp"
+      st"$lhs = *${rhsOffset.prettyST(p)} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
+    }
   }
 
   // Replaces AST.IR.Exp.LocalVarRef, AST.IR.Exp.GlobalVarRef, AST.IR.Exp.Field, AST.IR.Exp.Index

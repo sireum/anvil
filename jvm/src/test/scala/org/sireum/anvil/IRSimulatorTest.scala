@@ -29,25 +29,40 @@ import org.sireum.lang.{ast => AST}
 import org.sireum.test._
 import org.sireum.U8._
 
-class IRSimulatorTest extends SireumRcSpec {
-
+object IRSimulatorTest {
   val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
   val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result-sim"
   val errAsOut: Boolean = T
+  val singleTemp = "single-temp"
+  val splitTemp = "split-temp"
+  val memLocal = "mem-local"
+  val tempLocal = "temp-local"
+}
 
+import IRSimulatorTest._
+
+class IRSimulatorTest extends SireumRcSpec {
   {
     val notGitHubActions = Os.env("GITHUB_ACTIONS").isEmpty
-    IRSimulator.DEBUG = notGitHubActions
-    IRSimulator.DEBUG_TEMP = notGitHubActions
-    IRSimulator.DEBUG_EDIT = notGitHubActions
-    IRSimulator.DEBUG_GLOBAL = notGitHubActions
-    IRSimulator.DEBUG_LOCAL = notGitHubActions
+    val debug = F & notGitHubActions
+    IRSimulator.DEBUG = debug
+    IRSimulator.DEBUG_TEMP = debug
+    IRSimulator.DEBUG_EDIT = debug
+    IRSimulator.DEBUG_GLOBAL = debug
+    IRSimulator.DEBUG_LOCAL = debug
   }
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith(".sc")
-    }
-    m
+    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith(".sc") }
+    implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
+    for ((k, v) <- m; pair <- {
+      var r = Vector[(Vector[Predef.String], Predef.String)]()
+      r = r :+ (k.dropRight(1) :+ s"${k.last} ($singleTemp, $memLocal)", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} ($singleTemp, $tempLocal)", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} ($splitTemp, $memLocal)", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} ($splitTemp, $tempLocal)", v)
+      r
+    }) yield pair
   }
 
   def redirectConsole[T](output: Os.Path, f: () => T): T = {
@@ -107,13 +122,15 @@ class IRSimulatorTest extends SireumRcSpec {
     }
   }
 
-  override def check(path: Vector[Predef.String], content: Predef.String): Boolean = {
-    val file = path(path.size - 1)
+  override def check(p: Vector[Predef.String], content: Predef.String): Boolean = {
+    val path = p.dropRight(1) :+ p.last.substring(0, p.last.lastIndexOf(" ("))
+    val file = path.last
+    val out = dir /+ ISZ(p.map(String(_)): _*)
     def checkH(): Boolean = {
       val reporter = message.Reporter.create
       lang.parser.Parser.parseTopUnit[lang.ast.TopUnit.Program](content, T, F, Some(path.mkString("/")), reporter) match {
-        case Some(p) if !reporter.hasError =>
-          val (th2, p2) = lang.FrontEnd.checkWorksheet(100, Some(th), p, reporter)
+        case Some(program) if !reporter.hasError =>
+          val (th2, p2) = lang.FrontEnd.checkWorksheet(100, Some(th), program, reporter)
           var lastMethod: String = ""
           for (stmt <- p2.body.stmts) {
             stmt match {
@@ -121,7 +138,7 @@ class IRSimulatorTest extends SireumRcSpec {
               case _ =>
             }
           }
-          (dir / path(0)).removeAll()
+          out.removeAll()
           var config = Anvil.Config.empty
           config = config(
             memory = AnvilTest.memoryFileMap.get(file).getOrElse(AnvilTest.defaultMemory),
@@ -129,8 +146,10 @@ class IRSimulatorTest extends SireumRcSpec {
             stackTrace = AnvilTest.stackTraceFileSet.contains(file),
             erase = AnvilTest.eraseFileSet.contains(file),
             maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(AnvilTest.defaultMaxArraySize),
-            runtimeCheck = T)
-          val out = dir /+ ISZ(path.map(String(_)): _*)
+            runtimeCheck = T,
+            splitTempSizes = p.last.contains(splitTemp),
+            tempLocal = p.last.contains(tempLocal)
+          )
           Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, new Anvil.Output {
             def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
               val f = out /+ p
@@ -185,6 +204,6 @@ class IRSimulatorTest extends SireumRcSpec {
         case _ => return F
       }
     }
-    redirectConsole(dir / file / "output.txt", checkH _)
+    redirectConsole(out / "output.txt", checkH _)
   }
 }

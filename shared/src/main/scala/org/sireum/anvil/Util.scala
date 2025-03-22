@@ -190,7 +190,25 @@ object Util {
     }
   }
 
-  @record class TempRenumberer(val anvil: Anvil, val map: HashMap[(Z, AST.Typed), Z]) extends MAnvilIRTransformer {
+  @record class TempRenumberer(val anvil: Anvil, val map: HashMap[Z, Z]) extends MAnvilIRTransformer {
+    override def post_langastIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
+      val key = o.n
+      map.get(key) match {
+        case Some(n) => return MSome(o(n = n))
+        case _ => halt(s"Infeasible: ${o.n}, ${o.tipe}, $map")
+      }
+    }
+
+    override def post_langastIRStmtAssignTemp(o: AST.IR.Stmt.Assign.Temp): MOption[AST.IR.Stmt.Assign] = {
+      val key = o.lhs
+      map.get(key) match {
+        case Some(n) => return MSome(o(lhs = n))
+        case _ => halt(s"Infeasible: ${o.lhs}, ${o.rhs.tipe}, $map")
+      }
+    }
+  }
+
+  @record class TempTypeRenumberer(val anvil: Anvil, val map: HashMap[(Z, AST.Typed), Z]) extends MAnvilIRTransformer {
     override def post_langastIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
       val key = (o.n, o.tipe)
       map.get(key) match {
@@ -671,30 +689,31 @@ object Util {
     }
   }
 
-  @datatype class TempLV(val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[(Z, AST.Typed)] {
+  @datatype class TempScalarOrSpLV(val anvil: Anvil, val cfg: Graph[Z, Unit]) extends MonotonicDataflowFramework.Basic[(Z, AST.Typed)] {
     @strictpure def isForward: B = F
     @strictpure def isLUB: B = T
     @strictpure def iota: HashSSet[(Z, AST.Typed)] = HashSSet.empty
     @strictpure def init: HashSSet[(Z, AST.Typed)] = HashSSet.empty
+    @strictpure def toScalar(t: AST.Typed): AST.Typed = if (anvil.isScalar(t)) t else anvil.spType
     @pure def genGround(g: AST.IR.Stmt.Ground): HashSSet[(Z, AST.Typed)] = {
       val tc = TempCollector(F, HashSMap.empty)
       g match {
         case g: AST.IR.Stmt.Assign.Temp => tc.transform_langastIRExp(g.rhs)
         case _ => tc.transform_langastIRStmtGround(g)
       }
-      return HashSSet ++ (for (pair <- tc.r.entries; t <- pair._2.elements) yield (pair._1, t))
+      return HashSSet ++ (for (pair <- tc.r.entries; t <- pair._2.elements) yield (pair._1, toScalar(t)))
     }
     @pure def killGround(g: AST.IR.Stmt.Ground): HashSSet[(Z, AST.Typed)] = {
       g match {
-        case g: AST.IR.Stmt.Assign.Temp => return HashSSet.empty[(Z, AST.Typed)] + (g.lhs, g.rhs.tipe)
-        case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return HashSSet.empty[(Z, AST.Typed)] + (in.temp, in.tipe)
+        case g: AST.IR.Stmt.Assign.Temp => return HashSSet.empty[(Z, AST.Typed)] + (g.lhs, toScalar(g.rhs.tipe))
+        case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return HashSSet.empty[(Z, AST.Typed)] + (in.temp, toScalar(in.tipe))
         case _ => return HashSSet.empty
       }
     }
     @pure def genJump(j: AST.IR.Jump): HashSSet[(Z, AST.Typed)] = {
       val tc = TempCollector(F, HashSMap.empty)
       tc.transform_langastIRJump(j)
-      return HashSSet ++ (for (pair <- tc.r.entries; t <- pair._2.elements) yield (pair._1, t))
+      return HashSSet ++ (for (pair <- tc.r.entries; t <- pair._2.elements) yield (pair._1, toScalar(t)))
     }
     @strictpure def killJump(j: AST.IR.Jump): HashSSet[(Z, AST.Typed)] = HashSSet.empty
   }
@@ -792,11 +811,13 @@ object Util {
 
   @datatype class AnvilIRPrinter(val anvil: Anvil) extends AST.IR.Printer {
     @strictpure def exp(e: AST.IR.Exp): Option[ST] = e match {
-      case e: AST.IR.Exp.Temp => Some(tempST(anvil, e.tipe, e.n))
+      case e: AST.IR.Exp.Temp if anvil.config.splitTempSizes =>
+        Some(tempST(anvil, e.tipe, e.n))
       case _ => None()
     }
     @strictpure def stmt(stmt: AST.IR.Stmt): Option[ST] = stmt match {
-      case stmt: AST.IR.Stmt.Assign.Temp => Some(st"${tempST(anvil, stmt.rhs.tipe, stmt.lhs)} = ${stmt.rhs.prettyST(anvil.printer)}")
+      case stmt: AST.IR.Stmt.Assign.Temp if anvil.config.splitTempSizes =>
+        Some(st"${tempST(anvil, stmt.rhs.tipe, stmt.lhs)} = ${stmt.rhs.prettyST(anvil.printer)}")
       case _ => None()
     }
     @strictpure def jump(j: AST.IR.Jump): Option[ST] = None()

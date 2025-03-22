@@ -40,7 +40,7 @@ object AnvilTest {
     "instanceof.sc" ~> (128 + 8 * 3) +
     "local-reuse.sc" ~> (128 + 8 * 5) +
     "mult.sc" ~> (128 + 8 * 10) +
-    "print.sc" ~> (1024 + 8 * 28) +
+    "print.sc" ~> (1024 + 8 * 24) +
     "print-no-float.sc" ~> (256 + 8 * 11) +
     "printU64.sc" ~> (128 + 8 * 11) +
     "seq.sc" ~> (256 + 8 * 2) +

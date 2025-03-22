@@ -54,13 +54,15 @@ object Anvil {
                          val erase: B,
                          val axi4: B,
                          val customDivRem: B,
+                         val splitTempSizes: B,
+                         val tempLocal: B,
                          val indexingIntrinsic: B) {
     val shouldPrint: B = printSize > 0
   }
 
   object Config {
     @strictpure def empty: Config =
-      Config(None(), 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, F, 0, 8, F, F, F, F)
+      Config(None(), 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, F, 0, 8, F, F, F, F, T, F)
   }
 
   @sig trait Output {
@@ -363,13 +365,15 @@ import Anvil._
         var proc = p
         var pass: Z = 0
 
-        proc = anvil.transformTempNum(proc)
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "temp-num"), proc.prettyST(anvil.printer))
-        pass = pass + 1
+        if (config.tempLocal) {
+          proc = anvil.transformTempNum(proc)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "temp-num"), proc.prettyST(anvil.printer))
+          pass = pass + 1
 
-        proc = anvil.transformLocal(fresh, proc)
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "local"), proc.prettyST(anvil.printer))
-        pass = pass + 1
+          proc = anvil.transformLocal(fresh, proc)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "local"), proc.prettyST(anvil.printer))
+          pass = pass + 1
+        }
 
         val (maxOffset, p2, m) = anvil.transformOffset(globalMap, proc)
         callResultOffsetMap = callResultOffsetMap ++ m.entries
@@ -386,7 +390,7 @@ import Anvil._
           output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "reduce-exp"), proc.prettyST(anvil.printer))
           pass = pass + 1
 
-          proc = anvil.transformTempCompress(proc)
+          proc = if (config.splitTempSizes) anvil.transformTempTypeCompress(proc) else anvil.transformTempCompress(proc)
           output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "temp-compress"), proc.prettyST(anvil.printer))
           pass = pass + 1
         }
@@ -918,7 +922,7 @@ import Anvil._
       }
       return F
     }
-    TempLV(ControlFlowGraph.buildBasic(body)).compute(body, MBox(HashSMap.empty[Z, ISZ[HashSSet[(Z, AST.Typed)]]]), exit)
+    TempScalarOrSpLV(this, ControlFlowGraph.buildBasic(body)).compute(body, MBox(HashSMap.empty[Z, ISZ[HashSSet[(Z, AST.Typed)]]]), exit)
     var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
 
     def rec(label: Z, i: Z, temp: Z, undecl: AST.IR.Stmt.Decl): Unit = {
@@ -1133,10 +1137,8 @@ import Anvil._
     val params = HashSet ++ p.paramNames
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     val localExitSet = MBox(HashSMap.empty[Z, ISZ[HashSSet[(String, AST.Typed)]]])
-    val tempExitSet = MBox(HashSMap.empty[Z, ISZ[HashSSet[(Z, AST.Typed)]]])
     val cfg = ControlFlowGraph.buildBasic(body)
     LocalDeclLV(cfg).compute(body, MBox(HashSMap.empty), localExitSet)
-    TempLV(cfg).compute(body, MBox(HashSMap.empty), tempExitSet)
     var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
     var undeclMap = HashSMap.empty[(String, AST.Typed), AST.IR.Stmt.Decl]
     var blockUndecls = HashMap.empty[Z, ISZ[AST.IR.Stmt.Ground]]
@@ -1323,7 +1325,7 @@ import Anvil._
 //      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "reduce-exp"), r.prettyST(printer))
 //      pass = pass + 1
 
-      r = transformTempCompress(r)
+      r = if (config.splitTempSizes) transformTempTypeCompress(r) else transformTempCompress(r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "temp-compress"), r.prettyST(printer))
       pass = pass + 1
 
@@ -1445,7 +1447,7 @@ import Anvil._
         var blocks = ISZ[AST.IR.BasicBlock]()
         val body = p.body.asInstanceOf[AST.IR.Body.Basic]
         val exitSet = MBox(HashSMap.empty[Z, ISZ[HashSSet[(Z, AST.Typed)]]])
-        TempLV(ControlFlowGraph.buildBasic(body)).compute(body, MBox(HashSMap.empty), exitSet)
+        TempScalarOrSpLV(this, ControlFlowGraph.buildBasic(body)).compute(body, MBox(HashSMap.empty), exitSet)
         for (b <- body.blocks) {
           def processInvoke(stmtIndex: Z, g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, label: Z): Unit = {
             val liveTemps = exitSet.value.get(b.label).get(stmtIndex).elements
@@ -1552,7 +1554,9 @@ import Anvil._
             var rgrounds = ISZ[AST.IR.Stmt.Ground]()
             var i: Z = 0
             val lhsPairOpt: Option[(Z, AST.Typed)] = lhsOpt match {
-              case Some(lhs) => Some((lhs, called.tipe.ret))
+              case Some(lhs) =>
+                val t: AST.Typed = if (isScalar(called.tipe.ret)) called.tipe.ret else spType
+                Some((lhs, t))
               case _ => None()
             }
             for (pair <- liveTemps if lhsPairOpt != Some(pair)) {
@@ -1564,9 +1568,9 @@ import Anvil._
               val tempOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
                 AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, i, e.pos), e.pos)
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-                tempOffset, signed, size, AST.IR.Exp.Temp(j, t, e.pos), st"save $$$j", t, e.pos))
+                tempOffset, signed, size, AST.IR.Exp.Temp(j, t, e.pos), st"save $$$j ($tipe)", t, e.pos))
               rgrounds = rgrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(
-                j, tempOffset, signed, size, st"restore $$$j", t, e.pos))
+                j, tempOffset, signed, size, st"restore $$$j ($tipe)", t, e.pos))
             }
 
             var bgrounds = ISZ[AST.IR.Stmt.Ground]()
@@ -1754,7 +1758,7 @@ import Anvil._
                 case rhs: AST.IR.Exp.Temp =>
                   substMap = substMap + g.lhs ~> substMap.get(rhs.n).get
                   grounds = grounds :+ g
-                case rhs: AST.IR.Exp.LocalVarRef if isScalar(rhs.tipe) =>
+                case rhs: AST.IR.Exp.LocalVarRef if config.tempLocal && isScalar(rhs.tipe) =>
                   substMap = substMap + g.lhs ~> rhs
                   grounds = grounds :+ g
                 case rhs: AST.IR.Exp.Unary =>
@@ -1809,7 +1813,7 @@ import Anvil._
     var changed = T
     while (changed) {
       changed = F
-      val lv = TempLV(ControlFlowGraph.buildBasic(body))
+      val lv = TempScalarOrSpLV(this, ControlFlowGraph.buildBasic(body))
       val entrySet = MBox(HashSMap.empty[Z, ISZ[HashSSet[(Z, AST.Typed)]]])
       val exitSet = MBox(entrySet.value)
       def exitSetContains(label: Z, i: Z, temp: Z): B = {
@@ -1836,7 +1840,7 @@ import Anvil._
     return proc(body = body)
   }
 
-  def transformTempCompress(proc: AST.IR.Procedure): AST.IR.Procedure = {
+  def transformTempTypeCompress(proc: AST.IR.Procedure): AST.IR.Procedure = {
     val tc = TempCollector(T, HashSMap.empty)
     tc.transform_langastIRProcedure(proc)
     val temps = tc.r.entries
@@ -1848,6 +1852,17 @@ import Anvil._
         tv = tv.incType(this, t)
         tempMap = tempMap + (temps(i)._1, t) ~> count
       }
+    }
+    return TempTypeRenumberer(this, tempMap).transform_langastIRProcedure(proc).getOrElse(proc)
+  }
+
+  def transformTempCompress(proc: AST.IR.Procedure): AST.IR.Procedure = {
+    val tc = TempCollector(T, HashSMap.empty)
+    tc.transform_langastIRProcedure(proc)
+    val temps = tc.r.keys
+    var tempMap = HashMap.empty[Z, Z]
+    for (i <- temps) {
+      tempMap = tempMap + i ~> tempMap.size
     }
     return TempRenumberer(this, tempMap).transform_langastIRProcedure(proc).getOrElse(proc)
   }
