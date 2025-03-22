@@ -160,8 +160,6 @@ object DivRemLog {
            |                                                C_S_AXI_ADDR_WIDTH  = C_S_AXI_ADDR_WIDTH ,
            |                                                ARRAY_REG_WIDTH     = ARRAY_REG_WIDTH    ,
            |                                                ARRAY_REG_DEPTH     = ARRAY_REG_DEPTH    ,
-           |                                                GENERAL_REG_WIDTH   = GENERAL_REG_WIDTH  ,
-           |                                                GENERAL_REG_DEPTH   = GENERAL_REG_DEPTH  ,
            |                                                STACK_POINTER_WIDTH = STACK_POINTER_WIDTH,
            |                                                CODE_POINTER_WIDTH  = CODE_POINTER_WIDTH  ))
            |    mod${name}.io.valid := Mux(io_valid_reg(0) & (io_ready_reg === 2.U), true.B, false.B)
