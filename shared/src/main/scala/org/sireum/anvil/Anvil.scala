@@ -54,7 +54,7 @@ object Anvil {
                          val erase: B,
                          val axi4: B,
                          val customDivRem: B,
-                         val arrayIntrinsic: B) {
+                         val indexingIntrinsic: B) {
     val shouldPrint: B = printSize > 0
   }
 

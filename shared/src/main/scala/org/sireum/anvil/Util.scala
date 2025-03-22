@@ -1089,7 +1089,7 @@ object Util {
       anvil.spType, idx, AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(anvil.spType, min, idx.pos), idx.pos)
     val elementSize = anvil.typeByteSize(elementType)
     val dataOffset = anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
-    if (anvil.config.arrayIntrinsic) {
+    if (anvil.config.indexingIntrinsic) {
       return AST.IR.Exp.Intrinsic(Intrinsic.Indexing(rcv, dataOffset, indexOffset, elementSize, elementType, pos))
     } else {
       val baseDataOffset = AST.IR.Exp.Binary(anvil.spType, rcv, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType,
