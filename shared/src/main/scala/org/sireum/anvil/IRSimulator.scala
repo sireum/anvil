@@ -413,7 +413,8 @@ object IRSimulator {
       @strictpure def empty: Accesses = Accesses(HashSMap.empty, HashSMap.empty)
     }
 
-    @strictpure def create(memory: Z,
+    @strictpure def create(splitTemps: B,
+                           memory: Z,
                            temps: Util.TempVector,
                            globalMap: HashSMap[QName, Anvil.VarInfo]): State =
       State(
@@ -422,17 +423,17 @@ object IRSimulator {
         Value.fromU64(u64"0"),
         u64"0",
         MSZ.create(memory, u8"0"),
-        MSZ.create(temps.unsignedCount(1), F),
-        MSZ.create(temps.unsignedCount(8), u8"0"),
-        MSZ.create(temps.unsignedCount(16), u16"0"),
-        MSZ.create(temps.unsignedCount(32), u32"0"),
-        MSZ.create(temps.unsignedCount(64), u64"0"),
-        MSZ.create(temps.signedCount(8), s8"0"),
-        MSZ.create(temps.signedCount(16), s16"0"),
-        MSZ.create(temps.signedCount(32), s32"0"),
-        MSZ.create(temps.signedCount(64), s64"0"),
-        MSZ.create(temps.fp32Count, 0f),
-        MSZ.create(temps.fp64Count, 0d),
+        MSZ.create(if (splitTemps) temps.unsignedCount(1) else 0, F),
+        MSZ.create(if (splitTemps) temps.unsignedCount(8) else 0, u8"0"),
+        MSZ.create(if (splitTemps) temps.unsignedCount(16) else 0, u16"0"),
+        MSZ.create(if (splitTemps) temps.unsignedCount(32) else 0, u32"0"),
+        MSZ.create(if (splitTemps) temps.unsignedCount(64) else temps.maxCount, u64"0"),
+        MSZ.create(if (splitTemps) temps.signedCount(8) else 0, s8"0"),
+        MSZ.create(if (splitTemps) temps.signedCount(16) else 0, s16"0"),
+        MSZ.create(if (splitTemps) temps.signedCount(32) else 0, s32"0"),
+        MSZ.create(if (splitTemps) temps.signedCount(64) else 0, s64"0"),
+        MSZ.create(if (splitTemps) temps.fp32Count else 0, 0f),
+        MSZ.create(if (splitTemps) temps.fp64Count else 0, 0d),
         Stack(ISZ(HashSMap.empty)))
 
   }
@@ -869,6 +870,20 @@ object IRSimulator {
     @strictpure def toF32: F32 = conversions.U32.toRawF32(conversions.Z.toU32(value))
 
     @strictpure def toF64: F64 = conversions.U64.toRawF64(conversions.Z.toU64(value))
+
+    @strictpure def toRawU64: U64 = kind match {
+      case Value.Kind.B => if (value == 0) u64"0" else u64"1"
+      case Value.Kind.U8 => conversions.Z.toU64(value)
+      case Value.Kind.U16 => conversions.Z.toU64(value)
+      case Value.Kind.U32 => conversions.Z.toU64(value)
+      case Value.Kind.U64 => conversions.Z.toU64(value)
+      case Value.Kind.S8 => conversions.S64.toRawU64(conversions.Z.toS64(value))
+      case Value.Kind.S16 => conversions.S64.toRawU64(conversions.Z.toS64(value))
+      case Value.Kind.S32 => conversions.S64.toRawU64(conversions.Z.toS64(value))
+      case Value.Kind.S64 => conversions.S64.toRawU64(conversions.Z.toS64(value))
+      case Value.Kind.F32 => conversions.Z.toU64(value)
+      case Value.Kind.F64 => conversions.Z.toU64(value)
+    }
   }
 
   object Value {
@@ -989,31 +1004,37 @@ import IRSimulator._
         val isSigned = anvil.isSigned(t)
         val bitSize = anvil.typeBitSize(t)
         val isFP = anvil.isFP(t)
-        val v: Value = t match {
-          case AST.Typed.f32 => Value.fromF32(state.tempsF32(exp.n))
-          case AST.Typed.f64 => Value.fromF64(state.tempsF64(exp.n))
-          case _ =>
-            if (isSigned) {
-              bitSize match {
-                case z"8" => Value.fromS8(state.tempsS8(exp.n))
-                case z"16" => Value.fromS16(state.tempsS16(exp.n))
-                case z"32" => Value.fromS32(state.tempsS32(exp.n))
-                case z"64" => Value.fromS64(state.tempsS64(exp.n))
-                case _ => halt(s"Infeasible: $bitSize, ${exp.tipe}")
+        if (anvil.config.splitTempSizes) {
+          val v: Value = t match {
+            case AST.Typed.f32 => Value.fromF32(state.tempsF32(exp.n))
+            case AST.Typed.f64 => Value.fromF64(state.tempsF64(exp.n))
+            case _ =>
+              if (isSigned) {
+                bitSize match {
+                  case z"8" => Value.fromS8(state.tempsS8(exp.n))
+                  case z"16" => Value.fromS16(state.tempsS16(exp.n))
+                  case z"32" => Value.fromS32(state.tempsS32(exp.n))
+                  case z"64" => Value.fromS64(state.tempsS64(exp.n))
+                  case _ => halt(s"Infeasible: $bitSize, ${exp.tipe}")
+                }
+              } else {
+                bitSize match {
+                  case z"1" => Value.fromB(state.temps1(exp.n))
+                  case z"8" => Value.fromU8(state.tempsU8(exp.n))
+                  case z"16" => Value.fromU16(state.tempsU16(exp.n))
+                  case z"32" => Value.fromU32(state.tempsU32(exp.n))
+                  case z"64" => Value.fromU64(state.tempsU64(exp.n))
+                  case _ => halt(s"Infeasible: $bitSize, ${exp.tipe}")
+                }
               }
-            } else {
-              bitSize match {
-                case z"1" => Value.fromB(state.temps1(exp.n))
-                case z"8" => Value.fromU8(state.tempsU8(exp.n))
-                case z"16" => Value.fromU16(state.tempsU16(exp.n))
-                case z"32" => Value.fromU32(state.tempsU32(exp.n))
-                case z"64" => Value.fromU64(state.tempsU64(exp.n))
-                case _ => halt(s"Infeasible: $bitSize, ${exp.tipe}")
-              }
-            }
+          }
+          val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.Register, isFP, isSigned, bitSize, exp.n, v)
+          return (v, acs)
+        } else {
+          val v = Value.fromRawU64(anvil, state.tempsU64(exp.n), t)
+          val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.Register, F, F, 64, exp.n, v)
+          return (v, acs)
         }
-        val acs = State.Accesses.empty.addTemp(State.Edit.Temp.Kind.Register, isFP, isSigned, bitSize, exp.n, v)
-        return (v, acs)
       case exp: AST.IR.Exp.Binary =>
         val (left, lacs) = evalExp(state, exp.left)
         val (right, racs) = evalExp(state, exp.right)
@@ -1102,19 +1123,32 @@ import IRSimulator._
     stmt match {
       case stmt: AST.IR.Stmt.Assign.Temp =>
         val (rhs, acs) = evalExp(state, stmt.rhs)
-        val t: AST.Typed = if (anvil.isScalar(stmt.rhs.tipe)) stmt.rhs.tipe else anvil.spType
-        return State.Edit.Temp(State.Edit.Temp.Kind.Register, anvil.isFP(t), anvil.isSigned(t),
-          anvil.typeBitSize(t), stmt.lhs, rhs, acs)
+        if (anvil.config.splitTempSizes) {
+          val t: AST.Typed = if (anvil.isScalar(stmt.rhs.tipe)) stmt.rhs.tipe else anvil.spType
+          return State.Edit.Temp(State.Edit.Temp.Kind.Register, anvil.isFP(t), anvil.isSigned(t),
+            anvil.typeBitSize(t), stmt.lhs, rhs, acs)
+        } else {
+          val t = AST.Typed.u64
+          return State.Edit.Temp(State.Edit.Temp.Kind.Register, anvil.isFP(t), anvil.isSigned(t),
+            anvil.typeBitSize(t), stmt.lhs, Value.fromU64(rhs.toRawU64), acs)
+        }
       case stmt: AST.IR.Stmt.Intrinsic =>
         stmt.intrinsic match {
           case in: Intrinsic.TempLoad =>
             val (offset, eacs) = evalExp(state, in.rhsOffset)
             val (m, lacs) = load(state.memory, offset.value, in.bytes)
             val acs = eacs + lacs
-            val t: AST.Typed = if (anvil.isScalar(in.tipe)) in.tipe else anvil.spType
-            val v = Value.fromRawU64(anvil, m, t)
-            return State.Edit.Temp(State.Edit.Temp.Kind.Register, anvil.isFP(t), anvil.isSigned(t),
-              anvil.typeBitSize(t), in.temp, v, acs)
+            if (anvil.config.splitTempSizes) {
+              val t: AST.Typed = if (anvil.isScalar(in.tipe)) in.tipe else anvil.spType
+              val v = Value.fromRawU64(anvil, m, t)
+              return State.Edit.Temp(State.Edit.Temp.Kind.Register, anvil.isFP(t), anvil.isSigned(t),
+                anvil.typeBitSize(t), in.temp, v, acs)
+            } else {
+              val t = AST.Typed.u64
+              val v = Value.fromU64(m)
+              return State.Edit.Temp(State.Edit.Temp.Kind.Register, anvil.isFP(t), anvil.isSigned(t),
+                anvil.typeBitSize(t), in.temp, v, acs)
+            }
           case in: Intrinsic.Store =>
             val (v, eacs) = evalExp(state, in.rhs)
             val n: U64 =

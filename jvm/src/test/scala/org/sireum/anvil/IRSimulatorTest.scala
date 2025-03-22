@@ -43,8 +43,7 @@ import IRSimulatorTest._
 
 class IRSimulatorTest extends SireumRcSpec {
   {
-    val notGitHubActions = Os.env("GITHUB_ACTIONS").isEmpty
-    val debug = F & notGitHubActions
+    val debug = T & Os.env("GITHUB_ACTIONS").isEmpty
     IRSimulator.DEBUG = debug
     IRSimulator.DEBUG_TEMP = debug
     IRSimulator.DEBUG_EDIT = debug
@@ -160,7 +159,8 @@ class IRSimulatorTest extends SireumRcSpec {
             override def string: String = "AnvilTest.Output"
           }, reporter) match {
             case Some(ir) =>
-              val state = IRSimulator.State.create(ir.anvil.config.memory, ir.maxRegisters, ir.globalInfoMap)
+              val state = IRSimulator.State.create(ir.anvil.config.splitTempSizes, ir.anvil.config.memory,
+                ir.maxRegisters, ir.globalInfoMap)
               val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.offset
               var locals = ISZ[Intrinsic.Decl.Local]()
               for (entry <- ir.anvil.procedureParamInfo(Util.PBox(ir.procedure))._2.entries) {

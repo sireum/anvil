@@ -884,7 +884,7 @@ object Util {
       }
       return r
     }
-    @pure def maxCount: Z = {
+    @memoize def maxCount: Z = {
       var r: Z = fp32Count
       if (r < fp64Count) {
         r = fp64Count
@@ -894,6 +894,16 @@ object Util {
       }
       for (s <- signeds.values if r < s) {
         r = s
+      }
+      return r
+    }
+    @memoize def totalCount: Z = {
+      var r: Z = fp32Count + fp64Count
+      for (u <- unsigneds) {
+        r = r + u
+      }
+      for (s <- signeds.values) {
+        r = r + s
       }
       return r
     }
@@ -963,16 +973,20 @@ object Util {
 
   @record class TempIncrementer(val anvil: Anvil, val maxLocalTemps: TempVector) extends MAnvilIRTransformer {
     @strictpure def maxLocalTemp(tipe: AST.Typed): Z = {
-      val t: AST.Typed = if (anvil.isScalar(tipe)) tipe else anvil.spType
-      t match {
-        case AST.Typed.f32 => maxLocalTemps.fp32Count
-        case AST.Typed.f64 => maxLocalTemps.fp64Count
-        case _ =>
-          if (anvil.isSigned(t)) {
-            maxLocalTemps.signedCount(anvil.typeBitSize(t))
-          } else {
-            maxLocalTemps.unsignedCount(anvil.typeBitSize(t))
-          }
+      if (anvil.config.splitTempSizes) {
+        val t: AST.Typed = if (anvil.isScalar(tipe)) tipe else anvil.spType
+        t match {
+          case AST.Typed.f32 => maxLocalTemps.fp32Count
+          case AST.Typed.f64 => maxLocalTemps.fp64Count
+          case _ =>
+            if (anvil.isSigned(t)) {
+              maxLocalTemps.signedCount(anvil.typeBitSize(t))
+            } else {
+              maxLocalTemps.unsignedCount(anvil.typeBitSize(t))
+            }
+        }
+      } else {
+        maxLocalTemps.totalCount
       }
     }
 

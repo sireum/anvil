@@ -1930,10 +1930,11 @@ import Anvil._
       for (entry <- paramInfo.entries if !ignoredTempLocal.contains(entry._1)) {
         val id = entry._1
         val tipe = entry._2.tipe
-        val temp = tv.typeCount(this, tipe)
-        tv = tv.incType(this, tipe)
+        var t: AST.Typed = if (config.splitTempSizes) tipe else AST.Typed.u64
+        val temp = tv.typeCount(this, t)
+        tv = tv.incType(this, t)
         m = m + id ~> temp
-        val t: AST.Typed = if (isScalar(tipe)) tipe else spType
+        t = if (isScalar(tipe)) tipe else spType
         stmts = stmts :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp,
           AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)),
             AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, entry._2.offset, p.pos), p.pos),
@@ -1965,8 +1966,9 @@ import Anvil._
                     map = map -- ISZ(l.id)
                     r
                   } else {
-                    val r = tv.typeCount(this, l.tipe)
-                    tv = tv.incType(this, l.tipe)
+                    val t: AST.Typed = if (config.splitTempSizes) l.tipe else AST.Typed.u64
+                    val r = tv.typeCount(this, t)
+                    tv = tv.incType(this, t)
                     map = map + l.id ~> r
                     r
                   }
