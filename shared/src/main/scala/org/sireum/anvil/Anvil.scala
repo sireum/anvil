@@ -70,7 +70,7 @@ object Anvil {
   }
 
   @datatype class VarInfo(val isScalar: B,
-                          val offset: Z,
+                          val loc: Z,
                           val size: Z,
                           val dataSize: Z,
                           val tipe: AST.Typed,
@@ -373,7 +373,7 @@ import Anvil._
           output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "temp-num"), proc.prettyST(anvil.printer))
           pass = pass + 1
 
-          proc = anvil.transformLocal(fresh, proc)
+          proc = anvil.transformLocal(proc)
           output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "local"), proc.prettyST(anvil.printer))
           pass = pass + 1
         }
@@ -469,20 +469,16 @@ import Anvil._
       }
     }
 
-    val maxRegisters: TempVector = {
-      val tmc = TempMaxCounter(anvil, HashSet.empty, TempVector.empty)
-      tmc.transform_langastIRProgram(program)
-      tmc.r
-    }
+    val maxRegisters = programMaxTemps(anvil, program)
 
     val header: ST = {
       var globalParamSTs = ISZ[ST]()
       for (entry <- anvil.procedureParamInfo(PBox(main))._2.entries) {
-        globalParamSTs = globalParamSTs :+ st"- parameter ${entry._1}: ${entry._2.tipe} @[offset = ${entry._2.offset}, size = ${entry._2.size}, data-size = ${entry._2.dataSize}]"
+        globalParamSTs = globalParamSTs :+ st"- parameter ${entry._1}: ${entry._2.tipe} @[offset = ${entry._2.loc}, size = ${entry._2.size}, data-size = ${entry._2.dataSize}]"
       }
       for (pair <- globalMap.entries) {
         val (name, info) = pair
-        globalParamSTs = globalParamSTs :+ st"- global ${(name, ".")}: ${info.tipe} @[offset = ${info.offset}, size = ${info.size}, data-size = ${info.dataSize}]"
+        globalParamSTs = globalParamSTs :+ st"- global ${(name, ".")}: ${info.tipe} @[offset = ${info.loc}, size = ${info.size}, data-size = ${info.dataSize}]"
       }
       st"""/*
           |   Note that globalSize = $globalSize and maxRegisters = $maxRegisters
@@ -1075,7 +1071,7 @@ import Anvil._
       return p
     }
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-    val descOffset = procedureParamInfo(PBox(p))._2.get(sfDescId).get.offset
+    val descOffset = procedureParamInfo(PBox(p))._2.get(sfDescId).get.loc
     val desc = procedureDesc(PBox(p))
     var grounds = ISZ[AST.IR.Stmt.Ground]()
 
@@ -1444,6 +1440,7 @@ import Anvil._
             val liveTemps = exitSet.value.get(b.label).get(stmtIndex).elements
             val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
             val called = procedureMap.get(mc).get
+            val maxTemps = procMaxTemps(this, PBox(p)).max(procMaxTemps(this, PBox(called)))
             val registerSpace: Z = {
               var regs: Z = 0
               for (liveTemp <- liveTemps) {
@@ -1472,11 +1469,11 @@ import Anvil._
 
             val returnInfo = paramInfo.get(returnLocalId).get
             var locals = ISZ[Intrinsic.Decl.Local](
-              Intrinsic.Decl.Local(returnInfo.offset, returnInfo.totalSize, returnLocalId, returnInfo.tipe)
+              Intrinsic.Decl.Local(returnInfo.loc, returnInfo.totalSize, returnLocalId, returnInfo.tipe)
             )
             if (called.tipe.ret != AST.Typed.unit) {
               val resultInfo = paramInfo.get(resultLocalId).get
-              locals = locals :+ Intrinsic.Decl.Local(resultInfo.offset, resultInfo.totalSize, resultLocalId,
+              locals = locals :+ Intrinsic.Decl.Local(resultInfo.loc, resultInfo.totalSize, resultLocalId,
                 resultInfo.tipe)
             }
             if (config.stackTrace) {
@@ -1484,18 +1481,33 @@ import Anvil._
               val sfLocInfo = paramInfo.get(sfLocId).get
               val sfDescInfo = paramInfo.get(sfDescId).get
               val sfCurrentInfo = paramInfo.get(sfCurrentId).get
-              locals = locals :+ Intrinsic.Decl.Local(sfCallerInfo.offset, sfCallerInfo.totalSize, sfCallerId, sfCallerInfo.tipe)
-              locals = locals :+ Intrinsic.Decl.Local(sfLocInfo.offset, sfLocInfo.totalSize, sfLocId, sfLocInfo.tipe)
-              locals = locals :+ Intrinsic.Decl.Local(sfDescInfo.offset, sfDescInfo.totalSize, sfDescId, sfDescInfo.tipe)
-              locals = locals :+ Intrinsic.Decl.Local(sfCurrentInfo.offset, sfCurrentInfo.totalSize, sfCurrentId, sfCurrentInfo.tipe)
+              locals = locals :+ Intrinsic.Decl.Local(sfCallerInfo.loc, sfCallerInfo.totalSize, sfCallerId, sfCallerInfo.tipe)
+              locals = locals :+ Intrinsic.Decl.Local(sfLocInfo.loc, sfLocInfo.totalSize, sfLocId, sfLocInfo.tipe)
+              locals = locals :+ Intrinsic.Decl.Local(sfDescInfo.loc, sfDescInfo.totalSize, sfDescId, sfDescInfo.tipe)
+              locals = locals :+ Intrinsic.Decl.Local(sfCurrentInfo.loc, sfCurrentInfo.totalSize, sfCurrentId, sfCurrentInfo.tipe)
             }
             val isMain = procedureMod(called.context) == PMod.Main
-            for (param <- ops.ISZOps(called.paramNames).zip(called.tipe.args)) {
-              val info = paramInfo.get(param._1).get
-              val t: AST.Typed = if (isMain || isScalar(param._2)) param._2 else spType
-              locals = locals :+ Intrinsic.Decl.Local(info.offset, info.totalSize, param._1, t)
+            var tempGrounds = ISZ[AST.IR.Stmt.Ground]()
+            if (config.tempLocal) {
+              for (param <- ops.ISZOps(called.paramNames).zip(called.tipe.args)) {
+                {
+                  val info = paramInfo.get(param._1).get
+                  locals = locals :+ Intrinsic.Decl.Local(info.loc, info.totalSize, param._1, param._2)
+                }
+                if (isMain && !isScalar(param._2)) {
+                  val info = paramInfo.get(s"${param._1}$dataId").get
+                  locals = locals :+ Intrinsic.Decl.Local(info.loc, info.totalSize, param._1, param._2)
+                }
+              }
+              tempGrounds = tempGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(F, F, locals, e.pos))
+            } else {
+              for (param <- ops.ISZOps(called.paramNames).zip(called.tipe.args)) {
+                val info = paramInfo.get(param._1).get
+                val t: AST.Typed = if (isMain || isScalar(param._2)) param._2 else spType
+                locals = locals :+ Intrinsic.Decl.Local(info.loc, info.totalSize, param._1, t)
+              }
+              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(F, F, locals, e.pos))
             }
-            grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(F, F, locals, e.pos))
             grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
               AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
               isSigned(returnInfo.tipe), returnInfo.totalSize,
@@ -1506,14 +1518,14 @@ import Anvil._
               val n = callResultOffsetMap.get(callResultId(e.id, e.pos)).get - (spAdd + registerSpace)
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
-                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, resultInfo.offset, e.pos), e.pos),
+                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, resultInfo.loc, e.pos), e.pos),
                 isSigned(spType), typeByteSize(spType),
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
                   AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -n, e.pos), e.pos),
-                st"$resultLocalId@${resultInfo.offset} = $n", spType, e.pos))
+                st"$resultLocalId@${resultInfo.loc} = $n", spType, e.pos))
             }
             if (config.stackTrace) {
-              val n = procedureParamInfo(PBox(p))._2.get(sfCallerId).get.offset -
+              val n = procedureParamInfo(PBox(p))._2.get(sfCallerId).get.loc -
                 (spAdd + registerSpace)
               val sfCallerInfo = paramInfo.get(sfCallerId).get
               val sfCurrentInfo = paramInfo.get(sfCurrentId).get
@@ -1522,25 +1534,40 @@ import Anvil._
                 AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -n, e.pos), e.pos)
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
-                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, sfCallerInfo.offset, e.pos), e.pos),
+                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, sfCallerInfo.loc, e.pos), e.pos),
                 isSigned(spType), typeByteSize(spType), callerRhsOffset,
-                st"$sfCallerId@${sfCallerInfo.offset} = $n", spType, e.pos))
+                st"$sfCallerId@${sfCallerInfo.loc} = $n", spType, e.pos))
               val currentRhsOffset = AST.IR.Exp.Binary(spType,
                 AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
-                AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, sfCallerInfo.offset, e.pos), e.pos)
+                AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, sfCallerInfo.loc, e.pos), e.pos)
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
                 AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
-                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, sfCurrentInfo.offset, e.pos), e.pos),
+                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, sfCurrentInfo.loc, e.pos), e.pos),
                 isSigned(spType), typeByteSize(spType), currentRhsOffset,
-                st"$sfCurrentId@${sfCurrentInfo.offset} = ${sfCallerInfo.offset}", spType, e.pos))
+                st"$sfCurrentId@${sfCurrentInfo.loc} = ${sfCallerInfo.loc}", spType, e.pos))
             }
-            for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(mc.t.args)).zip(e.args)) {
-              val ((pid, pt), parg) = param
-              val t: AST.Typed = if (isScalar(pt)) pt else spType
-              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-                AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
-                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, paramInfo.get(pid).get.offset, e.pos), e.pos),
-                isSigned(t), typeByteSize(t), parg, st"$pid = ${parg.prettyST(printer)}", t, parg.pos))
+            if (config.tempLocal) {
+              var currMaxTemps = maxTemps
+              for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(called.tipe.args)).zip(e.args)) {
+                val ((pid, pt), parg) = param
+                val tempType: AST.Typed =
+                  if (config.splitTempSizes) if (isScalar(pt)) pt else spType
+                  else AST.Typed.u64
+                val temp = currMaxTemps.typeCount(this, tempType)
+                currMaxTemps = currMaxTemps.incType(this, tempType)
+                grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, parg, parg.pos)
+                tempGrounds = tempGrounds :+ AST.IR.Stmt.Assign.Temp(paramInfo.get(pid).get.loc,
+                  AST.IR.Exp.Temp(temp, pt, parg.pos), parg.pos)
+              }
+            } else {
+              for (param <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(mc.t.args)).zip(e.args)) {
+                val ((pid, pt), parg) = param
+                val t: AST.Typed = if (isScalar(pt)) pt else spType
+                grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+                  AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
+                    AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, paramInfo.get(pid).get.loc, e.pos), e.pos),
+                  isSigned(t), typeByteSize(t), parg, st"$pid = ${parg.prettyST(printer)}", t, parg.pos))
+              }
             }
             var rgrounds = ISZ[AST.IR.Stmt.Ground]()
             var i: Z = 0
@@ -1575,7 +1602,7 @@ import Anvil._
                 val t: AST.Typed = if (isScalar(called.tipe.ret)) called.tipe.ret else spType
                 var rhsOffset: AST.IR.Exp = AST.IR.Exp.Binary(spType,
                   AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
-                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, paramInfo.get(resultLocalId).get.offset, g.pos), g.pos)
+                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, paramInfo.get(resultLocalId).get.loc, g.pos), g.pos)
                 if (isScalar(called.tipe.ret)) {
                   rhsOffset = AST.IR.Exp.Intrinsic(Intrinsic.Load(rhsOffset,
                     isSigned(spType), typeByteSize(spType), st"", t, g.pos))
@@ -1586,8 +1613,14 @@ import Anvil._
                 bgrounds = rgrounds ++ bgrounds
             }
             addBeginningMap = addBeginningMap + label ~> bgrounds
-            blocks = blocks :+ b(grounds = grounds,
-              jump = AST.IR.Jump.Goto(called.body.asInstanceOf[AST.IR.Body.Basic].blocks(0).label, e.pos))
+            val calledLabel = called.body.asInstanceOf[AST.IR.Body.Basic].blocks(0).label
+            if (tempGrounds.nonEmpty) {
+              val tempLabel = fresh.label()
+              blocks = blocks :+ b(grounds = grounds, jump = AST.IR.Jump.Goto(tempLabel, e.pos))
+              blocks = blocks :+ AST.IR.BasicBlock(tempLabel, tempGrounds, AST.IR.Jump.Goto(calledLabel, e.pos))
+            } else {
+              blocks = blocks :+ b(grounds = grounds, jump = AST.IR.Jump.Goto(calledLabel, e.pos))
+            }
           }
           def processInvokeH(stmtIndex: Z, g: AST.IR.Stmt.Ground, lhsOpt: Option[Z], e: AST.IR.Exp.Apply, lbl: Z): Unit = {
             th.nameMap.get(e.owner :+ e.id) match {
@@ -1890,8 +1923,7 @@ import Anvil._
       m = m + sfLocId ~> VarInfo(isScalar(sfLocType), maxOffset, typeByteSize(sfLocType), 0, sfLocType, p.pos)
       maxOffset = maxOffset + typeByteSize(sfLocType)
 
-      //val mdesc = procedureDesc(p)
-      val mdescType = typeShaType //allocTypeNamed(T, mdesc.size)
+      val mdescType = typeShaType
       m = m + sfDescId ~> VarInfo(isScalar(mdescType), maxOffset, typeByteSize(mdescType), 0, mdescType, p.pos)
       maxOffset = maxOffset + typeByteSize(mdescType)
 
@@ -1899,7 +1931,21 @@ import Anvil._
       maxOffset = maxOffset + typeByteSize(spType)
     }
 
-    {
+    if (config.tempLocal) {
+      var tv = TempVector.empty
+      for (param <- ops.ISZOps(p.paramNames).zip(p.tipe.args)) {
+        val (id, tipe) = param
+        val tempType: AST.Typed = if (config.splitTempSizes) if (isScalar(tipe)) tipe else spType else AST.Typed.u64
+        val localTemp = tv.typeCount(this, tempType)
+        tv = tv.incType(this, tempType)
+        m = m + id ~> VarInfo(T, localTemp, 0, 0, if (isScalar(tipe)) tipe else spType, p.pos)
+        if (isMain && !isScalar(tipe)) {
+          val size = typeByteSize(tipe)
+          m = m + s"$id$dataId" ~> VarInfo(F, maxOffset, size, 0, tipe, p.pos)
+          maxOffset = maxOffset + size
+        }
+      }
+    } else {
       for (param <- ops.ISZOps(p.paramNames).zip(p.tipe.args)) {
         val (id, t) = param
         val dataSize: Z = if (isMain && !isScalar(t)) typeByteSize(t) else 0
@@ -1912,30 +1958,18 @@ import Anvil._
     return (maxOffset, m)
   }
 
-  def transformLocal(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
-    var body = p.body.asInstanceOf[AST.IR.Body.Basic]
+  def transformLocal(p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     val paramInfo = procedureParamInfo(PBox(p))._2
     var tv = TempVector.empty
     var localTempMap: HashSMap[Z, HashSMap[String, Z]] = {
       var m = HashSMap.empty[String, Z]
-      var stmts = ISZ[AST.IR.Stmt.Ground]()
-      for (entry <- paramInfo.entries if !ignoredTempLocal.contains(entry._1)) {
-        val id = entry._1
-        val tipe = entry._2.tipe
-        var t: AST.Typed = if (config.splitTempSizes) tipe else AST.Typed.u64
-        val temp = tv.typeCount(this, t)
+      for (entry <- paramInfo.entries if !ignoredTempLocal.contains(entry._1) && isScalar(entry._2.tipe)) {
+        val t: AST.Typed = if (config.splitTempSizes) entry._2.tipe else AST.Typed.u64
+        m = m + entry._1 ~> tv.typeCount(this, t)
         tv = tv.incType(this, t)
-        m = m + id ~> temp
-        t = if (isScalar(tipe)) tipe else spType
-        stmts = stmts :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp,
-          AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)),
-            AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, entry._2.offset, p.pos), p.pos),
-          isSigned(t), typeByteSize(t), st"$id", tipe, p.pos))
       }
-      val label = fresh.label()
-      val first = body.blocks(0)
-      body = body(blocks = AST.IR.BasicBlock(first.label, stmts, AST.IR.Jump.Goto(label, p.pos)) +: body.blocks(0 ~> first(label = label)))
-      HashSMap.empty[Z, HashSMap[String, Z]] + first.label ~> m
+      HashSMap.empty[Z, HashSMap[String, Z]] + body.blocks(0).label ~> m
     }
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
     var work = ISZ(body.blocks(0).label)
@@ -2003,7 +2037,7 @@ import Anvil._
     val incomingMap = countNumOfIncomingJumps(body.blocks)
     val paramSet = HashSet ++ proc.paramNames
     blockLocalOffsetMap = blockLocalOffsetMap + body.blocks(0).label ~> (maxOffset, 0, LocalOffsetInfo(
-      HashMap.empty[String, Z] ++ (for (entry <- offsetParamInfo._2.entries) yield (entry._1, entry._2.offset)), ISZ()))
+      HashMap.empty[String, Z] ++ (for (entry <- offsetParamInfo._2.entries) yield (entry._1, entry._2.loc)), ISZ()))
     var work = ISZ(body.blocks(0))
     while (work.nonEmpty) {
       var next = ISZ[AST.IR.BasicBlock]()
@@ -2052,7 +2086,7 @@ import Anvil._
               g match {
                 case AST.IR.Stmt.Assign.Global(name, tipe, rhs, pos) =>
                   val newRhs = OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
-                  val globalOffset = AST.IR.Exp.Int(spType, globalMap.get(name).get.offset, pos)
+                  val globalOffset = AST.IR.Exp.Int(spType, globalMap.get(name).get.loc, pos)
                   if (isScalar(tipe)) {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(globalOffset, isSigned(tipe),
                       typeByteSize(tipe), newRhs, g.prettyST(printer), tipe, g.pos))
@@ -2118,7 +2152,7 @@ import Anvil._
                       }
                     case rhs: AST.IR.Exp.GlobalVarRef =>
                       val temp = n
-                      val globalOffset = AST.IR.Exp.Int(spType, globalMap.get(rhs.name).get.offset, rhs.pos)
+                      val globalOffset = AST.IR.Exp.Int(spType, globalMap.get(rhs.name).get.loc, rhs.pos)
                       val t: AST.Typed = if (isScalar(rhs.tipe)) rhs.tipe else spType
                       if (isScalar(rhs.tipe)) {
                         grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp, globalOffset, isSigned(t),
@@ -2475,18 +2509,18 @@ import Anvil._
       val memSizeInfo = globalMap.get(memSizeName).get
       val sha3t = sha3Type(displayType)
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-        AST.IR.Exp.Int(spType, memInfo.offset, p.pos), isSigned(spType), typeByteSize(spType),
-        AST.IR.Exp.Int(spType, memTypeInfo.offset, p.pos), st"${memName(0)}", spType, p.pos))
+        AST.IR.Exp.Int(spType, memInfo.loc, p.pos), isSigned(spType), typeByteSize(spType),
+        AST.IR.Exp.Int(spType, memTypeInfo.loc, p.pos), st"${memName(0)}", spType, p.pos))
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-        AST.IR.Exp.Int(spType, memTypeInfo.offset, p.pos), isSigned(typeShaType), typeShaSize,
+        AST.IR.Exp.Int(spType, memTypeInfo.loc, p.pos), isSigned(typeShaType), typeShaSize,
         AST.IR.Exp.Int(typeShaType, sha3t.toZ, p.pos), st"memory $typeFieldId ($displayType: 0x$sha3t)", typeShaType, p.pos))
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-        AST.IR.Exp.Int(spType, memSizeInfo.offset, p.pos),
+        AST.IR.Exp.Int(spType, memSizeInfo.loc, p.pos),
         isSigned(AST.Typed.z), typeByteSize(AST.Typed.z),
         AST.IR.Exp.Int(AST.Typed.z, config.memory, p.pos), st"memory $sizeFieldId", AST.Typed.z, p.pos))
       val sfCallerInfo = procedureParamInfo(PBox(p))._2.get(sfCallerId).get
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-        AST.IR.Exp.Int(spType, globalSize + sfCallerInfo.offset, p.pos), isSigned(spType), typeByteSize(spType),
+        AST.IR.Exp.Int(spType, globalSize + sfCallerInfo.loc, p.pos), isSigned(spType), typeByteSize(spType),
         AST.IR.Exp.Int(spType, 0, p.pos), st"$sfCallerId = 0", spType, p.pos))
     }
     if (config.shouldPrint) {
@@ -2494,19 +2528,19 @@ import Anvil._
       val displayInfo = globalMap.get(displayName).get
       val sha3t = sha3Type(displayType)
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-        AST.IR.Exp.Int(typeShaType, displayInfo.offset + typeByteSize(spType), p.pos), isSigned(typeShaType), typeShaSize,
+        AST.IR.Exp.Int(typeShaType, displayInfo.loc + typeByteSize(spType), p.pos), isSigned(typeShaType), typeShaSize,
         AST.IR.Exp.Int(typeShaType, sha3t.toZ, p.pos), st"$displayId.$typeFieldId ($displayType: 0x$sha3t)", typeShaType, p.pos))
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-        AST.IR.Exp.Int(spType, displayInfo.offset + typeByteSize(spType) + typeByteSize(typeShaType), p.pos),
+        AST.IR.Exp.Int(spType, displayInfo.loc + typeByteSize(spType) + typeByteSize(typeShaType), p.pos),
         isSigned(AST.Typed.z), typeByteSize(AST.Typed.z),
         AST.IR.Exp.Int(AST.Typed.z, dpMask + 1, p.pos), st"$displayId.size", AST.Typed.z, p.pos))
     }
     val paramInfo = procedureParamInfo(PBox(p))._2
     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-      AST.IR.Exp.Int(cpType, globalSize + paramInfo.get(returnLocalId).get.offset, p.pos), isSigned(cpType), typeByteSize(cpType),
+      AST.IR.Exp.Int(cpType, globalSize + paramInfo.get(returnLocalId).get.loc, p.pos), isSigned(cpType), typeByteSize(cpType),
       AST.IR.Exp.Int(cpType, 0, p.pos), st"$returnLocalId", cpType, p.pos))
     if (p.tipe.ret != AST.Typed.unit) {
-      val offset = paramInfo.get(resultLocalId).get.offset
+      val offset = paramInfo.get(resultLocalId).get.loc
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(spType, offset, p.pos), isSigned(spType), typeByteSize(spType),
         AST.IR.Exp.Int(spType, offset + typeByteSize(spType), p.pos), st"data address of $resultLocalId (size = ${typeByteSize(p.tipe.ret)})", spType, p.pos))
@@ -2515,8 +2549,8 @@ import Anvil._
       val info = paramInfo.get(pid).get
       if (!isScalar(info.tipe)) {
         grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-          AST.IR.Exp.Int(spType, info.offset, p.pos), isSigned(spType), typeByteSize(spType),
-          AST.IR.Exp.Int(spType, info.offset + typeByteSize(spType), p.pos), st"data address of $pid (size = ${typeByteSize(info.tipe)})", spType, p.pos))
+          AST.IR.Exp.Int(spType, info.loc, p.pos), isSigned(spType), typeByteSize(spType),
+          AST.IR.Exp.Int(spType, info.loc + typeByteSize(spType), p.pos), st"data address of $pid (size = ${typeByteSize(info.tipe)})", spType, p.pos))
       }
     }
     return p(body = body(AST.IR.BasicBlock(fresh.label(), grounds, AST.IR.Jump.Goto(startingLabel, p.pos)) +: body.blocks))
@@ -2954,4 +2988,13 @@ import Anvil._
     if (isImmutable) AST.Typed.isName else AST.Typed.msName,
     ISZ(AST.Typed.Name(ISZ(s"$numOfBytes"), ISZ()), AST.Typed.u8))
 
+  @memoize def procMaxTemps(anvil: Anvil, pbox: PBox): TempVector = {
+    val tmc = TempMaxCounter(anvil, HashSet.empty, TempVector.empty)
+    tmc.transform_langastIRProcedure(pbox.p)
+    if (anvil.config.splitTempSizes) {
+      return tmc.r
+    } else {
+      return TempVector.empty.setType(anvil, AST.Typed.u64, tmc.r.totalCount)
+    }
+  }
 }

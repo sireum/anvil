@@ -137,7 +137,7 @@ object Util {
       }
     }
     override def post_langastIRExpGlobalVarRef(o: AST.IR.Exp.GlobalVarRef): MOption[AST.IR.Exp] = {
-      val globalOffset = AST.IR.Exp.Int(anvil.spType, globalMap.get(o.name).get.offset, o.pos)
+      val globalOffset = AST.IR.Exp.Int(anvil.spType, globalMap.get(o.name).get.loc, o.pos)
       if (anvil.isScalar(o.tipe)) {
         return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(globalOffset, anvil.isSigned(o.tipe),
           anvil.typeByteSize(o.tipe), st"", o.tipe, o.pos)))
@@ -829,7 +829,14 @@ object Util {
     @strictpure def jump(j: AST.IR.Jump): Option[ST] = None()
   }
 
-  @datatype class TempVector(val unsigneds: ISZ[Z], val signeds: HashMap[Z, Z], val fp32Count: Z, val fp64Count: Z) {
+  @datatype class TempVector(val unsigneds: ISZ[Z], val signeds: HashSMap[Z, Z], val fp32Count: Z, val fp64Count: Z) {
+    @strictpure def combine(other: TempVector, f: (Z, Z) => Z @pure): TempVector = TempVector(
+      unsigneds = for (pair <- ops.ISZOps(unsigneds).zip(other.unsigneds)) yield f(pair._1, pair._2),
+      signeds = HashSMap.empty[Z, Z] ++ (for (entry <- signeds.entries) yield (entry._1, f(entry._2, other.signeds.get(entry._1).get))),
+      fp32Count = f(fp32Count, other.fp32Count),
+      fp64Count = f(fp64Count, other.fp64Count)
+    )
+    @strictpure def max(other: TempVector): TempVector = combine(other, (n: Z, m: Z) => if (n < m) m else n)
     @strictpure def unsignedCount(bitWidth: Z): Z = {
       assert(1 <= bitWidth & bitWidth <= 64)
       unsigneds(bitWidth - 1)
@@ -885,8 +892,14 @@ object Util {
     }
     @pure def incParams(anvil: Anvil, m: HashSMap[String, Anvil.VarInfo]): TempVector = {
       var r = this
-      for (info <- m.values) {
-        r = r.incType(anvil, info.tipe)
+      if (anvil.config.tempLocal) {
+        for (idInfo <- m.entries if !ignoredTempLocal.contains(idInfo._1) && anvil.isScalar(idInfo._2.tipe)) {
+          r = r.incType(anvil, idInfo._2.tipe)
+        }
+      } else {
+        for (info <- m.values) {
+          r = r.incType(anvil, info.tipe)
+        }
       }
       return r
     }
@@ -962,7 +975,7 @@ object Util {
 
   object TempVector {
     @strictpure def empty: TempVector = TempVector(ISZ.create(64, 0),
-      HashMap.empty[Z, Z] ++ (for (i <- ISZ(8, 16, 32, 64)) yield (i, 0)), 0, 0)
+      HashSMap.empty[Z, Z] ++ (for (i <- ISZ(8, 16, 32, 64)) yield (i, 0)), 0, 0)
   }
 
   @record class ScalarLocalTempCounter(val anvil: Anvil, var r: TempVector) extends MAnvilIRTransformer {
@@ -1057,6 +1070,7 @@ object Util {
   val sfCurrentId: String = "$sfCurrentId"
   val sfLocId: String = "$sfLoc"
   val sfDescId: String = "$sfDesc"
+  val dataId: String = "$data"
   val testId: String = "$test"
   val testNumName: ISZ[String] = ISZ("$testNum")
   val sfLocType: AST.Typed.Name = AST.Typed.u32
@@ -1172,5 +1186,11 @@ object Util {
       }
     }
     return if (changed) Some(st"${(lines, "\n")}".render) else None()
+  }
+
+  @pure def programMaxTemps(anvil: Anvil, p: AST.IR.Program): TempVector = {
+    val tmc = TempMaxCounter(anvil, HashSet.empty, TempVector.empty)
+    tmc.transform_langastIRProgram(p)
+    return tmc.r
   }
 }

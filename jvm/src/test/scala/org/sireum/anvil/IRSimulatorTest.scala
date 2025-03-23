@@ -33,10 +33,10 @@ object IRSimulatorTest {
   val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
   val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result-sim"
   val errAsOut: Boolean = T
-  val singleTemp = "single-temp"
-  val splitTemp = "split-temp"
-  val memLocal = "mem-local"
-  val tempLocal = "temp-local"
+  val singleTempId = "single-temp"
+  val splitTempId = "split-temp"
+  val memLocalId = "mem-local"
+  val tempLocalId = "temp-local"
 }
 
 import IRSimulatorTest._
@@ -56,10 +56,10 @@ class IRSimulatorTest extends SireumRcSpec {
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
-      r = r :+ (k.dropRight(1) :+ s"${k.last} ($singleTemp, $memLocal)", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} ($singleTemp, $tempLocal)", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} ($splitTemp, $memLocal)", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} ($splitTemp, $tempLocal)", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} ($singleTempId, $memLocalId)", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} ($singleTempId, $tempLocalId)", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} ($splitTempId, $memLocalId)", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} ($splitTempId, $tempLocalId)", v)
       r
     }) yield pair
   }
@@ -105,9 +105,10 @@ class IRSimulatorTest extends SireumRcSpec {
       return r
     } catch {
       case t: Throwable =>
-        val sw = new java.io.PrintWriter(new java.io.StringWriter)
-        t.printStackTrace(sw)
+        val sw = new java.io.StringWriter
+        t.printStackTrace(new java.io.PrintWriter(sw))
         sw.flush()
+        eprintln(sw.toString)
         System.out.flush()
         System.err.flush()
         throw t
@@ -139,15 +140,17 @@ class IRSimulatorTest extends SireumRcSpec {
           }
           out.removeAll()
           var config = Anvil.Config.empty
+          val splitTempSizes = p.last.contains(splitTempId)
+          val tempLocal = p.last.contains(tempLocalId)
           config = config(
-            memory = AnvilTest.memoryFileMap.get(file).getOrElse(AnvilTest.defaultMemory),
+            memory = AnvilTest.memoryFileMap(splitTempSizes, tempLocal).get(file).getOrElse(AnvilTest.defaultMemory),
             printSize = AnvilTest.printFileMap.get(file).getOrElse(AnvilTest.defaultPrintSize),
             stackTrace = AnvilTest.stackTraceFileSet.contains(file),
             erase = AnvilTest.eraseFileSet.contains(file),
             maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(AnvilTest.defaultMaxArraySize),
             runtimeCheck = T,
-            splitTempSizes = p.last.contains(splitTemp),
-            tempLocal = p.last.contains(tempLocal)
+            splitTempSizes = splitTempSizes,
+            tempLocal = tempLocal
           )
           Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, new Anvil.Output {
             def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
@@ -161,11 +164,11 @@ class IRSimulatorTest extends SireumRcSpec {
             case Some(ir) =>
               val state = IRSimulator.State.create(ir.anvil.config.splitTempSizes, ir.anvil.config.memory,
                 ir.maxRegisters, ir.globalInfoMap)
-              val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.offset
+              val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.loc
               var locals = ISZ[Intrinsic.Decl.Local]()
               for (entry <- ir.anvil.procedureParamInfo(Util.PBox(ir.procedure))._2.entries) {
                 val (id, info) = entry
-                locals = locals :+ Intrinsic.Decl.Local(info.offset, info.totalSize, id, info.tipe)
+                locals = locals :+ Intrinsic.Decl.Local(info.loc, info.totalSize, id, info.tipe)
               }
               IRSimulator.State.Edit.Temp(
                 IRSimulator.State.Edit.Temp.Kind.SP,
@@ -184,7 +187,7 @@ class IRSimulatorTest extends SireumRcSpec {
               IRSimulator(ir.anvil).evalProcedure(state, ir.procedure)
               val displaySize = ir.anvil.config.printSize
               if (ir.anvil.config.shouldPrint) {
-                val offset = ir.globalInfoMap.get(Util.displayName).get.offset +
+                val offset = ir.globalInfoMap.get(Util.displayName).get.loc +
                   ir.anvil.typeShaSize + ir.anvil.typeByteSize(AST.Typed.z)
                 val dp = state.DP.toZ
                 val (lo, hi): (Z, Z) = if (dp < displaySize) (0, dp) else (dp, displaySize + dp - 1)

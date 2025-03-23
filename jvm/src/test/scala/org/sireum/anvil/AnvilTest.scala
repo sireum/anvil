@@ -29,24 +29,28 @@ import org.sireum.anvil.AnvilTest.maxArrayFileMap
 import org.sireum.test._
 
 object AnvilTest {
-  val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
-    "add.sc" ~> (128 + 8 * 4) +
-    "assert.sc" ~> (256 + 8 * 20) +
-    "bubble.sc" ~> (128 + 8 * 12) +
-    "construct.sc" ~> (256 + 8 * 3) +
-    "divrem.sc" ~> (128 + 8 * 7) +
-    "factorial.sc" ~> (128 + 8 * 6) +
-    "global.sc" ~> (128 + 8 * 3) +
-    "instanceof.sc" ~> (128 + 8 * 3) +
-    "local-reuse.sc" ~> (128 + 8 * 5) +
-    "mult.sc" ~> (128 + 8 * 10) +
-    "print.sc" ~> (1024 + 8 * 24) +
-    "print-no-float.sc" ~> (256 + 8 * 11) +
-    "printU64.sc" ~> (128 + 8 * 11) +
-    "seq.sc" ~> (256 + 8 * 2) +
-    "shiftS64.sc" ~> (256 + 8 * 3) +
-    "shiftU64.sc" ~> (256 + 8 * 3) +
-    "sum.sc" ~> (256 + 8 * 7)
+  @memoize def memoryFileMap(splitTempSizes: B, tempLocal: B): HashMap[String, Z] = {
+    return HashMap.empty[String, Z] +
+      "add.sc" ~> (if (tempLocal) 128  else 128 + 8 * 4) +
+      "assert.sc" ~> (if (tempLocal) 256 + 8 * 8 else 256 + 8 * 14) +
+      "bubble.sc" ~> (if (tempLocal) 128 + 8 * 8 else 128 + 8 * 12) +
+      "construct.sc" ~> (if (tempLocal) 256 + 8 * 0 else 256 + 8 * 3) +
+      "divrem.sc" ~> (if (tempLocal) 128 + 8 * 4 else 128 + 8 * 7) +
+      "factorial.sc" ~> (if (tempLocal) 128 + 8 * 2 else 128 + 8 * 6) +
+      "global.sc" ~> (if (tempLocal) 64 + 8 * 7 else 128 + 8 * 3) +
+      "instanceof.sc" ~> (if (tempLocal) 128 else 128 + 8 * 3) +
+      "local-reuse.sc" ~> (if (tempLocal) 128 + 8 * 1 else 128 + 8 * 4) +
+      "mult.sc" ~> (if (tempLocal) 128 + 8 * 6 else 128 + 8 * 10) +
+      "print.sc" ~> (if (tempLocal) 768 + 8 * 23  else 768 + 8 * 23) +
+      "print-no-float.sc" ~> (if (tempLocal) 256 + 8 * 6 else 256 + 8 * 9) +
+      "printU64.sc" ~> (if (tempLocal) 128 + 8 * 5 else 128 + 8 * 11) +
+      "seq.sc" ~> (if (tempLocal) 128 + 8 * 14 else 256 + 8 * 2) +
+      "shiftS64.sc" ~> (if (tempLocal) 128 + 8 * 14 else 256 + 8 * 3) +
+      "shiftU64.sc" ~> (if (tempLocal) 128 + 8 * 13 else 256 + 8 * 3) +
+      "sum.sc" ~> (
+        if (splitTempSizes) if (tempLocal) 128 + 8 * 16 else 256 + 8 * 7
+        else if (tempLocal) 128 + 8 * 15 else 256 + 8 * 6)
+  }
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "sum.sc" ~> 3
   val printFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "add.sc" ~> 16 +
@@ -92,13 +96,18 @@ class AnvilTest extends SireumRcSpec {
         (dir / path(0)).removeAll()
         var config = Anvil.Config.empty
         val file = path(path.size - 1)
+        val splitTempSizes = T
+        val tempLocal = T
         config = config(
-          memory = AnvilTest.memoryFileMap.get(file).getOrElse(AnvilTest.defaultMemory),
+          memory = AnvilTest.memoryFileMap(T, T).get(file).getOrElse(AnvilTest.defaultMemory),
           printSize = AnvilTest.printFileMap.get(file).getOrElse(AnvilTest.defaultPrintSize),
           stackTrace = AnvilTest.stackTraceFileSet.contains(file),
           erase = AnvilTest.eraseFileSet.contains(file),
           maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(AnvilTest.defaultMaxArraySize),
-          runtimeCheck = T)
+          runtimeCheck = T,
+          splitTempSizes = splitTempSizes,
+          tempLocal = tempLocal
+        )
         val out = dir /+ ISZ(path.map(String(_)): _*)
         Anvil.synthesize(!AnvilTest.dontTestFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
           new Anvil.Output {

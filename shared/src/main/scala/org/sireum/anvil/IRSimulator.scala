@@ -68,10 +68,10 @@ object IRSimulator {
         for (entry <- globalMap.entries) {
           val (name, info) = entry
           if (info.isScalar) {
-            val v = sim.load(memory, info.offset, info.size)._1
-            globalSTs = globalSTs :+ st"${(name, ".")}@[${shortenHexString(conversions.Z.toU64(info.offset))} (${info.offset}), ${info.size}] = ${shortenHexString(v)} (${v.toZ})"
+            val v = sim.load(memory, info.loc, info.size)._1
+            globalSTs = globalSTs :+ st"${(name, ".")}@[${shortenHexString(conversions.Z.toU64(info.loc))} (${info.loc}), ${info.size}] = ${shortenHexString(v)} (${v.toZ})"
           } else {
-            globalSTs = globalSTs :+ st"${(name, ".")}@[${shortenHexString(conversions.Z.toU64(info.offset))} (${info.offset}), ${info.size}] = ..."
+            globalSTs = globalSTs :+ st"${(name, ".")}@[${shortenHexString(conversions.Z.toU64(info.loc))} (${info.loc}), ${info.size}] = ..."
           }
         }
         Some(
@@ -86,9 +86,37 @@ object IRSimulator {
         for (entry <- callFrames.peek.get.entries) {
           val (id, info) = entry
           val offset = SP.value + info.loc
-          if (sim.anvil.isScalar(info.tipe)) {
+          if (sim.anvil.isScalar(info.tipe) || info.size == 0) {
             if (info.size == 0) {
-              localSTs = localSTs :+ st"$id = ${Util.tempST(sim.anvil, info.tipe, info.loc)}"
+              val t: AST.Typed =
+                if (sim.anvil.config.splitTempSizes) if (sim.anvil.isScalar(info.tipe)) info.tipe else sim.anvil.spType
+                else AST.Typed.u64
+              val value: Value = t match {
+                case AST.Typed.f32 => Value.fromF32(tempsF32(info.loc))
+                case AST.Typed.f64 => Value.fromF64(tempsF64(info.loc))
+                case _ =>
+                  val bitSize = sim.anvil.typeBitSize(t)
+                  if (sim.anvil.isSigned(t)) {
+                    bitSize match {
+                      case z"8" => Value.fromS8(tempsS8(info.loc))
+                      case z"16" => Value.fromS16(tempsS16(info.loc))
+                      case z"32" => Value.fromS32(tempsS32(info.loc))
+                      case z"64" => Value.fromS64(tempsS64(info.loc))
+                      case _ => halt(s"Infeasible: $bitSize")
+                    }
+                  } else {
+                    if (bitSize == 1) Value.fromB(temps1(info.loc))
+                    else if (bitSize <= 8) Value.fromU8(tempsU8(info.loc))
+                    else if (bitSize <= 16) Value.fromU16(tempsU16(info.loc))
+                    else if (bitSize <= 32) Value.fromU32(tempsU32(info.loc))
+                    else Value.fromU64(tempsU64(info.loc))
+                  }
+              }
+              if (sim.anvil.isScalar(info.tipe)) {
+                localSTs = localSTs :+ st"$id[${Util.tempST(sim.anvil, info.tipe, info.loc)}] = ${value.debugST}"
+              } else {
+                localSTs = localSTs :+ st"$id@[${value.debugST}, ${sim.anvil.typeByteSize(info.tipe)}] = ..."
+              }
             } else {
               val v = sim.load(memory, offset, info.size)._1
               val vh = shortenHexString(v)
