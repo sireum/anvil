@@ -196,6 +196,14 @@ class IRSimulatorTest extends SireumRcSpec {
                 }
                 val display = conversions.String.fromU8ms(u8ms)
                 print(display)
+
+                Util.postProcessStackTrace(ir.procDescMap, display) match {
+                  case Some(d) =>
+                    println()
+                    println("After post-processing stack trace, display is:")
+                    println(d)
+                  case _ =>
+                }
               }
             case _ =>
           }

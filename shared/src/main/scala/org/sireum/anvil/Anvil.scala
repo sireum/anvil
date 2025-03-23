@@ -83,7 +83,8 @@ object Anvil {
                      val procedure: AST.IR.Procedure,
                      val maxRegisters: TempVector,
                      val globalSize: Z,
-                     val globalInfoMap: HashSMap[QName, VarInfo])
+                     val globalInfoMap: HashSMap[QName, VarInfo],
+                     val procDescMap: HashSMap[U32, String])
 
   def synthesize(isTest: B, fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, name: QName, config: Config,
                  output: Output, reporter: Reporter): Unit = {
@@ -333,6 +334,8 @@ import Anvil._
     var program = mq._2
     val globalSize = mq._3
     val globalMap = mq._4
+    val procDescMap = HashSMap.empty[U32, String] ++
+      (for (p <- program.procedures) yield (sha3(procedureDesc(PBox(p))), procedureDesc(PBox(p))))
 
     output.add(F, ISZ("ir", s"$stage-initial.sir"), program.prettyST(printer))
 
@@ -527,7 +530,7 @@ import Anvil._
         id
     }
 
-    return Some(IR(anvil, name, program.procedures(0), maxRegisters, globalSize, globalMap))
+    return Some(IR(anvil, name, program.procedures(0), maxRegisters, globalSize, globalMap, procDescMap))
   }
 
   @pure def transformBlock(stage: Z, output: Output, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1073,27 +1076,15 @@ import Anvil._
     }
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     val descOffset = procedureParamInfo(PBox(p))._2.get(sfDescId).get.offset
-    val desc = conversions.String.toU8is(procedureDesc(p))
+    val desc = procedureDesc(PBox(p))
     var grounds = ISZ[AST.IR.Stmt.Ground]()
 
     val descTypeOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)),
       AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, descOffset, p.pos), p.pos)
-    val descSizeOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)),
-      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, descOffset + typeShaSize, p.pos), p.pos)
-    val sfDescType = sha3Type(AST.Typed.string)
+    val sfDescType = sha3(desc)
     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(descTypeOffset, isSigned(typeShaType),
-      typeByteSize(typeShaType), AST.IR.Exp.Int(typeShaType, sha3Type(AST.Typed.string).toZ, p.pos),
-      st"$sfDescId.type = 0x$sfDescType", typeShaType, p.pos))
-    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(descSizeOffset, isSigned(AST.Typed.z),
-      typeByteSize(AST.Typed.z), AST.IR.Exp.Int(AST.Typed.z, desc.size, p.pos),
-      st"$sfDescId.size = ${desc.size}", AST.Typed.z, p.pos))
-    val elementOffset = descOffset + typeShaSize + typeByteSize(AST.Typed.z)
-    for (i <- desc.indices) {
-      val offset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)),
-        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, i + elementOffset, p.pos), p.pos)
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(offset, F, 1,
-        AST.IR.Exp.Int(AST.Typed.u8, desc(i).toZ, p.pos), st"'${ops.COps(conversions.U32.toC(conversions.U8.toU32(desc(i)))).escapeString}'", AST.Typed.u8, p.pos))
-    }
+      typeByteSize(typeShaType), AST.IR.Exp.Int(typeShaType, sfDescType.toZ, p.pos),
+      st"$sfDescId = 0x$sfDescType ($desc)", typeShaType, p.pos))
     val label = fresh.label()
     val first = body.blocks(0)
     return p(body = body(blocks = AST.IR.BasicBlock(first.label, grounds, AST.IR.Jump.Goto(label, p.pos)) +: body.blocks(0 ~> first(label = label))))
@@ -1867,7 +1858,8 @@ import Anvil._
     return TempRenumberer(this, tempMap).transform_langastIRProcedure(proc).getOrElse(proc)
   }
 
-  @pure def procedureDesc(proc: AST.IR.Procedure): String = {
+  @memoize def procedureDesc(pbox: PBox): String = {
+    val proc = pbox.p
     var uri = proc.pos.uriOpt.get
     val i = ops.StringOps(uri).lastIndexOf('/')
     if (i >= 0) {
@@ -1898,8 +1890,8 @@ import Anvil._
       m = m + sfLocId ~> VarInfo(isScalar(sfLocType), maxOffset, typeByteSize(sfLocType), 0, sfLocType, p.pos)
       maxOffset = maxOffset + typeByteSize(sfLocType)
 
-      val mdesc = procedureDesc(p)
-      val mdescType = allocTypeNamed(T, mdesc.size)
+      //val mdesc = procedureDesc(p)
+      val mdescType = typeShaType //allocTypeNamed(T, mdesc.size)
       m = m + sfDescId ~> VarInfo(isScalar(mdescType), maxOffset, typeByteSize(mdescType), 0, mdescType, p.pos)
       maxOffset = maxOffset + typeByteSize(mdescType)
 

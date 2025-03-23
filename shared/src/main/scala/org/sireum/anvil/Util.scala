@@ -386,7 +386,13 @@ object Util {
               stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, rhs.args(0), displayIndexType, pos))
             } else if (idOps.s == "u2z") {
               stmts = stmts :+ stmt(rhs = AST.IR.Exp.Type(F, rhs.args(0), AST.Typed.z, pos))
-            } else if (idOps.startsWith("toRaw")) {
+            } else if (idOps.startsWith("u2RawU32")) {
+              val (t, mask) = (AST.Typed.u32, AST.IR.Exp.Int(AST.Typed.u32, 0xFFFFFFFF, pos))
+              var r: AST.IR.Exp = AST.IR.Exp.Binary(t, AST.IR.Exp.Type(F, arg, t, pos), AST.IR.Exp.Binary.Op.And,
+                mask, pos)
+              r = AST.IR.Exp.Type(F, r, rhs.tipe.asInstanceOf[AST.Typed.Name], pos)
+              stmts = stmts :+ stmt(rhs = r)
+            }  else if (idOps.startsWith("toRaw")) {
               val (t, mask): (AST.Typed.Name, AST.IR.Exp.Int) = anvil.typeByteSize(arg.tipe) match {
                 case z"1" => (AST.Typed.u8, AST.IR.Exp.Int(AST.Typed.u8, 0xFF, pos))
                 case z"2" => (AST.Typed.u16, AST.IR.Exp.Int(AST.Typed.u16, 0xFFFF, pos))
@@ -1134,5 +1140,37 @@ object Util {
           idx.pos), idx.pos)
       return AST.IR.Exp.Binary(anvil.spType, baseDataOffset, AST.IR.Exp.Binary.Op.Add, elementOffset, receiver.pos)
     }
+  }
+
+  @pure def postProcessStackTrace(procDescMap: HashSMap[U32, String], display: String): Option[String] = {
+    var lines = ISZ[String]()
+    var changed = F
+    for (line <- ops.StringOps(display).split((c: C) => c == '\n')) {
+      val lineOps = ops.StringOps(line)
+      val i = lineOps.lastIndexOf(':')
+      var replaced = F
+      if (lineOps.startsWith("꧐") && lineOps.lastIndexOf(':') > 0) {
+        val desc = lineOps.substring(1, i)
+        U32(s"0x$desc") match {
+          case Some(n) =>
+            procDescMap.get(n) match {
+              case Some(s) =>
+                Z(lineOps.substring(i + 1, line.size)) match {
+                  case Some(ln) =>
+                    replaced = T
+                    changed = T
+                    lines = lines :+ s"  $s$ln)"
+                  case _ =>
+                }
+              case _ =>
+            }
+          case _ =>
+        }
+      }
+      if (!replaced) {
+        lines = lines :+ line
+      }
+    }
+    return if (changed) Some(st"${(lines, "\n")}".render) else None()
   }
 }

@@ -31,7 +31,7 @@ import org.sireum.test._
 object AnvilTest {
   val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "add.sc" ~> (128 + 8 * 4) +
-    "assert.sc" ~> (512 + 8 * 18) +
+    "assert.sc" ~> (256 + 8 * 28) +
     "bubble.sc" ~> (128 + 8 * 12) +
     "construct.sc" ~> (256 + 8 * 3) +
     "divrem.sc" ~> (128 + 8 * 7) +
