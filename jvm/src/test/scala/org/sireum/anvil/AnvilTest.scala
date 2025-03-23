@@ -31,7 +31,7 @@ import org.sireum.test._
 object AnvilTest {
   val memoryFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "add.sc" ~> (128 + 8 * 4) +
-    "assert.sc" ~> (256 + 8 * 28) +
+    "assert.sc" ~> (256 + 8 * 20) +
     "bubble.sc" ~> (128 + 8 * 12) +
     "construct.sc" ~> (256 + 8 * 3) +
     "divrem.sc" ~> (128 + 8 * 7) +
@@ -44,12 +44,13 @@ object AnvilTest {
     "print-no-float.sc" ~> (256 + 8 * 11) +
     "printU64.sc" ~> (128 + 8 * 11) +
     "seq.sc" ~> (256 + 8 * 2) +
-    "shift.sc" ~> (256 + 8 * 13) +
+    "shiftS64.sc" ~> (256 + 8 * 3) +
+    "shiftU64.sc" ~> (256 + 8 * 3) +
     "sum.sc" ~> (256 + 8 * 7)
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "sum.sc" ~> 3
   val printFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "add.sc" ~> 16 +
-    "assert.sc" ~> 128 +
+    "assert.sc" ~> 64 +
     "bubble.sc" ~> 16 +
     "construct.sc" ~> 16 +
     "divrem.sc" ~> 32 +
@@ -62,7 +63,8 @@ object AnvilTest {
     "print-no-float.sc" ~> 64 +
     "printU64.sc" ~> 64 +
     "seq.sc" ~> 32 +
-    "shift.sc" ~> 128 +
+    "shiftS64.sc" ~> 64 +
+    "shiftU64.sc" ~> 64 +
     "sum.sc" ~> 8
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add.sc"
