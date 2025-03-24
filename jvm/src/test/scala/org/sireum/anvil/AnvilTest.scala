@@ -121,7 +121,7 @@ class AnvilTest extends SireumRcSpec {
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
         val out = dir /+ ISZ(path.map(String(_)): _*)
-        Anvil.synthesize(!AnvilTest.dontTestFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
+        val irOpt = Anvil.synthesize(!AnvilTest.dontTestFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
           new Anvil.Output {
             def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
               val f = out /+ p
@@ -134,6 +134,7 @@ class AnvilTest extends SireumRcSpec {
         if (reporter.hasError) {
           return F
         }
+        val ir = irOpt.get
 
         if (config.genVerilog || config.simOpt.nonEmpty) {
           val sireumHome = Os.sireumHomeOpt.get
