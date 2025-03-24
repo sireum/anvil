@@ -69,9 +69,94 @@ object DivRemLog {
     var r = HashSMap.empty[ISZ[String], ST]
     val processedProcedureST = processProcedure(name, o, maxRegisters)
     r = r + ISZ(name) ~> o.prettyST(anvil.printer)
-    output.add(T, ISZ("ir", s"chisel-${name}.scala"), processedProcedureST)
+    output.add(T, ISZ("chisel/src/main/scala", s"chisel-${name}.scala"), processedProcedureST)
+    output.add(T, ISZ("chise", "build.sbt"), buildSbtST())
     return
   }
+
+  @pure def verilogGenerationST(moduleName: String): ST = {
+    val verilogGenST: ST =
+      st"""
+          |import chisel3.stage.{ChiselStage,ChiselGeneratorAnnotation}
+          |
+          |object AXIWrapperChiselGenerated${moduleName}VerilogGeneration extends App {
+          |  (new ChiselStage).execute(
+          |    Array("--target-dir", "generated_verilog"),
+          |    Seq(ChiselGeneratorAnnotation(() => new AXIWrapperChiselGenerated${moduleName}()))
+          |  )
+          |}
+          |
+        """
+
+    return verilogGenST
+  }
+
+  @pure def testBenchST(moduleName: String): ST = {
+    val benchST: ST =
+      st"""
+          |import chisel3._
+          |import chiseltest._
+          |import chiseltest.simulator.WriteVcdAnnotation
+          |import org.scalatest.flatspec.AnyFlatSpec
+          |
+          |class ${moduleName}Bench extends AnyFlatSpec with ChiselScalatestTester {
+          |  "${moduleName}Bench" should "work" in {
+          |    test(new ${moduleName}()).withAnnotations(Seq(WriteVcdAnnotation, VerilatorBackendAnnotation)) { dut =>
+          |      dut.clock.setTimeout(3000)
+          |
+          |      dut.reset.poke(true.B)
+          |      for (i <- 0 until (5)) {
+          |        dut.clock.step()
+          |      }
+          |      dut.reset.poke(false.B)
+          |      dut.clock.step()
+          |
+          |      dut.io.arrayWe.poke(true.B)
+          |      dut.io.arrayWriteAddr.poke(0.U)
+          |      dut.io.arrayWData.poke("hFFFFFFFF".U)
+          |      dut.io.arrayStrb.poke("b1111".U)
+          |      dut.clock.step()
+          |
+          |      dut.io.arrayWe.poke(true.B)
+          |      dut.io.arrayWriteAddr.poke(4.U)
+          |      dut.io.arrayWData.poke("hFFFFFFFF".U)
+          |      dut.io.arrayStrb.poke("b1111".U)
+          |      dut.clock.step()
+          |
+          |      dut.io.arrayWe.poke(false.B)
+          |      dut.io.valid.poke(true.B)
+          |      for(i <- 0 until 700) {
+          |        dut.clock.step()
+          |      }
+          |
+          |    }
+          |  }
+          |}
+        """
+
+    return benchST
+  }
+
+  @pure def buildSbtST(): ST = {
+    val sbtST: ST =
+      st"""
+          |scalaVersion := "2.12.13"
+          |
+          |
+          |scalacOptions ++= Seq(
+          |  "-feature",
+          |  "-language:reflectiveCalls",
+          |)
+          |
+          |// Chisel 3.5
+          |addCompilerPlugin("edu.berkeley.cs" % "chisel3-plugin" % "3.5.6" cross CrossVersion.full)
+          |libraryDependencies += "edu.berkeley.cs" %% "chisel3" % "3.5.6"
+          |libraryDependencies += "edu.berkeley.cs" %% "chiseltest" % "0.5.6"
+        """
+
+    return sbtST
+  }
+
   @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector): ST = {
 
     @strictpure def axi4WrapperST(): ST =
@@ -80,6 +165,8 @@ object DivRemLog {
            |                                         val C_S_AXI_ADDR_WIDTH:  Int = 32,
            |                                         val ARRAY_REG_WIDTH:     Int = 8,
            |                                         val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
+           |                                         ${if(!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
+           |                                         ${if(!anvil.config.splitTempSizes) s"val GENERAL_REG_DEPTH:   Int = ${maxRegisters.maxCount}," else ""}
            |                                         val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize*8},
            |                                         val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize*8})  extends Module {
            |    val io = IO(new Bundle{
@@ -160,6 +247,8 @@ object DivRemLog {
            |                                                C_S_AXI_ADDR_WIDTH  = C_S_AXI_ADDR_WIDTH ,
            |                                                ARRAY_REG_WIDTH     = ARRAY_REG_WIDTH    ,
            |                                                ARRAY_REG_DEPTH     = ARRAY_REG_DEPTH    ,
+           |                                                ${if(!anvil.config.splitTempSizes) "GENERAL_REG_WIDTH   = GENERAL_REG_WIDTH  ," else ""}
+           |                                                ${if(!anvil.config.splitTempSizes) "GENERAL_REG_DEPTH   = GENERAL_REG_DEPTH  ," else ""}
            |                                                STACK_POINTER_WIDTH = STACK_POINTER_WIDTH,
            |                                                CODE_POINTER_WIDTH  = CODE_POINTER_WIDTH  ))
            |    mod${name}.io.valid := Mux(io_valid_reg(0) & (io_ready_reg === 2.U), true.B, false.B)
@@ -436,6 +525,8 @@ object DivRemLog {
           |               val C_S_AXI_ADDR_WIDTH:  Int = 32,
           |               val ARRAY_REG_WIDTH:     Int = 8,
           |               val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
+          |               ${if(!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
+          |               ${if(!anvil.config.splitTempSizes) s"val GENERAL_REG_DEPTH:   Int = ${maxRegisters.maxCount}," else ""}
           |               val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize*8},
           |               val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize*8}) extends Module {
           |
@@ -452,9 +543,9 @@ object DivRemLog {
           |    })
           |
           |    // reg for share array between software and IP
-          |    val ${sharedMemName} = Reg(Vec(1 << log2Ceil(ARRAY_REG_DEPTH), UInt(ARRAY_REG_WIDTH.W)))
+          |    val ${sharedMemName} = Reg(Vec(ARRAY_REG_DEPTH, UInt(ARRAY_REG_WIDTH.W)))
           |    // reg for general purpose
-          |    ${generalPurposeRegisterST}
+          |    ${if(!anvil.config.splitTempSizes) s"val ${generalRegName} = Reg(Vec(GENERAL_REG_DEPTH, UInt(GENERAL_REG_WIDTH.W)))" else s"${generalPurposeRegisterST.render}"}
           |    // reg for code pointer
           |    val CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
           |    // reg for stack pointer
@@ -679,12 +770,14 @@ object DivRemLog {
           }
         }
 
+        val padST = st".asSInt.pad(${if(!anvil.config.splitTempSizes) "GENERAL_REG_WIDTH" else s"${anvil.typeBitSize(intrinsic.tipe)}"})"
+
         intrinsicST =
           st"""
               |val ${tmpWire} = (${rhsOffsetST.render}).asUInt
-              |${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U) := Cat(
+              |${if(!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"} := Cat(
               |  ${(internalST, "\n")}
-              |)${if(intrinsic.isSigned) s".asSInt.pad(${anvil.typeBitSize(intrinsic.tipe)})" else ""}
+              |)${if(intrinsic.isSigned) s"${padST.render}" else ""}${if(!anvil.config.splitTempSizes) ".asUInt" else ""}
             """
         TmpWireCount.incCount()
       }
@@ -720,7 +813,7 @@ object DivRemLog {
               |val ${tmpWireRhsST.render} = ${rhsAddrST.render}
               |val ${totalSizeWireST.render} = ${rhsBytesSt.render}
               |
-              |when(Idx <= ${totalSizeWireST.render}) {
+              |when(Idx < ${totalSizeWireST.render}) {
               |  ${(BytesTransferST, "\n")}
               |  Idx := Idx + ${anvil.config.copySize}.U
               |  LeftByteRounds := ${totalSizeWireST.render} - Idx
@@ -740,9 +833,6 @@ object DivRemLog {
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Store) => {
         val lhsOffsetST = processExpr(intrinsic.lhsOffset, F)
         val rhsST = processExpr(intrinsic.rhs, intrinsic.isSigned)
-        if(MemCopyLog.currentBlock.get.label == 144) {
-          println(rhsST.render)
-        }
         var shareMemAssign = ISZ[ST]()
         val tmpWireLhsST = st"__tmp_${TmpWireCount.getCurrent}"
         val tmpWireRhsST = st"__tmp_${TmpWireCount.getCurrent + 1}"
@@ -757,10 +847,12 @@ object DivRemLog {
             st"${sharedMemName}(${tmpWireLhsST} + ${i}.U) := ${tmpWireRhsST}(${(i)*8+7}, ${(i)*8})"
         }
 
+        val storeDataST = st"${if(anvil.typeBitSize(intrinsic.rhs.tipe) < (intrinsic.bytes * 8)) s".pad(${intrinsic.bytes * 8})" else ""}"
+
         intrinsicST =
           st"""
               |val ${tmpWireLhsST} = ${lhsOffsetST.render}
-              |val ${tmpWireRhsST} = (${tmpWireRhsContent.render}${if(anvil.typeBitSize(intrinsic.rhs.tipe) < (intrinsic.bytes * 8)) s".pad(${intrinsic.bytes * 8})" else ""}).asUInt
+              |val ${tmpWireRhsST} = (${tmpWireRhsContent.render}${if(!anvil.config.splitTempSizes) "" else storeDataST.render}).asUInt
               |${(shareMemAssign, "\n")}
             """
         TmpWireCount.incCount()
@@ -805,7 +897,7 @@ object DivRemLog {
     a match {
       case a: AST.IR.Stmt.Assign.Temp => {
         val regNo = a.lhs
-        val lhsST = st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
+        val lhsST: ST = if(!anvil.config.splitTempSizes)  st"${generalRegName}(${regNo}.U)" else st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
         val rhsST = processExpr(a.rhs, F)
         if(isIntrinsicLoad(a.rhs)) {
           assignST =
@@ -819,7 +911,8 @@ object DivRemLog {
           if(DivRemLog.isCustomDivRem) {
             if(DivRemLog.isDiv) {
               if(DivRemLog.byteNum == 4) {
-                targetST = if(DivRemLog.isSigned) st"Mux(a_neg ^ b_neg, -divider32.io.quotient.asSInt, divider32.io.quotient.asSInt)" else st"divider32.io.quotient"
+                val padStr: String = if(!anvil.config.splitTempSizes) ".pad(64)" else ""
+                targetST = if(DivRemLog.isSigned) st"Mux(a_neg ^ b_neg, -divider32.io.quotient.asSInt${padStr}, divider32.io.quotient.asSInt${padStr})" else st"divider32.io.quotient"
               } else if(DivRemLog.byteNum == 8) {
                 targetST = if(DivRemLog.isSigned) st"Mux(a_neg ^ b_neg, -divider64.io.quotient.asSInt, divider64.io.quotient.asSInt)" else st"divider64.io.quotient"
               } else {
@@ -827,7 +920,8 @@ object DivRemLog {
               }
             } else {
               if(DivRemLog.byteNum == 4) {
-                targetST = if(DivRemLog.isSigned) st"Mux(a_neg, -divider32.io.remainder.asSInt, divider32.io.remainder.asSInt)" else st"divider32.io.remainder"
+                val padStr: String = if(!anvil.config.splitTempSizes) ".pad(64)" else ""
+                targetST = if(DivRemLog.isSigned) st"Mux(a_neg, -divider32.io.remainder.asSInt${padStr}, divider32.io.remainder.asSInt${padStr})" else st"divider32.io.remainder"
               } else if(DivRemLog.byteNum == 8) {
                 targetST = if(DivRemLog.isSigned) st"Mux(a_neg, -divider64.io.remainder.asSInt, divider64.io.remainder.asSInt)" else st"divider64.io.remainder"
               } else {
@@ -838,12 +932,13 @@ object DivRemLog {
             targetST = rhsST
           }
 
+          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${targetST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
           if(DivRemLog.isCustomDivRem) {
             if(DivRemLog.byteNum == 4) {
               finalST =
                 st"""
                     |when(dividerStart & divider32.io.valid) {
-                    |  ${lhsST} := ${targetST.render}
+                    |  ${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${targetST.render}"}
                     |  ${processJumpIntrinsic(DivRemLog.currentBlock.get).render}
                     |  dividerStart := false.B
                     |}
@@ -852,7 +947,7 @@ object DivRemLog {
               finalST =
                 st"""
                     |when(dividerStart & divider64.io.valid) {
-                    |  ${lhsST} := ${targetST.render}
+                    |  ${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${targetST.render}"}
                     |  ${processJumpIntrinsic(DivRemLog.currentBlock.get).render}
                     |  dividerStart := false.B
                     |}
@@ -861,7 +956,7 @@ object DivRemLog {
               finalST = st""
             }
           } else {
-            finalST = st"${lhsST} := ${targetST.render}"
+            finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${targetST.render}"}"
           }
 
           assignST =
@@ -909,7 +1004,9 @@ object DivRemLog {
               |)${if(intrinsic.isSigned) ".asSInt" else ""}"""
       }
       case exp: AST.IR.Exp.Temp => {
-        exprST = st"${getGeneralRegName(exp.tipe)}(${exp.n}.U)"
+        val noSplitST: ST = st"${generalRegName}(${exp.n}.U)${if(isSignedExp(exp)) ".asSInt" else ""}"
+        val splitST: ST = st"${getGeneralRegName(exp.tipe)}(${exp.n}.U)"
+        exprST = if(!anvil.config.splitTempSizes) noSplitST else splitST
       }
       case exp: AST.IR.Exp.Bool => {
         exprST = exp.value match {
@@ -925,7 +1022,8 @@ object DivRemLog {
         exprST = st"${if(exp.value > 2147483647 || exp.value < -2147483648) s"BigInt(\"${exp.value}\")" else s"${exp.value}"}.${valuePostfix}(${anvil.typeByteSize(exp.tipe)*8}.W)"
       }
       case exp: AST.IR.Exp.Type => {
-        exprST = st"${processExpr(exp.exp, F)}${if(anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}${if(anvil.typeBitSize(exp.exp.tipe)== anvil.typeBitSize(exp.t)) "" else s".pad(${anvil.typeBitSize(exp.t)})"}"
+        val splitStr: String = if(anvil.typeBitSize(exp.exp.tipe)== anvil.typeBitSize(exp.t)) "" else s".pad(${anvil.typeBitSize(exp.t)})"
+        exprST = st"${processExpr(exp.exp, F)}${if(anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}${if(!anvil.config.splitTempSizes) "" else splitStr}"
       }
       case exp: AST.IR.Exp.Unary => {
         val variableST = processExpr(exp.exp, F)
