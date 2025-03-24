@@ -91,11 +91,13 @@ object Anvil {
                      val procDescMap: HashSMap[U32, String])
 
   def synthesize(isTest: B, fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, name: QName, config: Config,
-                 output: Output, reporter: Reporter): Unit = {
-    generateIR(isTest, fresh, th, name, config, output, reporter) match {
+                 output: Output, reporter: Reporter): Option[IR] = {
+    val rOpt = generateIR(isTest, fresh, th, name, config, output, reporter)
+    rOpt match {
       case Some(ir) => HwSynthesizer(ir.anvil).printProcedure(ir.name, ir.procedure, output, ir.maxRegisters)
       case _ =>
     }
+    return rOpt
   }
 
   def generateIR(isTest: B, fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, name: QName, config: Config,
