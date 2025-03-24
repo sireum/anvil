@@ -95,15 +95,22 @@ object AnvilTest {
 
 class AnvilTest extends SireumRcSpec {
 
-  {
+  val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
+  val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result"
+  val javaBin: Os.Path = {
     Os.sireumHomeOpt match {
       case Some(sireumHome) => Init(sireumHome, Os.kind, (sireumHome / "versions.properties").properties).installSbt(F)
       case _ => halt("Please set the SIREUM_HOME environment variable")
     }
+    val versions = Map.empty[String, String] +
+      "org.sireum.version.java" ~> "17.0.14+10" +
+      "org.sireum.version.nik" ~> "17.0.4+8,21.3.3+1"
+    val d = (dir.up / "result-java").canon
+    val init = Init(d, Os.kind, versions)
+    init.installJava(versions, F, T)
+    Os.javaExe(Some(d)).up.canon
   }
 
-  val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
-  val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result"
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
     val m = $internal.RC.text(Vector("example")) { (p, _) => !p.last.endsWith("print.sc") }
@@ -129,7 +136,7 @@ class AnvilTest extends SireumRcSpec {
           runtimeCheck = T,
           splitTempSizes = splitTempSizes,
           tempLocal = tempLocal,
-          genVerilog = F,
+          genVerilog = T,
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
         val out = dir /+ ISZ(path.map(String(_)): _*)
@@ -150,12 +157,10 @@ class AnvilTest extends SireumRcSpec {
 
         if (config.genVerilog || config.simOpt.nonEmpty) {
           val sireumHome = Os.sireumHomeOpt.get
-          val javaBin = Os.javaExe(Some(sireumHome)).up.canon
           val scalaBin = sireumHome / "bin" / "scala" / "bin"
           val sbt = sireumHome / "bin" / "sbt" / "bin" / (if (Os.isWin) "sbt.bat" else "sbt")
           var envVars = ISZ[(String, String)]()
-          //envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}$scalaBin${Os.pathSepChar}${sbt.up.canon}${Os.env("PATH").get}"
-          //envVars = envVars :+ "JAVA_OPTS" ~> "--enable-native-access=ALL-UNNAMED -Dfile.encoding=UTF-8"
+          envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}$scalaBin${Os.pathSepChar}${sbt.up.canon}${Os.env("PATH").get}"
           config.simOpt match {
             case Some(simConfig) =>
               envVars = envVars :+ "VL_THREADS" ~> simConfig.threads.string
