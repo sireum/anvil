@@ -73,7 +73,19 @@ object AnvilTest {
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add.sc"
   val dontTestFileSet: HashSet[String] = HashSet.empty[String]
-  val simCyclesMap: HashMap[String, Z] = HashMap.empty[String, Z]
+  val simCyclesMap: HashMap[String, Z] = HashMap.empty[String, Z] +
+    "add.sc" ~> 700 +
+    "bubble.sc" ~> 700 +
+    "construct.sc" ~> 350 +
+    "divrem.sc" ~> 1500 +
+    "factorial.sc" ~> 700 +
+    "global.sc" ~> 200 +
+    "instanceof.sc" ~> 200 +
+    "local-reuse.sc" ~> 400 +
+    "mult.sc" ~> 1000 +
+    "printU64.sc" ~> 1000 +
+    "seq.sc" ~> 500 +
+    "sum.sc" ~> 400
 
   val defaultMemory: Z = 256
   val defaultPrintSize: Z = 128
@@ -83,15 +95,22 @@ object AnvilTest {
 
 class AnvilTest extends SireumRcSpec {
 
-  {
+  val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
+  val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result"
+  val javaBin: Os.Path = {
     Os.sireumHomeOpt match {
       case Some(sireumHome) => Init(sireumHome, Os.kind, (sireumHome / "versions.properties").properties).installSbt(F)
       case _ => halt("Please set the SIREUM_HOME environment variable")
     }
+    val versions = Map.empty[String, String] +
+      "org.sireum.version.java" ~> "17.0.14+10" +
+      "org.sireum.version.nik" ~> "17.0.4+8,21.3.3+1"
+    val d = (dir.up / "result-java").canon
+    val init = Init(d, Os.kind, versions)
+    init.installJava(versions, F, T)
+    Os.javaExe(Some(d)).up.canon
   }
 
-  val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
-  val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result"
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
     val m = $internal.RC.text(Vector("example")) { (p, _) => !p.last.endsWith("print.sc") }
@@ -107,9 +126,9 @@ class AnvilTest extends SireumRcSpec {
         var config = Anvil.Config.empty
         val file = path(path.size - 1)
         val splitTempSizes = T
-        val tempLocal = T
+        val tempLocal = F
         config = config(
-          memory = AnvilTest.memoryFileMap(T, T).get(file).getOrElse(AnvilTest.defaultMemory),
+          memory = AnvilTest.memoryFileMap(T, F).get(file).getOrElse(AnvilTest.defaultMemory),
           printSize = AnvilTest.printFileMap.get(file).getOrElse(AnvilTest.defaultPrintSize),
           stackTrace = AnvilTest.stackTraceFileSet.contains(file),
           erase = AnvilTest.eraseFileSet.contains(file),
@@ -138,12 +157,10 @@ class AnvilTest extends SireumRcSpec {
 
         if (config.genVerilog || config.simOpt.nonEmpty) {
           val sireumHome = Os.sireumHomeOpt.get
-          val javaBin = Os.javaExe(Some(sireumHome)).up.canon
           val scalaBin = sireumHome / "bin" / "scala" / "bin"
           val sbt = sireumHome / "bin" / "sbt" / "bin" / (if (Os.isWin) "sbt.bat" else "sbt")
           var envVars = ISZ[(String, String)]()
           envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}$scalaBin${Os.pathSepChar}${sbt.up.canon}${Os.env("PATH").get}"
-          envVars = envVars :+ "JAVA_OPTS" ~> "--enable-native-access=ALL-UNNAMED -Dfile.encoding=UTF-8"
           config.simOpt match {
             case Some(simConfig) =>
               envVars = envVars :+ "VL_THREADS" ~> simConfig.threads.string
@@ -151,7 +168,19 @@ class AnvilTest extends SireumRcSpec {
           }
           val chiselDir = out / "chisel"
           // TODO: complete sbt commands
-          //Os.proc(ISZ(sbt.string)).at(chiselDir).script.env(envVars).echo.console.runCheck()
+          val axiWrapperVerilogCommandStr: String = s"test:runMain AXIWrapperChiselGenerated${ir.name}VerilogGeneration"
+          val verilogCommandStr: String = s"test:runMain ${ir.name}VerilogGeneration"
+          val simCommandStr: String = s"testOnly *${ir.name}Bench"
+          if(config.genVerilog && config.axi4) {
+            Os.proc(ISZ("bash", sbt.string, s"${axiWrapperVerilogCommandStr}")).at(chiselDir).env(envVars).echo.console.runCheck()
+          } else if(config.genVerilog) {
+            Os.proc(ISZ("bash", sbt.string, s"${verilogCommandStr}")).at(chiselDir).env(envVars).echo.console.runCheck()
+          } else {
+            config.simOpt match {
+              case Some(simConfig) => Os.proc(ISZ("bash", sbt.string, s"${simCommandStr}")).at(chiselDir).env(envVars).echo.console.runCheck()
+              case None() => Os.proc(ISZ("bash", sbt.string, s"${verilogCommandStr}")).at(chiselDir).env(envVars).echo.console.runCheck()
+            }
+          }
         }
 
         return T
