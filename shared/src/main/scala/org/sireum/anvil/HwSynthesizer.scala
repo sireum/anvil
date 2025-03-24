@@ -73,15 +73,20 @@ object DivRemLog {
     output.add(T, ISZ("chisel", "build.sbt"), buildSbtST())
 
     if(anvil.config.genVerilog && anvil.config.axi4) {
+      output.add(T, ISZ("chisel/src/test/scala", s"AXIWrapperChiselGenerated${name}VerilogGeneration.scala"), axiWrapperVerilogGenerationST(name))
+    } else if(anvil.config.genVerilog) {
       output.add(T, ISZ("chisel/src/test/scala", s"${name}VerilogGeneration.scala"), verilogGenerationST(name))
     } else {
-      output.add(T, ISZ("chisel/src/test/scala", s"${name}Bench.scala"), testBenchST(name))
+      anvil.config.simOpt match {
+        case Some(simConfig) => output.add(T, ISZ("chisel/src/test/scala", s"${name}Bench.scala"), testBenchST(name, simConfig.cycles))
+        case None() => output.add(T, ISZ("chisel/src/test/scala", s"${name}VerilogGeneration.scala"), verilogGenerationST(name))
+      }
     }
 
     return
   }
 
-  @pure def verilogGenerationST(moduleName: String): ST = {
+  @pure def axiWrapperVerilogGenerationST(moduleName: String): ST = {
     val verilogGenST: ST =
       st"""
           |import chisel3.stage.{ChiselStage,ChiselGeneratorAnnotation}
@@ -98,7 +103,24 @@ object DivRemLog {
     return verilogGenST
   }
 
-  @pure def testBenchST(moduleName: String): ST = {
+  @pure def verilogGenerationST(moduleName: String): ST = {
+    val verilogGenST: ST =
+      st"""
+          |import chisel3.stage.{ChiselStage,ChiselGeneratorAnnotation}
+          |
+          |object ${moduleName}VerilogGeneration extends App {
+          |  (new ChiselStage).execute(
+          |    Array("--target-dir", "generated_verilog"),
+          |    Seq(ChiselGeneratorAnnotation(() => new ${moduleName}()))
+          |  )
+          |}
+          |
+        """
+
+    return verilogGenST
+  }
+
+  @pure def testBenchST(moduleName: String, cycles: Z): ST = {
     val benchST: ST =
       st"""
           |import chisel3._
@@ -132,7 +154,7 @@ object DivRemLog {
           |
           |      dut.io.arrayWe.poke(false.B)
           |      dut.io.valid.poke(true.B)
-          |      for(i <- 0 until ${anvil.config.simOpt.get.cycles}) {
+          |      for(i <- 0 until ${cycles}) {
           |        dut.clock.step()
           |      }
           |

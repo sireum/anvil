@@ -117,7 +117,7 @@ class AnvilTest extends SireumRcSpec {
           runtimeCheck = T,
           splitTempSizes = splitTempSizes,
           tempLocal = tempLocal,
-          genVerilog = T,
+          genVerilog = F,
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
         val out = dir /+ ISZ(path.map(String(_)): _*)
@@ -142,8 +142,8 @@ class AnvilTest extends SireumRcSpec {
           val scalaBin = sireumHome / "bin" / "scala" / "bin"
           val sbt = sireumHome / "bin" / "sbt" / "bin" / (if (Os.isWin) "sbt.bat" else "sbt")
           var envVars = ISZ[(String, String)]()
-          envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}$scalaBin${Os.pathSepChar}${sbt.up.canon}${Os.env("PATH").get}"
-          envVars = envVars :+ "JAVA_OPTS" ~> "--enable-native-access=ALL-UNNAMED -Dfile.encoding=UTF-8"
+          //envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}$scalaBin${Os.pathSepChar}${sbt.up.canon}${Os.env("PATH").get}"
+          //envVars = envVars :+ "JAVA_OPTS" ~> "--enable-native-access=ALL-UNNAMED -Dfile.encoding=UTF-8"
           config.simOpt match {
             case Some(simConfig) =>
               envVars = envVars :+ "VL_THREADS" ~> simConfig.threads.string
@@ -151,7 +151,19 @@ class AnvilTest extends SireumRcSpec {
           }
           val chiselDir = out / "chisel"
           // TODO: complete sbt commands
-          //Os.proc(ISZ(sbt.string)).at(chiselDir).script.env(envVars).echo.console.runCheck()
+          val axiWrapperVerilogCommandStr: String = s"test:runMain AXIWrapperChiselGenerated${ir.name}VerilogGeneration"
+          val verilogCommandStr: String = s"test:runMain ${ir.name}VerilogGeneration"
+          val simCommandStr: String = s"test *${ir.name}Bench"
+          if(config.genVerilog && config.axi4) {
+            Os.proc(ISZ("bash", sbt.string, s"${axiWrapperVerilogCommandStr}")).at(chiselDir).env(envVars).echo.console.runCheck()
+          } else if(config.genVerilog) {
+            Os.proc(ISZ("bash", sbt.string, s"${verilogCommandStr}")).at(chiselDir).env(envVars).echo.console.runCheck()
+          } else {
+            config.simOpt match {
+              case Some(simConfig) => Os.proc(ISZ("bash", sbt.string, s"${simCommandStr}")).at(chiselDir).env(envVars).echo.console.runCheck()
+              case None() => Os.proc(ISZ("bash", sbt.string, s"${verilogCommandStr}")).at(chiselDir).env(envVars).echo.console.runCheck()
+            }
+          }
         }
 
         return T
