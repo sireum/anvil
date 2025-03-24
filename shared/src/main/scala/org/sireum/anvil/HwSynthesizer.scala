@@ -70,7 +70,14 @@ object DivRemLog {
     val processedProcedureST = processProcedure(name, o, maxRegisters)
     r = r + ISZ(name) ~> o.prettyST(anvil.printer)
     output.add(T, ISZ("chisel/src/main/scala", s"chisel-${name}.scala"), processedProcedureST)
-    output.add(T, ISZ("chise", "build.sbt"), buildSbtST())
+    output.add(T, ISZ("chisel", "build.sbt"), buildSbtST())
+
+    if(anvil.config.genVerilog && anvil.config.axi4) {
+      output.add(T, ISZ("chisel/src/test/scala", s"${name}VerilogGeneration.scala"), verilogGenerationST(name))
+    } else {
+      output.add(T, ISZ("chisel/src/test/scala", s"${name}Bench.scala"), testBenchST(name))
+    }
+
     return
   }
 
@@ -125,7 +132,7 @@ object DivRemLog {
           |
           |      dut.io.arrayWe.poke(false.B)
           |      dut.io.valid.poke(true.B)
-          |      for(i <- 0 until 700) {
+          |      for(i <- 0 until ${anvil.config.simOpt.get.cycles}) {
           |        dut.clock.step()
           |      }
           |
