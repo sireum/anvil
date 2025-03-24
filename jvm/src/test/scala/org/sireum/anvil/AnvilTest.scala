@@ -25,7 +25,7 @@
 package org.sireum.anvil
 
 import org.sireum._
-import org.sireum.anvil.AnvilTest.maxArrayFileMap
+import org.sireum.anvil.AnvilTest.{defaultSimThreads, maxArrayFileMap, simCyclesMap}
 import org.sireum.test._
 
 object AnvilTest {
@@ -73,12 +73,22 @@ object AnvilTest {
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add.sc"
   val dontTestFileSet: HashSet[String] = HashSet.empty[String]
+  val simCyclesMap: HashMap[String, Z] = HashMap.empty[String, Z]
+
   val defaultMemory: Z = 256
   val defaultPrintSize: Z = 128
   val defaultMaxArraySize: Z = 5
+  val defaultSimThreads: Z = 16
 }
 
 class AnvilTest extends SireumRcSpec {
+
+  {
+    Os.sireumHomeOpt match {
+      case Some(sireumHome) => Init(sireumHome, Os.kind, (sireumHome / "versions.properties").properties).installSbt(F)
+      case _ => halt("Please set the SIREUM_HOME environment variable")
+    }
+  }
 
   val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
   val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result"
@@ -106,7 +116,9 @@ class AnvilTest extends SireumRcSpec {
           maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(AnvilTest.defaultMaxArraySize),
           runtimeCheck = T,
           splitTempSizes = splitTempSizes,
-          tempLocal = tempLocal
+          tempLocal = tempLocal,
+          genVerilog = T,
+          simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
         val out = dir /+ ISZ(path.map(String(_)): _*)
         Anvil.synthesize(!AnvilTest.dontTestFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
@@ -119,7 +131,29 @@ class AnvilTest extends SireumRcSpec {
           override def string: String = "AnvilTest.Output"
         }, reporter)
         reporter.printMessages()
-        T
+        if (reporter.hasError) {
+          return F
+        }
+
+        if (config.genVerilog || config.simOpt.nonEmpty) {
+          val sireumHome = Os.sireumHomeOpt.get
+          val javaBin = Os.javaExe(Some(sireumHome)).up.canon
+          val scalaBin = sireumHome / "bin" / "scala" / "bin"
+          val sbt = sireumHome / "bin" / "sbt" / "bin" / (if (Os.isWin) "sbt.bat" else "sbt")
+          var envVars = ISZ[(String, String)]()
+          envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}$scalaBin${Os.pathSepChar}${sbt.up.canon}${Os.env("PATH").get}"
+          envVars = envVars :+ "JAVA_OPTS" ~> "--enable-native-access=ALL-UNNAMED -Dfile.encoding=UTF-8"
+          config.simOpt match {
+            case Some(simConfig) =>
+              envVars = envVars :+ "VL_THREADS" ~> simConfig.threads.string
+            case _ =>
+          }
+          val chiselDir = out / "chisel"
+          // TODO: complete sbt commands
+          //Os.proc(ISZ(sbt.string)).at(chiselDir).script.env(envVars).echo.console.runCheck()
+        }
+
+        return T
       case _ => return F
     }
 
