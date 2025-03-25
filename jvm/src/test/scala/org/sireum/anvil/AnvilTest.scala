@@ -103,7 +103,7 @@ class AnvilTest extends SireumRcSpec {
 
   val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
   val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result"
-  val javaBin: Os.Path = {
+  val init: Init = {
     val versions: Map[String, String] = Os.sireumHomeOpt match {
       case Some(sireumHome) =>
         val vs = (sireumHome / "versions.properties").properties
@@ -113,10 +113,11 @@ class AnvilTest extends SireumRcSpec {
     }
     val d = (dir.up / "result-java").canon
     val vs = versions + "org.sireum.version.java" ~> "17.0.14+10"
-    Init(d, Os.kind, vs).installJava(vs, F, F)
-    Os.javaExe(Some(d)).up.canon
+    val init = Init(d, Os.kind, vs)
+    init.installJava(vs, F, F)
+    init.installVerilator()
+    init
   }
-  val isInGitHubAction: B = Os.env("GITHUB_ACTIONS").nonEmpty
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
     val m = $internal.RC.text(Vector("example")) { (p, _) => !p.last.endsWith("print.sc") }
@@ -154,11 +155,9 @@ class AnvilTest extends SireumRcSpec {
           splitTempSizes = splitTempSizes,
           tempLocal = tempLocal,
           genVerilog = T,
+          axi4 = T,
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
-        if (isInGitHubAction) {
-          config = config(genVerilog = F, simOpt = None())
-        }
 
         val irOpt = Anvil.synthesize(!dontTestFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
           new Anvil.Output {
@@ -175,43 +174,43 @@ class AnvilTest extends SireumRcSpec {
         }
         val ir = irOpt.get
 
-        if (config.genVerilog || config.simOpt.nonEmpty) {
-          val sireumHome = Os.sireumHomeOpt.get
-          val scalaBin = sireumHome / "bin" / "scala" / "bin"
-          val sbt = sireumHome / "bin" / "sbt" / "bin" / (if (Os.isWin) "sbt.bat" else "sbt")
-          val verilatorBin = sireumHome / "bin" / "verilator" / "bin"
-          var envVars = ISZ[(String, String)]()
-          envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}$scalaBin${Os.pathSepChar}${sbt.up.canon}${Os.pathSepChar}$verilatorBin${Os.pathSepChar}${Os.env("PATH").get}"
-          config.simOpt match {
-            case Some(simConfig) =>
-              envVars = envVars :+ "VL_THREADS" ~> simConfig.threads.string
-              envVars = envVars :+ "JAVA_HOME" ~> javaBin.up.canon.string
-              envVars = envVars :+ "VERILATOR_ROOT" ~> verilatorBin.up.canon.string
-            case _ =>
-          }
-          val chiselDir = out / "chisel"
-          val axiWrapperVerilogCommandStr: String = s"test:runMain AXIWrapperChiselGenerated${ir.name}VerilogGeneration"
-          val verilogCommandStr: String = s"test:runMain ${ir.name}VerilogGeneration"
-          val simCommandStr: String = s"testOnly *${ir.name}Bench"
-          val sbtOpts = ISZ[String]("-J-Xms32m", "-J-Xmx8G")
-          if (config.genVerilog && config.axi4) {
-            Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$axiWrapperVerilogCommandStr").
-              at(chiselDir).env(envVars).echo.console.runCheck()
-          } else if (config.genVerilog) {
-            Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$verilogCommandStr").
-              at(chiselDir).env(envVars).echo.console.runCheck()
-          } else {
-            config.simOpt match {
-              case Some(_) =>
-                Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$simCommandStr").
-                  at(chiselDir).env(envVars).echo.console.runCheck()
-              case _ =>
-                Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$verilogCommandStr").
-                  at(chiselDir).env(envVars).echo.console.runCheck()
-            }
-          }
+        if (!(config.genVerilog || config.axi4 || config.simOpt.nonEmpty)) {
+          return T
         }
 
+        val sireumHome = Os.sireumHomeOpt.get
+        val scalaBin = sireumHome / "bin" / "scala" / "bin"
+        val sbt = sireumHome / "bin" / "sbt" / "bin" / (if (Os.isWin) "sbt.bat" else "sbt")
+        var envVars = ISZ[(String, String)]()
+        val javaBin = Os.javaExe(Some(init.home)).up.canon
+        val verilatorBin = init.homeBin / "verilator" / "bin"
+        envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}$scalaBin${Os.pathSepChar}${sbt.up.canon}${Os.pathSepChar}$verilatorBin${Os.pathSepChar}${Os.env("PATH").get}"
+        config.simOpt match {
+          case Some(simConfig) =>
+            envVars = envVars :+ "VL_THREADS" ~> simConfig.threads.string
+            envVars = envVars :+ "JAVA_HOME" ~> javaBin.up.canon.string
+            envVars = envVars :+ "VERILATOR_ROOT" ~> verilatorBin.up.canon.string
+          case _ =>
+        }
+        val chiselDir = out / "chisel"
+        val axiWrapperVerilogCommandStr: String = s"test:runMain AXIWrapperChiselGenerated${ir.name}VerilogGeneration"
+        val verilogCommandStr: String = s"test:runMain ${ir.name}VerilogGeneration"
+        val simCommandStr: String = s"testOnly *${ir.name}Bench"
+        val sbtOpts = ISZ[String]("-J-Xss32m")
+        if (config.genVerilog) {
+          Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$verilogCommandStr").
+            at(chiselDir).env(envVars).echo.console.runCheck()
+        }
+        if (config.axi4) {
+          Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$axiWrapperVerilogCommandStr").
+            at(chiselDir).env(envVars).echo.console.runCheck()
+        }
+        config.simOpt match {
+          case Some(_) if verilatorBin.exists =>
+            Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$simCommandStr").
+              at(chiselDir).env(envVars).echo.console.runCheck()
+          case _ =>
+        }
         return T
       case _ => return F
     }
