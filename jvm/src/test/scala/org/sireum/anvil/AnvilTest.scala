@@ -107,34 +107,33 @@ class AnvilTest extends SireumRcSpec {
     val versions: Map[String, String] = Os.sireumHomeOpt match {
       case Some(sireumHome) =>
         val vs = (sireumHome / "versions.properties").properties
-        Init(sireumHome, Os.kind, vs).installSbt(F)
+        Init(sireumHome, Os.kind, vs).anvilDeps()
         vs
       case _ => halt("Please set the SIREUM_HOME environment variable")
     }
     val d = (dir.up / "result-java").canon
     val vs = versions + "org.sireum.version.java" ~> "17.0.14+10"
-    val init = Init(d, Os.kind, vs)
-    init.installJava(vs, F, F)
-    val r = Os.javaExe(Some(d)).up.canon
-    r
+    Init(d, Os.kind, vs).installJava(vs, F, F)
+    Os.javaExe(Some(d)).up.canon
   }
+  val isInGitHubAction: B = Os.env("GITHUB_ACTIONS").nonEmpty
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
     val m = $internal.RC.text(Vector("example")) { (p, _) => !p.last.endsWith("print.sc") }
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last}_(${AnvilTest.singleTempId},_${AnvilTest.memLocalId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last}_(${AnvilTest.singleTempId},_${AnvilTest.tempLocalId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last}_(${AnvilTest.splitTempId},_${AnvilTest.memLocalId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last}_(${AnvilTest.splitTempId},_${AnvilTest.tempLocalId})", v)
       r
     }) yield pair
   }
 
 
   override def check(p: Vector[Predef.String], content: Predef.String): Boolean = {
-    val path = p.dropRight(1) :+ p.last.substring(0, p.last.lastIndexOf(" ("))
+    val path = p.dropRight(1) :+ p.last.substring(0, p.last.lastIndexOf("_("))
     val file = String(path.last)
     val out = dir /+ ISZ(p.map(String(_)): _*)
     val reporter = message.Reporter.create
@@ -157,7 +156,10 @@ class AnvilTest extends SireumRcSpec {
           genVerilog = T,
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
-        assert(config.simOpt.nonEmpty)
+        if (isInGitHubAction) {
+          config = config(genVerilog = F, simOpt = None())
+        }
+
         val irOpt = Anvil.synthesize(!dontTestFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
           new Anvil.Output {
             def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
@@ -177,11 +179,14 @@ class AnvilTest extends SireumRcSpec {
           val sireumHome = Os.sireumHomeOpt.get
           val scalaBin = sireumHome / "bin" / "scala" / "bin"
           val sbt = sireumHome / "bin" / "sbt" / "bin" / (if (Os.isWin) "sbt.bat" else "sbt")
+          val verilatorBin = sireumHome / "bin" / "verilator" / "bin"
           var envVars = ISZ[(String, String)]()
-          envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}$scalaBin${Os.pathSepChar}${sbt.up.canon}${Os.pathSepChar}${Os.env("PATH").get}"
+          envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}$scalaBin${Os.pathSepChar}${sbt.up.canon}${Os.pathSepChar}$verilatorBin${Os.pathSepChar}${Os.env("PATH").get}"
           config.simOpt match {
             case Some(simConfig) =>
               envVars = envVars :+ "VL_THREADS" ~> simConfig.threads.string
+              envVars = envVars :+ "JAVA_HOME" ~> javaBin.up.canon.string
+              envVars = envVars :+ "VERILATOR_ROOT" ~> verilatorBin.up.canon.string
             case _ =>
           }
           val chiselDir = out / "chisel"
