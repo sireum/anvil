@@ -33,10 +33,6 @@ object IRSimulatorTest {
   val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
   val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result-sim"
   val errAsOut: Boolean = T
-  val singleTempId = "single-temp"
-  val splitTempId = "split-temp"
-  val memLocalId = "mem-local"
-  val tempLocalId = "temp-local"
 }
 
 import IRSimulatorTest._
@@ -56,10 +52,10 @@ class IRSimulatorTest extends SireumRcSpec {
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
-      r = r :+ (k.dropRight(1) :+ s"${k.last} ($singleTempId, $memLocalId)", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} ($singleTempId, $tempLocalId)", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} ($splitTempId, $memLocalId)", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} ($splitTempId, $tempLocalId)", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId})", v)
       r
     }) yield pair
   }
@@ -140,8 +136,8 @@ class IRSimulatorTest extends SireumRcSpec {
           }
           out.removeAll()
           var config = Anvil.Config.empty
-          val splitTempSizes = p.last.contains(splitTempId)
-          val tempLocal = p.last.contains(tempLocalId)
+          val splitTempSizes = p.last.contains(AnvilTest.splitTempId)
+          val tempLocal = p.last.contains(AnvilTest.tempLocalId)
           config = config(
             memory = AnvilTest.memoryFileMap(splitTempSizes, tempLocal).get(file).getOrElse(AnvilTest.defaultMemory),
             printSize = AnvilTest.printFileMap.get(file).getOrElse(AnvilTest.defaultPrintSize),
