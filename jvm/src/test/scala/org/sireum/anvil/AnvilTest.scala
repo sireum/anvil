@@ -153,7 +153,7 @@ class AnvilTest extends SireumRcSpec {
           splitTempSizes = splitTempSizes,
           tempLocal = tempLocal,
           genVerilog = T,
-          axi4 = T,
+          axi4 = F,
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
 
@@ -181,10 +181,10 @@ class AnvilTest extends SireumRcSpec {
         val javaBin = Os.javaExe(Some(init.home)).up.canon
         val verilatorBin = init.homeBin / "verilator" / "bin"
         envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}${sbt.up.canon}${Os.pathSepChar}$verilatorBin${Os.pathSepChar}${Os.env("PATH").get}"
+        envVars = envVars :+ "JAVA_HOME" ~> javaBin.up.canon.string
         config.simOpt match {
           case Some(simConfig) =>
             envVars = envVars :+ "VL_THREADS" ~> simConfig.threads.string
-            envVars = envVars :+ "JAVA_HOME" ~> javaBin.up.canon.string
             envVars = envVars :+ "VERILATOR_ROOT" ~> verilatorBin.up.canon.string
           case _ =>
         }
