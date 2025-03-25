@@ -105,16 +105,14 @@ class AnvilTest extends SireumRcSpec {
   val dir: Os.Path = Os.path(implicitly[sourcecode.File].value).up.up.up.up.up.up.up / "result"
   val init: Init = {
     val versions: Map[String, String] = Os.sireumHomeOpt match {
-      case Some(sireumHome) =>
-        val vs = (sireumHome / "versions.properties").properties
-        Init(sireumHome, Os.kind, vs).anvilDeps()
-        vs
-      case _ => halt("Please set the SIREUM_HOME environment variable")
+      case Some(sireumHome) => (sireumHome / "versions.properties").properties
+      case _ => (dir.up.up / "versions.properties").properties
     }
     val d = (dir.up / "result-java").canon
     val vs = versions + "org.sireum.version.java" ~> "17.0.14+10"
     val init = Init(d, Os.kind, vs)
     init.installJava(vs, F, F)
+    init.installSbt(F)
     init.installVerilator()
     init
   }
@@ -178,13 +176,11 @@ class AnvilTest extends SireumRcSpec {
           return T
         }
 
-        val sireumHome = Os.sireumHomeOpt.get
-        val scalaBin = sireumHome / "bin" / "scala" / "bin"
-        val sbt = sireumHome / "bin" / "sbt" / "bin" / (if (Os.isWin) "sbt.bat" else "sbt")
+        val sbt = init.homeBin / "sbt" / "bin" / (if (Os.isWin) "sbt.bat" else "sbt")
         var envVars = ISZ[(String, String)]()
         val javaBin = Os.javaExe(Some(init.home)).up.canon
         val verilatorBin = init.homeBin / "verilator" / "bin"
-        envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}$scalaBin${Os.pathSepChar}${sbt.up.canon}${Os.pathSepChar}$verilatorBin${Os.pathSepChar}${Os.env("PATH").get}"
+        envVars = envVars :+ "PATH" ~> s"$javaBin${Os.pathSepChar}${sbt.up.canon}${Os.pathSepChar}$verilatorBin${Os.pathSepChar}${Os.env("PATH").get}"
         config.simOpt match {
           case Some(simConfig) =>
             envVars = envVars :+ "VL_THREADS" ~> simConfig.threads.string
