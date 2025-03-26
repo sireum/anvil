@@ -347,14 +347,6 @@ import Anvil._
         globalMap = globalMap + g.name ~> VarInfo(isScalar(g.tipe), globalSize, size, 0, g.tipe, g.pos)
         globalSize = globalSize + size
       }
-      val smc = ShiftMethodCollector(this, HashSSet.empty)
-      for (p <- procedures) {
-        smc.transform_langastIRProcedure(p)
-      }
-      for (id <- smc.ids.elements) {
-        val info = th.nameMap.get(runtimeName :+ id).get.asInstanceOf[Info.Method]
-        procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
-      }
       (startOpt.get.context, AST.IR.Program(threeAddressCode, globals, procedures), globalSize, globalMap)
     }
 
@@ -1304,12 +1296,6 @@ import Anvil._
 
       r = FloatEqualityTransformer(this).transform_langastIRProcedure(r).getOrElse(r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "float-eq"), r.prettyST(printer))
-      pass = pass + 1
-
-      if (p.context.owner != runtimeName) {
-        r = ShiftTransformer(this).transform_langastIRProcedure(r).getOrElse(r)
-      }
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "shift"), r.prettyST(printer))
       pass = pass + 1
 
       r = transformStackTraceLoc(r)

@@ -44,8 +44,8 @@ object AnvilTest {
       "print-no-float.sc" ~> (if (tempLocal) 256 + 8 * 6 else 256 + 8 * 9) +
       "printU64.sc" ~> (if (tempLocal) 128 + 8 * 5 else 128 + 8 * 11) +
       "seq.sc" ~> (if (tempLocal) 128 + 8 * 14 else 256 + 8 * 2) +
-      "shiftS64.sc" ~> (if (tempLocal) 128 + 8 * 14 else 256 + 8 * 3) +
-      "shiftU64.sc" ~> (if (tempLocal) 128 + 8 * 13 else 256 + 8 * 3) +
+      "shiftS64.sc" ~> (if (tempLocal) 128 + 8 * 12 else 256 + 8 * 1) +
+      "shiftU64.sc" ~> (if (tempLocal) 128 + 8 * 11 else 256 + 8 * 1) +
       "sum.sc" ~> (
         if (splitTempSizes) if (tempLocal) 128 + 8 * 16 else 256 + 8 * 7
         else if (tempLocal) 128 + 8 * 15 else 256 + 8 * 6)
