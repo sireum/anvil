@@ -1263,16 +1263,19 @@ object DivRemLog {
             exprST = st"(${leftST.render} < ${rightST.render}).asUInt"
           }
           case AST.IR.Exp.Binary.Op.Shr => {
-            val right: ST = if(isRhsIntType(exp.right)) st"${rightST.render}(4,0)" else st"${rightST.render}(4,0)"
-            exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} >> ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})"
+            val rangeStr: String = if(anvil.typeBitSize(exp.right.tipe) > 20) "(6,0)" else ""
+            val right: ST = if(anvil.isSigned(exp.right.tipe)) st"(${rightST.render}${rangeStr}.asUInt & \"b1111111\".U)" else st"(${rightST.render}${rangeStr} & \"b1111111\".U)"
+            exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} >> ${right.render})"
           }
           case AST.IR.Exp.Binary.Op.Ushr => {
-            val right: ST = if(isRhsIntType(exp.right)) st"${rightST.render}(4,0)" else st"${rightST.render}(4,0)"
-            exprST = st"(((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asUInt" else ""} >> ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ""})"
+            val rangeStr: String = if(anvil.typeBitSize(exp.right.tipe) > 20) "(6,0)" else ""
+            val right: ST = if(anvil.isSigned(exp.right.tipe)) st"(${rightST.render}${rangeStr}.asUInt & \"b1111111\".U)" else st"(${rightST.render}${rangeStr} & \"b1111111\".U)"
+            exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} >> ${right.render})"
           }
           case AST.IR.Exp.Binary.Op.Shl => {
-            val right: ST = if(isRhsIntType(exp.right)) st"${rightST.render}(4,0)" else st"${rightST.render}(4,0)"
-            exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} << ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})"
+            val rangeStr: String = if(anvil.typeBitSize(exp.right.tipe) > 20) "(6,0)" else ""
+            val right: ST = if(anvil.isSigned(exp.right.tipe)) st"(${rightST.render}${rangeStr}.asUInt & \"b1111111\".U)" else st"(${rightST.render}${rangeStr} & \"b1111111\".U)"
+            exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} << ${right.render})"
           }
           case _ => {
             halt(s"processExpr AST.IR.Exp.Binary unimplemented")
