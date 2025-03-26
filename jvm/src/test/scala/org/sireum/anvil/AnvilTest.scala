@@ -82,8 +82,11 @@ object AnvilTest {
     "instanceof.sc" ~> 200 +
     "local-reuse.sc" ~> 400 +
     "mult.sc" ~> 1000 +
+    "print-no-float.sc" ~> 300 +
     "printU64.sc" ~> 1000 +
     "seq.sc" ~> 500 +
+    "shiftS64.sc" ~> 1450 +
+    "shiftU64.sc" ~> 1600 +
     "sum.sc" ~> 400
 
   val defaultMemory: Z = 256
@@ -152,7 +155,7 @@ class AnvilTest extends SireumRcSpec {
           runtimeCheck = T,
           splitTempSizes = splitTempSizes,
           tempLocal = tempLocal,
-          genVerilog = T,
+          genVerilog = F,
           axi4 = F,
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
