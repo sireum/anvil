@@ -86,7 +86,7 @@ object AnvilTest {
     "printU64.sc" ~> 1000 +
     "seq.sc" ~> 500 +
     "shiftS64.sc" ~> 1450 +
-    "shiftU64.sc" ~> 1600 +
+    "shiftU64.sc" ~> 1500 +
     "sum.sc" ~> 400
 
   val defaultMemory: Z = 256
