@@ -192,20 +192,20 @@ class AnvilTest extends SireumRcSpec {
         val axiWrapperVerilogCommandStr: String = s"test:runMain AXIWrapperChiselGenerated${ir.name}VerilogGeneration"
         val verilogCommandStr: String = s"test:runMain ${ir.name}VerilogGeneration"
         val simCommandStr: String = s"testOnly *${ir.name}Bench"
-        val sbtOpts = ISZ[String]("-J-Xss32m")
-        if (config.genVerilog) {
-          Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$verilogCommandStr").
-            at(chiselDir).env(envVars).echo.console.runCheck()
-        }
-        if (config.axi4) {
+        val sbtOpts = ISZ[String]("-J-Xss32m", "-J-Xmx32G")
+        if (config.genVerilog && config.axi4) {
           Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$axiWrapperVerilogCommandStr").
             at(chiselDir).env(envVars).echo.console.runCheck()
-        }
-        config.simOpt match {
-          case Some(_) if verilatorBin.exists =>
-            Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$simCommandStr").
-              at(chiselDir).env(envVars).echo.console.runCheck()
-          case _ =>
+        } else if (config.genVerilog) {
+          Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$verilogCommandStr").
+            at(chiselDir).env(envVars).echo.console.runCheck()
+        } else {
+          config.simOpt match {
+            case Some(_) if verilatorBin.exists =>
+              Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$simCommandStr").
+                at(chiselDir).env(envVars).echo.console.runCheck()
+            case _ =>
+          }
         }
         return T
       case _ => return F
