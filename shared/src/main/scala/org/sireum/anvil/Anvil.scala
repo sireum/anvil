@@ -56,7 +56,8 @@ object Anvil {
                          val customDivRem: B,
                          val splitTempSizes: B,
                          val tempLocal: B,
-                         val indexingIntrinsic: B,
+                         val alu: B,
+                         val indexing: B,
                          val genVerilog: B,
                          val simOpt: Option[Config.Sim]) {
     val shouldPrint: B = printSize > 0
@@ -66,7 +67,28 @@ object Anvil {
     @datatype class Sim(val threads: Z, val cycles: Z)
 
     @strictpure def empty: Config =
-      Config(None(), 512 * 1024, 64, 100, 100, HashMap.empty, HashMap.empty, F, 1, F, 0, 8, F, F, F, F, T, F, F, None())
+      Config(
+        nameOpt = None(),
+        memory = 512 * 1024,
+        defaultBitWidth = 64,
+        maxStringSize = 100,
+        maxArraySize = 100,
+        customArraySizes = HashMap.empty,
+        customConstants = HashMap.empty,
+        stackTrace = F,
+        maxExpDepth = 1,
+        runtimeCheck = F,
+        printSize = 0,
+        copySize = 8,
+        erase = F,
+        axi4 = F,
+        customDivRem = F,
+        splitTempSizes = F,
+        tempLocal = T,
+        alu = F,
+        indexing = F,
+        genVerilog = F,
+        simOpt = None())
   }
 
   @sig trait Output {
