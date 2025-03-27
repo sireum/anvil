@@ -28,13 +28,15 @@ package org.sireum.anvil
 
 import org.sireum._
 
-@datatype class AnvilOutput(val sbtVersion: String, val out: Os.Path) extends Anvil.Output {
+@datatype class AnvilOutput(val finalOnly: B, val sbtVersion: String, val out: Os.Path) extends Anvil.Output {
   override def add(isFinal: B, path: => ISZ[String], content: => ST): Unit = {
-    if (isFinal) {
+    if (isFinal || !finalOnly) {
       val f = out /+ path
       f.up.mkdirAll()
       f.writeOver(content.render)
-      println(s"Wrote $f")
+      if (isFinal) {
+        println(s"Wrote $f")
+      }
     }
   }
 }

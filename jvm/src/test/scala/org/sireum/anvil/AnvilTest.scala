@@ -164,7 +164,7 @@ class AnvilTest extends SireumRcSpec {
         }
 
         val irOpt = Anvil.synthesize(!dontTestFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
-          AnvilOutput(init.versions.get("org.sireum.version.sbt").get, out), reporter)
+          AnvilOutput(F, init.versions.get("org.sireum.version.sbt").get, out), reporter)
         reporter.printMessages()
         if (reporter.hasError) {
           return F
