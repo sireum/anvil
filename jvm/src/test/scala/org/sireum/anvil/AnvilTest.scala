@@ -95,6 +95,8 @@ object AnvilTest {
   val splitTempId = "split-temp"
   val memLocalId = "mem-local"
   val tempLocalId = "temp-local"
+
+  val isInGitHubAction: B = Os.env("GITHUB_ACTIONS").nonEmpty
 }
 
 import AnvilTest._
@@ -153,19 +155,24 @@ class AnvilTest extends SireumRcSpec {
           splitTempSizes = splitTempSizes,
           tempLocal = tempLocal,
           genVerilog = T,
-          axi4 = F,
+          axi4 = T,
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
 
+        if (isInGitHubAction && (splitTempSizes || !tempLocal)) {
+          config = config(simOpt = None())
+        }
+
         val irOpt = Anvil.synthesize(!dontTestFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
           new Anvil.Output {
+            def sbtVersion: String = init.versions.get("org.sireum.version.sbt").get
             def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
               val f = out /+ p
               f.up.mkdirAll()
               f.writeOver(content.render)
             }
-          override def string: String = "AnvilTest.Output"
-        }, reporter)
+            override def string: String = "AnvilTest.Output"
+          }, reporter)
         reporter.printMessages()
         if (reporter.hasError) {
           return F
@@ -189,9 +196,9 @@ class AnvilTest extends SireumRcSpec {
           case _ =>
         }
         val chiselDir = out / "chisel"
-        val axiWrapperVerilogCommandStr: String = s"test:runMain AXIWrapperChiselGenerated${ir.name}VerilogGeneration"
-        val verilogCommandStr: String = s"test:runMain ${ir.name}VerilogGeneration"
-        val simCommandStr: String = s"testOnly *${ir.name}Bench"
+        val axiWrapperVerilogCommandStr: String = s"Test/runMain AXIWrapperChiselGenerated${ir.name}VerilogGeneration"
+        val verilogCommandStr: String = s"Test/runMain ${ir.name}VerilogGeneration"
+        val simCommandStr: String = s"Test/testOnly *${ir.name}Bench"
         val sbtOpts = ISZ[String]("-J-Xss32m")
         if (config.genVerilog) {
           Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$verilogCommandStr").

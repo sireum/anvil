@@ -154,8 +154,8 @@ class IRSimulatorTest extends SireumRcSpec {
               f.up.mkdirAll()
               f.writeOver(content.render)
             }
-
             override def string: String = "AnvilTest.Output"
+            def sbtVersion: String = halt("Infeasible")
           }, reporter) match {
             case Some(ir) =>
               val state = IRSimulator.State.create(ir.anvil.config.splitTempSizes, ir.anvil.config.memory,

@@ -92,6 +92,7 @@ object Anvil {
   }
 
   @sig trait Output {
+    def sbtVersion: String
     def add(isFinal: B, path: => ISZ[String], content: => ST): Unit
   }
 

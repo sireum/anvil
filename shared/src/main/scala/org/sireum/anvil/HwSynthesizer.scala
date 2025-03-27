@@ -71,16 +71,17 @@ object DivRemLog {
     r = r + ISZ(name) ~> o.prettyST(anvil.printer)
     output.add(T, ISZ("chisel/src/main/scala", s"chisel-${name}.scala"), processedProcedureST)
     output.add(T, ISZ("chisel", "build.sbt"), buildSbtST())
+    output.add(T, ISZ("chisel", "project", "build.properties"), st"sbt.version=${output.sbtVersion}")
 
-    if(anvil.config.genVerilog && anvil.config.axi4) {
-      output.add(T, ISZ("chisel/src/test/scala", s"AXIWrapperChiselGenerated${name}VerilogGeneration.scala"), axiWrapperVerilogGenerationST(name))
-    } else if(anvil.config.genVerilog) {
+    if (anvil.config.genVerilog) {
       output.add(T, ISZ("chisel/src/test/scala", s"${name}VerilogGeneration.scala"), verilogGenerationST(name))
-    } else {
-      anvil.config.simOpt match {
-        case Some(simConfig) => output.add(T, ISZ("chisel/src/test/scala", s"${name}Bench.scala"), testBenchST(name, simConfig.cycles))
-        case None() => output.add(T, ISZ("chisel/src/test/scala", s"${name}VerilogGeneration.scala"), verilogGenerationST(name))
-      }
+    }
+    if (anvil.config.axi4) {
+      output.add(T, ISZ("chisel/src/test/scala", s"AXIWrapperChiselGenerated${name}VerilogGeneration.scala"), axiWrapperVerilogGenerationST(name))
+    }
+    anvil.config.simOpt match {
+      case Some(simConfig) => output.add(T, ISZ("chisel/src/test/scala", s"${name}Bench.scala"), testBenchST(name, simConfig.cycles))
+      case _ =>
     }
 
     return
@@ -168,8 +169,7 @@ object DivRemLog {
 
   @pure def buildSbtST(): ST = {
     val sbtST: ST =
-      st"""
-          |scalaVersion := "2.12.13"
+      st"""scalaVersion := "2.13.10"
           |
           |
           |scalacOptions ++= Seq(
