@@ -148,15 +148,7 @@ class IRSimulatorTest extends SireumRcSpec {
             splitTempSizes = splitTempSizes,
             tempLocal = tempLocal
           )
-          Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, new Anvil.Output {
-            def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
-              val f = out /+ p
-              f.up.mkdirAll()
-              f.writeOver(content.render)
-            }
-            override def string: String = "AnvilTest.Output"
-            def sbtVersion: String = halt("Infeasible")
-          }, reporter) match {
+          Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, AnvilOutput("", out), reporter) match {
             case Some(ir) =>
               val state = IRSimulator.State.create(ir.anvil.config.splitTempSizes, ir.anvil.config.memory,
                 ir.maxRegisters, ir.globalInfoMap)

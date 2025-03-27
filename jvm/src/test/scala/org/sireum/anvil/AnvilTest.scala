@@ -159,20 +159,12 @@ class AnvilTest extends SireumRcSpec {
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
 
-        if (isInGitHubAction && (splitTempSizes || !tempLocal)) {
+        if (isInGitHubAction) {
           config = config(simOpt = None())
         }
 
         val irOpt = Anvil.synthesize(!dontTestFileSet.contains(file), lang.IRTranslator.createFresh, th2, ISZ(), config,
-          new Anvil.Output {
-            def sbtVersion: String = init.versions.get("org.sireum.version.sbt").get
-            def add(isFinal: B, p: => ISZ[String], content: => ST): Unit = {
-              val f = out /+ p
-              f.up.mkdirAll()
-              f.writeOver(content.render)
-            }
-            override def string: String = "AnvilTest.Output"
-          }, reporter)
+          AnvilOutput(init.versions.get("org.sireum.version.sbt").get, out), reporter)
         reporter.printMessages()
         if (reporter.hasError) {
           return F
