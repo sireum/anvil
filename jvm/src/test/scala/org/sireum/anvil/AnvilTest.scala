@@ -159,7 +159,7 @@ class AnvilTest extends SireumRcSpec {
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
 
-        if (isInGitHubAction && (splitTempSizes || !tempLocal)) {
+        if (isInGitHubAction) {
           config = config(simOpt = None())
         }
 
@@ -202,13 +202,8 @@ class AnvilTest extends SireumRcSpec {
         }
         config.simOpt match {
           case Some(_) if verilatorBin.exists =>
-            val p = Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$simCommandStr").
-              at(chiselDir).env(envVars).echo.console
-            if (isInGitHubAction) {
-              p.run()
-            } else {
-              p.runCheck()
-            }
+            Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$simCommandStr").
+              at(chiselDir).env(envVars).echo.console.runCheck()
           case _ =>
         }
         return T
