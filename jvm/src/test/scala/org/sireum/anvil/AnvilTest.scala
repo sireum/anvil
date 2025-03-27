@@ -159,7 +159,7 @@ class AnvilTest extends SireumRcSpec {
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
 
-        if (isInGitHubAction) {
+        if (isInGitHubAction && (splitTempSizes || !tempLocal)) {
           config = config(simOpt = None())
         }
 
