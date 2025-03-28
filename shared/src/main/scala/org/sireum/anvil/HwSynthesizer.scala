@@ -707,23 +707,30 @@ object DivRemLog {
 
     j match {
       case AST.IR.Jump.Intrinsic(intrinsic: Intrinsic.GotoLocal) => {
-        var returnAddrST = ISZ[ST]()
-        val offsetST: ST = if(intrinsic.offset < 0) st"- ${-intrinsic.offset}" else st"+ ${intrinsic.offset}"
-
-        for(i <- (anvil.cpTypeByteSize - 1) to 0 by -1) {
-          if(i == 0) {
-            returnAddrST = returnAddrST :+ st"${sharedMemName}(SP ${offsetST.render}.U + ${i}.U)"
-          } else {
-            returnAddrST = returnAddrST :+ st"${sharedMemName}(SP ${offsetST.render}.U + ${i}.U),"
-          }
-        }
-
-        intrinsicST =
-          st"""
-              |CP := Cat(
-              |  ${(returnAddrST, "\n")}
-              |)
+        if (anvil.config.tempLocal) {
+          intrinsicST =
+            st"""
+                |CP := ${processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F)}
             """
+        } else {
+          var returnAddrST = ISZ[ST]()
+          val offsetST: ST = if (intrinsic.loc < 0) st"- ${-intrinsic.loc}" else st"+ ${intrinsic.loc}"
+
+          for (i <- (anvil.cpTypeByteSize - 1) to 0 by -1) {
+            if (i == 0) {
+              returnAddrST = returnAddrST :+ st"${sharedMemName}(SP ${offsetST.render}.U + ${i}.U)"
+            } else {
+              returnAddrST = returnAddrST :+ st"${sharedMemName}(SP ${offsetST.render}.U + ${i}.U),"
+            }
+          }
+
+          intrinsicST =
+            st"""
+                |CP := Cat(
+                |  ${(returnAddrST, "\n")}
+                |)
+            """
+        }
       }
       case j: AST.IR.Jump.Goto => {
         intrinsicST = st"CP := ${j.label}.U"

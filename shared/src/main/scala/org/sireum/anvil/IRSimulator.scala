@@ -1256,10 +1256,15 @@ import IRSimulator._
       case jump: AST.IR.Jump.Intrinsic =>
         jump.intrinsic match {
           case in: Intrinsic.GotoLocal =>
-            val offset = state.SP.value + in.offset
-            val (cp, acs) = load(state.memory, offset, anvil.cpTypeByteSize)
-            return State.Edit.Temp(State.Edit.Temp.Kind.CP, isFP, isSigned, bitSize, 0,
-              Value.fromRawU64(anvil, cp, anvil.cpType), acs)
+            if (anvil.config.tempLocal) {
+              val (cp, acs) = evalExp(state, AST.IR.Exp.Temp(in.loc, anvil.cpType, in.pos))
+              return State.Edit.Temp(State.Edit.Temp.Kind.CP, isFP, isSigned, bitSize, 0, cp, acs)
+            } else {
+              val offset = state.SP.value + in.loc
+              val (cp, acs) = load(state.memory, offset, anvil.cpTypeByteSize)
+              return State.Edit.Temp(State.Edit.Temp.Kind.CP, isFP, isSigned, bitSize, 0,
+                Value.fromRawU64(anvil, cp, anvil.cpType), acs)
+            }
         }
       case _: AST.IR.Jump.Return => halt(s"Infeasible: ${jump.prettyST(anvil.printer)}")
       case _: AST.IR.Jump.Halt => halt(s"Infeasible: ${jump.prettyST(anvil.printer)}")

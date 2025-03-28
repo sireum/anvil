@@ -30,10 +30,6 @@ import org.sireum.alir.MonotonicDataflowFramework
 import org.sireum.lang.symbol.Info
 import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.{ast => AST}
-import org.sireum.U64._
-import org.sireum.lang.ast.IR
-import org.sireum.lang.ast.IR.{Exp, Stmt}
-import org.sireum.lang.ast.IR.Stmt.Assign
 
 object Util {
   @enum object PMod {
@@ -289,7 +285,13 @@ object Util {
     }
   }
 
-  @record class CPSubstitutor(var cpSubstMap: HashMap[Z, Z]) extends MAnvilIRTransformer {
+  @record class CPSubstitutor(val anvil: Anvil, var cpSubstMap: HashMap[Z, Z]) extends MAnvilIRTransformer {
+    override def transform_langastIRBasicBlock(o: AST.IR.BasicBlock): MOption[AST.IR.BasicBlock] = {
+      val rOpt = extension.Debug.onError[MOption[AST.IR.BasicBlock]](
+        super.transform_langastIRBasicBlock(o), (_: String) => { halt(o.prettyST(anvil.printer).render)})
+      return rOpt
+    }
+
     override def post_langastIRBasicBlock(o: AST.IR.BasicBlock): MOption[AST.IR.BasicBlock] = {
       return MSome(o(label = cpSubstMap.get(o.label).get))
     }
@@ -321,6 +323,14 @@ object Util {
 
     override def post_langastIRJumpHalt(o: AST.IR.Jump.Halt): MOption[AST.IR.Jump] = {
       return MSome(AST.IR.Jump.Goto(errorLabel, o.pos))
+    }
+
+    override def post_langastIRStmtAssignTemp(o: AST.IR.Stmt.Assign.Temp): MOption[AST.IR.Stmt.Assign] = {
+      o.rhs match {
+        case rhs: AST.IR.Exp.Int if anvil.config.tempLocal && rhs.tipe == anvil.cpType =>
+          return MSome(o(rhs = rhs(value = cpSubstMap.get(rhs.value).get)))
+        case _ => return MNone()
+      }
     }
   }
 
@@ -651,7 +661,7 @@ object Util {
   }
 
   @record class LocalTempSubstutitor(val m: HashSMap[String, Z]) extends MAnvilIRTransformer {
-    override def post_langastIRExpLocalVarRef(o: Exp.LocalVarRef): MOption[IR.Exp] = {
+    override def post_langastIRExpLocalVarRef(o: AST.IR.Exp.LocalVarRef): MOption[AST.IR.Exp] = {
       m.get(o.id) match {
         case Some(n) => return MSome(AST.IR.Exp.Temp(n, o.tipe, o.pos))
         case _ =>
@@ -659,7 +669,7 @@ object Util {
       return MNone()
     }
 
-    override def post_langastIRStmtAssignLocal(o: Assign.Local): MOption[Stmt.Assign] = {
+    override def post_langastIRStmtAssignLocal(o: AST.IR.Stmt.Assign.Local): MOption[AST.IR.Stmt.Assign] = {
       m.get(o.lhs) match {
         case Some(n) => return MSome(AST.IR.Stmt.Assign.Temp(n, o.rhs, o.pos))
         case _ =>
@@ -989,10 +999,12 @@ object Util {
 
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
   val syntheticMethodIds: HashSet[String] = HashSet.empty[String] + objInitId + newInitId + testId
-  val ignoredTempLocal: HashSet[String] = HashSet.empty[String] + returnLocalId + sfLocId + sfDescId + sfCallerId + sfCurrentId + s"$resultLocalId$dataId"
+  val ignoredTempLocal: HashSet[String] = HashSet.empty[String] + sfLocId + sfDescId + sfCallerId + sfCurrentId + s"$resultLocalId$dataId"
 
   @strictpure def tempST(anvil: Anvil, tipe: AST.Typed, n: Z): ST = {
-    val t: AST.Typed = if (anvil.isScalar(tipe)) tipe else anvil.spType
+    val t: AST.Typed =
+      if (anvil.config.splitTempSizes) if (anvil.isScalar(tipe)) tipe else anvil.spType
+      else AST.Typed.u64
     tempST2(anvil.isFP(t), anvil.isSigned(t), anvil.typeBitSize(t), n)
   }
 

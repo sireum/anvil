@@ -733,7 +733,7 @@ import Anvil._
       }
     }
 
-    return transformEmptyBlock(CPSubstitutor(cpSubstMap).
+    return transformEmptyBlock(CPSubstitutor(this, cpSubstMap).
       transform_langastIRProcedure(p).getOrElse(p))
   }
 
@@ -1445,6 +1445,8 @@ import Anvil._
           case AST.IR.Stmt.Intrinsic(Intrinsic.Store(
           AST.IR.Exp.Intrinsic(Intrinsic.Register(T, _, _)), _, _, n: AST.IR.Exp.Int, _, _, _)) =>
             r = r + n.value ~> (r.get(n.value).get + 1)
+          case AST.IR.Stmt.Assign.Temp(_, n: AST.IR.Exp.Int, _) if n.tipe == cpType =>
+            r = r + n.value ~> (r.get(n.value).get + 1)
           case _ =>
         }
       }
@@ -1477,7 +1479,11 @@ import Anvil._
             val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
             val called = procedureMap.get(mc).get
             val paramInfo = procedureParamInfo(PBox(called))._2
-            val liveTemps: ISZ[(Z, AST.Typed)] = exitSet.value.get(b.label).get(stmtIndex).elements
+            var liveTemps = exitSet.value.get(b.label).get(stmtIndex).elements
+            if (config.tempLocal) {
+              val returnInfo = paramInfo.get(returnLocalId).get
+              liveTemps = liveTemps :+ (returnInfo.loc, returnInfo.tipe)
+            }
             val pMaxTemps = procMaxTemps(this, PBox(p))
             val calledMaxTemps = procMaxTemps(this, PBox(called))
             val maxTemps = pMaxTemps.max(calledMaxTemps)
@@ -1570,14 +1576,14 @@ import Anvil._
                 st"$sfCurrentId@${sfCurrentInfo.loc} = ${sfCallerInfo.loc}", spType, e.pos))
             }
 
-            grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-              AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
-              isSigned(returnInfo.tipe), returnInfo.totalSize,
-              AST.IR.Exp.Int(returnInfo.tipe, label, e.pos), st"$returnLocalId@0 = $label", returnInfo.tipe, e.pos
-            ))
-
             if (config.tempLocal) {
               var currMaxTemps = maxTemps
+
+              {
+                tempGrounds = tempGrounds :+ AST.IR.Stmt.Assign.Temp(paramInfo.get(returnLocalId).get.loc,
+                  AST.IR.Exp.Int(cpType, label, e.pos), e.pos)
+              }
+
               var paramTypeArgs = ISZ[((String, AST.Typed), AST.IR.Exp)]()
               if (called.tipe.ret != AST.Typed.unit && !isScalar(called.tipe.ret)) {
                 val n = callResultOffsetMap.get(callResultId(e.id, e.pos)).get - (spAdd + registerSpace)
@@ -1598,6 +1604,12 @@ import Anvil._
                   AST.IR.Exp.Temp(temp, pt, parg.pos), parg.pos)
               }
             } else {
+              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+                AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
+                isSigned(returnInfo.tipe), returnInfo.totalSize,
+                AST.IR.Exp.Int(returnInfo.tipe, label, e.pos), st"$returnLocalId@0 = $label", returnInfo.tipe, e.pos
+              ))
+
               if (called.tipe.ret != AST.Typed.unit) {
                 val resultInfo = paramInfo.get(resultLocalId).get
                 val n = callResultOffsetMap.get(callResultId(e.id, e.pos)).get - (spAdd + registerSpace)
@@ -1728,7 +1740,8 @@ import Anvil._
                 case _ =>
               }
               blocks = blocks :+ b(grounds = b.grounds ++ addGrounds,
-                jump = AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(0, p.context, returnLocalId, j.pos)))
+                jump = AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(
+                  procedureParamInfo(PBox(p))._2.get(returnLocalId).get.loc, p.context, returnLocalId, j.pos)))
             case _ => blocks = blocks :+ b
           }
         }
@@ -1980,8 +1993,14 @@ import Anvil._
     var tv = TempVector.empty
 
     var maxOffset: Z = 0
-    m = m + returnLocalId ~> VarInfo(isScalar(cpType), maxOffset, typeByteSize(cpType), 0, cpType, p.pos)
-    maxOffset = maxOffset + typeByteSize(cpType)
+    if (config.tempLocal) {
+      val tvType: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
+      m = m + returnLocalId ~> VarInfo(isScalar(cpType), tv.typeCount(this, tvType), 0, 0, cpType, p.pos)
+      tv = tv.incType(this, tvType)
+    } else {
+      m = m + returnLocalId ~> VarInfo(isScalar(cpType), maxOffset, typeByteSize(cpType), 0, cpType, p.pos)
+      maxOffset = maxOffset + typeByteSize(cpType)
+    }
 
     val isMain = procedureMod(p.context) == PMod.Main
     if (p.tipe.ret != AST.Typed.unit) {
@@ -2622,9 +2641,14 @@ import Anvil._
         AST.IR.Exp.Int(AST.Typed.z, dpMask + 1, p.pos), st"$displayId.size", AST.Typed.z, p.pos))
     }
     val paramInfo = procedureParamInfo(PBox(p))._2
-    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-      AST.IR.Exp.Int(cpType, globalSize + paramInfo.get(returnLocalId).get.loc, p.pos), isSigned(cpType), typeByteSize(cpType),
-      AST.IR.Exp.Int(cpType, 0, p.pos), st"$returnLocalId", cpType, p.pos))
+    if (config.tempLocal) {
+      grounds = grounds :+ AST.IR.Stmt.Assign.Temp(paramInfo.get(returnLocalId).get.loc,
+        AST.IR.Exp.Int(cpType, 0, p.pos), p.pos)
+    } else {
+      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+        AST.IR.Exp.Int(cpType, globalSize + paramInfo.get(returnLocalId).get.loc, p.pos), isSigned(cpType),
+        typeByteSize(cpType), AST.IR.Exp.Int(cpType, 0, p.pos), st"$returnLocalId", cpType, p.pos))
+    }
     if (p.tipe.ret != AST.Typed.unit) {
       val offset = paramInfo.get(resultLocalId).get.loc
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
