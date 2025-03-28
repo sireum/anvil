@@ -907,7 +907,7 @@ object Util {
 
   @record class TempMaxCounter(val anvil: Anvil, var seen: HashSet[(Z, AST.Typed)], var r: TempVector) extends MAnvilIRTransformer {
     override def post_langastIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
-      val t = o.tipe
+      val t: AST.Typed = if (anvil.config.splitTempSizes) o.tipe else AST.Typed.u64
       val key = (o.n, t)
       if (seen.contains(key)) {
         return MNone()
@@ -918,7 +918,7 @@ object Util {
     }
 
     override def post_langastIRStmtAssignTemp(o: AST.IR.Stmt.Assign.Temp): MOption[AST.IR.Stmt.Assign] = {
-      val t = o.rhs.tipe
+      val t: AST.Typed = if (anvil.config.splitTempSizes) o.rhs.tipe else AST.Typed.u64
       val key = (o.lhs, t)
       if (seen.contains(key)) {
         return MNone()
@@ -929,7 +929,7 @@ object Util {
     }
 
     override def postIntrinsicTempLoad(o: Intrinsic.TempLoad): MOption[Intrinsic.TempLoad] = {
-      val t = o.tipe
+      val t: AST.Typed = if (anvil.config.splitTempSizes) o.tipe else AST.Typed.u64
       val key = (o.temp, t)
       if (seen.contains(key)) {
         return MNone()
@@ -989,7 +989,7 @@ object Util {
 
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
   val syntheticMethodIds: HashSet[String] = HashSet.empty[String] + objInitId + newInitId + testId
-  val ignoredTempLocal: HashSet[String] = HashSet.empty[String] + returnLocalId + sfLocId + sfDescId + sfCallerId + sfCurrentId + resultLocalId
+  val ignoredTempLocal: HashSet[String] = HashSet.empty[String] + returnLocalId + sfLocId + sfDescId + sfCallerId + sfCurrentId + s"$resultLocalId$dataId"
 
   @strictpure def tempST(anvil: Anvil, tipe: AST.Typed, n: Z): ST = {
     val t: AST.Typed = if (anvil.isScalar(tipe)) tipe else anvil.spType
