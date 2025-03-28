@@ -195,9 +195,31 @@ import Anvil._
 
   def generateIR(isTest: B, fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): Option[IR] = {
     val threeAddressCode = T
+    @strictpure def isLit(e: AST.IR.Exp): B = e match {
+      case _: AST.IR.Exp.Bool => T
+      case _: AST.IR.Exp.Int => T
+      case _: AST.IR.Exp.F32 => T
+      case _: AST.IR.Exp.F64 => T
+      case _: AST.IR.Exp.R => T
+      case _: AST.IR.Exp.String => T
+      case _ => F
+    }
+    @strictpure def should3AC(e: AST.IR.Exp): B = e match {
+      case _: AST.IR.Exp.Bool => F
+      case _: AST.IR.Exp.Int => F
+      case _: AST.IR.Exp.F32 => F
+      case _: AST.IR.Exp.F64 => F
+      case _: AST.IR.Exp.R => F
+      case _: AST.IR.Exp.String => F
+      case _: AST.IR.Exp.LocalVarRef => !config.tempLocal || !isScalar(e.tipe)
+      case _ => T
+    }
 
-    val irt = lang.IRTranslator(threeAddressCode = threeAddressCode, threeAddressCodeLit = F,
-      th = tsr.typeHierarchy, fresh = fresh)
+    val irt = lang.IRTranslator(
+      threeAddressCode = threeAddressCode,
+      threeAddressExpF = should3AC _,
+      th = tsr.typeHierarchy,
+      fresh = fresh)
 
     var stage: Z = 0
 
