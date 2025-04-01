@@ -42,14 +42,35 @@ object TmpWireCount {
   }
 }
 
-object MemCopyLog {
-  //@strictpure def currentBlock(b: AST.IR.BasicBlock): AST.IR.BasicBlock = b
+object BlockLog {
   var currentBlock: MOption[AST.IR.BasicBlock] = MNone()
-  var isMemCopyInBlock: B = F
+
+  def getBlock: AST.IR.BasicBlock = {
+    return currentBlock.get
+  }
+
+  def setBlock(b: AST.IR.BasicBlock):B = {
+    currentBlock = MSome(b)
+    return T
+  }
+}
+
+object MemCopyLog {
+  var flagMemCopyInBlock: B = F
+  def isMemCopyInBlock(): B = {
+    return flagMemCopyInBlock
+  }
+
+  def enableFlagMemCopyInBlock(): Unit = {
+    flagMemCopyInBlock = T
+  }
+
+  def disableFlagMemCopyInBlock(): Unit = {
+    flagMemCopyInBlock = F
+  }
 }
 
 object DivRemLog {
-  var currentBlock: MOption[AST.IR.BasicBlock] = MNone()
   var customDivRemST: ST = st""
   var isCustomDivRem: B = F
   var byteNum: Z = 0
@@ -57,9 +78,160 @@ object DivRemLog {
   var isSigned: B = F
 }
 
-@datatype class HwSynthesizer(val anvil: Anvil) {
+@datatype trait HwModule {
+  @strictpure def moduleName: String
+  @strictpure def instanceName: String
+  @strictpure def moduleST: ST
+  @strictpure def instanceST: ST
+}
+
+@datatype trait ChiselModule extends HwModule {
+  @pure def signed: B
+  @pure def modName: String
+  @pure def modST(signed: B): ST
+  @pure def insName: String
+  @pure def maxNumInstance: Z
+  @pure def width: Z
+  @pure def inputs: ISZ[HashSMap[String, ChiselModule.Input]]
+  @strictpure override def moduleName: String = modName
+  @strictpure override def instanceName: String = insName
+  @strictpure override def moduleST: ST = modST(signed)
+  @pure override def instanceST: ST = {
+
+    @strictpure def inputPortListST(modIdx: Z): ST = {
+      val targetInstanceInputs: HashSMap[String, ChiselModule.Input] = inputs(modIdx)
+      val muxLogicST: ISZ[ST] = {
+        for(entry <- targetInstanceInputs.entries) yield
+          st"${instanceName}${modIdx}.io.${entry._1} := ${entry._2.prettyST}"
+      }
+
+      st"""
+          |def init${instanceName}${modIdx}() = {
+          |  ${(muxLogicST, "\n")}
+          |}
+          |init${instanceName}${modIdx}()
+        """
+    }
+
+    val moduleInstances: ISZ[ST] = {
+      for(i <- 0 until maxNumInstance) yield
+        st"""
+            |val ${instanceName}${i} = Module(new ${moduleName}(${width}))
+            |${(inputPortListST(i), "\n")}"""
+    }
+
+    return st"""
+               |${(moduleInstances, "\n")}
+               """
+  }
+}
+
+object ChiselModule {
+  @datatype class StateValue(val state: Z, val value: String) {
+  }
+
+  @datatype class Input(val stateValue: ISZ[StateValue], val portName: String, val portValueType: String) {
+    @strictpure def defaultValue: String = {
+      portValueType match {
+        case "UInt" => "0.U"
+        case "SInt" => "0.S"
+        case _ => "false.B"
+      }
+    }
+    @strictpure def prettyST: ST = st"${(for(sv <- stateValue) yield st"Mux(CP === ${sv.state}.U, ${sv.value}, ${defaultValue})", " |\n")}"
+    @strictpure def +(v: StateValue): Input = Input(stateValue :+ v, portName, portValueType)
+  }
+
+  @datatype class InstanceVector(val modInstanceName: String, val usageVector: ISZ[Z], val maxNumInstances: Z, val inputs: ISZ[HashSMap[String, Input]]) {
+    @strictpure def getVectorIndex: Z = usageVector.size
+    @strictpure def appendV: InstanceVector = InstanceVector(modInstanceName, usageVector :+ 1, maxNumInstances + 1, inputs)
+    @strictpure def initializeV: InstanceVector = InstanceVector(modInstanceName, ISZ[Z](), maxNumInstances, inputs)
+    @strictpure def addInstance(): InstanceVector = InstanceVector(modInstanceName, usageVector :+ 1, maxNumInstances, inputs)
+    @strictpure def addInput(index: Z, name: String, v: StateValue): InstanceVector = {
+      val targetMod: HashSMap[String, Input]  = inputs(index)
+      val inputPort: Input = targetMod.get(name).get
+      val updatedPort: Input = inputPort + v
+      val updatedTargetMod: HashSMap[String, Input] = targetMod + name ~> updatedPort
+      val updatedInputs: ISZ[HashSMap[String, Input]] = inputs(index ~> updatedTargetMod)
+      InstanceVector(modInstanceName, usageVector, maxNumInstances, updatedInputs)
+    }
+
+    @pure def extendInputs(n: Z, label: Z): InstanceVector = {
+      var updatedVector = this
+      if(n <= 0) {
+        return this
+      }
+      for(i <- 0 until n) {
+        updatedVector = updatedVector.appendV
+        updatedVector = InstanceVector(updatedVector.modInstanceName, updatedVector.usageVector, updatedVector.maxNumInstances, inputs :+ HashSMap.empty)
+      }
+
+      return updatedVector
+    }
+
+    @pure def populateInputs(label: Z, hashSMap: HashSMap[String, (ST, String)], originalV: InstanceVector) : InstanceVector = {
+      var updatedVector = originalV
+
+      if (updatedVector.getVectorIndex < updatedVector.maxNumInstances) {
+        for (entry <- hashSMap.entries) {
+          updatedVector = updatedVector.addInput(updatedVector.getVectorIndex, entry._1, StateValue(label, entry._2._1.render))
+        }
+        updatedVector = updatedVector.addInstance()
+      } else {
+        updatedVector = updatedVector.appendV
+        var newInput: HashSMap[String, Input] = HashSMap.empty[String, Input]
+        for(entry <- hashSMap.entries) {
+          val newStateValue: ISZ[StateValue] = ISZ(StateValue(label, entry._2._1.render))
+          newInput = newInput + entry._1 ~> Input(newStateValue, entry._1, entry._2._2)
+        }
+        updatedVector = InstanceVector(updatedVector.modInstanceName, updatedVector.usageVector, updatedVector.maxNumInstances, inputs :+ newInput)
+      }
+      return updatedVector
+    }
+  }
+}
+
+@datatype class Adder(val signedPort: B,
+                      val moduleDeclarationName: String,
+                      val moduleInstanceName: String,
+                      val maxNumOfInstance: Z,
+                      val widthOfPort: Z,
+                      val inputList: ISZ[HashSMap[String, ChiselModule.Input]]) extends ChiselModule {
+  @strictpure override def signed: B = signedPort
+  @strictpure override def modName: String = moduleDeclarationName
+  @strictpure override def insName: String = moduleInstanceName
+  @strictpure override def maxNumInstance: Z = maxNumOfInstance
+  @strictpure override def width: Z = widthOfPort
+  @strictpure override def inputs: ISZ[HashSMap[String, ChiselModule.Input]] = inputList
+  @strictpure def modST(signed: B): ST = {
+    val portType: ST = if(signed) st"SInt" else st"UInt"
+    st"""
+        |class ${modName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(${width}.W))
+        |        val b = Input(${portType}(${width}.W))
+        |        val op = Input(Bool())
+        |        val out = Output(${portType}(${width}.W))
+        |    })
+        |
+        |    io.out := Mux(io.op, io.a + io.b, io.a - io.b)
+        |}
+      """
+  }
+}
+
+@record class HwSynthesizer(val anvil: Anvil) {
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
+
+  var adderUnsignedInstance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderUnsigned", ISZ[Z](), 0, ISZ[HashSMap[String, ChiselModule.Input]]())
+  var adderSignedInstance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderSigned", ISZ[Z](), 0, ISZ[HashSMap[String, ChiselModule.Input]]())
+
+  /*
+  var adderSignedCounter: ISZ[Z] = ISZ()
+  var adderUnsignedCounter: ISZ[Z] = ISZ()
+   */
+
   /*
     Notes/links:
     * Slang IR: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/IR.scala
@@ -190,282 +362,282 @@ object DivRemLog {
 
     @strictpure def axi4WrapperST(): ST =
       st"""
-           |class AXIWrapperChiselGenerated${name}(val C_S_AXI_DATA_WIDTH:  Int = 32,
-           |                                         val C_S_AXI_ADDR_WIDTH:  Int = 32,
-           |                                         val ARRAY_REG_WIDTH:     Int = 8,
-           |                                         val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
-           |                                         ${if(!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
-           |                                         ${if(!anvil.config.splitTempSizes) s"val GENERAL_REG_DEPTH:   Int = ${maxRegisters.maxCount}," else ""}
-           |                                         val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize*8},
-           |                                         val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize*8})  extends Module {
-           |    val io = IO(new Bundle{
-           |        // write address channel
-           |        val S_AXI_AWADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
-           |        val S_AXI_AWPROT  = Input(UInt(3.W))
-           |        val S_AXI_AWVALID = Input(Bool())
-           |        val S_AXI_AWREADY = Output(Bool())
+          |class AXIWrapperChiselGenerated${name}(val C_S_AXI_DATA_WIDTH:  Int = 32,
+          |                                         val C_S_AXI_ADDR_WIDTH:  Int = 32,
+          |                                         val ARRAY_REG_WIDTH:     Int = 8,
+          |                                         val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
+          |                                         ${if(!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
+          |                                         ${if(!anvil.config.splitTempSizes) s"val GENERAL_REG_DEPTH:   Int = ${maxRegisters.maxCount}," else ""}
+          |                                         val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize*8},
+          |                                         val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize*8})  extends Module {
+          |    val io = IO(new Bundle{
+          |        // write address channel
+          |        val S_AXI_AWADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |        val S_AXI_AWPROT  = Input(UInt(3.W))
+          |        val S_AXI_AWVALID = Input(Bool())
+          |        val S_AXI_AWREADY = Output(Bool())
 
-           |        // write data channel
-           |        val S_AXI_WDATA  = Input(SInt(C_S_AXI_DATA_WIDTH.W))
-           |        val S_AXI_WSTRB  = Input(UInt((C_S_AXI_DATA_WIDTH/8).W))
-           |        val S_AXI_WVALID = Input(Bool())
-           |        val S_AXI_WREADY = Output(Bool())
+          |        // write data channel
+          |        val S_AXI_WDATA  = Input(SInt(C_S_AXI_DATA_WIDTH.W))
+          |        val S_AXI_WSTRB  = Input(UInt((C_S_AXI_DATA_WIDTH/8).W))
+          |        val S_AXI_WVALID = Input(Bool())
+          |        val S_AXI_WREADY = Output(Bool())
 
-           |        // write response channel
-           |        val S_AXI_BRESP  = Output(UInt(2.W))
-           |        val S_AXI_BVALID = Output(Bool())
-           |        val S_AXI_BREADY = Input(Bool())
+          |        // write response channel
+          |        val S_AXI_BRESP  = Output(UInt(2.W))
+          |        val S_AXI_BVALID = Output(Bool())
+          |        val S_AXI_BREADY = Input(Bool())
 
-           |        // read address channel
-           |        val S_AXI_ARADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
-           |        val S_AXI_ARPROT  = Input(UInt(3.W))
-           |        val S_AXI_ARVALID = Input(Bool())
-           |        val S_AXI_ARREADY = Output(Bool())
+          |        // read address channel
+          |        val S_AXI_ARADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |        val S_AXI_ARPROT  = Input(UInt(3.W))
+          |        val S_AXI_ARVALID = Input(Bool())
+          |        val S_AXI_ARREADY = Output(Bool())
 
-           |        // read data channel
-           |        val S_AXI_RDATA  = Output(SInt(C_S_AXI_DATA_WIDTH.W))
-           |        val S_AXI_RRESP  = Output(UInt(2.W))
-           |        val S_AXI_RVALID = Output(Bool())
-           |        val S_AXI_RREADY = Input(Bool())
-           |    })
-           |
-           |    val lowActiveReset = !reset.asBool
-           |  withReset(lowActiveReset) {
-           |
-           |    // AXI4LITE signals, the signals need to be saved
-           |    val axi_awaddr  = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
-           |    val axi_araddr  = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
-           |    // AXI4LITE output signal
-           |    val axi_awready = Reg(Bool())
-           |    val axi_wready  = Reg(Bool())
-           |    val axi_bresp   = Reg(UInt(2.W))
-           |    val axi_bvalid  = Reg(Bool())
-           |    val axi_arready = Reg(Bool())
-           |    val axi_rdata   = Reg(SInt(C_S_AXI_DATA_WIDTH.W))
-           |    val axi_rresp   = Reg(UInt(2.W))
-           |    val axi_rvalid  = Reg(Bool())
-           |
-           |
-           |    // Example-specific design signals
-           |    // local parameter for addressing 32 bit / 64 bit C_S_AXI_DATA_WIDTH
-           |    // ADDR_LSB is used for addressing 32/64 bit registers/memories
-           |    // ADDR_LSB = 2 for 32 bits (n downto 2)
-           |    // ADDR_LSB = 3 for 64 bits (n downto 3)
-           |    val ADDR_LSB: Int = (C_S_AXI_DATA_WIDTH/32) + 1
-           |    val OPT_MEM_ADDR_BITS: Int = 10
-           |
-           |    //----------------------------------------------
-           |    //-- Signals for user logic register space example
-           |    //------------------------------------------------
-           |    val slv_reg_rden = Wire(Bool())
-           |    val slv_reg_wren = Wire(Bool())
-           |    val reg_data_out = Wire(SInt(C_S_AXI_DATA_WIDTH.W))
-           |    val aw_en        = Reg(Bool())
-           |
-           |    // Registers for target module port
-           |    val io_valid_reg = Reg(UInt(32.W))
-           |    val io_ready_reg = Reg(UInt(32.W))
-           |
-           |    // instantiate the target module
-           |    val arrayReadAddrValid = (axi_araddr(log2Ceil(ARRAY_REG_DEPTH), 0) >= 8.U) && ((axi_araddr(log2Ceil(ARRAY_REG_DEPTH), 0) + 3.U) < (ARRAY_REG_DEPTH.U + 8.U))
-           |    val arrayWriteAddrValid = (axi_awaddr(log2Ceil(ARRAY_REG_DEPTH), 0) >= 8.U) && ((axi_awaddr(log2Ceil(ARRAY_REG_DEPTH), 0) + 3.U) < (ARRAY_REG_DEPTH.U + 8.U))
-           |    val arrayWriteValid = slv_reg_wren & arrayWriteAddrValid
-           |    val arrayReadValid = arrayReadAddrValid & axi_arready & io.S_AXI_ARVALID & ~axi_rvalid
-           |    val arrayReady = axi_araddr(log2Ceil(ARRAY_REG_DEPTH), 0) === 4.U
-           |    val mod${name} = Module(new ${name}(C_S_AXI_DATA_WIDTH  = C_S_AXI_DATA_WIDTH ,
-           |                                                C_S_AXI_ADDR_WIDTH  = C_S_AXI_ADDR_WIDTH ,
-           |                                                ARRAY_REG_WIDTH     = ARRAY_REG_WIDTH    ,
-           |                                                ARRAY_REG_DEPTH     = ARRAY_REG_DEPTH    ,
-           |                                                ${if(!anvil.config.splitTempSizes) "GENERAL_REG_WIDTH   = GENERAL_REG_WIDTH  ," else ""}
-           |                                                ${if(!anvil.config.splitTempSizes) "GENERAL_REG_DEPTH   = GENERAL_REG_DEPTH  ," else ""}
-           |                                                STACK_POINTER_WIDTH = STACK_POINTER_WIDTH,
-           |                                                CODE_POINTER_WIDTH  = CODE_POINTER_WIDTH  ))
-           |    mod${name}.io.valid := Mux(io_valid_reg(0) & (io_ready_reg === 2.U), true.B, false.B)
-           |    io_ready_reg := mod${name}.io.ready
-           |    mod${name}.io.arrayRe := arrayReadValid
-           |    mod${name}.io.arrayWe := arrayWriteValid
-           |    mod${name}.io.arrayStrb := Mux(arrayWriteValid, io.S_AXI_WSTRB, 0.U)
-           |    mod${name}.io.arrayWriteAddr := Mux(arrayWriteValid,
-           |                                                    Cat(axi_awaddr(log2Ceil(ARRAY_REG_DEPTH) - 1, ADDR_LSB), 0.U(ADDR_LSB.W)) - 8.U,
-           |                                                    0.U)
-           |    mod${name}.io.arrayReadAddr  := Mux(arrayReadValid,
-           |                                                    Cat(axi_araddr(log2Ceil(ARRAY_REG_DEPTH) - 1, ADDR_LSB), 0.U(ADDR_LSB.W)) - 8.U,
-           |                                                    0.U)
-           |    mod${name}.io.arrayWData := Mux(arrayWriteValid, io.S_AXI_WDATA.asUInt, 0.U)
-           |
-           |    when(arrayReady) {
-           |        reg_data_out := io_ready_reg.asSInt
-           |    } .elsewhen(arrayReadValid) {
-           |        reg_data_out := mod${name}.io.arrayRData.asSInt
-           |    } .otherwise {
-           |        reg_data_out := 0.S
-           |    }
-           |
-           |    when(lowActiveReset.asBool) {
-           |        io_ready_reg := 0.U
-           |    } .otherwise {
-           |        io_ready_reg := mod${name}.io.ready
-           |    }
-           |
-           |    // I/O Connections assignments
-           |    io.S_AXI_AWREADY := axi_awready;
-           |    io.S_AXI_WREADY  := axi_wready;
-           |    io.S_AXI_BRESP   := axi_bresp;
-           |    io.S_AXI_BVALID	 := axi_bvalid;
-           |    io.S_AXI_ARREADY := axi_arready;
-           |    io.S_AXI_RDATA   := axi_rdata;
-           |    io.S_AXI_RRESP   := axi_rresp;
-           |    io.S_AXI_RVALID  := axi_rvalid;
-           |
-           |    // Implement axi_awready generation
-           |    // axi_awready is asserted for one S_AXI_ACLK clock cycle when both
-           |    // S_AXI_AWVALID and S_AXI_WVALID are asserted. axi_awready is
-           |    // de-asserted when reset is low.
-           |    when(lowActiveReset.asBool) {
-           |        axi_awready := false.B
-           |        aw_en       := true.B
-           |    } .otherwise {
-           |        when(~axi_awready && io.S_AXI_AWVALID && io.S_AXI_WVALID && aw_en) {
-           |            // slave is ready to accept write address when
-           |            // there is a valid write address and write data
-           |            // on the write address and data bus. This design
-           |            // expects no outstanding transactions.
-           |            axi_awready := true.B
-           |            aw_en       := false.B
-           |        } .elsewhen(io.S_AXI_BREADY && axi_bvalid) {
-           |            // the current operation is finished
-           |            // prepare for the next write operation
-           |            axi_awready := false.B
-           |            aw_en       := true.B
-           |        } .otherwise {
-           |            axi_awready  := false.B
-           |        }
-           |    }
-           |
-           |    // Implement axi_awaddr latching
-           |    // This process is used to latch the address when both
-           |    // S_AXI_AWVALID and S_AXI_WVALID are valid.
-           |    when(lowActiveReset.asBool) {
-           |        axi_awaddr := 0.U
-           |    } .otherwise {
-           |        when(~axi_awready && io.S_AXI_AWVALID && io.S_AXI_WVALID && aw_en) {
-           |            axi_awaddr := io.S_AXI_AWADDR
-           |        }
-           |    }
-           |
-           |    // Implement axi_wready generation
-           |    // axi_wready is asserted for one S_AXI_ACLK clock cycle when both
-           |    // S_AXI_AWVALID and S_AXI_WVALID are asserted. axi_wready is
-           |    // de-asserted when reset is low.
-           |    when(lowActiveReset.asBool) {
-           |        axi_wready := false.B
-           |    } .otherwise {
-           |        when(~axi_wready && io.S_AXI_WVALID && io.S_AXI_AWVALID && aw_en) {
-           |            // slave is ready to accept write data when
-           |            // there is a valid write address and write data
-           |            // on the write address and data bus. This design
-           |            // expects no outstanding transactions.
-           |            axi_wready := true.B
-           |        } .otherwise {
-           |            axi_wready := false.B
-           |        }
-           |    }
-           |
-           |    // Implement memory mapped register select and write logic generation
-           |    // The write data is accepted and written to memory mapped registers when
-           |    // axi_awready, S_AXI_WVALID, axi_wready and S_AXI_WVALID are asserted. Write strobes are used to
-           |    // select byte enables of slave registers while writing.
-           |    // These registers are cleared when reset (active low) is applied.
-           |    // Slave register write enable is asserted when valid address and data are available
-           |    // and the slave is ready to accept the write address and write data.
-           |    slv_reg_wren := axi_wready && io.S_AXI_WVALID && axi_awready && io.S_AXI_AWVALID
-           |
-           |    val writeEffectiveAddr = axi_awaddr(log2Ceil(ARRAY_REG_DEPTH), 0)
-           |
-           |    when(lowActiveReset.asBool) {
-           |        io_valid_reg := 0.U
-           |    } .otherwise {
-           |        when(slv_reg_wren && writeEffectiveAddr === 0.U) {
-           |                io_valid_reg := io.S_AXI_WDATA.asUInt
-           |        }
-           |    }
-           |
-           |    // Implement write response logic generation
-           |    // The write response and response valid signals are asserted by the slave
-           |    // when axi_wready, S_AXI_WVALID, axi_wready and S_AXI_WVALID are asserted.
-           |    // This marks the acceptance of address and indicates the status of
-           |    // write transaction.
-           |    when(lowActiveReset.asBool) {
-           |        axi_bvalid := false.B
-           |        axi_bresp  := 0.U
-           |    } .otherwise {
-           |        when(axi_awready && io.S_AXI_AWVALID && ~axi_bvalid && axi_wready && io.S_AXI_WVALID) {
-           |            axi_bvalid := true.B
-           |            axi_bresp  := 0.U
-           |        } .otherwise {
-           |            when(io.S_AXI_BREADY && axi_bvalid) {
-           |                axi_bvalid := false.B
-           |            }
-           |        }
-           |    }
-           |
-           |    // Implement axi_arready generation
-           |    // axi_arready is asserted for one S_AXI_ACLK clock cycle when
-           |    // S_AXI_ARVALID is asserted. axi_awready is
-           |    // de-asserted when reset (active low) is asserted.
-           |    // The read address is also latched when S_AXI_ARVALID is
-           |    // asserted. axi_araddr is reset to zero on reset assertion.
-           |    when(lowActiveReset.asBool) {
-           |        axi_arready := false.B
-           |        axi_araddr  := 0.U
-           |    } .otherwise {
-           |        when(~axi_arready && io.S_AXI_ARVALID) {
-           |            // indicates that the slave has acceped the valid read address
-           |            axi_arready := true.B
-           |            axi_araddr  := io.S_AXI_ARADDR
-           |        } .otherwise {
-           |            axi_arready := false.B
-           |        }
-           |    }
-           |
-           |    // Implement axi_arvalid generation
-           |    // axi_rvalid is asserted for one S_AXI_ACLK clock cycle when both
-           |    // S_AXI_ARVALID and axi_arready are asserted. The slave registers
-           |    // data are available on the axi_rdata bus at this instance. The
-           |    // assertion of axi_rvalid marks the validity of read data on the
-           |    // bus and axi_rresp indicates the status of read transaction.axi_rvalid
-           |    // is deasserted on reset (active low). axi_rresp and axi_rdata are
-           |    // cleared to zero on reset (active low).
-           |    when(lowActiveReset.asBool) {
-           |        axi_rvalid := false.B
-           |        axi_rresp  := 0.U
-           |    } .otherwise {
-           |        when(axi_arready && io.S_AXI_ARVALID && ~axi_rvalid) {
-           |            axi_rvalid := true.B
-           |            axi_rresp  := 0.U
-           |        } .elsewhen(axi_rvalid && io.S_AXI_RREADY) {
-           |            axi_rvalid := false.B
-           |        }
-           |    }
-           |
-           |    // Implement memory mapped register select and read logic generation
-           |    // Slave register read enable is asserted when valid address is available
-           |    // and the slave is ready to accept the read address.
-           |    slv_reg_rden := axi_arready & io.S_AXI_ARVALID & ~axi_rvalid;
-           |
-           |    // Output register or memory read data
-           |    when(lowActiveReset.asBool) {
-           |        axi_rdata := 0.S
-           |    } .otherwise {
-           |        // When there is a valid read address (S_AXI_ARVALID) with
-           |        // acceptance of read address by the slave (axi_arready),
-           |        // output the read dada
-           |        when(slv_reg_rden) {
-           |            axi_rdata := reg_data_out
-           |        }
-           |    }
-           |  }
-           |}
+          |        // read data channel
+          |        val S_AXI_RDATA  = Output(SInt(C_S_AXI_DATA_WIDTH.W))
+          |        val S_AXI_RRESP  = Output(UInt(2.W))
+          |        val S_AXI_RVALID = Output(Bool())
+          |        val S_AXI_RREADY = Input(Bool())
+          |    })
+          |
+          |    val lowActiveReset = !reset.asBool
+          |  withReset(lowActiveReset) {
+          |
+          |    // AXI4LITE signals, the signals need to be saved
+          |    val axi_awaddr  = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |    val axi_araddr  = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |    // AXI4LITE output signal
+          |    val axi_awready = Reg(Bool())
+          |    val axi_wready  = Reg(Bool())
+          |    val axi_bresp   = Reg(UInt(2.W))
+          |    val axi_bvalid  = Reg(Bool())
+          |    val axi_arready = Reg(Bool())
+          |    val axi_rdata   = Reg(SInt(C_S_AXI_DATA_WIDTH.W))
+          |    val axi_rresp   = Reg(UInt(2.W))
+          |    val axi_rvalid  = Reg(Bool())
+          |
+          |
+          |    // Example-specific design signals
+          |    // local parameter for addressing 32 bit / 64 bit C_S_AXI_DATA_WIDTH
+          |    // ADDR_LSB is used for addressing 32/64 bit registers/memories
+          |    // ADDR_LSB = 2 for 32 bits (n downto 2)
+          |    // ADDR_LSB = 3 for 64 bits (n downto 3)
+          |    val ADDR_LSB: Int = (C_S_AXI_DATA_WIDTH/32) + 1
+          |    val OPT_MEM_ADDR_BITS: Int = 10
+          |
+          |    //----------------------------------------------
+          |    //-- Signals for user logic register space example
+          |    //------------------------------------------------
+          |    val slv_reg_rden = Wire(Bool())
+          |    val slv_reg_wren = Wire(Bool())
+          |    val reg_data_out = Wire(SInt(C_S_AXI_DATA_WIDTH.W))
+          |    val aw_en        = Reg(Bool())
+          |
+          |    // Registers for target module port
+          |    val io_valid_reg = Reg(UInt(32.W))
+          |    val io_ready_reg = Reg(UInt(32.W))
+          |
+          |    // instantiate the target module
+          |    val arrayReadAddrValid = (axi_araddr(log2Ceil(ARRAY_REG_DEPTH), 0) >= 8.U) && ((axi_araddr(log2Ceil(ARRAY_REG_DEPTH), 0) + 3.U) < (ARRAY_REG_DEPTH.U + 8.U))
+          |    val arrayWriteAddrValid = (axi_awaddr(log2Ceil(ARRAY_REG_DEPTH), 0) >= 8.U) && ((axi_awaddr(log2Ceil(ARRAY_REG_DEPTH), 0) + 3.U) < (ARRAY_REG_DEPTH.U + 8.U))
+          |    val arrayWriteValid = slv_reg_wren & arrayWriteAddrValid
+          |    val arrayReadValid = arrayReadAddrValid & axi_arready & io.S_AXI_ARVALID & ~axi_rvalid
+          |    val arrayReady = axi_araddr(log2Ceil(ARRAY_REG_DEPTH), 0) === 4.U
+          |    val mod${name} = Module(new ${name}(C_S_AXI_DATA_WIDTH  = C_S_AXI_DATA_WIDTH ,
+          |                                                C_S_AXI_ADDR_WIDTH  = C_S_AXI_ADDR_WIDTH ,
+          |                                                ARRAY_REG_WIDTH     = ARRAY_REG_WIDTH    ,
+          |                                                ARRAY_REG_DEPTH     = ARRAY_REG_DEPTH    ,
+          |                                                ${if(!anvil.config.splitTempSizes) "GENERAL_REG_WIDTH   = GENERAL_REG_WIDTH  ," else ""}
+          |                                                ${if(!anvil.config.splitTempSizes) "GENERAL_REG_DEPTH   = GENERAL_REG_DEPTH  ," else ""}
+          |                                                STACK_POINTER_WIDTH = STACK_POINTER_WIDTH,
+          |                                                CODE_POINTER_WIDTH  = CODE_POINTER_WIDTH  ))
+          |    mod${name}.io.valid := Mux(io_valid_reg(0) & (io_ready_reg === 2.U), true.B, false.B)
+          |    io_ready_reg := mod${name}.io.ready
+          |    mod${name}.io.arrayRe := arrayReadValid
+          |    mod${name}.io.arrayWe := arrayWriteValid
+          |    mod${name}.io.arrayStrb := Mux(arrayWriteValid, io.S_AXI_WSTRB, 0.U)
+          |    mod${name}.io.arrayWriteAddr := Mux(arrayWriteValid,
+          |                                                    Cat(axi_awaddr(log2Ceil(ARRAY_REG_DEPTH) - 1, ADDR_LSB), 0.U(ADDR_LSB.W)) - 8.U,
+          |                                                    0.U)
+          |    mod${name}.io.arrayReadAddr  := Mux(arrayReadValid,
+          |                                                    Cat(axi_araddr(log2Ceil(ARRAY_REG_DEPTH) - 1, ADDR_LSB), 0.U(ADDR_LSB.W)) - 8.U,
+          |                                                    0.U)
+          |    mod${name}.io.arrayWData := Mux(arrayWriteValid, io.S_AXI_WDATA.asUInt, 0.U)
+          |
+          |    when(arrayReady) {
+          |        reg_data_out := io_ready_reg.asSInt
+          |    } .elsewhen(arrayReadValid) {
+          |        reg_data_out := mod${name}.io.arrayRData.asSInt
+          |    } .otherwise {
+          |        reg_data_out := 0.S
+          |    }
+          |
+          |    when(lowActiveReset.asBool) {
+          |        io_ready_reg := 0.U
+          |    } .otherwise {
+          |        io_ready_reg := mod${name}.io.ready
+          |    }
+          |
+          |    // I/O Connections assignments
+          |    io.S_AXI_AWREADY := axi_awready;
+          |    io.S_AXI_WREADY  := axi_wready;
+          |    io.S_AXI_BRESP   := axi_bresp;
+          |    io.S_AXI_BVALID	 := axi_bvalid;
+          |    io.S_AXI_ARREADY := axi_arready;
+          |    io.S_AXI_RDATA   := axi_rdata;
+          |    io.S_AXI_RRESP   := axi_rresp;
+          |    io.S_AXI_RVALID  := axi_rvalid;
+          |
+          |    // Implement axi_awready generation
+          |    // axi_awready is asserted for one S_AXI_ACLK clock cycle when both
+          |    // S_AXI_AWVALID and S_AXI_WVALID are asserted. axi_awready is
+          |    // de-asserted when reset is low.
+          |    when(lowActiveReset.asBool) {
+          |        axi_awready := false.B
+          |        aw_en       := true.B
+          |    } .otherwise {
+          |        when(~axi_awready && io.S_AXI_AWVALID && io.S_AXI_WVALID && aw_en) {
+          |            // slave is ready to accept write address when
+          |            // there is a valid write address and write data
+          |            // on the write address and data bus. This design
+          |            // expects no outstanding transactions.
+          |            axi_awready := true.B
+          |            aw_en       := false.B
+          |        } .elsewhen(io.S_AXI_BREADY && axi_bvalid) {
+          |            // the current operation is finished
+          |            // prepare for the next write operation
+          |            axi_awready := false.B
+          |            aw_en       := true.B
+          |        } .otherwise {
+          |            axi_awready  := false.B
+          |        }
+          |    }
+          |
+          |    // Implement axi_awaddr latching
+          |    // This process is used to latch the address when both
+          |    // S_AXI_AWVALID and S_AXI_WVALID are valid.
+          |    when(lowActiveReset.asBool) {
+          |        axi_awaddr := 0.U
+          |    } .otherwise {
+          |        when(~axi_awready && io.S_AXI_AWVALID && io.S_AXI_WVALID && aw_en) {
+          |            axi_awaddr := io.S_AXI_AWADDR
+          |        }
+          |    }
+          |
+          |    // Implement axi_wready generation
+          |    // axi_wready is asserted for one S_AXI_ACLK clock cycle when both
+          |    // S_AXI_AWVALID and S_AXI_WVALID are asserted. axi_wready is
+          |    // de-asserted when reset is low.
+          |    when(lowActiveReset.asBool) {
+          |        axi_wready := false.B
+          |    } .otherwise {
+          |        when(~axi_wready && io.S_AXI_WVALID && io.S_AXI_AWVALID && aw_en) {
+          |            // slave is ready to accept write data when
+          |            // there is a valid write address and write data
+          |            // on the write address and data bus. This design
+          |            // expects no outstanding transactions.
+          |            axi_wready := true.B
+          |        } .otherwise {
+          |            axi_wready := false.B
+          |        }
+          |    }
+          |
+          |    // Implement memory mapped register select and write logic generation
+          |    // The write data is accepted and written to memory mapped registers when
+          |    // axi_awready, S_AXI_WVALID, axi_wready and S_AXI_WVALID are asserted. Write strobes are used to
+          |    // select byte enables of slave registers while writing.
+          |    // These registers are cleared when reset (active low) is applied.
+          |    // Slave register write enable is asserted when valid address and data are available
+          |    // and the slave is ready to accept the write address and write data.
+          |    slv_reg_wren := axi_wready && io.S_AXI_WVALID && axi_awready && io.S_AXI_AWVALID
+          |
+          |    val writeEffectiveAddr = axi_awaddr(log2Ceil(ARRAY_REG_DEPTH), 0)
+          |
+          |    when(lowActiveReset.asBool) {
+          |        io_valid_reg := 0.U
+          |    } .otherwise {
+          |        when(slv_reg_wren && writeEffectiveAddr === 0.U) {
+          |                io_valid_reg := io.S_AXI_WDATA.asUInt
+          |        }
+          |    }
+          |
+          |    // Implement write response logic generation
+          |    // The write response and response valid signals are asserted by the slave
+          |    // when axi_wready, S_AXI_WVALID, axi_wready and S_AXI_WVALID are asserted.
+          |    // This marks the acceptance of address and indicates the status of
+          |    // write transaction.
+          |    when(lowActiveReset.asBool) {
+          |        axi_bvalid := false.B
+          |        axi_bresp  := 0.U
+          |    } .otherwise {
+          |        when(axi_awready && io.S_AXI_AWVALID && ~axi_bvalid && axi_wready && io.S_AXI_WVALID) {
+          |            axi_bvalid := true.B
+          |            axi_bresp  := 0.U
+          |        } .otherwise {
+          |            when(io.S_AXI_BREADY && axi_bvalid) {
+          |                axi_bvalid := false.B
+          |            }
+          |        }
+          |    }
+          |
+          |    // Implement axi_arready generation
+          |    // axi_arready is asserted for one S_AXI_ACLK clock cycle when
+          |    // S_AXI_ARVALID is asserted. axi_awready is
+          |    // de-asserted when reset (active low) is asserted.
+          |    // The read address is also latched when S_AXI_ARVALID is
+          |    // asserted. axi_araddr is reset to zero on reset assertion.
+          |    when(lowActiveReset.asBool) {
+          |        axi_arready := false.B
+          |        axi_araddr  := 0.U
+          |    } .otherwise {
+          |        when(~axi_arready && io.S_AXI_ARVALID) {
+          |            // indicates that the slave has acceped the valid read address
+          |            axi_arready := true.B
+          |            axi_araddr  := io.S_AXI_ARADDR
+          |        } .otherwise {
+          |            axi_arready := false.B
+          |        }
+          |    }
+          |
+          |    // Implement axi_arvalid generation
+          |    // axi_rvalid is asserted for one S_AXI_ACLK clock cycle when both
+          |    // S_AXI_ARVALID and axi_arready are asserted. The slave registers
+          |    // data are available on the axi_rdata bus at this instance. The
+          |    // assertion of axi_rvalid marks the validity of read data on the
+          |    // bus and axi_rresp indicates the status of read transaction.axi_rvalid
+          |    // is deasserted on reset (active low). axi_rresp and axi_rdata are
+          |    // cleared to zero on reset (active low).
+          |    when(lowActiveReset.asBool) {
+          |        axi_rvalid := false.B
+          |        axi_rresp  := 0.U
+          |    } .otherwise {
+          |        when(axi_arready && io.S_AXI_ARVALID && ~axi_rvalid) {
+          |            axi_rvalid := true.B
+          |            axi_rresp  := 0.U
+          |        } .elsewhen(axi_rvalid && io.S_AXI_RREADY) {
+          |            axi_rvalid := false.B
+          |        }
+          |    }
+          |
+          |    // Implement memory mapped register select and read logic generation
+          |    // Slave register read enable is asserted when valid address is available
+          |    // and the slave is ready to accept the read address.
+          |    slv_reg_rden := axi_arready & io.S_AXI_ARVALID & ~axi_rvalid;
+          |
+          |    // Output register or memory read data
+          |    when(lowActiveReset.asBool) {
+          |        axi_rdata := 0.S
+          |    } .otherwise {
+          |        // When there is a valid read address (S_AXI_ARVALID) with
+          |        // acceptance of read address by the slave (axi_arready),
+          |        // output the read dada
+          |        when(slv_reg_rden) {
+          |            axi_rdata := reg_data_out
+          |        }
+          |    }
+          |  }
+          |}
         """
 
     @strictpure def dividerST(): ST =
@@ -542,22 +714,26 @@ object DivRemLog {
       return st"${(generalRegST, "\n")}"
     }
 
-    @strictpure def procedureST(stateMachineST: ST): ST =
-      st"""
+    @pure def procedureST(stateMachineST: ST): ST = {
+      val adderUnsignedModule: Adder = Adder(F, "AdderUnsigned", "adderUnsigned", adderUnsignedInstance.maxNumInstances, 64, adderUnsignedInstance.inputs)
+      val adderSignedModule: Adder = Adder(T, "AdderSigned", "adderSigned", adderSignedInstance.maxNumInstances, 64, adderSignedInstance.inputs)
+      return st"""
           |import chisel3._
           |import chisel3.util._
           |import chisel3.experimental._
           |
-          |${if(anvil.config.customDivRem) dividerST().render else ""}
+          |${if (anvil.config.customDivRem) dividerST().render else ""}
+          |${if (anvil.config.alu) adderUnsignedModule.moduleST.render else ""}
+          |${if (anvil.config.alu) adderSignedModule.moduleST.render else ""}
           |
           |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 32,
           |               val C_S_AXI_ADDR_WIDTH:  Int = 32,
           |               val ARRAY_REG_WIDTH:     Int = 8,
           |               val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
-          |               ${if(!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
-          |               ${if(!anvil.config.splitTempSizes) s"val GENERAL_REG_DEPTH:   Int = ${maxRegisters.maxCount}," else ""}
-          |               val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize*8},
-          |               val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize*8}) extends Module {
+          |               ${if (!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
+          |               ${if (!anvil.config.splitTempSizes) s"val GENERAL_REG_DEPTH:   Int = ${maxRegisters.maxCount}," else ""}
+          |               val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize * 8},
+          |               val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize * 8}) extends Module {
           |
           |    val io = IO(new Bundle{
           |        val valid          = Input(Bool())
@@ -574,7 +750,7 @@ object DivRemLog {
           |    // reg for share array between software and IP
           |    val ${sharedMemName} = Reg(Vec(ARRAY_REG_DEPTH, UInt(ARRAY_REG_WIDTH.W)))
           |    // reg for general purpose
-          |    ${if(!anvil.config.splitTempSizes) s"val ${generalRegName} = Reg(Vec(GENERAL_REG_DEPTH, UInt(GENERAL_REG_WIDTH.W)))" else s"${generalPurposeRegisterST.render}"}
+          |    ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = Reg(Vec(GENERAL_REG_DEPTH, UInt(GENERAL_REG_WIDTH.W)))" else s"${generalPurposeRegisterST.render}"}
           |    // reg for code pointer
           |    val CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
           |    // reg for stack pointer
@@ -587,16 +763,19 @@ object DivRemLog {
           |    val LeftByteRounds = RegInit(0.U(8.W))
           |    val IdxLeftByteRounds = RegInit(0.U(8.W))
           |
-          |    ${if(anvil.config.customDivRem) "// divider" else ""}
-          |    ${if(anvil.config.customDivRem) "val divider64 = Module(new PipelinedDivMod(64))" else ""}
-          |    ${if(anvil.config.customDivRem) "divider64.io.a := 1.U" else ""}
-          |    ${if(anvil.config.customDivRem) "divider64.io.b := 1.U" else ""}
-          |    ${if(anvil.config.customDivRem) "divider64.io.start := false.B" else ""}
-          |    ${if(anvil.config.customDivRem) "val divider32 = Module(new PipelinedDivMod(32))" else ""}
-          |    ${if(anvil.config.customDivRem) "divider32.io.a := 1.U" else ""}
-          |    ${if(anvil.config.customDivRem) "divider32.io.b := 1.U" else ""}
-          |    ${if(anvil.config.customDivRem) "divider32.io.start := false.B" else ""}
-          |    ${if(anvil.config.customDivRem) "val dividerStart = RegInit(false.B)" else ""}
+          |    ${if (anvil.config.customDivRem) "// divider" else ""}
+          |    ${if (anvil.config.customDivRem) "val divider64 = Module(new PipelinedDivMod(64))" else ""}
+          |    ${if (anvil.config.customDivRem) "divider64.io.a := 1.U" else ""}
+          |    ${if (anvil.config.customDivRem) "divider64.io.b := 1.U" else ""}
+          |    ${if (anvil.config.customDivRem) "divider64.io.start := false.B" else ""}
+          |    ${if (anvil.config.customDivRem) "val divider32 = Module(new PipelinedDivMod(32))" else ""}
+          |    ${if (anvil.config.customDivRem) "divider32.io.a := 1.U" else ""}
+          |    ${if (anvil.config.customDivRem) "divider32.io.b := 1.U" else ""}
+          |    ${if (anvil.config.customDivRem) "divider32.io.start := false.B" else ""}
+          |    ${if (anvil.config.customDivRem) "val dividerStart = RegInit(false.B)" else ""}
+          |
+          |    ${if (anvil.config.alu) adderUnsignedModule.instanceST.render else ""}
+          |    ${if (anvil.config.alu) adderSignedModule.instanceST.render else ""}
           |
           |    // write operation
           |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
@@ -613,12 +792,13 @@ object DivRemLog {
           |
           |    io.ready := Mux(CP === 0.U, 0.U, Mux(CP === 1.U, 1.U, 2.U))
           |
-          |    ${(stateMachineST,"")}
+          |    ${(stateMachineST, "")}
           |
           |}
           |
-          |${if(anvil.config.axi4) axi4WrapperST().render else ""}
+          |${if (anvil.config.axi4) axi4WrapperST().render else ""}
           """
+    }
 
     val basicBlockST = processBasicBlock(o.body.asInstanceOf[AST.IR.Body.Basic].blocks)
 
@@ -638,6 +818,14 @@ object DivRemLog {
     @pure def groundST(b: AST.IR.BasicBlock, ground: ST, jump: ST): ST = {
       var commentST = ISZ[ST]()
 
+      /*
+      val adderCounter = HwSynthesizer.AdderCounter(anvil, 0, 0)
+      adderCounter.transform_langastIRBasicBlock(b)
+      adderSignedCounter = adderSignedCounter ++ (for(i <- 0 until adderCounter.sign - adderSignedCounter.size) yield 0)
+      adderUnsignedCounter = adderUnsignedCounter ++ (for(i <- 0 until adderCounter.unsign - adderUnsignedCounter.size) yield 0)
+      adderSignedInstance.extendInputs(adderCounter.sign - adderSignedInstance.maxNumInstances, b.label, )
+       */
+
       for(g <- b.grounds) {
         commentST = commentST :+ g.prettyST(anvil.printer)
       }
@@ -650,7 +838,7 @@ object DivRemLog {
                    |  ${(commentST, "\n")}
                    |  */
                    |  ${(ground, "")}
-                   |  ${if(!MemCopyLog.isMemCopyInBlock & !DivRemLog.isCustomDivRem) jump.render else st""}
+                   |  ${if(!MemCopyLog.isMemCopyInBlock() & !DivRemLog.isCustomDivRem) jump.render else st""}
                    |}
                  """
       } else {
@@ -661,20 +849,22 @@ object DivRemLog {
     var groundsST = ISZ[ST]()
 
     for (b <- bs) {
-      MemCopyLog.currentBlock = MSome(b)
-      DivRemLog.currentBlock = MSome(b)
+      BlockLog.setBlock(b)
 
       if(b.label != 0) {
         val jump = processJumpIntrinsic(b)
         groundsST = groundsST :+ groundST(b, processGround(b.grounds), jump)
       }
 
-      MemCopyLog.isMemCopyInBlock = F
+      MemCopyLog.disableFlagMemCopyInBlock()
       DivRemLog.isCustomDivRem = F
       DivRemLog.isDiv = F
       DivRemLog.customDivRemST = st""
       DivRemLog.byteNum = 0
       DivRemLog.isSigned = F
+
+      adderUnsignedInstance = adderUnsignedInstance.initializeV
+      adderSignedInstance = adderSignedInstance.initializeV
     }
 
     return basicBlockST(groundsST)
@@ -818,7 +1008,7 @@ object DivRemLog {
         TmpWireCount.incCount()
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Copy) => {
-        MemCopyLog.isMemCopyInBlock = T
+        MemCopyLog.enableFlagMemCopyInBlock()
 
         // acquire the source and destination address
         val lhsAddrST = processExpr(intrinsic.lhsOffset, F)
@@ -841,7 +1031,7 @@ object DivRemLog {
         }
 
         // get the jump statement ST
-        val jumpST = processJumpIntrinsic(MemCopyLog.currentBlock.get)
+        val jumpST = processJumpIntrinsic(BlockLog.getBlock)
 
         intrinsicST =
           st"""
@@ -975,7 +1165,7 @@ object DivRemLog {
                 st"""
                     |when(dividerStart & divider32.io.valid) {
                     |  ${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${targetST.render}"}
-                    |  ${processJumpIntrinsic(DivRemLog.currentBlock.get).render}
+                    |  ${processJumpIntrinsic(BlockLog.getBlock).render}
                     |  dividerStart := false.B
                     |}
                   """
@@ -984,7 +1174,7 @@ object DivRemLog {
                 st"""
                     |when(dividerStart & divider64.io.valid) {
                     |  ${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${targetST.render}"}
-                    |  ${processJumpIntrinsic(DivRemLog.currentBlock.get).render}
+                    |  ${processJumpIntrinsic(BlockLog.getBlock).render}
                     |  dividerStart := false.B
                     |}
                   """
@@ -1081,7 +1271,19 @@ object DivRemLog {
         val rightST = st"${processExpr(exp.right, F).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
         exp.op match {
           case AST.IR.Exp.Binary.Op.Add => {
-            exprST = st"(${leftST.render} + ${rightST.render})"
+            if(anvil.config.alu) {
+              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
+              if(isSIntOperation) {
+                hashSMap = hashSMap + "a" ~> (leftST, "SInt") + "b" ~> (rightST, "SInt") + "op" ~> (st"true.B", "Bool")
+                adderSignedInstance = adderSignedInstance.populateInputs(BlockLog.getBlock.label, hashSMap, adderSignedInstance)
+              } else {
+                hashSMap = hashSMap + "a" ~> (leftST, "UInt") + "b" ~> (rightST, "UInt") + "op" ~> (st"true.B", "Bool")
+                adderUnsignedInstance = adderUnsignedInstance.populateInputs(BlockLog.getBlock.label, hashSMap, adderUnsignedInstance)
+              }
+              exprST = st"${if(isSIntOperation) s"${adderSignedInstance.modInstanceName}${adderSignedInstance.getVectorIndex-1}.io.out" else s"${adderUnsignedInstance.modInstanceName}${adderUnsignedInstance.getVectorIndex-1}.io.out"}"
+            } else {
+              exprST = st"(${leftST.render} + ${rightST.render})"
+            }
           }
           case AST.IR.Exp.Binary.Op.Sub => {
             exprST = st"(${leftST.render} - ${rightST.render})"
@@ -1096,10 +1298,10 @@ object DivRemLog {
                 if(anvil.typeByteSize(exp.left.tipe) == 4) {
                   signedNumberExtraST =
                     st"""
-                      |val a_neg = ${leftST.render}(31)
-                      |val b_neg = ${rightST.render}(31)
-                      |val a_abs = Mux(a_neg, -${leftST.render}, ${leftST.render}).asUInt
-                      |val b_abs = Mux(b_neg, -${rightST.render}, ${rightST.render}).asUInt
+                        |val a_neg = ${leftST.render}(31)
+                        |val b_neg = ${rightST.render}(31)
+                        |val a_abs = Mux(a_neg, -${leftST.render}, ${leftST.render}).asUInt
+                        |val b_abs = Mux(b_neg, -${rightST.render}, ${rightST.render}).asUInt
                     """
                 } else if(anvil.typeByteSize(exp.left.tipe) == 8) {
                   signedNumberExtraST =
@@ -1288,5 +1490,20 @@ object DivRemLog {
     }
 
     return exprST
+  }
+}
+
+object HwSynthesizer {
+  @record class AdderCounter(val anvil: Anvil, var sign: Z, var unsign: Z) extends MAnvilIRTransformer {
+    override def post_langastIRExpBinary(o: AST.IR.Exp.Binary): MOption[AST.IR.Exp] = {
+      if(o.op == AST.IR.Exp.Binary.Op.Add) {
+        if(anvil.isSigned(o.left.tipe)) {
+          sign = sign + 1
+        } else {
+          unsign = unsign + 1
+        }
+      }
+      return MNone()
+    }
   }
 }
