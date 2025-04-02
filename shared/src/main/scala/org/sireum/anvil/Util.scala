@@ -1080,4 +1080,15 @@ object Util {
     tmc.transform_langastIRProgram(p)
     return tmc.r
   }
+
+  @pure def pow(n: Z, m: Z): Z = {
+    var r: Z = 1
+    var i: Z = 0
+    while (i < m) {
+      r = r * n
+      i = i + 1
+    }
+    return r
+  }
+
 }

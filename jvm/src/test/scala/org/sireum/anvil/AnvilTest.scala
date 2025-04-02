@@ -95,6 +95,10 @@ object AnvilTest {
   val splitTempId = "split-temp"
   val memLocalId = "mem-local"
   val tempLocalId = "temp-local"
+  val withALUId = "with-alu"
+  val withoutALUId = "without-alu"
+  val withIndexingId = "with-indexing"
+  val withoutIndexingId = "without-indexing"
 
   val isInGitHubAction: B = Os.env("GITHUB_ACTIONS").nonEmpty
 }
@@ -124,10 +128,24 @@ class AnvilTest extends SireumRcSpec {
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
-      r = r :+ (k.dropRight(1) :+ s"${k.last}_(${AnvilTest.singleTempId},_${AnvilTest.memLocalId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last}_(${AnvilTest.singleTempId},_${AnvilTest.tempLocalId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last}_(${AnvilTest.splitTempId},_${AnvilTest.memLocalId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last}_(${AnvilTest.splitTempId},_${AnvilTest.tempLocalId})", v)
+      def combs(i: Int, acc: Vector[Vector[Boolean]]): Vector[Vector[Boolean]] = {
+        if (i <= 0) {
+          return acc
+        }
+        var r = Vector[Vector[Boolean]]()
+        for (bs <- acc) {
+          r = r :+ (bs :+ false)
+          r = r :+ (bs :+ true)
+        }
+        combs(i - 1, r)
+      }
+
+      for (bs <- combs(4, (for (_ <- 0 until Util.pow(4, 2).toInt) yield Vector[Boolean]()).toVector)) {
+        assert(bs.size == 4)
+        if (!bs(3)) {
+          r = r :+ (k.dropRight(1) :+ s"${k.last}_(${if (bs(0)) AnvilTest.splitTempId else AnvilTest.singleTempId},_${if (bs(1)) AnvilTest.tempLocalId else AnvilTest.memLocalId},_${if (bs(2)) AnvilTest.withALUId else AnvilTest.withoutALUId},_${if (bs(3)) AnvilTest.withIndexingId else AnvilTest.withoutIndexingId})", v)
+        }
+      }
       r
     }) yield pair
   }
@@ -145,6 +163,8 @@ class AnvilTest extends SireumRcSpec {
         var config = Anvil.Config.empty
         val splitTempSizes = p.last.contains(splitTempId)
         val tempLocal = p.last.contains(tempLocalId)
+        val alu = p.last.contains(withALUId)
+        val indexing = p.last.contains(withIndexingId)
         config = config(
           memory = memoryFileMap(T, F).get(file).getOrElse(defaultMemory),
           printSize = printFileMap.get(file).getOrElse(defaultPrintSize),
@@ -156,6 +176,8 @@ class AnvilTest extends SireumRcSpec {
           tempLocal = tempLocal,
           genVerilog = T,
           axi4 = T,
+          alu = alu,
+          indexing = indexing,
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
 

@@ -3040,16 +3040,6 @@ import Anvil._
     return i
   }
 
-  @pure def pow(n: Z, m: Z): Z = {
-    var r: Z = 1
-    var i: Z = 0
-    while (i < m) {
-      r = r * n
-      i = i + 1
-    }
-    return r
-  }
-
   @memoize def getAnnotations(context: AST.IR.MethodContext): ISZ[AST.Annotation] = {
     if (syntheticMethodIds.contains(context.id)) {
       return ISZ()
@@ -3102,5 +3092,15 @@ import Anvil._
     val tmc = TempMaxCounter(anvil, HashSet.empty, TempVector.empty)
     tmc.transform_langastIRProcedure(pbox.p)
     return tmc.r
+  }
+
+  @pure def pow(n: Z, m: Z): Z = {
+    var r: Z = 1
+    var i: Z = 0
+    while (i < m) {
+      r = r * n
+      i = i + 1
+    }
+    return r
   }
 }
