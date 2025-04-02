@@ -28,7 +28,7 @@ package org.sireum.anvil
 import org.sireum._
 import org.sireum.lang.ast.IR.Jump
 import org.sireum.lang.{ast => AST}
-import org.sireum.lang.symbol.Resolver.{QName, typeParamMap}
+import org.sireum.lang.symbol.Resolver.{QName, addBuiltIns, typeParamMap}
 import org.sireum.lang.symbol.TypeInfo
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 
@@ -102,24 +102,34 @@ object DivRemLog {
       val targetInstanceInputs: HashSMap[String, ChiselModule.Input] = inputs(modIdx)
       val muxLogicST: ISZ[ST] = {
         for(entry <- targetInstanceInputs.entries) yield
-          st"${instanceName}${modIdx}.io.${entry._1} := ${entry._2.prettyST}"
+          st"${instanceName}_${modIdx}.io.${entry._1} := ${entry._2.prettyST}"
       }
 
       st"""
-          |def init${instanceName}${modIdx}() = {
+          |def init${instanceName}_${modIdx}() = {
           |  ${(muxLogicST, "\n")}
           |}
-          |init${instanceName}${modIdx}()
+          |init${instanceName}_${modIdx}()
         """
     }
 
+    @pure def acutalInputSize: Z = {
+      for(i <- 0 until inputs.size) {
+        if(inputs(i).isEmpty) {
+          return i
+        }
+      }
+      return maxNumInstance
+    }
+
     val moduleInstances: ST = {
+      val actualSize: Z = acutalInputSize
       val modDeclIns: ISZ[ST] = {
-        for(i <- 0 until maxNumInstance) yield
-          st"""val ${instanceName}${i} = Module(new ${moduleName}(${width}))"""
+        for(i <- 0 until actualSize) yield
+          st"""val ${instanceName}_${i} = Module(new ${moduleName}(${width}))"""
       }
       val modPortIns: ISZ[ST] = {
-        for(i <- 0 until maxNumInstance) yield
+        for(i <- 0 until actualSize) yield
           st"""${(inputPortListST(i), "\n")}"""
       }
 
@@ -269,8 +279,14 @@ object ChiselModule {
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
 
-  var adderUnsignedInstance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderUnsigned", ISZ[(Z,Z,B)](), 20, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
-  var adderSignedInstance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderSigned", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
+  var adderUnsigned64Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderUnsigned64", ISZ[(Z,Z,B)](), 10, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
+  var adderSigned64Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderSigned64", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
+  var adderUnsigned32Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderUnsigned32", ISZ[(Z,Z,B)](), 10, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
+  var adderSigned32Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderSigned32", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
+  var adderUnsigned16Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderUnsigned16", ISZ[(Z,Z,B)](), 10, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
+  var adderSigned16Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderSigned16", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
+  var adderUnsigned8Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderUnsigned8", ISZ[(Z,Z,B)](), 10, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
+  var adderSigned8Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderSigned8", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
 
   //var adderSignedCounter: ISZ[Z] = ISZ()
   //var adderUnsignedCounter: ISZ[Z] = ISZ()
@@ -758,16 +774,28 @@ object ChiselModule {
     }
 
     @pure def procedureST(stateMachineST: ST): ST = {
-      val adderUnsignedModule: Adder = Adder(F, "AdderUnsigned", "adderUnsigned", adderUnsignedInstance.maxNumInstances, 64, adderUnsignedInstance.inputs)
-      val adderSignedModule: Adder = Adder(T, "AdderSigned", "adderSigned", adderSignedInstance.maxNumInstances, 64, adderSignedInstance.inputs)
+      val adderUnsigned64Module: Adder = Adder(F, "AdderUnsigned64", "adderUnsigned64", adderUnsigned64Instance.maxNumInstances, 64, adderUnsigned64Instance.inputs)
+      val adderSigned64Module: Adder = Adder(T, "AdderSigned64", "adderSigned64", adderSigned64Instance.maxNumInstances, 64, adderSigned64Instance.inputs)
+      val adderUnsigned32Module: Adder = Adder(F, "AdderUnsigned32", "adderUnsigned32", adderUnsigned32Instance.maxNumInstances, 32, adderUnsigned32Instance.inputs)
+      val adderSigned32Module: Adder = Adder(T, "AdderSigned32", "adderSigned32", adderSigned32Instance.maxNumInstances, 32, adderSigned32Instance.inputs)
+      val adderUnsigned16Module: Adder = Adder(F, "AdderUnsigned16", "adderUnsigned16", adderUnsigned16Instance.maxNumInstances, 16, adderUnsigned16Instance.inputs)
+      val adderSigned16Module: Adder = Adder(T, "AdderSigned16", "adderSigned16", adderSigned16Instance.maxNumInstances, 16, adderSigned16Instance.inputs)
+      val adderUnsigned8Module: Adder = Adder(F, "AdderUnsigned8", "adderUnsigned8", adderUnsigned8Instance.maxNumInstances, 8, adderUnsigned8Instance.inputs)
+      val adderSigned8Module: Adder = Adder(T, "AdderSigned8", "adderSigned8", adderSigned8Instance.maxNumInstances, 8, adderSigned8Instance.inputs)
       return st"""
           |import chisel3._
           |import chisel3.util._
           |import chisel3.experimental._
           |
           |${if (anvil.config.customDivRem) dividerST().render else ""}
-          |${if (anvil.config.alu) adderUnsignedModule.moduleST.render else ""}
-          |${if (anvil.config.alu) adderSignedModule.moduleST.render else ""}
+          |${if (anvil.config.alu) adderUnsigned64Module.moduleST.render else ""}
+          |${if (anvil.config.alu) adderSigned64Module.moduleST.render else ""}
+          |${if (anvil.config.alu) adderUnsigned32Module.moduleST.render else ""}
+          |${if (anvil.config.alu) adderSigned32Module.moduleST.render else ""}
+          |${if (anvil.config.alu) adderUnsigned16Module.moduleST.render else ""}
+          |${if (anvil.config.alu) adderSigned16Module.moduleST.render else ""}
+          |${if (anvil.config.alu) adderUnsigned8Module.moduleST.render else ""}
+          |${if (anvil.config.alu) adderSigned8Module.moduleST.render else ""}
           |
           |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 32,
           |               val C_S_AXI_ADDR_WIDTH:  Int = 32,
@@ -817,8 +845,14 @@ object ChiselModule {
           |    ${if (anvil.config.customDivRem) "divider32.io.start := false.B" else ""}
           |    ${if (anvil.config.customDivRem) "val dividerStart = RegInit(false.B)" else ""}
           |
-          |    ${if (anvil.config.alu) adderUnsignedModule.instanceST.render else ""}
-          |    ${if (anvil.config.alu) adderSignedModule.instanceST.render else ""}
+          |    ${if (anvil.config.alu) adderUnsigned64Module.instanceST.render else ""}
+          |    ${if (anvil.config.alu) adderSigned64Module.instanceST.render else ""}
+          |    ${if (anvil.config.alu) adderUnsigned32Module.instanceST.render else ""}
+          |    ${if (anvil.config.alu) adderSigned32Module.instanceST.render else ""}
+          |    ${if (anvil.config.alu) adderUnsigned16Module.instanceST.render else ""}
+          |    ${if (anvil.config.alu) adderSigned16Module.instanceST.render else ""}
+          |    ${if (anvil.config.alu) adderUnsigned8Module.instanceST.render else ""}
+          |    ${if (anvil.config.alu) adderSigned8Module.instanceST.render else ""}
           |
           |    // write operation
           |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
@@ -906,10 +940,22 @@ object ChiselModule {
       DivRemLog.byteNum = 0
       DivRemLog.isSigned = F
 
-      adderUnsignedInstance = adderUnsignedInstance.clearUsageVector
-      adderUnsignedInstance = adderUnsignedInstance.initializeBlockStartInstanceIndex
-      adderSignedInstance = adderSignedInstance.clearUsageVector
-      adderSignedInstance = adderSignedInstance.initializeBlockStartInstanceIndex
+      adderUnsigned64Instance = adderUnsigned64Instance.clearUsageVector
+      adderUnsigned64Instance = adderUnsigned64Instance.initializeBlockStartInstanceIndex
+      adderSigned64Instance = adderSigned64Instance.clearUsageVector
+      adderSigned64Instance = adderSigned64Instance.initializeBlockStartInstanceIndex
+      adderUnsigned32Instance = adderUnsigned32Instance.clearUsageVector
+      adderUnsigned32Instance = adderUnsigned32Instance.initializeBlockStartInstanceIndex
+      adderSigned32Instance = adderSigned32Instance.clearUsageVector
+      adderSigned32Instance = adderSigned32Instance.initializeBlockStartInstanceIndex
+      adderUnsigned16Instance = adderUnsigned16Instance.clearUsageVector
+      adderUnsigned16Instance = adderUnsigned16Instance.initializeBlockStartInstanceIndex
+      adderSigned16Instance = adderSigned16Instance.clearUsageVector
+      adderSigned16Instance = adderSigned16Instance.initializeBlockStartInstanceIndex
+      adderUnsigned8Instance = adderUnsigned8Instance.clearUsageVector
+      adderUnsigned8Instance = adderUnsigned8Instance.initializeBlockStartInstanceIndex
+      adderSigned8Instance = adderSigned8Instance.clearUsageVector
+      adderSigned8Instance = adderSigned8Instance.initializeBlockStartInstanceIndex
     }
 
     return basicBlockST(groundsST)
@@ -1314,23 +1360,90 @@ object ChiselModule {
         val isSIntOperation = isSignedExp(exp.left) || isSignedExp(exp.right)
         val leftST = st"${processExpr(exp.left, F).render}${if(isSIntOperation && (!isSignedExp(exp.left))) ".asSInt" else ""}"
         val rightST = st"${processExpr(exp.right, F).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
+        val expByteSize: Z = if(anvil.isScalar(exp.left.tipe)) anvil.typeByteSize(exp.left.tipe) else anvil.typeByteSize(anvil.spType)
         exp.op match {
           case AST.IR.Exp.Binary.Op.Add => {
-            if(anvil.config.alu) {
+            @pure def updateAdderInstance(signed: B, byteSize: Z, hashSMap: HashSMap[String, (ST, String)]): Z = {
+              if(signed) {
+                byteSize match {
+                  case 1 => {
+                    val res = adderSigned8Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    adderSigned8Instance = res._1
+                    return res._2
+                  }
+                  case 2 => {
+                    val res = adderSigned16Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    adderSigned16Instance = res._1
+                    return res._2
+                  }
+                  case 4 => {
+                    val res = adderSigned32Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    adderSigned32Instance = res._1
+                    return res._2
+                  }
+                  case 8 => {
+                    val res = adderSigned64Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    adderSigned64Instance = res._1
+                    return res._2
+                  }
+                  case _ => return -1
+                }
+              } else {
+                byteSize match {
+                  case 1 => {
+                    val res = adderUnsigned8Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    adderUnsigned8Instance = res._1
+                    return res._2
+                  }
+                  case 2 => {
+                    val res = adderUnsigned16Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    adderUnsigned16Instance = res._1
+                    return res._2
+                  }
+                  case 4 => {
+                    val res = adderUnsigned32Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    adderUnsigned32Instance = res._1
+                    return res._2
+                  }
+                  case 8 => {
+                    val res = adderUnsigned64Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    adderUnsigned64Instance = res._1
+                    return res._2
+                  }
+                  case _ => return -1
+                }
+              }
+            }
+            @pure def adderIPPortST(signed: B, byteSize: Z): ST = {
               var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              var index: Z = 0
-              if(isSIntOperation) {
+              if(signed) {
                 hashSMap = hashSMap + "a" ~> (leftST, "SInt") + "b" ~> (rightST, "SInt") + "op" ~> (st"true.B", "Bool")
-                val res = adderSignedInstance.populateInputs(BlockLog.getBlock.label, hashSMap)
-                adderSignedInstance = res._1
-                index = res._2
               } else {
                 hashSMap = hashSMap + "a" ~> (leftST, "UInt") + "b" ~> (rightST, "UInt") + "op" ~> (st"true.B", "Bool")
-                val res = adderUnsignedInstance.populateInputs(BlockLog.getBlock.label, hashSMap)
-                adderUnsignedInstance = res._1
-                index = res._2
               }
-              exprST = st"${if(isSIntOperation) s"${adderSignedInstance.modInstanceName}${index}.io.out" else s"${adderUnsignedInstance.modInstanceName}${index}.io.out"}"
+              val instanceIndex: Z = updateAdderInstance(signed, byteSize, hashSMap)
+              val resST: ST = if(signed) {
+                byteSize match {
+                  case 1 => st"${adderSigned8Instance.modInstanceName}_${instanceIndex}"
+                  case 2 => st"${adderSigned16Instance.modInstanceName}_${instanceIndex}"
+                  case 4 => st"${adderSigned32Instance.modInstanceName}_${instanceIndex}"
+                  case 8 => st"${adderSigned64Instance.modInstanceName}_${instanceIndex}"
+                  case _ => halt("not implemented in adderIPPortST")
+                }
+              } else {
+                byteSize match {
+                  case 1 => st"${adderUnsigned8Instance.modInstanceName}_${instanceIndex}"
+                  case 2 => st"${adderUnsigned16Instance.modInstanceName}_${instanceIndex}"
+                  case 4 => st"${adderUnsigned32Instance.modInstanceName}_${instanceIndex}"
+                  case 8 => st"${adderUnsigned64Instance.modInstanceName}_${instanceIndex}"
+                  case _ => halt("not implemented in adderIPPortST")
+                }
+              }
+
+              return resST
+            }
+            if(anvil.config.alu) {
+              exprST = st"${if(isSIntOperation) s"${adderIPPortST(T, expByteSize).render}.io.out" else s"${adderIPPortST(F, expByteSize).render}.io.out"}"
             } else {
               exprST = st"(${leftST.render} + ${rightST.render})"
             }
