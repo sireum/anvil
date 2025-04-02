@@ -151,7 +151,7 @@ object ChiselModule {
     @strictpure def +(v: StateValue): Input = Input(stateValue :+ v, portName, portValueType)
   }
 
-  @datatype class InstanceVector(val modInstanceName: String, val usageVector: ISZ[(Z,Z,B)], val maxNumInstances: Z, val inputs: ISZ[HashSMap[String, Input]]) {
+  @datatype class InstanceVector(val modInstanceName: String, val usageVector: ISZ[(Z,Z,B)], val maxNumInstances: Z, val inputs: ISZ[HashSMap[String, Input]], val blockStartInstanceIndex: Z) {
     @strictpure def sortUsageVector: ISZ[(Z,Z,B)] = {
       val sortedUsageVector = ops.ISZOps(usageVector).sortWith( (a, b) =>
         if(a._2 != b._2) a._2 < b._2
@@ -162,12 +162,22 @@ object ChiselModule {
 
     @pure def clearUsageVector: InstanceVector = {
       val clearedUsageVector: ISZ[(Z,Z,B)] = usageVector.map(x => (x._1, x._2, F))
-      return InstanceVector(modInstanceName, clearedUsageVector, maxNumInstances, inputs)
+      return InstanceVector(modInstanceName, clearedUsageVector, maxNumInstances, inputs, blockStartInstanceIndex)
+    }
+
+    @pure def initializeBlockStartInstanceIndex: InstanceVector = {
+      val sortedVector = sortUsageVector
+      for(i <- 0 until sortedVector.size) {
+        if(sortedVector(i)._3 == F) {
+          return InstanceVector(modInstanceName, usageVector, maxNumInstances, inputs, sortedVector(i)._1)
+        }
+      }
+      return InstanceVector(modInstanceName, usageVector, maxNumInstances, inputs, 0)
     }
 
     @pure def getVectorIndex(v: ISZ[(Z,Z,B)]): Z = {
       for(i <- 0 until v.size) {
-        if(v(i)._3 == F) {
+        if(v(i)._3 == F && v(i)._1 >= blockStartInstanceIndex) {
           return i
         }
       }
@@ -181,7 +191,7 @@ object ChiselModule {
         tempVector = tempVector :+ (maxNumInstances + i, 0, F)
         tempInputs = tempInputs :+ HashSMap.empty[String, Input]
       }
-      return InstanceVector(modInstanceName, usageVector ++ tempVector, maxNumInstances + num, inputs ++ tempInputs)
+      return InstanceVector(modInstanceName, usageVector ++ tempVector, maxNumInstances + num, inputs ++ tempInputs, blockStartInstanceIndex)
     }
 
     @pure def initializeUsageVector: InstanceVector = {
@@ -191,7 +201,7 @@ object ChiselModule {
         tempVector = tempVector :+ (i, 0, F)
         tempInputs = tempInputs :+ HashSMap.empty[String, Input]
       }
-      return InstanceVector(modInstanceName, tempVector, maxNumInstances, tempInputs)
+      return InstanceVector(modInstanceName, tempVector, maxNumInstances, tempInputs, blockStartInstanceIndex)
     }
 
     @pure def addInput(inputList: HashSMap[String, Input]): (InstanceVector,Z) = {
@@ -212,7 +222,7 @@ object ChiselModule {
       }
       val updatedInputs: ISZ[HashSMap[String, Input]] = originalInstance.inputs(instanceIndex ~> updatedTargetMod)
       val updatedVector: ISZ[(Z,Z,B)] = sortedVector(index ~> (instanceIndex, usage + 1, T))
-      return (InstanceVector(originalInstance.modInstanceName, updatedVector, originalInstance.maxNumInstances, updatedInputs), instanceIndex)
+      return (InstanceVector(originalInstance.modInstanceName, updatedVector, originalInstance.maxNumInstances, updatedInputs, blockStartInstanceIndex), instanceIndex)
     }
 
     @pure def populateInputs(label: Z, hashSMap: HashSMap[String, (ST, String)]) : (InstanceVector,Z) = {
@@ -259,8 +269,8 @@ object ChiselModule {
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
 
-  var adderUnsignedInstance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderUnsigned", ISZ[(Z,Z,B)](), 20, ISZ[HashSMap[String, ChiselModule.Input]]()).initializeUsageVector
-  var adderSignedInstance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderSigned", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]]()).initializeUsageVector
+  var adderUnsignedInstance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderUnsigned", ISZ[(Z,Z,B)](), 20, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
+  var adderSignedInstance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderSigned", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
 
   //var adderSignedCounter: ISZ[Z] = ISZ()
   //var adderUnsignedCounter: ISZ[Z] = ISZ()
@@ -897,7 +907,9 @@ object ChiselModule {
       DivRemLog.isSigned = F
 
       adderUnsignedInstance = adderUnsignedInstance.clearUsageVector
+      adderUnsignedInstance = adderUnsignedInstance.initializeBlockStartInstanceIndex
       adderSignedInstance = adderSignedInstance.clearUsageVector
+      adderSignedInstance = adderSignedInstance.initializeBlockStartInstanceIndex
     }
 
     return basicBlockST(groundsST)
