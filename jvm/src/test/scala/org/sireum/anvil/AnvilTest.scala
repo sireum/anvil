@@ -143,7 +143,9 @@ class AnvilTest extends SireumRcSpec {
       for (bs <- combs(4, (for (_ <- 0 until Util.pow(4, 2).toInt) yield Vector[Boolean]()).toVector)) {
         assert(bs.size == 4)
         if (!bs(3)) {
-          r = r :+ (k.dropRight(1) :+ s"${k.last}_(${if (bs(0)) AnvilTest.splitTempId else AnvilTest.singleTempId},_${if (bs(1)) AnvilTest.tempLocalId else AnvilTest.memLocalId},_${if (bs(2)) AnvilTest.withALUId else AnvilTest.withoutALUId},_${if (bs(3)) AnvilTest.withIndexingId else AnvilTest.withoutIndexingId})", v)
+          val name = s"${k.last}_${if (bs(0)) AnvilTest.splitTempId else AnvilTest.singleTempId}_${if (bs(1)) AnvilTest.tempLocalId else AnvilTest.memLocalId}_${if (bs(2)) AnvilTest.withALUId else AnvilTest.withoutALUId}_${if (bs(3)) AnvilTest.withIndexingId else AnvilTest.withoutIndexingId}".
+            replace('.', '_')
+          r = r :+ (k.dropRight(1) :+ name, v)
         }
       }
       r
@@ -152,7 +154,7 @@ class AnvilTest extends SireumRcSpec {
 
 
   override def check(p: Vector[Predef.String], content: Predef.String): Boolean = {
-    val path = p.dropRight(1) :+ p.last.substring(0, p.last.lastIndexOf("_("))
+    val path = p.dropRight(1) :+ s"${p.last.substring(0, p.last.lastIndexOf("_sc_"))}.sc"
     val file = String(path.last)
     val out = dir /+ ISZ(p.map(String(_)): _*)
     val reporter = message.Reporter.create
