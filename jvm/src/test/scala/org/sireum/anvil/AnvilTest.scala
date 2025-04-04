@@ -118,8 +118,8 @@ class AnvilTest extends SireumRcSpec {
     val vs = versions + "org.sireum.version.java" ~> "17.0.14+10"
     val init = Init(d, Os.kind, vs)
     init.installJava(vs, F, F)
-    init.installSbt(F)
-    init.installVerilator()
+    init.installSbt(T)
+    init.installVerilator(T)
     init
   }
 
