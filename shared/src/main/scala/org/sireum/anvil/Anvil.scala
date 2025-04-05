@@ -58,6 +58,7 @@ object Anvil {
                          val tempLocal: B,
                          val alu: B,
                          val indexing: B,
+                         val mux: B,
                          val genVerilog: B,
                          val simOpt: Option[Config.Sim]) {
     val shouldPrint: B = printSize > 0
@@ -87,6 +88,7 @@ object Anvil {
         tempLocal = T,
         alu = F,
         indexing = F,
+        mux = F,
         genVerilog = F,
         simOpt = None())
   }

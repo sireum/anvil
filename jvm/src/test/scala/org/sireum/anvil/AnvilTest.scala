@@ -99,6 +99,8 @@ object AnvilTest {
   val withoutALUId = "without-alu"
   val withIndexingId = "with-indexing"
   val withoutIndexingId = "without-indexing"
+  val withMux = "with-mux"
+  val withoutMux = "without-mux"
 
   val isInGitHubAction: B = Os.env("GITHUB_ACTIONS").nonEmpty
 }
@@ -140,10 +142,10 @@ class AnvilTest extends SireumRcSpec {
         combs(i - 1, r)
       }
 
-      for (bs <- combs(4, (for (_ <- 0 until Util.pow(4, 2).toInt) yield Vector[Boolean]()).toVector)) {
-        assert(bs.size == 4)
-        if (!bs(3)) {
-          val name = s"${k.last}_${if (bs(0)) AnvilTest.splitTempId else AnvilTest.singleTempId}_${if (bs(1)) AnvilTest.tempLocalId else AnvilTest.memLocalId}_${if (bs(2)) AnvilTest.withALUId else AnvilTest.withoutALUId}_${if (bs(3)) AnvilTest.withIndexingId else AnvilTest.withoutIndexingId}".
+      for (bs <- combs(5, (for (_ <- 0 until Util.pow(5, 2).toInt) yield Vector[Boolean]()).toVector)) {
+        assert(bs.size == 5)
+        if (!bs(3) && (!isInGitHubAction || bs.forall(b => b))) {
+          val name = s"${k.last}_${if (bs(0)) AnvilTest.splitTempId else AnvilTest.singleTempId}_${if (bs(1)) AnvilTest.tempLocalId else AnvilTest.memLocalId}_${if (bs(2)) AnvilTest.withALUId else AnvilTest.withoutALUId}_${if (bs(3)) AnvilTest.withIndexingId else AnvilTest.withoutIndexingId}_${if (bs(4)) AnvilTest.withMux else AnvilTest.withoutMux}".
             replace('.', '_')
           r = r :+ (k.dropRight(1) :+ name, v)
         }
@@ -167,6 +169,7 @@ class AnvilTest extends SireumRcSpec {
         val tempLocal = p.last.contains(tempLocalId)
         val alu = p.last.contains(withALUId)
         val indexing = p.last.contains(withIndexingId)
+        val mux = p.last.contains(withMux)
         config = config(
           memory = memoryFileMap(T, F).get(file).getOrElse(defaultMemory),
           printSize = printFileMap.get(file).getOrElse(defaultPrintSize),
@@ -180,6 +183,7 @@ class AnvilTest extends SireumRcSpec {
           axi4 = T,
           alu = alu,
           indexing = indexing,
+          mux = mux,
           simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
         )
 
