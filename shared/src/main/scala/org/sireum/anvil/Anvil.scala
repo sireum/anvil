@@ -489,6 +489,10 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-copy"), p.prettyST(anvil.printer))
       pass = pass + 1
 
+      p = anvil.transformIndexing(fresh, p)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-indexing"), p.prettyST(anvil.printer))
+      pass = pass + 1
+
       p = anvil.transformMain(fresh, p, globalSize, globalMap)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "main"), p.prettyST(anvil.printer))
       pass = pass + 1
@@ -717,6 +721,27 @@ import Anvil._
       }
     }
     return transformEmptyBlock(p(body = body(blocks = blocks)))
+  }
+
+  def transformIndexing(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      val ic = IndexingCounter(0)
+      ic.transform_langastIRBasicBlock(b)
+      if (ic.count > 1) {
+        var label = b.label
+        for (g <- b.grounds) {
+          val next = fresh.label()
+          blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(g), AST.IR.Jump.Goto(next, g.pos))
+          label = next
+        }
+        blocks = blocks((blocks.size - 1) ~> blocks(blocks.size - 1)(jump = b.jump))
+      } else {
+        blocks = blocks :+ b
+      }
+    }
+    return p(body = body(blocks = blocks))
   }
 
   def transformCP(p: AST.IR.Procedure): AST.IR.Procedure = {

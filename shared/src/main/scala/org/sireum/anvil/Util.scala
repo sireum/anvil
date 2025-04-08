@@ -950,6 +950,13 @@ object Util {
     }
   }
 
+  @record class IndexingCounter(var count: Z) extends MAnvilIRTransformer {
+    override def postIntrinsicIndexing(o: Intrinsic.Indexing): MOption[Intrinsic.Indexing] = {
+      count = count + 1
+      return MNone()
+    }
+  }
+
   val kind: String = "Anvil"
   val exitLabel: Z = 0
   val errorLabel: Z = 1
@@ -1022,7 +1029,13 @@ object Util {
     val indexType = receiverType.args(0)
     val elementType = receiverType.args(1)
     val min = anvil.minIndex(indexType)
-    var idx = os.transform_langastIRExp(index).getOrElse(index)
+    var maskOpt = Option.none[Z]()
+    var idx: AST.IR.Exp = os.transform_langastIRExp(index).getOrElse(index) match {
+      case indexMask: AST.IR.Exp.Binary if indexMask.op == AST.IR.Exp.Binary.Op.And && indexMask.right.isInstanceOf[AST.IR.Exp.Int] =>
+        maskOpt = Some(indexMask.right.asInstanceOf[AST.IR.Exp.Int].value)
+        indexMask.left
+      case i => i
+    }
     val rcv = os.transform_langastIRExp(receiver).getOrElse(receiver)
     if (idx.tipe != anvil.spType) {
       idx = AST.IR.Exp.Type(F, idx, anvil.spType, idx.pos)
@@ -1032,7 +1045,7 @@ object Util {
     val elementSize = anvil.typeByteSize(elementType)
     val dataOffset = anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
     if (anvil.config.indexing) {
-      return AST.IR.Exp.Intrinsic(Intrinsic.Indexing(rcv, dataOffset, indexOffset, elementSize, elementType, pos))
+      return AST.IR.Exp.Intrinsic(Intrinsic.Indexing(rcv, dataOffset, indexOffset, maskOpt, elementSize, elementType, pos))
     } else {
       val baseDataOffset = AST.IR.Exp.Binary(anvil.spType, rcv, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType,
         dataOffset, receiver.pos), receiver.pos)

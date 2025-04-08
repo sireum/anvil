@@ -1129,7 +1129,11 @@ import IRSimulator._
             }
           case in: Intrinsic.Indexing =>
             val (base, bacs) = evalExp(state, in.baseOffset)
-            val (index, iacs) = evalExp(state, in.index)
+            val (index, iacs): (Value, State.Accesses) = in.maskOpt match {
+              case Some(mask) => evalExp(state, AST.IR.Exp.Binary(in.index.tipe, in.index, AST.IR.Exp.Binary.Op.And,
+                AST.IR.Exp.Int(in.index.tipe, mask, in.pos), in.pos))
+              case _ => evalExp(state, in.index)
+            }
             val v = Value.fromZ(base.value + in.dataOffset + index.value * in.elementSize, anvil.typeBitSize(in.tipe),
               anvil.isSigned(in.tipe))
             return (v, bacs + iacs)

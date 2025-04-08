@@ -63,6 +63,7 @@ object Intrinsic {
   @datatype class Indexing(val baseOffset: AST.IR.Exp,
                            val dataOffset: Z,
                            val index: AST.IR.Exp,
+                           val maskOpt: Option[Z],
                            val elementSize: Z,
                            val tipe: AST.Typed,
                            val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
