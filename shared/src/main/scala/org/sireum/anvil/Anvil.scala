@@ -143,9 +143,6 @@ object Anvil {
       }
     }
     val tsr = TypeSpecializer.specialize(th, entryPoints, HashMap.empty, reporter)
-    if (tsr.extMethods.nonEmpty) {
-      reporter.error(None(), kind, s"@ext methods are not supported")
-    }
     if (reporter.hasError) {
       return None()
     }

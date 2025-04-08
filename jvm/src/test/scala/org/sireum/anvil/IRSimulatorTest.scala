@@ -120,7 +120,7 @@ class IRSimulatorTest extends SireumRcSpec {
 
   override def check(p: Vector[Predef.String], content: Predef.String): Boolean = {
     val path = p.dropRight(1) :+ p.last.substring(0, p.last.lastIndexOf(" ("))
-    val file = path.last
+    val file = String(path.last)
     val out = dir /+ ISZ(p.map(String(_)): _*)
     def checkH(): Boolean = {
       val reporter = message.Reporter.create
@@ -144,7 +144,7 @@ class IRSimulatorTest extends SireumRcSpec {
             stackTrace = AnvilTest.stackTraceFileSet.contains(file),
             erase = AnvilTest.eraseFileSet.contains(file),
             maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(AnvilTest.defaultMaxArraySize),
-            runtimeCheck = T,
+            runtimeCheck = !AnvilTest.noRuntimeCheckFileSet.contains(file),
             splitTempSizes = splitTempSizes,
             tempLocal = tempLocal
           )

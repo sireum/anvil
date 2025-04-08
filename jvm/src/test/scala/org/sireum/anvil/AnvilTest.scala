@@ -37,6 +37,7 @@ object AnvilTest {
       "divrem.sc" ~> (if (tempLocal) 128 + 8 * 0 else 128 + 8 * 7) +
       "factorial.sc" ~> (if (tempLocal) 128 + 8 * 0 else 128 + 8 * 6) +
       "global.sc" ~> (if (tempLocal) 64 + 8 * 5 else 128 + 8 * 3) +
+      "indexing.sc" ~> (if (tempLocal) 128 + 8 * 1 else 128 + 8 * 6) +
       "instanceof.sc" ~> (if (tempLocal) 64 + 8 * 5 else 128 + 8 * 3) +
       "local-reuse.sc" ~> (if (tempLocal) 64 + 8 * 6 else 128 + 8 * 4) +
       "mult.sc" ~> (if (tempLocal) 128 + 8 * 4 else 128 + 8 * 10) +
@@ -59,6 +60,7 @@ object AnvilTest {
     "divrem.sc" ~> 32 +
     "factorial.sc" ~> 32 +
     "global.sc" ~> 2 +
+    "indexing.sc" ~> 8 +
     "instanceof.sc" ~> 2 +
     "local-reuse.sc" ~> 8 +
     "mult.sc" ~> 64 +
@@ -72,6 +74,7 @@ object AnvilTest {
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add.sc"
   val dontTestFileSet: HashSet[String] = HashSet.empty[String]
+  val noRuntimeCheckFileSet: HashSet[String] = HashSet.empty[String] + "indexing.sc"
   val simCyclesMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "add.sc" ~> 700 +
     "bubble.sc" ~> 700 +
@@ -176,7 +179,7 @@ class AnvilTest extends SireumRcSpec {
           stackTrace = stackTraceFileSet.contains(file),
           erase = eraseFileSet.contains(file),
           maxArraySize = maxArrayFileMap.get(file).getOrElse(defaultMaxArraySize),
-          runtimeCheck = T,
+          runtimeCheck = !noRuntimeCheckFileSet.contains(file),
           splitTempSizes = splitTempSizes,
           tempLocal = tempLocal,
           genVerilog = T,
