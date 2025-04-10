@@ -38,6 +38,7 @@ object AnvilTest {
       "factorial.sc" ~> (if (tempLocal) 128 + 8 * 0 else 128 + 8 * 6) +
       "global.sc" ~> (if (tempLocal) 64 + 8 * 5 else 128 + 8 * 3) +
       "indexing.sc" ~> (if (tempLocal) 128 + 8 * 1 else 128 + 8 * 6) +
+      "indexing-obj.sc" ~> (if (tempLocal) 128 + 8 * 6 else 128 + 8 * 10) +
       "instanceof.sc" ~> (if (tempLocal) 64 + 8 * 5 else 128 + 8 * 3) +
       "local-reuse.sc" ~> (if (tempLocal) 64 + 8 * 6 else 128 + 8 * 4) +
       "mult.sc" ~> (if (tempLocal) 128 + 8 * 4 else 128 + 8 * 10) +
@@ -51,7 +52,7 @@ object AnvilTest {
         if (splitTempSizes) if (tempLocal) 128 + 8 * 8 else 256 + 8 * 7
         else if (tempLocal) 128 + 8 * 8 else 256 + 8 * 6)
   }
-  val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "sum.sc" ~> 3
+  val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] + "sum.sc" ~> 3 + "indexing-obj.sc" ~> 1
   val printFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "add.sc" ~> 16 +
     "assert.sc" ~> 64 +
@@ -61,6 +62,7 @@ object AnvilTest {
     "factorial.sc" ~> 32 +
     "global.sc" ~> 2 +
     "indexing.sc" ~> 8 +
+    "indexing-obj.sc" ~> 2 +
     "instanceof.sc" ~> 2 +
     "local-reuse.sc" ~> 8 +
     "mult.sc" ~> 64 +

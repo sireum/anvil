@@ -1134,8 +1134,9 @@ import IRSimulator._
                 AST.IR.Exp.Int(in.index.tipe, mask, in.pos), in.pos))
               case _ => evalExp(state, in.index)
             }
-            val v = Value.fromZ(base.value + in.dataOffset + index.value * in.elementSize, anvil.typeBitSize(in.tipe),
-              anvil.isSigned(in.tipe))
+            val t: AST.Typed = if (anvil.isScalar(in.tipe)) in.tipe else anvil.spType
+            val v = Value.fromZ(base.value + in.dataOffset + index.value * in.elementSize, anvil.typeBitSize(t),
+              anvil.isSigned(t))
             return (v, bacs + iacs)
         }
       case exp: AST.IR.Exp.R => halt(s"TODO: ${exp.prettyST(anvil.printer).render}")
