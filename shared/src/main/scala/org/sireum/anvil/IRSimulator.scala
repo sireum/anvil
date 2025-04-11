@@ -36,6 +36,7 @@ import org.sireum.S8._
 import org.sireum.S16._
 import org.sireum.S32._
 import org.sireum.S64._
+import org.sireum.anvil.Util.IndexingCounter
 import org.sireum.lang.symbol.Resolver.QName
 
 object IRSimulator {
@@ -1359,6 +1360,11 @@ import IRSimulator._
     }
     @strictpure def isDivRem(op: AST.IR.Exp.Binary.Op.Type): B =
       op == AST.IR.Exp.Binary.Op.Div || op == AST.IR.Exp.Binary.Op.Rem
+    @pure def hasIndexing: B = {
+      val ic = IndexingCounter(0)
+      ic.transform_langastIRBasicBlock(b)
+      return ic.count > 0
+    }
 
     if (anvil.config.customDivRem) {
       b.grounds match {
@@ -1371,6 +1377,9 @@ import IRSimulator._
           cycles = cycles + 2
         case _ =>
       }
+    }
+    if (anvil.config.indexing && hasIndexing && cycles < 4) {
+      cycles = 4
     }
     checkAccesses(state, b.label, r)
     blockCycles.value = cycles
