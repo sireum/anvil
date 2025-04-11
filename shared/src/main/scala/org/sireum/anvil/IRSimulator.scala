@@ -1377,9 +1377,12 @@ import IRSimulator._
           cycles = cycles + 2
         case _ =>
       }
-    }
-    if (anvil.config.indexing && hasIndexing && cycles < 4) {
-      cycles = 4
+    } else if (anvil.config.indexing && hasIndexing) {
+      if (cycles < 4) {
+        cycles = 4
+      } else {
+        cycles = cycles + 4
+      }
     }
     checkAccesses(state, b.label, r)
     blockCycles.value = cycles
