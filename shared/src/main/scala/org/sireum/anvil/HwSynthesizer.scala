@@ -55,6 +55,21 @@ object BlockLog {
   }
 }
 
+object IndexingLog {
+  var flagIndexingInBlock: B = F
+  def isIndexingInBlock(): B = {
+    return flagIndexingInBlock
+  }
+
+  def enableFlagIndexingInBlock(): Unit = {
+    flagIndexingInBlock = T
+  }
+
+  def disableFlagIndexingInBlock(): Unit = {
+    flagIndexingInBlock = F
+  }
+}
+
 object MemCopyLog {
   var flagMemCopyInBlock: B = F
   def isMemCopyInBlock(): B = {
@@ -212,6 +227,15 @@ object ChiselModule {
   }
 
   @datatype class InstanceVector(val modInstanceName: String, val usageVector: ISZ[(Z,Z,B)], val maxNumInstances: Z, val inputs: ISZ[HashSMap[String, Input]], val blockStartInstanceIndex: Z) {
+    @pure def getActiveInstanceIndex: Z = {
+      for(i <- 0 until usageVector.size) {
+        if(usageVector(i)._3 == T) {
+          return usageVector(i)._1
+        }
+      }
+      return -1
+    }
+
     @strictpure def sortUsageVector: ISZ[(Z,Z,B)] = {
       val sortedUsageVector = ops.ISZOps(usageVector).sortWith( (a, b) =>
         if(a._2 != b._2) a._2 < b._2
@@ -308,7 +332,7 @@ object ChiselModule {
   @strictpure override def maxNumInstance: Z = maxNumOfInstance
   @strictpure override def width: Z = widthOfPort
   @strictpure override def inputs: ISZ[HashSMap[String, ChiselModule.Input]] = inputList
-  @strictpure def modST(signed: B): ST = {
+  @strictpure override def modST(signed: B): ST = {
     val portType: ST = if(signed) st"SInt" else st"UInt"
     st"""
         |class ${modName}(val width: Int = 64) extends Module {
@@ -320,6 +344,61 @@ object ChiselModule {
         |    })
         |
         |    io.out := Mux(io.op, io.a + io.b, io.a - io.b)
+        |}
+      """
+  }
+}
+
+@datatype class Indexer(val signedPort: B,
+                        val moduleDeclarationName: String,
+                        val moduleInstanceName: String,
+                        val maxNumOfInstance: Z,
+                        val widthOfPort: Z,
+                        val inputList: ISZ[HashSMap[String, ChiselModule.Input]]) extends ChiselModule {
+  @strictpure override def signed: B = signedPort
+  @strictpure override def modName: String = moduleDeclarationName
+  @strictpure override def insName: String = moduleInstanceName
+  @strictpure override def maxNumInstance: Z = maxNumOfInstance
+  @strictpure override def width: Z = widthOfPort
+  @strictpure override def inputs: ISZ[HashSMap[String, ChiselModule.Input]] = inputList
+  @strictpure override def modST(signed: B): ST = {
+    st"""
+        |class Indexer(val width: Int = 16) extends Module {
+        |    val io = IO(new Bundle{
+        |        val baseOffset = Input(UInt(width.W))
+        |        val dataOffset = Input(UInt(width.W))
+        |        val index = Input(UInt(width.W))
+        |        val elementSize = Input(UInt(width.W))
+        |        val mask = Input(UInt(width.W))
+        |        val ready = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(UInt(width.W))
+        |    })
+        |
+        |    val stateReg = RegInit(0.U(2.W))
+        |    switch(stateReg) {
+        |        is(0.U) {
+        |            stateReg := Mux(io.ready, 1.U, 0.U)
+        |        }
+        |        is(1.U) {
+        |            stateReg := 2.U
+        |        }
+        |        is(2.U) {
+        |            stateReg := 3.U
+        |        }
+        |        is(3.U) {
+        |            stateReg := Mux(!io.ready, 0.U, 3.U)
+        |        }
+        |    }
+        |
+        |    io.valid := Mux(stateReg === 3.U, true.B, false.B)
+        |
+        |    val regBaseAddr = RegNext(io.baseOffset + io.dataOffset)
+        |
+        |    val regIndex = RegNext(io.index)
+        |    val regMult = RegNext(regIndex * io.elementSize)
+        |
+        |    io.out := RegNext(regBaseAddr + (regMult & io.mask))
         |}
       """
   }
@@ -337,6 +416,8 @@ object ChiselModule {
   var adderSigned16Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderSigned16", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
   var adderUnsigned8Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderUnsigned8", ISZ[(Z,Z,B)](), 10, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
   var adderSigned8Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderSigned8", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
+
+  var indexerInstance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("indexer", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
 
   /*
     Notes/links:
@@ -830,6 +911,8 @@ object ChiselModule {
       val adderUnsigned8Module: Adder = Adder(F, "AdderUnsigned8", "adderUnsigned8", adderUnsigned8Instance.maxNumInstances, 8, adderUnsigned8Instance.inputs)
       val adderSigned8Module: Adder = Adder(T, "AdderSigned8", "adderSigned8", adderSigned8Instance.maxNumInstances, 8, adderSigned8Instance.inputs)
 
+      val indexerModule: Indexer = Indexer(F, "Indexer", "indexer", indexerInstance.maxNumInstances, 16, indexerInstance.inputs)
+
       val adderModuleDeclST: ST = {
         var moduleST: ISZ[ST] = ISZ()
         moduleST = moduleST :+ adderUnsigned64Module.moduleST
@@ -882,6 +965,30 @@ object ChiselModule {
         st"""${(instanceST, "\n")}"""
       }
 
+      val indexerModuleDeclST: ST = {
+        var moduleST: ISZ[ST] = ISZ()
+        moduleST = moduleST :+ indexerModule.moduleST
+        st"""${(moduleST, "\n")}"""
+      }
+
+      val indexerInstanceDeclST: ST = {
+        var instanceST: ISZ[ST] = ISZ()
+        instanceST = instanceST :+ indexerModule.instanceDeclST
+        st"""${(instanceST, "\n")}"""
+      }
+
+      val indexerInstancePortFuncST: ST = {
+        var instanceST: ISZ[ST] = ISZ()
+        instanceST = instanceST :+ indexerModule.instancePortFuncST(anvil.config.mux)
+        st"""${(instanceST, "\n")}"""
+      }
+
+      val indexerInstancePortCallST: ST = {
+        var instanceST: ISZ[ST] = ISZ()
+        instanceST = instanceST :+ indexerModule.instancePortCallST
+        st"""${(instanceST, "\n")}"""
+      }
+
       return st"""
           |import chisel3._
           |import chisel3.util._
@@ -889,6 +996,7 @@ object ChiselModule {
           |
           |${if (anvil.config.customDivRem) dividerST().render else ""}
           |${if (anvil.config.alu) adderModuleDeclST else st""}
+          |${if (anvil.config.indexing) indexerModuleDeclST else st""}
           |
           |import ${name}._
           |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 32,
@@ -940,6 +1048,7 @@ object ChiselModule {
           |    ${if (anvil.config.customDivRem) "val dividerStart = RegInit(false.B)" else ""}
           |
           |    ${if(anvil.config.alu) adderInstanceDeclST else st""}
+          |    ${if(anvil.config.indexing) indexerInstanceDeclST else st""}
           |    init(this)
           |
           |    // write operation
@@ -964,8 +1073,10 @@ object ChiselModule {
           |object ${name} {
           |  def init(o: ${name}) {
           |    import o._
-          |    ${if(anvil.config.alu) adderInstancePortFuncST.render else ""}
+          |    ${if(anvil.config.alu) adderInstancePortFuncST else st""}
           |    ${if(anvil.config.alu) adderInstancePortCallST else st""}
+          |    ${if(anvil.config.indexing) indexerInstancePortFuncST else st""}
+          |    ${if(anvil.config.indexing) indexerInstancePortCallST else st""}
           |  }
           |}
           |
@@ -1001,8 +1112,8 @@ object ChiselModule {
           }
         }
       }
-        return st"""
-              |${(portLogicST, "\n")}"""
+      return st"""
+            |${(portLogicST, "\n")}"""
     }
 
     @pure def adderWithoutMuxST: ST = {
@@ -1019,6 +1130,13 @@ object ChiselModule {
           |${(addersST, "\n")}"""
     }
 
+    @pure def indexerWithoutMuxST: ST = {
+      var indexersST: ISZ[ST] = ISZ()
+      indexersST = indexersST:+ instanceVectorWithoutMux(indexerInstance)
+      return st"""
+          |${(indexersST, "\n")}"""
+    }
+
     @pure def groundST(b: AST.IR.BasicBlock, ground: ST, jump: ST): ST = {
       var commentST = ISZ[ST]()
 
@@ -1026,6 +1144,22 @@ object ChiselModule {
         commentST = commentST :+ g.prettyST(anvil.printer)
       }
       commentST = commentST :+ b.jump.prettyST(anvil.printer)
+
+      val jumpST: ST = {
+        if(IndexingLog.isIndexingInBlock()) {
+          val jST = processJumpIntrinsic(BlockLog.getBlock)
+          st"""
+              |when(${indexerInstance.modInstanceName}_${indexerInstance.getActiveInstanceIndex}.io.valid) {
+              |  ${jST.render}
+              |  ${indexerInstance.modInstanceName}_${indexerInstance.getActiveInstanceIndex}.io.ready := false.B
+              |}
+            """
+        } else if(!MemCopyLog.isMemCopyInBlock() & !DivRemLog.isCustomDivRem) {
+          jump
+        } else {
+          st""
+        }
+      }
 
       if(b.label > 1) {
         return st"""
@@ -1035,7 +1169,8 @@ object ChiselModule {
                    |  */
                    |  ${(ground, "")}
                    |  ${if(anvil.config.alu && !anvil.config.mux) adderWithoutMuxST.render else ""}
-                   |  ${if(!MemCopyLog.isMemCopyInBlock() & !DivRemLog.isCustomDivRem) jump.render else st""}
+                   |  ${if(anvil.config.indexing) indexerWithoutMuxST.render else ""}
+                   |  ${jumpST.render}
                    |}
                  """
       } else {
@@ -1054,6 +1189,8 @@ object ChiselModule {
       }
 
       MemCopyLog.disableFlagMemCopyInBlock()
+      IndexingLog.disableFlagIndexingInBlock()
+
       DivRemLog.isCustomDivRem = F
       DivRemLog.isDiv = F
       DivRemLog.customDivRemST = st""
@@ -1077,6 +1214,11 @@ object ChiselModule {
         adderUnsigned8Instance = adderUnsigned8Instance.initializeBlockStartInstanceIndex
         adderSigned8Instance = adderSigned8Instance.clearUsageVector
         adderSigned8Instance = adderSigned8Instance.initializeBlockStartInstanceIndex
+      }
+
+      if(anvil.config.indexing) {
+        indexerInstance = indexerInstance.clearUsageVector
+        indexerInstance = indexerInstance.initializeBlockStartInstanceIndex
       }
     }
 
@@ -1215,13 +1357,16 @@ object ChiselModule {
         }
 
         val padST = st".asSInt.pad(${if(!anvil.config.splitTempSizes) "GENERAL_REG_WIDTH" else s"${anvil.typeBitSize(intrinsic.tipe)}"})"
+        val placeholder: String = if(IndexingLog.isIndexingInBlock()) "  " else ""
 
         intrinsicST =
           st"""
               |val ${tmpWire} = (${rhsOffsetST.render}).asUInt
-              |${if(!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"} := Cat(
-              |  ${(internalST, "\n")}
-              |)${if(intrinsic.isSigned) s"${padST.render}" else ""}${if(!anvil.config.splitTempSizes) ".asUInt" else ""}
+              |${if(IndexingLog.isIndexingInBlock()) s"when(${indexerInstance.modInstanceName}_${indexerInstance.getActiveInstanceIndex}.io.valid){" else ""}
+              |${placeholder}${if(!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"} := Cat(
+              |  ${placeholder}${(internalST, "\n")}
+              |)${placeholder}${if(intrinsic.isSigned) s"${padST.render}" else ""}${if(!anvil.config.splitTempSizes) ".asUInt" else ""}
+              |${if(IndexingLog.isIndexingInBlock()) "}" else ""}
             """
         TmpWireCount.incCount()
       }
@@ -1275,6 +1420,10 @@ object ChiselModule {
 
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Store) => {
+        @strictpure def isLhsOffsetIndexing(e: AST.IR.Exp): B = e match {
+          case AST.IR.Exp.Intrinsic(in: Intrinsic.Indexing) => T
+          case _ => F
+        }
         val lhsOffsetST = processExpr(intrinsic.lhsOffset, F)
         val rhsST = processExpr(intrinsic.rhs, intrinsic.isSigned)
         var shareMemAssign = ISZ[ST]()
@@ -1286,9 +1435,19 @@ object ChiselModule {
           rhsST
         }
 
+        if(isLhsOffsetIndexing(intrinsic.lhsOffset)) {
+          shareMemAssign = shareMemAssign :+
+            st"when(${indexerInstance.modInstanceName}_${indexerInstance.getActiveInstanceIndex}.io.valid){"
+        }
+
         for(i <- 0 to (intrinsic.bytes - 1) by 1) {
           shareMemAssign = shareMemAssign :+
-            st"${sharedMemName}(${tmpWireLhsST} + ${i}.U) := ${tmpWireRhsST}(${(i)*8+7}, ${(i)*8})"
+            st"${if(isLhsOffsetIndexing(intrinsic.lhsOffset)) "  " else ""}${sharedMemName}(${tmpWireLhsST} + ${i}.U) := ${tmpWireRhsST}(${(i) * 8 + 7}, ${(i) * 8})"
+        }
+
+        if(isLhsOffsetIndexing(intrinsic.lhsOffset)) {
+          shareMemAssign = shareMemAssign :+
+            st"}"
         }
 
         val storeDataST = st"${if(anvil.typeBitSize(intrinsic.rhs.tipe) < (intrinsic.bytes * 8)) s".pad(${intrinsic.bytes * 8})" else ""}"
@@ -1348,7 +1507,8 @@ object ChiselModule {
             st"""
                 |${lhsST} := Cat{
                 |  ${rhsST.render}
-                |}"""
+                |}
+                """
         } else {
           var targetST = st""
           var finalST = st""
@@ -1446,6 +1606,35 @@ object ChiselModule {
               |Cat(
               |  ${(rhsExprST, "\n")}
               |)${if(intrinsic.isSigned) ".asSInt" else ""}"""
+      }
+      case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Indexing) => {
+        IndexingLog.enableFlagIndexingInBlock()
+        val baseOffsetST: ST = processExpr(intrinsic.baseOffset, F)
+        val dataOffset: Z = intrinsic.dataOffset
+        val indexST: ST = processExpr(intrinsic.index, F)
+        val mask: Z = intrinsic.maskOpt match {
+          case Some(z) => z
+          case None() => 0xFFFF
+        }
+        val elementSize: Z = intrinsic.elementSize
+        @pure def updateIndexerInstance(hashSMap: HashSMap[String, (ST, String)]): Z = {
+          val res = indexerInstance.populateInputs(BlockLog.getBlock.label, hashSMap)
+          indexerInstance = res._1
+          return res._2
+        }
+        @pure def indexerIPPortST(): ST = {
+          var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
+          hashSMap = hashSMap +
+            "baseOffset" ~> (st"${baseOffsetST.render}", "UInt") +
+            "dataOffset" ~> (st"${dataOffset}.U", "UInt") +
+            "index" ~> (st"${indexST.render}", "UInt") +
+            "elementSize" ~> (st"${elementSize}.U", "UInt") +
+            "mask" ~> (st"${mask}.U", "UInt") +
+            "ready" ~> (st"true.B", "Bool")
+          val instanceIndex: Z = updateIndexerInstance(hashSMap)
+          return st"${indexerInstance.modInstanceName}_${instanceIndex}"
+        }
+        exprST = st"${s"${indexerIPPortST().render}.io.out"}"
       }
       case exp: AST.IR.Exp.Temp => {
         val noSplitST: ST = st"${generalRegName}(${exp.n}.U)${if(isSignedExp(exp)) ".asSInt" else ""}"
