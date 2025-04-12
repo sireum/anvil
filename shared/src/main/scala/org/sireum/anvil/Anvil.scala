@@ -56,12 +56,12 @@ object Anvil {
                          val customDivRem: B,
                          val splitTempSizes: B,
                          val tempLocal: B,
-                         val alu: B,
-                         val indexing: B,
+                         val ipMax: Z,
                          val mux: B,
                          val genVerilog: B,
                          val simOpt: Option[Config.Sim]) {
     val shouldPrint: B = printSize > 0
+    val useIP: B = ipMax > 0
   }
 
   object Config {
@@ -86,8 +86,7 @@ object Anvil {
         customDivRem = F,
         splitTempSizes = F,
         tempLocal = T,
-        alu = F,
-        indexing = F,
+        ipMax = 0,
         mux = F,
         genVerilog = F,
         simOpt = None())
@@ -161,7 +160,7 @@ import Anvil._
                       val config: Config,
                       val numOfLocs: Z) {
 
-  val printer: AST.IR.Printer = AnvilIRPrinter(this)
+  val printer: AST.IR.Printer = AnvilIRPrinter(this, IpAlloc(HashSMap.empty, HashSMap.empty, 0))
   val typeShaType: AST.Typed.Name = AST.Typed.u32
   val typeShaSize: Z = typeByteSize(typeShaType)
   val spType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "SP"), ISZ())
@@ -550,9 +549,11 @@ import Anvil._
 
     }
 
+    val printer2: AST.IR.Printer =
+      if (config.useIP) AnvilIRPrinter(anvil, ipAlloc(anvil, program.procedures(0), 10)) else anvil.printer
     output.add(F, ISZ("ir", s"$stage-reordered.sir"),
       st"""$header
-          |${program.prettyST(anvil.printer)}""")
+          |${program.prettyST(printer2)}""")
 
     stage = stage + 1
 

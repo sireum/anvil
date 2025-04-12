@@ -1377,7 +1377,7 @@ import IRSimulator._
           cycles = cycles + 2
         case _ =>
       }
-    } else if (anvil.config.indexing && hasIndexing) {
+    } else if (anvil.config.useIP && hasIndexing) {
       if (cycles < 4) {
         cycles = 4
       } else {

@@ -147,7 +147,7 @@ class IRSimulatorTest extends SireumRcSpec {
             runtimeCheck = !AnvilTest.noRuntimeCheckFileSet.contains(file),
             splitTempSizes = splitTempSizes,
             tempLocal = tempLocal,
-            indexing = T
+            ipMax = 10
           )
           Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, AnvilOutput(F, "", out), reporter) match {
             case Some(ir) =>

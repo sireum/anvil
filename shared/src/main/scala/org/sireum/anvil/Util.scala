@@ -27,6 +27,8 @@ package org.sireum.anvil
 
 import org.sireum._
 import org.sireum.alir.MonotonicDataflowFramework
+import org.sireum.lang.ast.IR
+import org.sireum.lang.ast.IR.Exp
 import org.sireum.lang.symbol.Info
 import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.{ast => AST}
@@ -579,7 +581,6 @@ object Util {
 
   @record class IntTransformer(val anvil: Anvil) extends MAnvilIRTransformer {
     override def post_langastIRExpInt(o: AST.IR.Exp.Int): MOption[AST.IR.Exp] = {
-      val isSigned = anvil.isSigned(o.tipe)
       val n: U64 = conversions.Z.toU64(if (o.value < 0) o.value + anvil.pow(2, 64) else o.value)
       val v = IRSimulator.Value.fromRawU64(anvil, n, o.tipe).value
       return if (v != o.value) MSome(o(value = v)) else MNone()
@@ -708,11 +709,16 @@ object Util {
     @strictpure def killJump(j: AST.IR.Jump): HashSSet[(String, AST.Typed)] = HashSSet.empty
   }
 
-  @datatype class AnvilIRPrinter(val anvil: Anvil) extends AST.IR.Printer {
-    @strictpure def exp(e: AST.IR.Exp): Option[ST] = e match {
-      case e: AST.IR.Exp.Temp if anvil.config.splitTempSizes =>
-        Some(tempST(anvil, e.tipe, e.n))
-      case _ => None()
+  @datatype class AnvilIRPrinter(val anvil: Anvil, val ipAlloc: IpAlloc) extends AST.IR.Printer {
+    @strictpure def exp(e: AST.IR.Exp): Option[ST] = {
+      e match {
+        case e: AST.IR.Exp.Temp if anvil.config.splitTempSizes => Some(tempST(anvil, e.tipe, e.n))
+        case _ =>
+          ipAlloc.allocMap.get(IpAlloc.Ext.exp(e)) match {
+            case Some(n) => Some(st"${e.prettyRawST(this)} /* IP#$n */")
+            case _ => None()
+          }
+      }
     }
     @strictpure def stmt(stmt: AST.IR.Stmt): Option[ST] = stmt match {
       case stmt: AST.IR.Stmt.Assign.Temp if anvil.config.splitTempSizes =>
@@ -957,6 +963,26 @@ object Util {
     }
   }
 
+  @record class IpCounter(val anvil: Anvil,
+                          var ipMap: HashSMap[IpAlloc.Exp, Z],
+                          var binopMap: HashSMap[(B, AST.IR.Exp.Binary.Op.Type), Z],
+                          var indexing: Z) extends MAnvilIRTransformer {
+    override def pre_langastIRExpBinary(o: Exp.Binary): MAnvilIRTransformer.PreResult[IR.Exp] = {
+      val t: AST.Typed = if (anvil.isScalar(o.tipe)) o.left.tipe else anvil.spType
+      val key = (anvil.isSigned(t), o.op)
+      val n = binopMap.get(key).getOrElseEager(0)
+      ipMap = ipMap + IpAlloc.Ext.exp(o) ~> n
+      binopMap = binopMap + key ~> (n + 1)
+      return MAnvilIRTransformer.PreResult_langastIRExpBinary
+    }
+
+    override def preIntrinsicIndexing(o: Intrinsic.Indexing): MAnvilIRTransformer.PreResult[Intrinsic.Indexing] = {
+      ipMap = ipMap + IpAlloc.Ext.exp(AST.IR.Exp.Intrinsic(o)) ~> indexing
+      indexing = indexing + 1
+      return MAnvilIRTransformer.PreResultIntrinsicIndexing
+    }
+  }
+
   val kind: String = "Anvil"
   val exitLabel: Z = 0
   val errorLabel: Z = 1
@@ -1044,7 +1070,7 @@ object Util {
       anvil.spType, idx, AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(anvil.spType, min, idx.pos), idx.pos)
     val elementSize = anvil.typeByteSize(elementType)
     val dataOffset = anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
-    if (anvil.config.indexing) {
+    if (anvil.config.useIP) {
       return AST.IR.Exp.Intrinsic(Intrinsic.Indexing(rcv, dataOffset, indexOffset, maskOpt, elementSize, elementType, pos))
     } else {
       val baseDataOffset = AST.IR.Exp.Binary(anvil.spType, rcv, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType,
@@ -1102,6 +1128,74 @@ object Util {
       i = i + 1
     }
     return r
+  }
+
+  @datatype class IpAlloc(val allocMap: HashSMap[IpAlloc.Exp, Z],
+                          val binopAllocSizeMap: HashSMap[(B, AST.IR.Exp.Binary.Op.Type), Z],
+                          val indexingAllocSize: Z)
+  object IpAlloc {
+    @sig trait Exp {
+      @pure def ast: AST.IR.Exp
+    }
+    @ext("IpAlloc_Ext") object Ext {
+      @pure def exp(e: AST.IR.Exp): IpAlloc.Exp = $
+    }
+  }
+
+  @pure def ipAlloc(anvil: Anvil, p: AST.IR.Procedure, opMax: Z): IpAlloc = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var r = HashSMap.empty[IpAlloc.Exp, Z]
+    var binopAllocMap = HashSMap.empty[(B, AST.IR.Exp.Binary.Op.Type), ISZ[Z]]
+    var indexingAlloc = ISZ[Z]()
+    for (b <- body.blocks) {
+      def allocate(ic: IpCounter): Unit = {
+        @pure def getFirstAvailable(s: ISZ[Z]): Z = {
+          if (opMax <= 0) {
+            return 0
+          }
+          for (j <- s.indices) {
+            if (s(j) < opMax) {
+              return j
+            }
+          }
+          return s.size
+        }
+        val bam = binopAllocMap
+        val ia = indexingAlloc
+        for (entry <- ic.ipMap.entries) {
+          val (ipe, n) = entry
+          ipe.ast match {
+            case e: AST.IR.Exp.Binary =>
+              val t: AST.Typed = if (anvil.isScalar(e.tipe)) e.left.tipe else anvil.spType
+              val key = (anvil.isSigned(t), e.op)
+              var alloc = getFirstAvailable(bam.get(key).getOrElseEager(ISZ()))
+              alloc = alloc + n
+              var s = binopAllocMap.get(key).getOrElseEager(ISZ())
+              while (s.size <= alloc) {
+                s = s :+ 0
+              }
+              r = r + ipe ~> alloc
+              binopAllocMap = binopAllocMap + key ~> s(alloc ~> (s(alloc) + 1))
+            case AST.IR.Exp.Intrinsic(_: Intrinsic.Indexing) =>
+              var alloc = getFirstAvailable(ia)
+              alloc = alloc + n
+              var s = indexingAlloc
+              while (s.size <= alloc) {
+                s = s :+ 0
+              }
+              r = r + ipe ~> alloc
+              indexingAlloc = s(alloc ~> (s(alloc) + 1))
+            case _ => halt("Infeasible")
+          }
+        }
+      }
+
+      val ic = IpCounter(anvil, HashSMap.empty, HashSMap.empty, 0)
+      ic.transform_langastIRBasicBlock(b)
+      allocate(ic)
+
+    }
+    return IpAlloc(r, HashSMap ++ (for (e <- binopAllocMap.entries) yield (e._1, e._2.size)), indexingAlloc.size)
   }
 
 }
