@@ -81,11 +81,11 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
-    @pure def pre_langastIRExpInt(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Int): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def preIntrinsicLoad(ctx: Context, o: Intrinsic.Load): PreResult[Context, Intrinsic.Load] = {
       return PreResult(ctx, T, None())
     }
 
-    @pure def preIntrinsicLoad(ctx: Context, o: Intrinsic.Load): PreResult[Context, Intrinsic.Load] = {
+    @pure def pre_langastIRExpInt(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Int): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
@@ -93,11 +93,11 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
-    @pure def pre_langastIRExpF64(ctx: Context, o: org.sireum.lang.ast.IR.Exp.F64): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def preIntrinsicIndexing(ctx: Context, o: Intrinsic.Indexing): PreResult[Context, Intrinsic.Indexing] = {
       return PreResult(ctx, T, None())
     }
 
-    @pure def preIntrinsicIndexing(ctx: Context, o: Intrinsic.Indexing): PreResult[Context, Intrinsic.Indexing] = {
+    @pure def pre_langastIRExpF64(ctx: Context, o: org.sireum.lang.ast.IR.Exp.F64): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
@@ -612,11 +612,11 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
-    @pure def post_langastIRExpInt(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Int): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def postIntrinsicLoad(ctx: Context, o: Intrinsic.Load): TPostResult[Context, Intrinsic.Load] = {
       return TPostResult(ctx, None())
     }
 
-    @pure def postIntrinsicLoad(ctx: Context, o: Intrinsic.Load): TPostResult[Context, Intrinsic.Load] = {
+    @pure def post_langastIRExpInt(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Int): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
@@ -624,11 +624,11 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
-    @pure def post_langastIRExpF64(ctx: Context, o: org.sireum.lang.ast.IR.Exp.F64): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def postIntrinsicIndexing(ctx: Context, o: Intrinsic.Indexing): TPostResult[Context, Intrinsic.Indexing] = {
       return TPostResult(ctx, None())
     }
 
-    @pure def postIntrinsicIndexing(ctx: Context, o: Intrinsic.Indexing): TPostResult[Context, Intrinsic.Indexing] = {
+    @pure def post_langastIRExpF64(ctx: Context, o: org.sireum.lang.ast.IR.Exp.F64): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
@@ -1555,9 +1555,9 @@ import AnvilIRTransformer._
     val r: TPostResult[Context, Intrinsic.GotoLocal] = if (preR.continu) {
       val o2: Intrinsic.GotoLocal = preR.resultOpt.getOrElse(o)
       val hasChanged: B = preR.resultOpt.nonEmpty
-      val r0: TPostResult[Context, org.sireum.lang.ast.IR.MethodContext] = transform_langastIRMethodContext(preR.ctx, o2.context)
+      val r0: TPostResult[Context, Option[org.sireum.lang.ast.IR.MethodContext]] = transformOption(preR.ctx, o2.contextOpt, transform_langastIRMethodContext _)
       if (hasChanged || r0.resultOpt.nonEmpty)
-        TPostResult(r0.ctx, Some(o2(context = r0.resultOpt.getOrElse(o2.context))))
+        TPostResult(r0.ctx, Some(o2(contextOpt = r0.resultOpt.getOrElse(o2.contextOpt))))
       else
         TPostResult(r0.ctx, None())
     } else if (preR.resultOpt.nonEmpty) {
@@ -2150,9 +2150,9 @@ import AnvilIRTransformer._
       val hasChanged: B = preR.resultOpt.nonEmpty
       val rOpt: TPostResult[Context, org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = o2 match {
         case o2: Intrinsic.GotoLocal =>
-          val r0: TPostResult[Context, org.sireum.lang.ast.IR.MethodContext] = transform_langastIRMethodContext(preR.ctx, o2.context)
+          val r0: TPostResult[Context, Option[org.sireum.lang.ast.IR.MethodContext]] = transformOption(preR.ctx, o2.contextOpt, transform_langastIRMethodContext _)
           if (hasChanged || r0.resultOpt.nonEmpty)
-            TPostResult(r0.ctx, Some(o2(context = r0.resultOpt.getOrElse(o2.context))))
+            TPostResult(r0.ctx, Some(o2(contextOpt = r0.resultOpt.getOrElse(o2.contextOpt))))
           else
             TPostResult(r0.ctx, None())
       }

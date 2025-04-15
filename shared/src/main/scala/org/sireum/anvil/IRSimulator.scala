@@ -1262,7 +1262,7 @@ import IRSimulator._
       case jump: AST.IR.Jump.Intrinsic =>
         jump.intrinsic match {
           case in: Intrinsic.GotoLocal =>
-            if (anvil.config.tempLocal) {
+            if (in.isTemp) {
               val (cp, acs) = evalExp(state, AST.IR.Exp.Temp(in.loc, anvil.cpType, in.pos))
               return State.Edit.Temp(State.Edit.Temp.Kind.CP, isFP, isSigned, bitSize, 0, cp, acs)
             } else {

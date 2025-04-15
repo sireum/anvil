@@ -65,25 +65,25 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRExpBool: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
-  val PreResult_langastIRExpInt: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
-
-  val PostResult_langastIRExpInt: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
-
   val PreResultIntrinsicLoad: PreResult[Intrinsic.Load] = PreResult(T, MNone())
 
   val PostResultIntrinsicLoad: MOption[Intrinsic.Load] = MNone()
+
+  val PreResult_langastIRExpInt: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
+
+  val PostResult_langastIRExpInt: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
   val PreResult_langastIRExpF32: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
   val PostResult_langastIRExpF32: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
-  val PreResult_langastIRExpF64: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
-
-  val PostResult_langastIRExpF64: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
-
   val PreResultIntrinsicIndexing: PreResult[Intrinsic.Indexing] = PreResult(T, MNone())
 
   val PostResultIntrinsicIndexing: MOption[Intrinsic.Indexing] = MNone()
+
+  val PreResult_langastIRExpF64: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
+
+  val PostResult_langastIRExpF64: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
   val PreResult_langastIRExpR: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
@@ -149,6 +149,18 @@ object MAnvilIRTransformer {
 
   val PostResultIntrinsicGotoLocal: MOption[Intrinsic.GotoLocal] = MNone()
 
+  def transformOption[T](option: Option[T], f: T => MOption[T]): MOption[Option[T]] = {
+    option match {
+      case Some(v) =>
+        val r = f(v)
+        r match {
+          case MSome(v2) => return MSome(Some(v2))
+          case _ => return MNone()
+        }
+      case _ => return MNone()
+    }
+  }
+
   val PreResult_langastIRExpIf: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
   val PostResult_langastIRExpIf: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
@@ -172,18 +184,6 @@ object MAnvilIRTransformer {
   val PreResult_langastIRExpIntrinsic: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
   val PostResult_langastIRExpIntrinsic: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
-
-  def transformOption[T](option: Option[T], f: T => MOption[T]): MOption[Option[T]] = {
-    option match {
-      case Some(v) =>
-        val r = f(v)
-        r match {
-          case MSome(v2) => return MSome(Some(v2))
-          case _ => return MNone()
-        }
-      case _ => return MNone()
-    }
-  }
 
   val PreResult_langastIRStmtExpr: PreResult[org.sireum.lang.ast.IR.Stmt.Ground] = PreResult(T, MNone())
 
@@ -375,24 +375,24 @@ import MAnvilIRTransformer._
     return PreResult_langastIRExpBool
   }
 
-  def pre_langastIRExpInt(o: org.sireum.lang.ast.IR.Exp.Int): PreResult[org.sireum.lang.ast.IR.Exp] = {
-    return PreResult_langastIRExpInt
-  }
-
   def preIntrinsicLoad(o: Intrinsic.Load): PreResult[Intrinsic.Load] = {
     return PreResultIntrinsicLoad
+  }
+
+  def pre_langastIRExpInt(o: org.sireum.lang.ast.IR.Exp.Int): PreResult[org.sireum.lang.ast.IR.Exp] = {
+    return PreResult_langastIRExpInt
   }
 
   def pre_langastIRExpF32(o: org.sireum.lang.ast.IR.Exp.F32): PreResult[org.sireum.lang.ast.IR.Exp] = {
     return PreResult_langastIRExpF32
   }
 
-  def pre_langastIRExpF64(o: org.sireum.lang.ast.IR.Exp.F64): PreResult[org.sireum.lang.ast.IR.Exp] = {
-    return PreResult_langastIRExpF64
-  }
-
   def preIntrinsicIndexing(o: Intrinsic.Indexing): PreResult[Intrinsic.Indexing] = {
     return PreResultIntrinsicIndexing
+  }
+
+  def pre_langastIRExpF64(o: org.sireum.lang.ast.IR.Exp.F64): PreResult[org.sireum.lang.ast.IR.Exp] = {
+    return PreResult_langastIRExpF64
   }
 
   def pre_langastIRExpR(o: org.sireum.lang.ast.IR.Exp.R): PreResult[org.sireum.lang.ast.IR.Exp] = {
@@ -906,24 +906,24 @@ import MAnvilIRTransformer._
     return PostResult_langastIRExpBool
   }
 
-  def post_langastIRExpInt(o: org.sireum.lang.ast.IR.Exp.Int): MOption[org.sireum.lang.ast.IR.Exp] = {
-    return PostResult_langastIRExpInt
-  }
-
   def postIntrinsicLoad(o: Intrinsic.Load): MOption[Intrinsic.Load] = {
     return PostResultIntrinsicLoad
+  }
+
+  def post_langastIRExpInt(o: org.sireum.lang.ast.IR.Exp.Int): MOption[org.sireum.lang.ast.IR.Exp] = {
+    return PostResult_langastIRExpInt
   }
 
   def post_langastIRExpF32(o: org.sireum.lang.ast.IR.Exp.F32): MOption[org.sireum.lang.ast.IR.Exp] = {
     return PostResult_langastIRExpF32
   }
 
-  def post_langastIRExpF64(o: org.sireum.lang.ast.IR.Exp.F64): MOption[org.sireum.lang.ast.IR.Exp] = {
-    return PostResult_langastIRExpF64
-  }
-
   def postIntrinsicIndexing(o: Intrinsic.Indexing): MOption[Intrinsic.Indexing] = {
     return PostResultIntrinsicIndexing
+  }
+
+  def post_langastIRExpF64(o: org.sireum.lang.ast.IR.Exp.F64): MOption[org.sireum.lang.ast.IR.Exp] = {
+    return PostResult_langastIRExpF64
   }
 
   def post_langastIRExpR(o: org.sireum.lang.ast.IR.Exp.R): MOption[org.sireum.lang.ast.IR.Exp] = {
@@ -1811,9 +1811,9 @@ import MAnvilIRTransformer._
     val r: MOption[Intrinsic.GotoLocal] = if (preR.continu) {
       val o2: Intrinsic.GotoLocal = preR.resultOpt.getOrElse(o)
       val hasChanged: B = preR.resultOpt.nonEmpty
-      val r0: MOption[org.sireum.lang.ast.IR.MethodContext] = transform_langastIRMethodContext(o2.context)
+      val r0: MOption[Option[org.sireum.lang.ast.IR.MethodContext]] = transformOption(o2.contextOpt, transform_langastIRMethodContext _)
       if (hasChanged || r0.nonEmpty)
-        MSome(o2(context = r0.getOrElse(o2.context)))
+        MSome(o2(contextOpt = r0.getOrElse(o2.contextOpt)))
       else
         MNone()
     } else if (preR.resultOpt.nonEmpty) {
@@ -2406,9 +2406,9 @@ import MAnvilIRTransformer._
       val hasChanged: B = preR.resultOpt.nonEmpty
       val rOpt: MOption[org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = o2 match {
         case o2: Intrinsic.GotoLocal =>
-          val r0: MOption[org.sireum.lang.ast.IR.MethodContext] = transform_langastIRMethodContext(o2.context)
+          val r0: MOption[Option[org.sireum.lang.ast.IR.MethodContext]] = transformOption(o2.contextOpt, transform_langastIRMethodContext _)
           if (hasChanged || r0.nonEmpty)
-            MSome(o2(context = r0.getOrElse(o2.context)))
+            MSome(o2(contextOpt = r0.getOrElse(o2.contextOpt)))
           else
             MNone()
       }

@@ -61,7 +61,7 @@ object Anvil {
                          val genVerilog: B,
                          val simOpt: Option[Config.Sim]) {
     val shouldPrint: B = printSize > 0
-    val useIP: B = ipMax > 0
+    val useIP: B = ipMax >= 0
   }
 
   object Config {
@@ -464,10 +464,6 @@ import Anvil._
 
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "merged"), p.prettyST(anvil.printer))
 
-      p = anvil.transformErase(fresh, p)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "erase"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
       @strictpure def isRegisterInc(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
         case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isInc =>
           grounds.isEmpty ||
@@ -492,12 +488,20 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-indexing"), p.prettyST(anvil.printer))
       pass = pass + 1
 
+      p = anvil.transformErase(fresh, p)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "erase"), p.prettyST(anvil.printer))
+      pass = pass + 1
+
       p = anvil.transformMain(fresh, p, globalSize, globalMap)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "main"), p.prettyST(anvil.printer))
       pass = pass + 1
 
       p = anvil.transformCP(p)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "cp"), p.prettyST(anvil.printer))
+      pass = pass + 1
+
+      p = anvil.transformEmptyBlock(p)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "empty-block"), p.prettyST(anvil.printer))
       pass = pass + 1
 
       program(procedures = ISZ(p))
@@ -654,8 +658,9 @@ import Anvil._
       }
       blockMap = blockMap + b.label ~> b(jump = jump)
     }
-    blockMap = blockMap -- ((for (labelIncomings <- countNumOfIncomingJumps(blockMap.values).entries
-                                  if labelIncomings._2 == 0) yield labelIncomings._1) -- ISZ(0, 1, body.blocks(0).label))
+    val delBlockLabels: ISZ[Z] = (for (labelIncomings <- countNumOfIncomingJumps(blockMap.values).entries
+                                       if labelIncomings._2 == 0) yield labelIncomings._1) -- ISZ(0, 1, body.blocks(0).label)
+    blockMap = blockMap -- delBlockLabels
     return p(body = body(blocks = blockMap.values))
   }
 
@@ -758,8 +763,7 @@ import Anvil._
       }
     }
 
-    return transformEmptyBlock(CPSubstitutor(this, cpSubstMap).
-      transform_langastIRProcedure(p).getOrElse(p))
+    return CPSubstitutor(this, cpSubstMap).transform_langastIRProcedure(p).getOrElse(p)
   }
 
   def transformSplitReadWrite(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1158,32 +1162,83 @@ import Anvil._
     if (!config.erase) {
       return p
     }
+    val eraseLabel = fresh.label()
+    val maxTemps = programMaxTemps(this, AST.IR.Program(T, ISZ(), ISZ(p)))
+    val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
+    fresh.setTemp(maxTemps.typeCount(this, cpt))
+    val retParam = fresh.temp()
+    val spt: AST.Typed = if (config.splitTempSizes) spType else AST.Typed.u64
+    if (isSigned(cpt) != isSigned(spt) || typeByteSize(cpt) != typeByteSize(spt)) {
+      fresh.setTemp(maxTemps.typeCount(this, spt))
+    }
+    val offsetParam = fresh.temp()
+    val untilParam = fresh.temp()
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
+    var insertErase = F
     for (b <- body.blocks) {
       var block = b
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       for (g <- b.grounds) {
         g match {
           case AST.IR.Stmt.Intrinsic(in: Intrinsic.Decl) if in.undecl =>
-            val label = fresh.label()
-            blocks = blocks :+ block(grounds = grounds, jump = AST.IR.Jump.Goto(label, g.pos))
-            grounds = ISZ()
-            block = AST.IR.BasicBlock(label, grounds, b.jump)
-            for (slot <- in.slots) {
-              for (i <- 0 until slot.size) {
-                val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
-                  AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, slot.loc + i, g.pos), g.pos)
-                grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset, isSigned(AST.Typed.u8),
-                  typeByteSize(AST.Typed.u8), AST.IR.Exp.Int(AST.Typed.u8, 0, g.pos), st"// erasing ${slot.id} byte $i",
-                  AST.Typed.u8, g.pos))
+            var offset: Z = 0
+            var size: Z = 0
+            for (i <- in.slots.size - 1 to 0 if in.slots(i).size > 0) {
+              val slot = in.slots(i)
+              if (offset == 0) {
+                offset = slot.loc
               }
+              assert(offset + size == slot.loc, b.prettyST(printer).render)
+              size = size + slot.size
+            }
+            if (offset != 0) {
+              insertErase = T
+              val label = fresh.label()
+              grounds = grounds :+ AST.IR.Stmt.Assign.Temp(retParam, AST.IR.Exp.Int(cpType, label, g.pos), g.pos)
+              grounds = grounds :+ AST.IR.Stmt.Assign.Temp(offsetParam, AST.IR.Exp.Binary(spType,
+                  AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)), AST.IR.Exp.Binary.Op.Add,
+                AST.IR.Exp.Int(spType, offset, g.pos), g.pos), g.pos)
+              grounds = grounds :+ AST.IR.Stmt.Assign.Temp(untilParam, AST.IR.Exp.Binary(spType,
+                AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)), AST.IR.Exp.Binary.Op.Add,
+                AST.IR.Exp.Int(spType, offset + size, g.pos), g.pos), g.pos)
+              blocks = blocks :+ block(grounds = grounds, jump = AST.IR.Jump.Goto(eraseLabel, g.pos))
+              grounds = ISZ()
+              block = AST.IR.BasicBlock(label, grounds, block.jump)
+            }
+            val eraseTempLabel = fresh.label()
+            blocks = blocks :+ block(grounds = grounds, jump = AST.IR.Jump.Goto(eraseTempLabel, g.pos))
+            grounds = ISZ()
+            block = AST.IR.BasicBlock(eraseTempLabel, grounds, block.jump)
+            for (slot <- in.slots if slot.size == 0) {
+              val t: AST.Typed = if (isScalar(slot.tipe)) slot.tipe else spType
+              grounds = grounds :+ AST.IR.Stmt.Assign.Temp(slot.loc, AST.IR.Exp.Int(t, 0, g.pos), g.pos)
             }
           case _ =>
         }
         grounds = grounds :+ g
       }
       blocks = blocks :+ block(grounds = grounds)
+    }
+    if (insertErase) {
+      val loopLabel = fresh.label()
+      val incLabel = fresh.label()
+      val endLabel = fresh.label()
+      val pos = p.pos
+      blocks = blocks :+ AST.IR.BasicBlock(eraseLabel, ISZ(), AST.IR.Jump.If(
+        AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(offsetParam, spType, pos), AST.IR.Exp.Binary.Op.Lt,
+          AST.IR.Exp.Temp(untilParam, spType, pos), pos), loopLabel, endLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(
+        AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+          AST.IR.Exp.Temp(offsetParam, spType, pos), isSigned(AST.Typed.u8), typeByteSize(AST.Typed.u8),
+          AST.IR.Exp.Int(AST.Typed.u8, 0, pos), st"erase", AST.Typed.u8, pos))
+      ), AST.IR.Jump.Goto(incLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(incLabel, ISZ(
+        AST.IR.Stmt.Assign.Temp(offsetParam, AST.IR.Exp.Binary(spType,
+          AST.IR.Exp.Temp(offsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, 1, pos), pos), pos)
+      ), AST.IR.Jump.Goto(eraseLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(endLabel, ISZ(), AST.IR.Jump.Intrinsic(
+        Intrinsic.GotoLocal(T, retParam, None(), "erase", pos)))
     }
     return p(body = body(blocks = blocks))
   }
@@ -1765,8 +1820,8 @@ import Anvil._
                 case _ =>
               }
               blocks = blocks :+ b(grounds = b.grounds ++ addGrounds,
-                jump = AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(
-                  procedureParamInfo(PBox(p))._2.get(returnLocalId).get.loc, p.context, returnLocalId, j.pos)))
+                jump = AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(config.tempLocal,
+                  procedureParamInfo(PBox(p))._2.get(returnLocalId).get.loc, Some(p.context), returnLocalId, j.pos)))
             case _ => blocks = blocks :+ b
           }
         }

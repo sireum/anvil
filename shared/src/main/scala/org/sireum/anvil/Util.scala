@@ -329,7 +329,7 @@ object Util {
 
     override def post_langastIRStmtAssignTemp(o: AST.IR.Stmt.Assign.Temp): MOption[AST.IR.Stmt.Assign] = {
       o.rhs match {
-        case rhs: AST.IR.Exp.Int if anvil.config.tempLocal && rhs.tipe == anvil.cpType =>
+        case rhs: AST.IR.Exp.Int if (anvil.config.tempLocal || anvil.config.erase) && rhs.tipe == anvil.cpType =>
           return MSome(o(rhs = rhs(value = cpSubstMap.get(rhs.value).get)))
         case _ => return MNone()
       }

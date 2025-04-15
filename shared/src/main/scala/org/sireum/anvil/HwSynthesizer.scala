@@ -707,7 +707,7 @@ object DivRemLog {
 
     j match {
       case AST.IR.Jump.Intrinsic(intrinsic: Intrinsic.GotoLocal) => {
-        if (anvil.config.tempLocal) {
+        if (intrinsic.isTemp) {
           intrinsicST =
             st"""
                 |CP := ${processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F)}

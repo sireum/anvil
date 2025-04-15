@@ -135,13 +135,14 @@ object Intrinsic {
   }
 
   // Replaces AST.IR.Jump.Return
-  @datatype class GotoLocal(val loc: Z,
-                            val context: AST.IR.MethodContext,
+  @datatype class GotoLocal(val isTemp: B,
+                            val loc: Z,
+                            val contextOpt: Option[AST.IR.MethodContext],
                             val id: String,
                             val pos: Position) extends AST.IR.Jump.Intrinsic.Type {
     @strictpure def prettyST(p: AST.IR.Printer): ST = {
       val anvil = p.asInstanceOf[Util.AnvilIRPrinter].anvil
-      if (anvil.config.tempLocal) st"goto $id@${p.exp(AST.IR.Exp.Temp(loc, anvil.cpType, pos)).getOrElse(st"$$$loc")}"
+      if (isTemp) st"goto $id@${p.exp(AST.IR.Exp.Temp(loc, anvil.cpType, pos)).getOrElse(st"$$$loc")}"
       else st"goto $id@$loc"
     }
 
