@@ -57,11 +57,13 @@ object Anvil {
                          val splitTempSizes: B,
                          val tempLocal: B,
                          val ipMax: Z,
+                         val cpMax: Z,
                          val mux: B,
                          val genVerilog: B,
                          val simOpt: Option[Config.Sim]) {
     val shouldPrint: B = printSize > 0
     val useIP: B = ipMax >= 0
+    val separateCP: B = cpMax > 0
   }
 
   object Config {
@@ -87,6 +89,7 @@ object Anvil {
         splitTempSizes = F,
         tempLocal = T,
         ipMax = 0,
+        cpMax = 0,
         mux = F,
         genVerilog = F,
         simOpt = None())
