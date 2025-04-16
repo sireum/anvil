@@ -26,6 +26,7 @@
 package org.sireum.anvil
 
 import org.sireum._
+import org.sireum.anvil.Util.AnvilIRPrinter
 import org.sireum.lang.ast.IR.Jump
 import org.sireum.lang.{ast => AST}
 import org.sireum.lang.symbol.Resolver.{QName, addBuiltIns, typeParamMap}
@@ -288,13 +289,13 @@ object ChiselModule {
       return InstanceVector(modInstanceName, tempVector, maxNumInstances, tempInputs, blockStartInstanceIndex)
     }
 
-    @pure def addInput(inputList: HashSMap[String, Input]): (InstanceVector,Z) = {
+    @pure def addInput(inputList: HashSMap[String, Input], instanceIndex: Z): (InstanceVector,Z) = {
       val allSlotUsed: B = getVectorIndex(sortUsageVector) == -1
       val originalInstance: InstanceVector = if(!allSlotUsed) this else this.appendUsageVector(1)
       val sortedVector: ISZ[(Z,Z,B)] = originalInstance.sortUsageVector
       val index: Z = originalInstance.getVectorIndex(sortedVector)
       val usage: Z = sortedVector(index)._2
-      val instanceIndex: Z = sortedVector(index)._1
+      //val instanceIndex: Z = sortedVector(index)._1
       var updatedTargetMod: HashSMap[String, Input] = originalInstance.inputs(instanceIndex)
       for(entry <- inputList.entries) {
         val inputPort: Option[Input] = updatedTargetMod.get(entry._1)
@@ -309,13 +310,13 @@ object ChiselModule {
       return (InstanceVector(originalInstance.modInstanceName, updatedVector, originalInstance.maxNumInstances, updatedInputs, blockStartInstanceIndex), instanceIndex)
     }
 
-    @pure def populateInputs(label: Z, hashSMap: HashSMap[String, (ST, String)]) : (InstanceVector,Z) = {
+    @pure def populateInputs(label: Z, hashSMap: HashSMap[String, (ST, String)], instanceIndex: Z) : (InstanceVector,Z) = {
       var inputList: HashSMap[String, Input] = HashSMap.empty
       for(entry <- hashSMap.entries) {
         val stateValue: ISZ[StateValue] = ISZ(StateValue(label, entry._2._1.render))
         inputList = inputList + entry._1 ~> Input(stateValue, entry._1, entry._2._2)
       }
-      return addInput(inputList)
+      return addInput(inputList, instanceIndex)
     }
   }
 }
@@ -418,6 +419,7 @@ object ChiselModule {
   var adderSigned8Instance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("adderSigned8", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
 
   var indexerInstance: ChiselModule.InstanceVector = ChiselModule.InstanceVector("indexer", ISZ[(Z,Z,B)](), 1, ISZ[HashSMap[String, ChiselModule.Input]](), 0).initializeUsageVector
+  var ipAlloc: Util.IpAlloc = Util.IpAlloc(HashSMap.empty, HashSMap.empty, 0)
 
   /*
     Notes/links:
@@ -425,6 +427,9 @@ object ChiselModule {
     * Anvil IR Intrinsic: https://github.com/sireum/anvil/blob/master/shared/src/main/scala/org/sireum/anvil/Intrinsic.scala
    */
   def printProcedure(name: String, o: AST.IR.Procedure, output: Anvil.Output, maxRegisters: Util.TempVector): Unit = {
+    if(anvil.config.useIP) {
+      ipAlloc = Util.ipAlloc(anvil, o, anvil.config.ipMax)
+    }
     var r = HashSMap.empty[ISZ[String], ST]
     val processedProcedureST = processProcedure(name, o, maxRegisters)
     r = r + ISZ(name) ~> o.prettyST(anvil.printer)
@@ -1590,6 +1595,14 @@ object ChiselModule {
     case _ => F
   }
 
+  @pure def getIpAllocIndex(e: AST.IR.Exp): Z = {
+    val index: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(e)) match {
+      case Some(n) => n
+      case None() => halt("not found index in function getIpAllocIndex")
+    }
+    return index
+  }
+
   @pure def processExpr(exp: AST.IR.Exp, isForcedSign: B): ST = {
     var exprST = st""
 
@@ -1624,7 +1637,8 @@ object ChiselModule {
         }
         val elementSize: Z = intrinsic.elementSize
         @pure def updateIndexerInstance(hashSMap: HashSMap[String, (ST, String)]): Z = {
-          val res = indexerInstance.populateInputs(BlockLog.getBlock.label, hashSMap)
+          val instanceIndex: Z = getIpAllocIndex(exp)
+          val res = indexerInstance.populateInputs(BlockLog.getBlock.label, hashSMap, instanceIndex)
           indexerInstance = res._1
           return res._2
         }
@@ -1685,26 +1699,27 @@ object ChiselModule {
         val expByteSize: Z = if(anvil.isScalar(exp.left.tipe)) anvil.typeByteSize(exp.left.tipe) else anvil.typeByteSize(anvil.spType)
         exp.op match {
           case AST.IR.Exp.Binary.Op.Add => {
+            val instanceIndex: Z = getIpAllocIndex(exp)
             @pure def updateAdderInstance(signed: B, byteSize: Z, hashSMap: HashSMap[String, (ST, String)]): Z = {
               if(signed) {
                 byteSize match {
                   case 1 => {
-                    val res = adderSigned8Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    val res = adderSigned8Instance.populateInputs(BlockLog.getBlock.label, hashSMap, instanceIndex)
                     adderSigned8Instance = res._1
                     return res._2
                   }
                   case 2 => {
-                    val res = adderSigned16Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    val res = adderSigned16Instance.populateInputs(BlockLog.getBlock.label, hashSMap, instanceIndex)
                     adderSigned16Instance = res._1
                     return res._2
                   }
                   case 4 => {
-                    val res = adderSigned32Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    val res = adderSigned32Instance.populateInputs(BlockLog.getBlock.label, hashSMap, instanceIndex)
                     adderSigned32Instance = res._1
                     return res._2
                   }
                   case 8 => {
-                    val res = adderSigned64Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    val res = adderSigned64Instance.populateInputs(BlockLog.getBlock.label, hashSMap, instanceIndex)
                     adderSigned64Instance = res._1
                     return res._2
                   }
@@ -1713,22 +1728,22 @@ object ChiselModule {
               } else {
                 byteSize match {
                   case 1 => {
-                    val res = adderUnsigned8Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    val res = adderUnsigned8Instance.populateInputs(BlockLog.getBlock.label, hashSMap, instanceIndex)
                     adderUnsigned8Instance = res._1
                     return res._2
                   }
                   case 2 => {
-                    val res = adderUnsigned16Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    val res = adderUnsigned16Instance.populateInputs(BlockLog.getBlock.label, hashSMap, instanceIndex)
                     adderUnsigned16Instance = res._1
                     return res._2
                   }
                   case 4 => {
-                    val res = adderUnsigned32Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    val res = adderUnsigned32Instance.populateInputs(BlockLog.getBlock.label, hashSMap, instanceIndex)
                     adderUnsigned32Instance = res._1
                     return res._2
                   }
                   case 8 => {
-                    val res = adderUnsigned64Instance.populateInputs(BlockLog.getBlock.label, hashSMap)
+                    val res = adderUnsigned64Instance.populateInputs(BlockLog.getBlock.label, hashSMap, instanceIndex)
                     adderUnsigned64Instance = res._1
                     return res._2
                   }
