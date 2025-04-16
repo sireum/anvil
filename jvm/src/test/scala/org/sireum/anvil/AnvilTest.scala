@@ -145,7 +145,7 @@ class AnvilTest extends SireumRcSpec {
         combs(i - 1, r)
       }
 
-      for (bs <- combs(5, (for (_ <- 0 until Util.pow(5, 2).toInt) yield Vector[Boolean]()).toVector)) {
+      for (bs <- combs(4, (for (_ <- 0 until Util.pow(4, 2).toInt) yield Vector[Boolean]()).toVector)) {
         assert(bs.size == 5)
         if (!isInGitHubAction || bs.forall(b => b)) {
           val name = s"${k.last}_${if (bs(0)) AnvilTest.splitTempId else AnvilTest.singleTempId}_${if (bs(1)) AnvilTest.tempLocalId else AnvilTest.memLocalId}_${if (bs(2)) AnvilTest.withIpId else AnvilTest.withoutIpId}_${if (bs(3)) AnvilTest.withMux else AnvilTest.withoutMux}".

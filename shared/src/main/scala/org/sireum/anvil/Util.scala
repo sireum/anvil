@@ -723,6 +723,11 @@ object Util {
     @strictpure def stmt(stmt: AST.IR.Stmt): Option[ST] = stmt match {
       case stmt: AST.IR.Stmt.Assign.Temp if anvil.config.splitTempSizes =>
         Some(st"${tempST(anvil, stmt.rhs.tipe, stmt.lhs)} = ${stmt.rhs.prettyST(anvil.printer)}")
+      case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isInc =>
+        ipAlloc.allocMap.get(IpAlloc.Ext.exp(in.value)) match {
+          case Some(n) => Some(st"${stmt.prettyRawST(this)} /* IP#$n */")
+          case _ => None()
+        }
       case _ => None()
     }
     @strictpure def jump(j: AST.IR.Jump): Option[ST] = None()
@@ -969,7 +974,8 @@ object Util {
                           var indexing: Z) extends MAnvilIRTransformer {
     override def pre_langastIRExpBinary(o: Exp.Binary): MAnvilIRTransformer.PreResult[IR.Exp] = {
       val t: AST.Typed = if (anvil.isScalar(o.tipe)) o.left.tipe else anvil.spType
-      val key = (anvil.isSigned(t), o.op)
+      val op: AST.IR.Exp.Binary.Op.Type = if (o.op == AST.IR.Exp.Binary.Op.Sub) AST.IR.Exp.Binary.Op.Add else o.op
+      val key = (anvil.isSigned(t), op)
       val n = binopMap.get(key).getOrElseEager(0)
       ipMap = ipMap + IpAlloc.Ext.exp(o) ~> n
       binopMap = binopMap + key ~> (n + 1)
@@ -980,6 +986,17 @@ object Util {
       ipMap = ipMap + IpAlloc.Ext.exp(AST.IR.Exp.Intrinsic(o)) ~> indexing
       indexing = indexing + 1
       return MAnvilIRTransformer.PreResultIntrinsicIndexing
+    }
+
+    override def preIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): MAnvilIRTransformer.PreResult[Intrinsic.RegisterAssign] = {
+      if (o.isInc) {
+        val t: AST.Typed = if (o.isSP) anvil.spType else anvil.dpType
+        val key = (anvil.isSigned(t), AST.IR.Exp.Binary.Op.Add)
+        val n = binopMap.get(key).getOrElseEager(0)
+        ipMap = ipMap + IpAlloc.Ext.exp(o.value) ~> n
+        binopMap = binopMap + key ~> (n + 1)
+      }
+      return MAnvilIRTransformer.PreResultIntrinsicRegisterAssign
     }
   }
 
@@ -1164,18 +1181,21 @@ object Util {
         val ia = indexingAlloc
         for (entry <- ic.ipMap.entries) {
           val (ipe, n) = entry
+          def binop(t: AST.Typed, op: AST.IR.Exp.Binary.Op.Type): Unit = {
+            val key = (anvil.isSigned(t), op)
+            var alloc = getFirstAvailable(bam.get(key).getOrElseEager(ISZ()))
+            alloc = alloc + n
+            var s = binopAllocMap.get(key).getOrElseEager(ISZ())
+            while (s.size <= alloc) {
+              s = s :+ 0
+            }
+            r = r + ipe ~> alloc
+            binopAllocMap = binopAllocMap + key ~> s(alloc ~> (s(alloc) + 1))
+          }
           ipe.ast match {
             case e: AST.IR.Exp.Binary =>
               val t: AST.Typed = if (anvil.isScalar(e.tipe)) e.left.tipe else anvil.spType
-              val key = (anvil.isSigned(t), e.op)
-              var alloc = getFirstAvailable(bam.get(key).getOrElseEager(ISZ()))
-              alloc = alloc + n
-              var s = binopAllocMap.get(key).getOrElseEager(ISZ())
-              while (s.size <= alloc) {
-                s = s :+ 0
-              }
-              r = r + ipe ~> alloc
-              binopAllocMap = binopAllocMap + key ~> s(alloc ~> (s(alloc) + 1))
+              binop(t, if (e.op == AST.IR.Exp.Binary.Op.Sub) AST.IR.Exp.Binary.Op.Add else e.op)
             case AST.IR.Exp.Intrinsic(_: Intrinsic.Indexing) =>
               var alloc = getFirstAvailable(ia)
               alloc = alloc + n
@@ -1185,7 +1205,7 @@ object Util {
               }
               r = r + ipe ~> alloc
               indexingAlloc = s(alloc ~> (s(alloc) + 1))
-            case _ => halt("Infeasible")
+            case e => binop(e.tipe, AST.IR.Exp.Binary.Op.Add)
           }
         }
       }

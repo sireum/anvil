@@ -28,10 +28,15 @@ import org.sireum._
 import org.sireum.lang.{ast => AST}
 
 private final class IpAlloc_Ext(val ast: AST.IR.Exp) extends Util.IpAlloc.Exp {
-  override def hashCode(): Int = System.identityHashCode(ast)
+  override def hashCode(): Int = hash
+
+  def hash: Int = ast match {
+    case AST.IR.Exp.Intrinsic(in) => System.identityHashCode(in)
+    case _ => System.identityHashCode(ast)
+  }
 
   override def equals(obj: Any): Boolean = obj match {
-    case obj: IpAlloc_Ext => System.identityHashCode(ast) == System.identityHashCode(obj.ast)
+    case obj: IpAlloc_Ext => hash == obj.hash
     case _ => false
   }
   override def string: String = ast.prettyRawST(AST.IR.Printer.Empty()).render
