@@ -995,8 +995,8 @@ object ChiselModule {
           |import chisel3.experimental._
           |
           |${if (anvil.config.customDivRem) dividerST().render else ""}
-          |${if (anvil.config.alu) adderModuleDeclST else st""}
-          |${if (anvil.config.indexing) indexerModuleDeclST else st""}
+          |${if (anvil.config.useIP) adderModuleDeclST else st""}
+          |${if (anvil.config.useIP) indexerModuleDeclST else st""}
           |
           |import ${name}._
           |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 32,
@@ -1035,6 +1035,7 @@ object ChiselModule {
           |    // reg for recording how many rounds needed for the left bytes
           |    val LeftByteRounds = RegInit(0.U(8.W))
           |    val IdxLeftByteRounds = RegInit(0.U(8.W))
+          |    ${if(anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
           |
           |    ${if (anvil.config.customDivRem) "// divider" else ""}
           |    ${if (anvil.config.customDivRem) "val divider64 = Module(new PipelinedDivMod(64))" else ""}
@@ -1047,8 +1048,8 @@ object ChiselModule {
           |    ${if (anvil.config.customDivRem) "divider32.io.start := false.B" else ""}
           |    ${if (anvil.config.customDivRem) "val dividerStart = RegInit(false.B)" else ""}
           |
-          |    ${if(anvil.config.alu) adderInstanceDeclST else st""}
-          |    ${if(anvil.config.indexing) indexerInstanceDeclST else st""}
+          |    ${if(anvil.config.useIP) adderInstanceDeclST else st""}
+          |    ${if(anvil.config.useIP) indexerInstanceDeclST else st""}
           |    init(this)
           |
           |    // write operation
@@ -1073,10 +1074,10 @@ object ChiselModule {
           |object ${name} {
           |  def init(o: ${name}) {
           |    import o._
-          |    ${if(anvil.config.alu) adderInstancePortFuncST else st""}
-          |    ${if(anvil.config.alu) adderInstancePortCallST else st""}
-          |    ${if(anvil.config.indexing) indexerInstancePortFuncST else st""}
-          |    ${if(anvil.config.indexing) indexerInstancePortCallST else st""}
+          |    ${if(anvil.config.useIP) adderInstancePortFuncST else st""}
+          |    ${if(anvil.config.useIP) adderInstancePortCallST else st""}
+          |    ${if(anvil.config.useIP) indexerInstancePortFuncST else st""}
+          |    ${if(anvil.config.useIP) indexerInstancePortCallST else st""}
           |  }
           |}
           |
@@ -1146,7 +1147,7 @@ object ChiselModule {
       commentST = commentST :+ b.jump.prettyST(anvil.printer)
 
       val jumpST: ST = {
-        if(IndexingLog.isIndexingInBlock()) {
+        if(IndexingLog.isIndexingInBlock() && !MemCopyLog.isMemCopyInBlock()) {
           val jST = processJumpIntrinsic(BlockLog.getBlock)
           st"""
               |when(${indexerInstance.modInstanceName}_${indexerInstance.getActiveInstanceIndex}.io.valid) {
@@ -1168,8 +1169,8 @@ object ChiselModule {
                    |  ${(commentST, "\n")}
                    |  */
                    |  ${(ground, "")}
-                   |  ${if(anvil.config.alu && !anvil.config.mux) adderWithoutMuxST.render else ""}
-                   |  ${if(anvil.config.indexing) indexerWithoutMuxST.render else ""}
+                   |  ${if(anvil.config.useIP && !anvil.config.mux) adderWithoutMuxST.render else ""}
+                   |  ${if(anvil.config.useIP) indexerWithoutMuxST.render else ""}
                    |  ${jumpST.render}
                    |}
                  """
@@ -1197,7 +1198,7 @@ object ChiselModule {
       DivRemLog.byteNum = 0
       DivRemLog.isSigned = F
 
-      if(anvil.config.alu) {
+      if(anvil.config.useIP) {
         adderUnsigned64Instance = adderUnsigned64Instance.clearUsageVector
         adderUnsigned64Instance = adderUnsigned64Instance.initializeBlockStartInstanceIndex
         adderSigned64Instance = adderSigned64Instance.clearUsageVector
@@ -1216,7 +1217,7 @@ object ChiselModule {
         adderSigned8Instance = adderSigned8Instance.initializeBlockStartInstanceIndex
       }
 
-      if(anvil.config.indexing) {
+      if(anvil.config.useIP) {
         indexerInstance = indexerInstance.clearUsageVector
         indexerInstance = indexerInstance.initializeBlockStartInstanceIndex
       }
@@ -1395,6 +1396,9 @@ object ChiselModule {
 
         // get the jump statement ST
         val jumpST = processJumpIntrinsic(BlockLog.getBlock)
+        val indexerReadyDisableStr: String = if(IndexingLog.isIndexingInBlock()) s"${indexerInstance.modInstanceName}_${indexerInstance.getActiveInstanceIndex}.io.ready := false.B" else ""
+        val indexerValidStr: String = if(IndexingLog.isIndexingInBlock()) s"when(${indexerInstance.modInstanceName}_${indexerInstance.getActiveInstanceIndex}.io.valid) {indexerValid := true.B; ${indexerReadyDisableStr}}" else ""
+        val indexerConditionStr: String = if(IndexingLog.isIndexingInBlock()) "indexerValid & " else ""
 
         intrinsicST =
           st"""
@@ -1402,19 +1406,21 @@ object ChiselModule {
               |val ${tmpWireRhsST.render} = ${rhsAddrST.render}
               |val ${totalSizeWireST.render} = ${rhsBytesSt.render}
               |
-              |when(Idx < ${totalSizeWireST.render}) {
+              |${indexerValidStr}
+              |when(${indexerConditionStr}Idx < ${totalSizeWireST.render}) {
               |  ${(BytesTransferST, "\n")}
               |  Idx := Idx + ${anvil.config.copySize}.U
               |  LeftByteRounds := ${totalSizeWireST.render} - Idx
-              |} .elsewhen(IdxLeftByteRounds < LeftByteRounds) {
+              |} .elsewhen(${indexerConditionStr}IdxLeftByteRounds < LeftByteRounds) {
               |  val ${leftByteStartST.render} = Idx - ${anvil.config.copySize}.U
               |  ${sharedMemName}(${tmpWireLhsST.render} + ${leftByteStartST.render} + IdxLeftByteRounds) := ${sharedMemName}(${tmpWireRhsST.render} + ${leftByteStartST.render} + IdxLeftByteRounds)
               |  IdxLeftByteRounds := IdxLeftByteRounds + 1.U
-              |} .otherwise {
+              |} ${if(IndexingLog.isIndexingInBlock()) ".elsewhen(indexerValid) {" else ".otherwise {"}
               |  Idx := 0.U
               |  IdxLeftByteRounds := 0.U
               |  LeftByteRounds := 0.U
               |  ${jumpST.render}
+              |  ${if(IndexingLog.isIndexingInBlock()) "indexerValid := false.B" else ""}
               |}
             """
 
@@ -1758,7 +1764,7 @@ object ChiselModule {
 
               return resST
             }
-            if(anvil.config.alu) {
+            if(anvil.config.useIP) {
               exprST = st"${if(isSIntOperation) s"${adderIPPortST(T, expByteSize).render}.io.out" else s"${adderIPPortST(F, expByteSize).render}.io.out"}"
             } else {
               exprST = st"(${leftST.render} + ${rightST.render})"
