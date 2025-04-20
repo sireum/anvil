@@ -132,7 +132,7 @@ object DivRemLog {
         |${(portCallST, "\n")}
       """
   }
-  @pure def instancePortFuncST(bothDeclAndPort: B): ST = {
+  @pure def instancePortFuncST(): ST = {
 
     @pure def inputPortListSTWithoutMux(modIdx: Z): ST = {
       @strictpure def defaultValue(portValueType: String): String = {
@@ -789,7 +789,7 @@ import HwSynthesizer._
       val instancePortFuncST: ST = {
         var instanceST: ISZ[ST] = ISZ()
         for(i <- 0 until ipModules.size) {
-          instanceST = instanceST :+ ipModules(i).instancePortFuncST(anvil.config.mux)
+          instanceST = instanceST :+ ipModules(i).instancePortFuncST()
         }
         st"""${(instanceST, "\n")}"""
       }
