@@ -1211,10 +1211,10 @@ import Anvil._
             blocks = blocks :+ block(grounds = grounds, jump = AST.IR.Jump.Goto(eraseTempLabel, g.pos))
             grounds = ISZ()
             block = AST.IR.BasicBlock(eraseTempLabel, grounds, block.jump)
-            for (slot <- in.slots if slot.size == 0) {
-              val t: AST.Typed = if (isScalar(slot.tipe)) slot.tipe else spType
-              grounds = grounds :+ AST.IR.Stmt.Assign.Temp(slot.loc, AST.IR.Exp.Int(t, 0, g.pos), g.pos)
-            }
+//            for (slot <- in.slots if slot.size == 0) {
+//              val t: AST.Typed = if (isScalar(slot.tipe)) slot.tipe else spType
+//              grounds = grounds :+ AST.IR.Stmt.Assign.Temp(slot.loc, AST.IR.Exp.Int(t, 0, g.pos), g.pos)
+//            }
           case _ =>
         }
         grounds = grounds :+ g
