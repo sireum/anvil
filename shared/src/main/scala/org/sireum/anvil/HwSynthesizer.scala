@@ -950,14 +950,14 @@ import HwSynthesizer._
       }
     }
 
-    var groundsST = ISZ[ST]()
+    var allGroundsST = ISZ[ST]()
 
     for (b <- bs) {
       BlockLog.setBlock(b)
 
       if(b.label != 0) {
         val jump = processJumpIntrinsic(b)
-        groundsST = groundsST :+ groundST(b, processGround(b.grounds), jump)
+        allGroundsST = allGroundsST :+ groundST(b, processGround(b.grounds), jump)
       }
 
       MemCopyLog.disableFlagMemCopyInBlock()
@@ -971,7 +971,7 @@ import HwSynthesizer._
 
     }
 
-    return basicBlockST(groundsST)
+    return basicBlockST(allGroundsST)
   }
 
   @pure def processGround(gs: ISZ[AST.IR.Stmt.Ground]): ST = {
@@ -1504,7 +1504,20 @@ import HwSynthesizer._
             }
           }
           case AST.IR.Exp.Binary.Op.Sub => {
-            exprST = st"(${leftST.render} - ${rightST.render})"
+            if(anvil.config.useIP) {
+              val allocIndex: Z = getIpAllocIndex(exp)
+              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
+              if(isSIntOperation) {
+                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt") + "op" ~> (st"false.B", "Bool")
+              } else {
+                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt") + "op" ~> (st"false.B", "Bool")
+              }
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation)).get
+              exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
+            } else {
+              exprST = st"(${leftST.render} - ${rightST.render})"
+            }
           }
           case AST.IR.Exp.Binary.Op.Mul => {
             exprST = st"(${leftST.render} * ${rightST.render})"
@@ -1814,15 +1827,27 @@ object HwSynthesizer {
 
   @record class IpPortAssign(val anvil: Anvil, val ipAlloc: Util.IpAlloc, var sts: ISZ[ST]) extends MAnvilIRTransformer {
     override def pre_langastIRExpBinary(o: Exp.Binary): MAnvilIRTransformer.PreResult[IR.Exp] = {
-      if(o.op == AST.IR.Exp.Binary.Op.Add) {
+      @pure def inputLogic(ipt: IpType): Unit = {
         val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(o)).get
-        val signed: B = anvil.isSigned(o.tipe)
-        val instanceName: String = getIpInstanceName(BinaryIP(o.op, signed)).get
-        val inputs: HashSMap[String, ChiselModule.Input] = getInputPort(BinaryIP(o.op, signed))
+        val instanceName: String = getIpInstanceName(ipt).get
+        val inputs: HashSMap[String, ChiselModule.Input] = getInputPort(ipt)
         for (entry <- inputs.entries) {
           sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
         }
       }
+      val signed: B = anvil.isSigned(o.tipe)
+      if(o.op == AST.IR.Exp.Binary.Op.Add) {
+        inputLogic(BinaryIP(o.op, signed))
+      } else if(o.op == AST.IR.Exp.Binary.Op.Sub) {
+        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Add, signed))
+      }
+      /*
+      o.op match {
+        case AST.IR.Exp.Binary.Op.Add => inputLogic(BinaryIP(o.op, signed))
+        case AST.IR.Exp.Binary.Op.Sub => inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Add, signed))
+        case _ => halt("not support in IpPortAssign.pre_langastIRExpBinary")
+      }
+      */
       return MAnvilIRTransformer.PreResult_langastIRExpBinary
     }
 
