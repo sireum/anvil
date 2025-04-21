@@ -26,7 +26,7 @@
 package org.sireum.anvil
 
 import org.sireum._
-import org.sireum.anvil.Util.AnvilIRPrinter
+import org.sireum.anvil.Util.{AnvilIRPrinter, indexing}
 import org.sireum.lang.ast.{IR, Typed}
 import org.sireum.lang.ast.IR.{Exp, Jump}
 import org.sireum.lang.{ast => AST}
@@ -1223,15 +1223,58 @@ import HwSynthesizer._
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign) => {
         val targetReg: String = if(intrinsic.isSP) "SP" else "DP"
-        val updateContentST: ST = intrinsic.value match {
-          case AST.IR.Exp.Int(_, v, _) => if (intrinsic.isInc) if (v < 0) st"${targetReg} - ${-v}.U" else st"${targetReg} + ${v}.U" else st"${processExpr(intrinsic.value, F)}"
-          case _ => if(intrinsic.isInc) st"${targetReg} + ${processExpr(intrinsic.value, F)}" else st"${processExpr(intrinsic.value, F)}"
-        }
+        if(anvil.config.useIP) {
+          var leftST: ST = st""
+          var rightST: ST = st""
+          var isPlus: B = F
+          val regValueST: ST = processExpr(intrinsic.value, F)
+          intrinsic.value match {
+            case AST.IR.Exp.Int(_, v, _) => {
+              if (v < 0) {
+                leftST = st"${targetReg}"
+                isPlus = F
+                rightST = st"${-v}.U"
+              }
+              else {
+                leftST = st"${targetReg}"
+                isPlus = T
+                rightST = st"${v}.U"
+              }
+            }
+            case _ => {
+              if (intrinsic.isInc) {
+                leftST = st"${targetReg}"
+                isPlus = T
+                rightST = regValueST
+              }
+            }
+          }
 
-        intrinsicST =
-          st"""
-              |${targetReg} := ${updateContentST.render}
-            """
+          if(intrinsic.isInc) {
+            val allocIndex: Z = getIpAllocIndex(intrinsic.value)
+            var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
+            hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt") + "op" ~> (if (isPlus) st"true.B" else st"false.B", "Bool")
+            insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, F), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+            val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, F)).get
+            intrinsicST =
+              st"""
+                  |${targetReg} := ${indexerInstanceName}_${allocIndex}.io.out"""
+          } else {
+            intrinsicST =
+              st"""
+                  |${targetReg} := ${regValueST}"""
+          }
+        }
+        else {
+          val updateContentST: ST = intrinsic.value match {
+            case AST.IR.Exp.Int(_, v, _) => if (intrinsic.isInc) if (v < 0) st"${targetReg} - ${-v}.U" else st"${targetReg} + ${v}.U" else st"${processExpr(intrinsic.value, F)}"
+            case _ => if (intrinsic.isInc) st"${targetReg} + ${processExpr(intrinsic.value, F)}" else st"${processExpr(intrinsic.value, F)}"
+          }
+
+          intrinsicST =
+            st"""
+              |${targetReg} := ${updateContentST.render}"""
+        }
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Decl) => {
 
@@ -1347,7 +1390,7 @@ import HwSynthesizer._
   @pure def getIpAllocIndex(e: AST.IR.Exp): Z = {
     val index: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(e)) match {
       case Some(n) => n
-      case None() => halt("not found index in function getIpAllocIndex")
+      case None() => halt(s"not found index in function getIpAllocIndex, exp is ${e.prettyST(anvil.printer)}")
     }
     return index
   }
@@ -1794,6 +1837,14 @@ object HwSynthesizer {
     }
 
     override def preIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): MAnvilIRTransformer.PreResult[Intrinsic.RegisterAssign] = {
+      if(o.isInc) {
+        val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(o.value)).get
+        val instanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, F)).get
+        val inputs: HashSMap[String, ChiselModule.Input] = getInputPort(BinaryIP(AST.IR.Exp.Binary.Op.Add, F))
+        for (entry <- inputs.entries) {
+          sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
+        }
+      }
       return MAnvilIRTransformer.PreResultIntrinsicRegisterAssign
     }
   }
