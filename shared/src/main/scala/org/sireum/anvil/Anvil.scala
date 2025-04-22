@@ -288,9 +288,9 @@ import Anvil._
           stmts = stmts :+ AST.IR.Stmt.If(
             AST.IR.Exp.Binary(
               AST.Typed.b,
-              AST.IR.Exp.Binary(AST.Typed.z, temp, AST.IR.Exp.Binary.Op.Lt, zero, pos),
+              AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Lt, zero, pos),
               AST.IR.Exp.Binary.Op.Or,
-              AST.IR.Exp.Binary(AST.Typed.z, temp, AST.IR.Exp.Binary.Op.Eq, AST.IR.Exp.Int(AST.Typed.z, i, pos), pos),
+              AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Eq, AST.IR.Exp.Int(AST.Typed.z, i, pos), pos),
               pos),
             AST.IR.Stmt.Block(ISZ(
               AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, p.context.owner, p.context.id, ISZ(), p.tipe, pos))
