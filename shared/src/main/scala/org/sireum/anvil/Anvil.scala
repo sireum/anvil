@@ -495,9 +495,9 @@ import Anvil._
 
       val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
 
-//      p = anvil.transformTempLoad(fresh, p, maxTemps)
-//      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load"), p.prettyST(anvil.printer))
-//      pass = pass + 1
+      p = anvil.transformTempLoad(fresh, p, maxTemps)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load"), p.prettyST(anvil.printer))
+      pass = pass + 1
 
       p = anvil.transformStore(fresh, p, maxTemps)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "store"), p.prettyST(anvil.printer))
@@ -1383,27 +1383,22 @@ import Anvil._
       b.grounds match {
         case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad)) if in.bytes > 1 && in.tipe != cpType =>
           insertLoad = T
-          var addGoto = F
-          val retLabel: Z = b.jump match {
-            case j: AST.IR.Jump.Goto => j.label
-            case _ =>
-              addGoto = T
-              fresh.label()
-          }
+          val retLabel = fresh.label()
           var grounds = ISZ[AST.IR.Stmt.Ground]()
           val pos = in.pos
           grounds = grounds :+ AST.IR.Stmt.Assign.Temp(retParam, AST.IR.Exp.Int(cpType, retLabel, pos), pos)
-          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(offsetParam, in.rhsOffset, pos)
+          var rhsOffset: AST.IR.Exp = in.rhsOffset
+          if (rhsOffset.tipe != spType) {
+            rhsOffset = AST.IR.Exp.Type(F, rhsOffset, spType, pos)
+          }
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(offsetParam, rhsOffset, pos)
           grounds = grounds :+ AST.IR.Stmt.Assign.Temp(sizeParam, AST.IR.Exp.Int(AST.Typed.u64, in.bytes, pos), pos)
+          blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds, AST.IR.Jump.Goto(loadLabel, pos))
           var rhs: AST.IR.Exp = AST.IR.Exp.Temp(valueParam, AST.Typed.u64, pos)
           if (rhs.tipe != in.tipe) {
             rhs = AST.IR.Exp.Type(F, rhs, in.tipe.asInstanceOf[AST.Typed.Name], pos)
           }
-          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(in.temp, rhs, pos)
-          blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds, AST.IR.Jump.Goto(loadLabel, pos))
-          if (addGoto) {
-            blocks = blocks :+ AST.IR.BasicBlock(retLabel, ISZ(), b.jump)
-          }
+          blocks = blocks :+ AST.IR.BasicBlock(retLabel, ISZ(AST.IR.Stmt.Assign.Temp(in.temp, rhs, pos)), b.jump)
         case _ => blocks = blocks :+ b
       }
     }
