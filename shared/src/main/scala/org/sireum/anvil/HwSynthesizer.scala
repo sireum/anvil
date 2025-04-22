@@ -1195,13 +1195,6 @@ import HwSynthesizer._
     case _ => F
   }
 
-  @strictpure def isCompareExp(exp: AST.IR.Exp): B = exp match {
-    case bin: AST.IR.Exp.Binary => (bin.op == AST.IR.Exp.Binary.Op.Le) || (bin.op == AST.IR.Exp.Binary.Op.Lt) ||
-                                   (bin.op == AST.IR.Exp.Binary.Op.Ge) || (bin.op == AST.IR.Exp.Binary.Op.Gt) ||
-                                   (bin.op == AST.IR.Exp.Binary.Op.Eq) || (bin.op == AST.IR.Exp.Binary.Op.Ne)
-    case _ => F
-  }
-
   @pure def getGeneralRegName(tipe: AST.Typed): String = {
     val t: AST.Typed = if(anvil.isScalar(tipe)) tipe else anvil.spType
     return s"${generalRegName}${if(anvil.isSigned(t)) "S" else "U"}${anvil.typeBitSize(t)}"
@@ -1241,10 +1234,6 @@ import HwSynthesizer._
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Copy) => {
         MemCopyLog.enableFlagMemCopyInBlock()
-
-        if(BlockLog.getBlock.label == 43) {
-          println("hehe")
-        }
 
         // acquire the source and destination address
         val lhsAddrST = processExpr(intrinsic.lhsOffset, F)
@@ -1605,7 +1594,6 @@ import HwSynthesizer._
       case exp: AST.IR.Exp.Binary => {
         val isSIntOperation = isSignedExp(exp.left) || isSignedExp(exp.right)
         val isBoolOperation = isBoolExp(exp.left) || isBoolExp(exp.right)
-        val isComparison = isCompareExp(exp.left) || isCompareExp(exp.right)
         val leftST = st"${processExpr(exp.left, F).render}${if(isSIntOperation && (!isSignedExp(exp.left))) ".asSInt" else ""}"
         val rightST = st"${processExpr(exp.right, F).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
         exp.op match {
@@ -1776,12 +1764,12 @@ import HwSynthesizer._
             if(anvil.config.useIP) {
               val allocIndex: Z = getIpAllocIndex(exp)
               var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation || isBoolOperation || isComparison) {
+              if(!isSIntOperation || isBoolOperation) {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              val signed: B = if (!isSIntOperation || isBoolOperation || isComparison) F else T
+              val signed: B = if (!isSIntOperation || isBoolOperation) F else T
               insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.And, signed), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.And, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
@@ -1793,12 +1781,12 @@ import HwSynthesizer._
             if(anvil.config.useIP) {
               val allocIndex: Z = getIpAllocIndex(exp)
               var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation || isBoolOperation || isComparison) {
+              if(!isSIntOperation || isBoolOperation) {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              val signed: B = if (!isSIntOperation || isBoolOperation || isComparison) F else T
+              val signed: B = if (!isSIntOperation || isBoolOperation) F else T
               insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
@@ -1810,12 +1798,12 @@ import HwSynthesizer._
             if(anvil.config.useIP) {
               val allocIndex: Z = getIpAllocIndex(exp)
               var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation || isBoolOperation || isComparison) {
+              if(!isSIntOperation || isBoolOperation) {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              val signed: B = if (!isSIntOperation || isBoolOperation || isComparison) F else T
+              val signed: B = if (!isSIntOperation || isBoolOperation) F else T
               insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
