@@ -970,7 +970,6 @@ import HwSynthesizer._
           |    io.ready := Mux(CP === 0.U, 0.U, Mux(CP === 1.U, 1.U, 2.U))
           |
           |    ${(stateMachineST, "")}
-          |
           |}
           |
           |object ${name} {
@@ -979,8 +978,8 @@ import HwSynthesizer._
           |    ${if(anvil.config.useIP) instancePortFuncST else st""}
           |    ${if(anvil.config.useIP) instancePortCallST else st""}
           |  }
-          |  ${(stateFunctionObjectST, "\n")}
           |}
+          |${(stateFunctionObjectST, "\n")}
           |
           |${if (anvil.config.axi4) axi4WrapperST().render else ""}
           """
@@ -1032,19 +1031,21 @@ import HwSynthesizer._
       if(b.label > 1) {
         val functionDefinitionST: ST =
           st"""
-              |def block_${b.label}(o: ${name}) {
-              |  import o._
-              |  /*
-              |  ${(commentST, "\n")}
-              |  */
-              |  ${(ground, "")}
-              |  ${jumpST}
+              |object Block_${b.label} {
+              |  def block_${b.label}(o: ${name}) {
+              |    import o._
+              |    /*
+              |    ${(commentST, "\n")}
+              |    */
+              |    ${(ground, "")}
+              |    ${jumpST}
+              |  }
               |}
               """
         val functionCallST: ST =
           st"""
               |is(${b.label}.U) {
-              |  block_${b.label}(this)
+              |  Block_${b.label}.block_${b.label}(this)
               |}
               """
         return (functionCallST, functionDefinitionST)

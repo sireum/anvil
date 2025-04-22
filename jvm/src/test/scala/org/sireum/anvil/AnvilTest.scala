@@ -78,23 +78,23 @@ object AnvilTest {
   val dontTestFileSet: HashSet[String] = HashSet.empty[String]
   val noRuntimeCheckFileSet: HashSet[String] = HashSet.empty[String] + "indexing.sc"
   val simCyclesMap: HashMap[String, Z] = HashMap.empty[String, Z] +
-    "add.sc" ~> 800 +
-    "bubble.sc" ~> 1100 +
-    "construct.sc" ~> 600 +
-    "divrem.sc" ~> 1500 +
-    "factorial.sc" ~> 1000 +
-    "global.sc" ~> 200 +
-    "indexing.sc" ~> 300 +
-    "indexing-obj.sc" ~> 300 +
+    "add.sc" ~> 900 +
+    "bubble.sc" ~> 1600 +
+    "construct.sc" ~> 1100 +
+    "divrem.sc" ~> 900 +
+    "factorial.sc" ~> 1200 +
+    "global.sc" ~> 300 +
+    "indexing.sc" ~> 400 +
+    "indexing-obj.sc" ~> 800 +
     "instanceof.sc" ~> 300 +
-    "local-reuse.sc" ~> 600 +
+    "local-reuse.sc" ~> 1500 +
     "mult.sc" ~> 1300 +
-    "print-no-float.sc" ~> 500 +
-    "printU64.sc" ~> 1300 +
-    "seq.sc" ~> 700 +
-    "shiftS64.sc" ~> 2000 +
-    "shiftU64.sc" ~> 2100 +
-    "sum.sc" ~> 1200
+    "print-no-float.sc" ~> 700 +
+    "printU64.sc" ~> 1600 +
+    "seq.sc" ~> 1000 +
+    "shiftS64.sc" ~> 2300 +
+    "shiftU64.sc" ~> 2300 +
+    "sum.sc" ~> 1400
 
   val defaultMemory: Z = 256
   val defaultPrintSize: Z = 128
