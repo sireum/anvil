@@ -1370,11 +1370,11 @@ import Anvil._
       fresh.setTemp(maxTemps.typeCount(this, spt))
     }
     val offsetParam = fresh.temp()
+    val sizeParam = fresh.temp()
+    val index = fresh.temp()
     if (isSigned(AST.Typed.u64) != isSigned(spt) || typeByteSize(AST.Typed.u64) != typeByteSize(spt)) {
       fresh.setTemp(maxTemps.typeCount(this, AST.Typed.u64))
     }
-    val sizeParam = fresh.temp()
-    val index = fresh.temp()
     val valueParam = fresh.temp()
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
@@ -1392,7 +1392,7 @@ import Anvil._
             rhsOffset = AST.IR.Exp.Type(F, rhsOffset, spType, pos)
           }
           grounds = grounds :+ AST.IR.Stmt.Assign.Temp(offsetParam, rhsOffset, pos)
-          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(sizeParam, AST.IR.Exp.Int(AST.Typed.u64, in.bytes, pos), pos)
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(sizeParam, AST.IR.Exp.Int(spType, in.bytes, pos), pos)
           blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds, AST.IR.Jump.Goto(loadLabel, pos))
           var rhs: AST.IR.Exp = AST.IR.Exp.Temp(valueParam, AST.Typed.u64, pos)
           if (rhs.tipe != in.tipe) {
@@ -1409,28 +1409,27 @@ import Anvil._
       val endLabel = fresh.label()
       val pos = p.pos
       blocks = blocks :+ AST.IR.BasicBlock(loadLabel, ISZ(
-        AST.IR.Stmt.Assign.Temp(sizeParam, AST.IR.Exp.Binary(AST.Typed.u64,
-          AST.IR.Exp.Temp(sizeParam, AST.Typed.u64, pos), AST.IR.Exp.Binary.Op.Shl,
-          AST.IR.Exp.Int(AST.Typed.u64, 3, pos), pos), pos),
-        AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Int(AST.Typed.u64, 0, pos), pos),
+        AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Int(spType, 0, pos), pos),
         AST.IR.Stmt.Assign.Temp(valueParam, AST.IR.Exp.Int(AST.Typed.u64, 0, pos), pos)
       ), AST.IR.Jump.Goto(loopLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(), AST.IR.Jump.If(
-        AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(index, AST.Typed.u64, pos), AST.IR.Exp.Binary.Op.Lt,
-          AST.IR.Exp.Temp(sizeParam, AST.Typed.u64, pos), pos), bodyLabel, endLabel, pos))
+        AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(index, spType, pos), AST.IR.Exp.Binary.Op.Lt,
+          AST.IR.Exp.Temp(sizeParam, spType, pos), pos), bodyLabel, endLabel, pos))
       var rhs: AST.IR.Exp = AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(offsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
-        AST.IR.Exp.Type(F, AST.IR.Exp.Temp(index, AST.Typed.u64, pos), spType, pos), pos)
+        AST.IR.Exp.Temp(index, spType, pos), pos)
       rhs = AST.IR.Exp.Intrinsic(Intrinsic.Load(rhs, isSigned(AST.Typed.u8), typeByteSize(AST.Typed.u8), st"", AST.Typed.u8, pos))
       rhs = AST.IR.Exp.Type(F, rhs, AST.Typed.u64, pos)
-      rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs, AST.IR.Exp.Binary.Op.Shl, AST.IR.Exp.Temp(index, AST.Typed.u64, pos), pos)
+      rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs, AST.IR.Exp.Binary.Op.Shl,
+        AST.IR.Exp.Binary(AST.Typed.u64, AST.IR.Exp.Type(F, AST.IR.Exp.Temp(index, spType, pos), AST.Typed.u64, pos),
+          AST.IR.Exp.Binary.Op.Mul, AST.IR.Exp.Int(AST.Typed.u64, 8, pos), pos), pos)
       rhs = AST.IR.Exp.Binary(AST.Typed.u64, AST.IR.Exp.Temp(valueParam, AST.Typed.u64, pos),
         AST.IR.Exp.Binary.Op.Or, rhs, pos)
       blocks = blocks :+ AST.IR.BasicBlock(bodyLabel, ISZ(
         AST.IR.Stmt.Assign.Temp(valueParam, rhs, pos)
       ), AST.IR.Jump.Goto(incLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(incLabel, ISZ(
-        AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Binary(AST.Typed.u64, AST.IR.Exp.Temp(index, AST.Typed.u64, pos),
-          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(AST.Typed.u64, 8, pos), pos), pos)
+        AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(index, spType, pos),
+          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, 1, pos), pos), pos)
       ), AST.IR.Jump.Goto(loopLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(endLabel, ISZ(), AST.IR.Jump.Intrinsic(
         Intrinsic.GotoLocal(T, retParam, None(), "load", pos)))
@@ -1492,8 +1491,6 @@ import Anvil._
       val endLabel = fresh.label()
       val pos = p.pos
       blocks = blocks :+ AST.IR.BasicBlock(storeLabel, ISZ(
-        AST.IR.Stmt.Assign.Temp(sizeParam, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(sizeParam, spType, pos),
-          AST.IR.Exp.Binary.Op.Shl, AST.IR.Exp.Int(spType, 3, pos), pos), pos),
         AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Int(spType, 0, pos), pos)
       ), AST.IR.Jump.Goto(loopLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(), AST.IR.Jump.If(
@@ -1501,7 +1498,8 @@ import Anvil._
           AST.IR.Exp.Temp(sizeParam, spType, pos), pos), bodyLabel, endLabel, pos))
       val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(offsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
         AST.IR.Exp.Temp(index, spType, pos), pos)
-      var rhs: AST.IR.Exp = AST.IR.Exp.Type(F, AST.IR.Exp.Temp(index, spType, pos), AST.Typed.u64, pos)
+      var rhs: AST.IR.Exp = AST.IR.Exp.Binary(AST.Typed.u64, AST.IR.Exp.Type(F, AST.IR.Exp.Temp(index, spType, pos),
+        AST.Typed.u64, pos), AST.IR.Exp.Binary.Op.Mul, AST.IR.Exp.Int(AST.Typed.u64, 8, pos), pos)
       rhs = AST.IR.Exp.Binary(AST.Typed.u64, AST.IR.Exp.Temp(valueParam, AST.Typed.u64, pos),
         AST.IR.Exp.Binary.Op.Ushr, rhs, pos)
       rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs, AST.IR.Exp.Binary.Op.And, AST.IR.Exp.Int(AST.Typed.u64, 0xFF, pos), pos)
@@ -1512,7 +1510,7 @@ import Anvil._
       ), AST.IR.Jump.Goto(incLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(incLabel, ISZ(
         AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(index, spType, pos),
-          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, 8, pos), pos), pos)
+          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, 1, pos), pos), pos)
       ), AST.IR.Jump.Goto(loopLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(endLabel, ISZ(), AST.IR.Jump.Intrinsic(
         Intrinsic.GotoLocal(T, retParam, None(), "store", pos)))
