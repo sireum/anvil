@@ -2983,7 +2983,7 @@ import Anvil._
     val t = exp.tipe
     assert(!isScalar(t))
     val pos = exp.pos
-    if (t == AST.Typed.string || (isSeq(t) && !config.erase)) {
+    if (F && (t == AST.Typed.string || (isSeq(t) && !config.erase))) { // TODO: copy size
       val (sizeType, sizeOffset) = classSizeFieldOffsets(t.asInstanceOf[AST.Typed.Name])._2.get("size").get
       val elementByteSize: Z = if (t == AST.Typed.string) 1 else typeByteSize(t.asInstanceOf[AST.Typed.Name].args(1))
       var elementSize: AST.IR.Exp = AST.IR.Exp.Type(F,
