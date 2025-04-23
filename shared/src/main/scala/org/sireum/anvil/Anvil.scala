@@ -1360,6 +1360,139 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
+  def transformCopy2(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+    val copyLabel = fresh.label()
+    val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
+    fresh.setTemp(maxTemps.typeCount(this, cpt))
+    val retParam = fresh.temp()
+    val spt: AST.Typed = if (config.splitTempSizes) spType else AST.Typed.u64
+    if (isSigned(cpt) != isSigned(spt) || typeByteSize(cpt) != typeByteSize(spt)) {
+      fresh.setTemp(maxTemps.typeCount(this, spt))
+    }
+    val lhsOffsetParam = fresh.temp()
+    val rhsOffsetParam = fresh.temp()
+    val rhsElementSizeParam = fresh.temp()
+    val until = fresh.temp()
+
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    var insertCopy = F
+    for (b <- body.blocks) {
+      b.grounds match {
+        case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.Copy)) =>
+          insertCopy = T
+          var addGoto = F
+          val retLabel: Z = b.jump match {
+            case j: AST.IR.Jump.Goto => j.label
+            case _ =>
+              addGoto = T
+              fresh.label()
+          }
+          val t = in.rhsTipe
+          val pos = in.pos
+          var grounds = ISZ[AST.IR.Stmt.Ground]()
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(retParam, AST.IR.Exp.Int(cpType, retLabel, pos), pos)
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(lhsOffsetParam, in.lhsOffset, pos)
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(rhsOffsetParam, in.rhs, pos)
+          val sizeInfoOpt = classSizeFieldOffsets(t.asInstanceOf[AST.Typed.Name])._2.get("size")
+          if (config.erase || sizeInfoOpt.isEmpty) {
+            grounds = grounds :+ AST.IR.Stmt.Assign.Temp(rhsElementSizeParam, in.rhsBytes, pos)
+          } else {
+            val (sizeType, sizeOffset) = sizeInfoOpt.get
+            val elementByteSize: Z = if (t == AST.Typed.string) 1 else typeByteSize(t.asInstanceOf[AST.Typed.Name].args(1))
+            var elementSize: AST.IR.Exp = AST.IR.Exp.Type(F,
+              AST.IR.Exp.Intrinsic(Intrinsic.Load(
+                AST.IR.Exp.Binary(spType, in.rhs, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, sizeOffset, pos), pos),
+                isSigned(sizeType), typeByteSize(sizeType), st"", sizeType, pos)),
+              spType, pos)
+            if (elementByteSize != 1) {
+              elementSize = AST.IR.Exp.Binary(spType, elementSize, AST.IR.Exp.Binary.Op.Mul,
+                AST.IR.Exp.Int(spType, elementByteSize, pos), pos)
+            }
+            grounds = grounds :+ AST.IR.Stmt.Assign.Temp(rhsElementSizeParam, elementSize, pos)
+          }
+          blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds, AST.IR.Jump.Goto(copyLabel, pos))
+          if (addGoto) {
+            blocks = blocks :+ AST.IR.BasicBlock(retLabel, ISZ(), b.jump)
+          }
+        case _ => blocks = blocks :+ b
+      }
+    }
+    if (insertCopy) {
+      val untilLabel = fresh.label()
+      val loopLabel = fresh.label()
+      val bodyLabel = fresh.label()
+      val incLabel = fresh.label()
+      val loop2Label = fresh.label()
+      val body2Label = fresh.label()
+      val inc2Label = fresh.label()
+      val endLabel = fresh.label()
+      val pos = p.pos
+      val untilGrounds = ISZ[AST.IR.Stmt.Ground](
+        AST.IR.Stmt.Assign.Temp(until, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(rhsOffsetParam, spType, pos),
+          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Temp(rhsElementSizeParam, spType, pos), pos), pos)
+      )
+      if (config.erase) {
+        blocks = blocks :+ AST.IR.BasicBlock(copyLabel, untilGrounds, AST.IR.Jump.Goto(loopLabel, pos))
+      } else {
+        val copyGrounds = ISZ[AST.IR.Stmt.Ground](
+          AST.IR.Stmt.Assign.Temp(rhsElementSizeParam, AST.IR.Exp.Binary(spType,
+            AST.IR.Exp.Temp(rhsElementSizeParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
+            AST.IR.Exp.Int(spType, typeShaSize + typeByteSize(AST.Typed.z), pos), pos), pos)
+        )
+        blocks = blocks :+ AST.IR.BasicBlock(copyLabel, copyGrounds, AST.IR.Jump.Goto(untilLabel, pos))
+        blocks = blocks :+ AST.IR.BasicBlock(untilLabel, untilGrounds, AST.IR.Jump.Goto(loopLabel, pos))
+      }
+      blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Binary(AST.Typed.b,
+        AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(rhsOffsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
+          AST.IR.Exp.Int(spType, 8, pos), pos),
+        AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(until, spType, pos), pos), bodyLabel, loop2Label, pos))
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      for (i <- 0 until 8) {
+        var lhs: AST.IR.Exp = AST.IR.Exp.Temp(lhsOffsetParam, spType, pos)
+        if (i != 0) {
+          lhs = AST.IR.Exp.Binary(spType, lhs, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, i, pos), pos)
+        }
+        var rhs: AST.IR.Exp = AST.IR.Exp.Temp(rhsOffsetParam, spType, pos)
+        if (i != 0) {
+          rhs = AST.IR.Exp.Binary(spType, rhs, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, i, pos), pos)
+        }
+        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhs, isSigned(AST.Typed.u8),
+          typeByteSize(AST.Typed.u8), AST.IR.Exp.Intrinsic(Intrinsic.Load(rhs, isSigned(AST.Typed.u8),
+            typeByteSize(AST.Typed.u8), st"", AST.Typed.u8, pos)), st"Copy", AST.Typed.u8, pos))
+      }
+      blocks = blocks :+ AST.IR.BasicBlock(bodyLabel, grounds, AST.IR.Jump.Goto(incLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(incLabel, ISZ(
+        AST.IR.Stmt.Assign.Temp(lhsOffsetParam, AST.IR.Exp.Binary(spType,
+          AST.IR.Exp.Temp(lhsOffsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
+          AST.IR.Exp.Int(spType, 8, pos), pos), pos),
+        AST.IR.Stmt.Assign.Temp(rhsOffsetParam, AST.IR.Exp.Binary(spType,
+          AST.IR.Exp.Temp(rhsOffsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
+          AST.IR.Exp.Int(spType, 8, pos), pos), pos)
+      ), AST.IR.Jump.Goto(loopLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(loop2Label, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Binary(AST.Typed.b,
+        AST.IR.Exp.Temp(rhsOffsetParam, spType, pos),
+        AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(until, spType, pos), pos), body2Label, endLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(body2Label, ISZ(
+        AST.IR.Stmt.Intrinsic(Intrinsic.Store(AST.IR.Exp.Temp(lhsOffsetParam, spType, pos), isSigned(AST.Typed.u8),
+          typeByteSize(AST.Typed.u8), AST.IR.Exp.Intrinsic(Intrinsic.Load(AST.IR.Exp.Temp(rhsOffsetParam, spType, pos),
+            isSigned(AST.Typed.u8), typeByteSize(AST.Typed.u8), st"", AST.Typed.u8, pos)),
+          st"Copy", AST.Typed.u8, pos))
+      ), AST.IR.Jump.Goto(inc2Label, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(inc2Label, ISZ(
+        AST.IR.Stmt.Assign.Temp(lhsOffsetParam, AST.IR.Exp.Binary(spType,
+          AST.IR.Exp.Temp(lhsOffsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
+          AST.IR.Exp.Int(spType, 1, pos), pos), pos),
+        AST.IR.Stmt.Assign.Temp(rhsOffsetParam, AST.IR.Exp.Binary(spType,
+          AST.IR.Exp.Temp(rhsOffsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
+          AST.IR.Exp.Int(spType, 1, pos), pos), pos)
+      ), AST.IR.Jump.Goto(loop2Label, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(endLabel, ISZ(), AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(T, retParam,
+        None(), "copy", pos)))
+    }
+    return p(body = body(blocks = blocks))
+  }
+
   def transformTempLoad(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     val loadLabel = fresh.label()
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
@@ -1435,6 +1568,82 @@ import Anvil._
       ), AST.IR.Jump.Goto(loopLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(endLabel, ISZ(), AST.IR.Jump.Intrinsic(
         Intrinsic.GotoLocal(T, retParam, None(), "load", pos)))
+    }
+    return p(body = body(blocks = blocks))
+  }
+
+  def transformTempLoad2(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+    val loadLabel = fresh.label()
+    val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
+    fresh.setTemp(maxTemps.typeCount(this, cpt))
+    val retParam = fresh.temp()
+    val spt: AST.Typed = if (config.splitTempSizes) spType else AST.Typed.u64
+    if (isSigned(cpt) != isSigned(spt) || typeByteSize(cpt) != typeByteSize(spt)) {
+      fresh.setTemp(maxTemps.typeCount(this, spt))
+    }
+    val offsetParam = fresh.temp()
+    val sizeParam = fresh.temp()
+    if (isSigned(AST.Typed.u64) != isSigned(spt) || typeByteSize(AST.Typed.u64) != typeByteSize(spt)) {
+      fresh.setTemp(maxTemps.typeCount(this, AST.Typed.u64))
+    }
+    val valueParam = fresh.temp()
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    var insertLoad = F
+    for (b <- body.blocks) {
+      b.grounds match {
+        case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad)) if in.bytes > 1 && in.tipe != cpType =>
+          insertLoad = T
+          val retLabel = fresh.label()
+          var grounds = ISZ[AST.IR.Stmt.Ground]()
+          val pos = in.pos
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(retParam, AST.IR.Exp.Int(cpType, retLabel, pos), pos)
+          var rhsOffset: AST.IR.Exp = in.rhsOffset
+          if (rhsOffset.tipe != spType) {
+            rhsOffset = AST.IR.Exp.Type(F, rhsOffset, spType, pos)
+          }
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(offsetParam, rhsOffset, pos)
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(sizeParam, AST.IR.Exp.Int(spType, in.bytes, pos), pos)
+          blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds, AST.IR.Jump.Goto(loadLabel, pos))
+          var rhs: AST.IR.Exp = AST.IR.Exp.Temp(valueParam, AST.Typed.u64, pos)
+          if (rhs.tipe != in.tipe) {
+            rhs = AST.IR.Exp.Type(F, rhs, in.tipe.asInstanceOf[AST.Typed.Name], pos)
+          }
+          blocks = blocks :+ AST.IR.BasicBlock(retLabel, ISZ(AST.IR.Stmt.Assign.Temp(in.temp, rhs, pos)), b.jump)
+        case _ => blocks = blocks :+ b
+      }
+    }
+    if (insertLoad) {
+      val labels: ISZ[Z] = for (_ <- z"2" to z"8") yield fresh.label()
+      val pos = p.pos
+      blocks = blocks :+ AST.IR.BasicBlock(loadLabel, ISZ(),
+        AST.IR.Jump.Switch(AST.IR.Exp.Temp(sizeParam, spType, pos), for (i <- labels.indices) yield
+          AST.IR.Jump.Switch.Case(AST.IR.Exp.Int(spType, i + 2, pos), labels(i)), None(), pos))
+      for (i <- labels.indices) {
+        val label = labels(i)
+        var disjuncts = ISZ[AST.IR.Exp]()
+        for (j <- 0 until i + 2) {
+          var disjunct: AST.IR.Exp = AST.IR.Exp.Temp(offsetParam, spType, pos)
+          if (j != 0) {
+            disjunct = AST.IR.Exp.Binary(spType, disjunct,
+              AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, j, pos), pos)
+          }
+          disjunct = AST.IR.Exp.Intrinsic(Intrinsic.Load(disjunct, isSigned(AST.Typed.u8), typeByteSize(AST.Typed.u8),
+            st"", AST.Typed.u8, pos))
+          disjunct = AST.IR.Exp.Type(F, disjunct, AST.Typed.u64, pos)
+          if (j != 0) {
+            disjunct = AST.IR.Exp.Binary(AST.Typed.u64, disjunct, AST.IR.Exp.Binary.Op.Shl,
+              AST.IR.Exp.Int(AST.Typed.u64, j * 8, pos), pos)
+          }
+          disjuncts = disjuncts :+ disjunct
+        }
+        var rhs = disjuncts(0)
+        for (j <- 1 until disjuncts.size) {
+          rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs, AST.IR.Exp.Binary.Op.Or, disjuncts(j), pos)
+        }
+        blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(AST.IR.Stmt.Assign.Temp(valueParam, rhs, pos)),
+          AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(T, retParam, None(), "load", pos)))
+      }
     }
     return p(body = body(blocks = blocks))
   }
@@ -1517,6 +1726,85 @@ import Anvil._
       ), AST.IR.Jump.Goto(loopLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(endLabel, ISZ(), AST.IR.Jump.Intrinsic(
         Intrinsic.GotoLocal(T, retParam, None(), "store", pos)))
+    }
+    return p(body = body(blocks = blocks))
+  }
+
+  def transformStore2(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+    val storeLabel = fresh.label()
+    val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
+    fresh.setTemp(maxTemps.typeCount(this, cpt))
+    val retParam = fresh.temp()
+    val spt: AST.Typed = if (config.splitTempSizes) spType else AST.Typed.u64
+    if (isSigned(cpt) != isSigned(spt) || typeByteSize(cpt) != typeByteSize(spt)) {
+      fresh.setTemp(maxTemps.typeCount(this, spt))
+    }
+    val offsetParam = fresh.temp()
+    val sizeParam = fresh.temp()
+    if (isSigned(AST.Typed.u64) != isSigned(spt) || typeByteSize(AST.Typed.u64) != typeByteSize(spt)) {
+      fresh.setTemp(maxTemps.typeCount(this, AST.Typed.u64))
+    }
+    val valueParam = fresh.temp()
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    var insertStore = F
+    for (b <- body.blocks) {
+      b.grounds match {
+        case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.Store)) if in.bytes > 1 && in.tipe != cpType =>
+          insertStore = T
+          var addGoto = F
+          val retLabel: Z = b.jump match {
+            case j: AST.IR.Jump.Goto => j.label
+            case _ =>
+              addGoto = T
+              fresh.label()
+          }
+          var grounds = ISZ[AST.IR.Stmt.Ground]()
+          val pos = in.pos
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(retParam, AST.IR.Exp.Int(cpType, retLabel, pos), pos)
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(offsetParam, in.lhsOffset, pos)
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(sizeParam, AST.IR.Exp.Int(spType, in.bytes, pos), pos)
+          var rhs: AST.IR.Exp = in.rhs
+          if (rhs.tipe != AST.Typed.u64) {
+            rhs = AST.IR.Exp.Type(F, rhs, AST.Typed.u64, pos)
+          }
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(valueParam, rhs, pos)
+          blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds, AST.IR.Jump.Goto(storeLabel, pos))
+          if (addGoto) {
+            blocks = blocks :+ AST.IR.BasicBlock(retLabel, ISZ(), b.jump)
+          }
+        case _ => blocks = blocks :+ b
+      }
+    }
+    if (insertStore) {
+      val labels: ISZ[Z] = for (_ <- z"2" to z"8") yield fresh.label()
+      val pos = p.pos
+      blocks = blocks :+ AST.IR.BasicBlock(storeLabel, ISZ(),
+        AST.IR.Jump.Switch(AST.IR.Exp.Temp(sizeParam, spType, pos), for (i <- labels.indices) yield
+          AST.IR.Jump.Switch.Case(AST.IR.Exp.Int(spType, i + 2, pos), labels(i)), None(), pos))
+      for (i <- labels.indices) {
+        val label = labels(i)
+        var grounds = ISZ[AST.IR.Stmt.Ground]()
+        for (j <- 0 until i + 2) {
+          var rhs: AST.IR.Exp = AST.IR.Exp.Temp(valueParam, AST.Typed.u64, pos)
+          if (j != 0) {
+            rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs,
+              AST.IR.Exp.Binary.Op.Ushr, AST.IR.Exp.Int(AST.Typed.u64, j * 8, pos), pos)
+          }
+          rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs, AST.IR.Exp.Binary.Op.And, AST.IR.Exp.Int(AST.Typed.u64, 0xFF, pos), pos)
+          rhs = AST.IR.Exp.Type(F, rhs, AST.Typed.u8, pos)
+          var lhs: AST.IR.Exp = AST.IR.Exp.Temp(offsetParam, spType, pos)
+          if (j != 0) {
+            lhs = AST.IR.Exp.Binary(spType, lhs, AST.IR.Exp.Binary.Op.Add,
+              AST.IR.Exp.Int(spType, j, pos), pos)
+          }
+          grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+            lhs, isSigned(AST.Typed.u8),
+            typeByteSize(AST.Typed.u8), rhs, st"Store", AST.Typed.u8, pos))
+        }
+        blocks = blocks :+ AST.IR.BasicBlock(label, grounds,
+          AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(T, retParam, None(), "store", pos)))
+      }
     }
     return p(body = body(blocks = blocks))
   }
