@@ -1088,7 +1088,7 @@ object Util {
     val elementSize = anvil.typeByteSize(elementType)
     val dataOffset = anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
     if (anvil.config.useIP) {
-      return AST.IR.Exp.Intrinsic(Intrinsic.Indexing(rcv, dataOffset, indexOffset, maskOpt, elementSize, elementType, pos))
+      return AST.IR.Exp.Intrinsic(Intrinsic.Indexing(rcv, dataOffset, indexOffset, maskOpt, elementSize, anvil.spType, pos))
     } else {
       val baseDataOffset = AST.IR.Exp.Binary(anvil.spType, rcv, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType,
         dataOffset, receiver.pos), receiver.pos)
