@@ -56,7 +56,7 @@ object Anvil {
                          val customDivRem: B,
                          val splitTempSizes: B,
                          val tempLocal: B,
-                         val altMemory: B,
+                         val memoryAccess: Config.MemoryAccess.Type,
                          val ipMax: Z,
                          val cpMax: Z,
                          val genVerilog: B,
@@ -67,6 +67,13 @@ object Anvil {
   }
 
   object Config {
+
+    @enum object MemoryAccess {
+      "Default"
+      "Subroutine"
+      "SubroutineFast"
+    }
+
     @datatype class Sim(val threads: Z, val cycles: Z)
 
     @strictpure def empty: Config =
@@ -88,7 +95,7 @@ object Anvil {
         customDivRem = F,
         splitTempSizes = F,
         tempLocal = T,
-        altMemory = F,
+        memoryAccess = Config.MemoryAccess.Default,
         ipMax = 0,
         cpMax = 0,
         genVerilog = F,
@@ -497,17 +504,36 @@ import Anvil._
 
       val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
 
-      p = if (config.altMemory) anvil.transformTempLoadAlt(fresh, p, maxTemps) else anvil.transformTempLoad(fresh, p, maxTemps)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load"), p.prettyST(anvil.printer))
-      pass = pass + 1
+      config.memoryAccess match {
+        case Anvil.Config.MemoryAccess.Default =>
+        case Anvil.Config.MemoryAccess.Subroutine =>
 
-      p = if (config.altMemory) anvil.transformStoreAlt(fresh, p, maxTemps) else anvil.transformStore(fresh, p, maxTemps)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "store"), p.prettyST(anvil.printer))
-      pass = pass + 1
+          p = anvil.transformTempLoadSubroutine(fresh, p, maxTemps)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load"), p.prettyST(anvil.printer))
+          pass = pass + 1
 
-      p = if (config.altMemory) anvil.transformCopyAlt(fresh, p, maxTemps) else anvil.transformCopy(fresh, p, maxTemps)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy"), p.prettyST(anvil.printer))
-      pass = pass + 1
+          p = anvil.transformStoreSubroutine(fresh, p, maxTemps)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "store"), p.prettyST(anvil.printer))
+          pass = pass + 1
+
+          p = anvil.transformCopySubroutine(fresh, p, maxTemps)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy"), p.prettyST(anvil.printer))
+          pass = pass + 1
+
+        case Anvil.Config.MemoryAccess.SubroutineFast =>
+
+          p = anvil.transformTempLoadSubroutineFast(fresh, p, maxTemps)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load"), p.prettyST(anvil.printer))
+          pass = pass + 1
+
+          p = anvil.transformStoreSubroutineFast(fresh, p, maxTemps)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "store"), p.prettyST(anvil.printer))
+          pass = pass + 1
+
+          p = anvil.transformCopySubroutineFast(fresh, p, maxTemps)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy"), p.prettyST(anvil.printer))
+          pass = pass + 1
+      }
 
       p = anvil.transformErase(fresh, p, maxTemps)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "erase"), p.prettyST(anvil.printer))
@@ -1259,7 +1285,7 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformCopy(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+  def transformCopySubroutine(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     val copyLabel = fresh.label()
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
     fresh.setTemp(maxTemps.typeCount(this, cpt))
@@ -1362,7 +1388,7 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformCopyAlt(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+  def transformCopySubroutineFast(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     val copyLabel = fresh.label()
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
     fresh.setTemp(maxTemps.typeCount(this, cpt))
@@ -1495,7 +1521,7 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformTempLoad(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+  def transformTempLoadSubroutine(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     val loadLabel = fresh.label()
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
     fresh.setTemp(maxTemps.typeCount(this, cpt))
@@ -1574,7 +1600,7 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformTempLoadAlt(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+  def transformTempLoadSubroutineFast(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     val loadLabel = fresh.label()
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
     fresh.setTemp(maxTemps.typeCount(this, cpt))
@@ -1650,7 +1676,7 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformStore(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+  def transformStoreSubroutine(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     val storeLabel = fresh.label()
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
     fresh.setTemp(maxTemps.typeCount(this, cpt))
@@ -1732,7 +1758,7 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformStoreAlt(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+  def transformStoreSubroutineFast(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     val storeLabel = fresh.label()
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
     fresh.setTemp(maxTemps.typeCount(this, cpt))
