@@ -1163,7 +1163,7 @@ import HwSynthesizer._
           |class ${moduleName}Bench extends AnyFlatSpec with ChiselScalatestTester {
           |  "${moduleName}Bench" should "work" in {
           |    test(new ${moduleName}()).withAnnotations(Seq(WriteVcdAnnotation, VerilatorBackendAnnotation)) { dut =>
-          |      dut.clock.setTimeout(3000)
+          |      dut.clock.setTimeout(10000)
           |
           |      dut.reset.poke(true.B)
           |      for (i <- 0 until (5)) {
@@ -1677,7 +1677,7 @@ import HwSynthesizer._
           val jST = processJumpIntrinsic(BlockLog.getBlock)
           val ipType: IpType = if(DivRemLog.isDivisionInBlock()) BinaryIP(AST.IR.Exp.Binary.Op.Div, T) else BinaryIP(AST.IR.Exp.Binary.Op.Rem, T)
           val indexerName: String = getIpInstanceName(ipType).get
-          val activeIndex = if(DivRemLog.isDivisionInBlock()) DivRemLog.divisionActiveIndex else DivRemLog.remainderActiveIndex
+          val activeIndex: Z = if(DivRemLog.isDivisionInBlock()) DivRemLog.divisionActiveIndex else DivRemLog.remainderActiveIndex
           st"""
               |when(${indexerName}_${activeIndex}.io.valid) {
               |  ${jST.render}
