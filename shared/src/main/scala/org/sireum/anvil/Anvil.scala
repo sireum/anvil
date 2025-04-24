@@ -56,6 +56,7 @@ object Anvil {
                          val customDivRem: B,
                          val splitTempSizes: B,
                          val tempLocal: B,
+                         val altMemory: B,
                          val ipMax: Z,
                          val cpMax: Z,
                          val genVerilog: B,
@@ -87,6 +88,7 @@ object Anvil {
         customDivRem = F,
         splitTempSizes = F,
         tempLocal = T,
+        altMemory = F,
         ipMax = 0,
         cpMax = 0,
         genVerilog = F,
@@ -495,15 +497,15 @@ import Anvil._
 
       val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
 
-      p = anvil.transformTempLoad(fresh, p, maxTemps)
+      p = if (config.altMemory) anvil.transformTempLoadAlt(fresh, p, maxTemps) else anvil.transformTempLoad(fresh, p, maxTemps)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load"), p.prettyST(anvil.printer))
       pass = pass + 1
 
-      p = anvil.transformStore(fresh, p, maxTemps)
+      p = if (config.altMemory) anvil.transformStoreAlt(fresh, p, maxTemps) else anvil.transformStore(fresh, p, maxTemps)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "store"), p.prettyST(anvil.printer))
       pass = pass + 1
 
-      p = anvil.transformCopy(fresh, p, maxTemps)
+      p = if (config.altMemory) anvil.transformCopyAlt(fresh, p, maxTemps) else anvil.transformCopy(fresh, p, maxTemps)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy"), p.prettyST(anvil.printer))
       pass = pass + 1
 
@@ -1360,7 +1362,7 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformCopy2(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+  def transformCopyAlt(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     val copyLabel = fresh.label()
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
     fresh.setTemp(maxTemps.typeCount(this, cpt))
@@ -1572,7 +1574,7 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformTempLoad2(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+  def transformTempLoadAlt(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     val loadLabel = fresh.label()
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
     fresh.setTemp(maxTemps.typeCount(this, cpt))
@@ -1730,7 +1732,7 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformStore2(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+  def transformStoreAlt(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     val storeLabel = fresh.label()
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
     fresh.setTemp(maxTemps.typeCount(this, cpt))
