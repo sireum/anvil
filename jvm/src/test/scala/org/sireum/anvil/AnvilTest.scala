@@ -185,9 +185,10 @@ class AnvilTest extends SireumRcSpec {
           splitTempSizes = splitTempSizes,
           tempLocal = tempLocal,
           genVerilog = T,
-          axi4 = T,
+          axi4 = F,
           ipMax = ipMax,
-          simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
+          simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles)),
+          memoryAccess = Anvil.Config.MemoryAccess.Default
         )
 
         if (isInGitHubAction) {
