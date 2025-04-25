@@ -111,13 +111,15 @@ object DivRemLog {
 
 @datatype trait ChiselModule {
   @strictpure def signed: B
-  @strictpure def moduleST(signed: B): ST
+  @strictpure def moduleST: ST
   @strictpure def width: Z
-  @strictpure def inputs: HashSMap[String, ChiselModule.Input]
+  @strictpure def portList: HashSMap[String, String]
+  @strictpure def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]]
   @strictpure def expression: IpType
   @strictpure def moduleName: String
   @strictpure def instanceName: String
   @strictpure def indexSeq: ISZ[Z]
+  @strictpure def clearInputs: ChiselModule
   @pure def instanceDeclST: ST = {
     val moduleInstances: ST = {
       val modDeclIns: ISZ[ST] = {
@@ -147,12 +149,14 @@ object DivRemLog {
         portValueType match {
           case "UInt" => "0.U"
           case "SInt" => "0.S"
-          case _ => "false.B"
+          case "Bool" => "false.B"
+          case _ => halt(s"${portValueType} is not support in input type")
         }
       }
-      val muxLogicST: ISZ[ST] = {
-        for(entry <- inputs.entries) yield
-          st"o.${instanceName}_${modIdx}.io.${entry._1} := ${defaultValue(entry._2.portValueType)}"
+      var muxLogicST: ISZ[ST] = ISZ[ST]()
+
+      for(entry <- portList.entries) {
+        muxLogicST = muxLogicST :+ st"o.${instanceName}_${modIdx}.io.${entry._1} := ${defaultValue(entry._2)}"
       }
 
       return st"""
@@ -184,33 +188,29 @@ object ChiselModule {
   @datatype class StateValue(val state: Z, val value: String) {
   }
 
-  @datatype class Input(val stateValue: StateValue, val portValueType: String) {
-    @strictpure def defaultValue: String = {
-      portValueType match {
-        case "UInt" => "0.U"
-        case "SInt" => "0.S"
-        case _ => "false.B"
-      }
-    }
-  }
+  @datatype class Input(val stateValue: StateValue, val portValueType: String) {}
 }
 
 @datatype class Adder(val signedPort: B,
                       val moduleDeclarationName: String,
                       val moduleInstanceName: String,
                       val widthOfPort: Z,
-                      val inputList: HashSMap[String, ChiselModule.Input],
+                      val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                       val exp: IpType,
                       val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}" + "op" ~> "Bool"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -230,17 +230,22 @@ object ChiselModule {
                         val moduleDeclarationName: String,
                         val moduleInstanceName: String,
                         val widthOfPort: Z,
-                        val inputList: HashSMap[String, ChiselModule.Input],
+                        val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                         val exp: IpType,
                         val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "baseOffset" ~> "UInt" + "dataOffset" ~> "UInt" + "index" ~> "UInt" +
+      "elementSize" ~> "UInt" + "mask" ~> "UInt" + "ready" ~> "Bool"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class Indexer(val width: Int = 16) extends Module {
         |    val io = IO(new Bundle{
@@ -287,18 +292,22 @@ object ChiselModule {
                     val moduleDeclarationName: String,
                     val moduleInstanceName: String,
                     val widthOfPort: Z,
-                    val inputList: HashSMap[String, ChiselModule.Input],
+                    val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                     val exp: IpType,
                     val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -317,18 +326,22 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val inputList: HashSMap[String, ChiselModule.Input],
+                   val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                    val exp: IpType,
                    val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -347,18 +360,22 @@ object ChiselModule {
                     val moduleDeclarationName: String,
                     val moduleInstanceName: String,
                     val widthOfPort: Z,
-                    val inputList: HashSMap[String, ChiselModule.Input],
+                    val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                     val exp: IpType,
                     val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -377,18 +394,22 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val inputList: HashSMap[String, ChiselModule.Input],
+                   val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                    val exp: IpType,
                    val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -407,18 +428,22 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val inputList: HashSMap[String, ChiselModule.Input],
+                   val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                    val exp: IpType,
                    val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -437,18 +462,22 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val inputList: HashSMap[String, ChiselModule.Input],
+                   val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                    val exp: IpType,
                    val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -467,18 +496,22 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val inputList: HashSMap[String, ChiselModule.Input],
+                   val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                    val exp: IpType,
                    val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -497,18 +530,22 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val inputList: HashSMap[String, ChiselModule.Input],
+                   val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                    val exp: IpType,
                    val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -527,18 +564,22 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val inputList: HashSMap[String, ChiselModule.Input],
+                   val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                    val exp: IpType,
                    val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -557,18 +598,22 @@ object ChiselModule {
                     val moduleDeclarationName: String,
                     val moduleInstanceName: String,
                     val widthOfPort: Z,
-                    val inputList: HashSMap[String, ChiselModule.Input],
+                    val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                     val exp: IpType,
                     val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> "UInt"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -587,18 +632,22 @@ object ChiselModule {
                     val moduleDeclarationName: String,
                     val moduleInstanceName: String,
                     val widthOfPort: Z,
-                    val inputList: HashSMap[String, ChiselModule.Input],
+                    val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                     val exp: IpType,
                     val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> "UInt"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -617,18 +666,22 @@ object ChiselModule {
                      val moduleDeclarationName: String,
                      val moduleInstanceName: String,
                      val widthOfPort: Z,
-                     val inputList: HashSMap[String, ChiselModule.Input],
+                     val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                      val exp: IpType,
                      val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> "UInt"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
-    val portType: ST = if(signed) st"SInt" else st"UInt"
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -647,17 +700,21 @@ object ChiselModule {
                            val moduleDeclarationName: String,
                            val moduleInstanceName: String,
                            val widthOfPort: Z,
-                           val inputList: HashSMap[String, ChiselModule.Input],
+                           val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                            val exp: IpType,
                            val idxSeq: ISZ[Z]) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty + "a" ~> s"SInt" + "b" ~> "SInt"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
@@ -676,7 +733,7 @@ object ChiselModule {
                          val moduleDeclarationName: String,
                          val moduleInstanceName: String,
                          val widthOfPort: Z,
-                         val inputList: HashSMap[String, ChiselModule.Input],
+                         val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                          val exp: IpType,
                          val idxSeq: ISZ[Z],
                          val customDiv: B) extends ChiselModule {
@@ -684,10 +741,15 @@ object ChiselModule {
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  @strictpure override def portList: HashSMap[String, String] = {
+    if(customDiv) HashSMap.empty + "a" ~> s"SInt" + "b" ~> "SInt" + "start" ~> "Bool"
+    else HashSMap.empty + "a" ~> s"SInt" + "b" ~> "SInt"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     if(customDiv)
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -762,7 +824,7 @@ object ChiselModule {
                          val moduleDeclarationName: String,
                          val moduleInstanceName: String,
                          val widthOfPort: Z,
-                         val inputList: HashSMap[String, ChiselModule.Input],
+                         val inputList: HashSMap[Z, HashSMap[String, ChiselModule.Input]],
                          val exp: IpType,
                          val idxSeq: ISZ[Z],
                          val customDiv: B) extends ChiselModule {
@@ -770,10 +832,15 @@ object ChiselModule {
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
-  @strictpure override def inputs: HashSMap[String, ChiselModule.Input] = inputList
+  @strictpure override def portList: HashSMap[String, String] = {
+    if(customDiv) HashSMap.empty + "a" ~> s"SInt" + "b" ~> "SInt" + "start" ~> "Bool"
+    else HashSMap.empty + "a" ~> s"SInt" + "b" ~> "SInt"
+  }
+  @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
   @strictpure override def indexSeq: ISZ[Z] = idxSeq
-  @strictpure override def moduleST(signed: B): ST = {
+  @strictpure override def clearInputs: ChiselModule = this(inputList=HashSMap.empty)
+  @strictpure override def moduleST: ST = {
     if(customDiv)
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
@@ -851,7 +918,11 @@ import HwSynthesizer._
 
   var ipAlloc: Util.IpAlloc = Util.IpAlloc(HashSMap.empty, HashSMap.empty, 0)
 
-  @pure def insertIPInput(ip: IpType, h: HashSMap[String, ChiselModule.Input], instanceIndex: Z): Unit = {
+  @pure def clearAllIPInput(): Unit = {
+    ipModules = for(m <- ipModules) yield m.clearInputs
+  }
+
+  @pure def insertIPInput(ip: IpType, newHashSMap: HashSMap[Z, HashSMap[String, ChiselModule.Input]], instanceIndex: Z): Unit = {
     @pure def updateSeq(seq: ISZ[Z], item: Z): ISZ[Z] = {
       for(i <- 0 until seq.size) {
         if(seq(i) == item) {
@@ -867,6 +938,11 @@ import HwSynthesizer._
       }
     }
     val idxSeq: ISZ[Z] = updateSeq(ipModules(index).indexSeq, instanceIndex)
+    var h: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = ipModules(index).inputs
+    for(entry <- newHashSMap.entries) {
+      h = h + entry._1 ~> entry._2
+    }
+
     val updatedModule: ChiselModule = ip match {
       case BinaryIP(AST.IR.Exp.Binary.Op.Add, _) => {
         Adder(ipModules(index).signed,
@@ -1047,13 +1123,15 @@ import HwSynthesizer._
     return None()
   }
 
-  @pure def populateInputs(label: Z, hashSMap: HashSMap[String, (ST, String)]) : HashSMap[String, ChiselModule.Input] = {
+  @pure def populateInputs(label: Z, hashSMap: HashSMap[String, (ST, String)], instanceIndex: Z) : HashSMap[Z, HashSMap[String, ChiselModule.Input]] = {
     var inputList: HashSMap[String, ChiselModule.Input] = HashSMap.empty
+    var finalList: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = HashSMap.empty
     for(entry <- hashSMap.entries) {
       val stateValue: ChiselModule.StateValue = ChiselModule.StateValue(label, entry._2._1.render)
       inputList = inputList + entry._1 ~> ChiselModule.Input(stateValue, entry._2._2)
     }
-    return inputList
+    finalList = finalList + instanceIndex ~> inputList
+    return finalList
   }
 
   var ipModules: ISZ[ChiselModule] = ISZ[ChiselModule]() :+
@@ -1527,7 +1605,7 @@ import HwSynthesizer._
       val moduleDeclST: ST = {
         var moduleST: ISZ[ST] = ISZ()
         for(i <- 0 until ipModules.size) {
-          moduleST = moduleST :+ ipModules(i).moduleST(ipModules(i).signed)
+          moduleST = moduleST :+ ipModules(i).moduleST
         }
         st"""${(moduleST, "\n")}"""
       }
@@ -1732,6 +1810,8 @@ import HwSynthesizer._
 
       DivRemLog.disableFlagDivisionInBlock()
       DivRemLog.disableFlagRemainderInBlock()
+
+      clearAllIPInput()
     }
 
     return basicBlockST(allGroundsST, allFunctionsST)
@@ -1968,7 +2048,7 @@ import HwSynthesizer._
             val allocIndex: Z = getIpAllocIndex(intrinsic.value)
             var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
             hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt") + "op" ~> (if (isPlus) st"true.B" else st"false.B", "Bool")
-            insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, F), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+            insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, F), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
             val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, F)).get
             intrinsicST =
               st"""
@@ -2104,7 +2184,7 @@ import HwSynthesizer._
           "mask" ~> (st"${mask}.U", "UInt") +
           "ready" ~> (st"true.B", "Bool")
 
-        insertIPInput(IntrinsicIP(defaultIndexing), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+        insertIPInput(IntrinsicIP(defaultIndexing), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
         val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
 
         exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
@@ -2160,7 +2240,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt") + "op" ~> (st"true.B", "Bool")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2176,7 +2256,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt") + "op" ~> (st"false.B", "Bool")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2192,7 +2272,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}.asSInt", "SInt") + "b" ~> (st"${rightST.render}.asSInt", "SInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Mul, T), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Mul, T), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Mul, T)).get
               val placeHolder: String = if(isSIntOperation) "" else ".asUInt"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out${placeHolder}"
@@ -2213,7 +2293,7 @@ import HwSynthesizer._
               if(anvil.config.customDivRem) {
                 hashSMap = hashSMap + "start" ~> (st"true.B", "Bool")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Div, T), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Div, T), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Div, T)).get
               val placeHolder: String = if(isSIntOperation) "" else ".asUInt"
               if(anvil.config.customDivRem) {
@@ -2239,7 +2319,7 @@ import HwSynthesizer._
               if(anvil.config.customDivRem) {
                 hashSMap = hashSMap + "start" ~> (st"true.B", "Bool")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Rem, T)).get
               val placeHolder: String = if(isSIntOperation) "" else ".asUInt"
               if(anvil.config.customDivRem) {
@@ -2262,7 +2342,7 @@ import HwSynthesizer._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.And, signed), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.And, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.And, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2279,7 +2359,7 @@ import HwSynthesizer._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2296,7 +2376,7 @@ import HwSynthesizer._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2319,7 +2399,7 @@ import HwSynthesizer._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2336,7 +2416,7 @@ import HwSynthesizer._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2352,7 +2432,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2368,7 +2448,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2384,7 +2464,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2400,7 +2480,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2416,7 +2496,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2434,7 +2514,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2452,7 +2532,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap), allocIndex)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2498,7 +2578,7 @@ object HwSynthesizer {
   }
 
   @record class IpPortAssign(val anvil: Anvil, val ipAlloc: Util.IpAlloc, var sts: ISZ[ST], val ipModules: ISZ[ChiselModule]) extends MAnvilIRTransformer {
-    @pure def getInputPort(ip: IpType): HashSMap[String, ChiselModule.Input] = {
+    @pure def getInputPort(ip: IpType): HashSMap[Z, HashSMap[String, ChiselModule.Input]] = {
       for(i <- 0 until ipModules.size) {
         if(ipModules(i).expression == ip) {
           return ipModules(i).inputs
@@ -2527,8 +2607,9 @@ object HwSynthesizer {
       @pure def inputLogic(ipt: IpType): Unit = {
         val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(o)).get
         val instanceName: String = getIpInstanceName(ipt).get
-        val inputs: HashSMap[String, ChiselModule.Input] = getInputPort(ipt)
-        for (entry <- inputs.entries) {
+        val inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = getInputPort(ipt)
+        val h: HashSMap[String, ChiselModule.Input] = inputs.get(instanceIndex).get
+        for (entry <- h.entries) {
           sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
         }
       }
@@ -2581,8 +2662,9 @@ object HwSynthesizer {
     override def preIntrinsicIndexing(o: Intrinsic.Indexing): MAnvilIRTransformer.PreResult[Intrinsic.Indexing] = {
       val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(AST.IR.Exp.Intrinsic(o))).get
       val instanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
-      val inputs: HashSMap[String, ChiselModule.Input] = getInputPort(IntrinsicIP(defaultIndexing))
-      for (entry <- inputs.entries) {
+      val inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = getInputPort(IntrinsicIP(defaultIndexing))
+      val h: HashSMap[String, ChiselModule.Input] = inputs.get(instanceIndex).get
+      for (entry <- h.entries) {
         sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
       }
       return MAnvilIRTransformer.PreResultIntrinsicIndexing
@@ -2592,8 +2674,9 @@ object HwSynthesizer {
       if(o.isInc) {
         val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(o.value)).get
         val instanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, F)).get
-        val inputs: HashSMap[String, ChiselModule.Input] = getInputPort(BinaryIP(AST.IR.Exp.Binary.Op.Add, F))
-        for (entry <- inputs.entries) {
+        val inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = getInputPort(BinaryIP(AST.IR.Exp.Binary.Op.Add, F))
+        val h: HashSMap[String, ChiselModule.Input] = inputs.get(instanceIndex).get
+        for (entry <- h.entries) {
           sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
         }
       }
