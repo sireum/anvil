@@ -58,6 +58,21 @@ object BlockLog {
   }
 }
 
+object MemCopyLog {
+  var flagMemCopyInBlock: B = F
+  def isMemCopyInBlock(): B = {
+    return flagMemCopyInBlock
+  }
+
+  def enableFlagMemCopyInBlock(): Unit = {
+    flagMemCopyInBlock = T
+  }
+
+  def disableFlagMemCopyInBlock(): Unit = {
+    flagMemCopyInBlock = F
+  }
+}
+
 object IndexingLog {
   var flagIndexingInBlock: B = F
   var activeIndex: Z = 0
@@ -1742,7 +1757,7 @@ import HwSynthesizer._
       commentST = commentST :+ b.jump.prettyST(anvil.printer)
 
       val jumpST: ST = {
-        if(IndexingLog.isIndexingInBlock()) {
+        if(IndexingLog.isIndexingInBlock() && !MemCopyLog.isMemCopyInBlock()) {
           val jST = processJumpIntrinsic(BlockLog.getBlock)
           val indexerName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
           st"""
@@ -1807,7 +1822,7 @@ import HwSynthesizer._
       }
 
       IndexingLog.disableFlagIndexingInBlock()
-
+      MemCopyLog.disableFlagMemCopyInBlock()
       DivRemLog.disableFlagDivisionInBlock()
       DivRemLog.disableFlagRemainderInBlock()
 
@@ -1970,7 +1985,58 @@ import HwSynthesizer._
         TmpWireCount.incCount()
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Copy) => {
-        halt("not support MemCpy")
+        MemCopyLog.enableFlagMemCopyInBlock()
+
+        // acquire the source and destination address
+        val lhsAddrST = processExpr(intrinsic.lhsOffset, F)
+        val rhsAddrST = processExpr(intrinsic.rhs, F)
+
+        val tmpWireLhsST = st"__tmp_${TmpWireCount.getCurrent}"
+        TmpWireCount.incCount()
+        val tmpWireRhsST = st"__tmp_${TmpWireCount.getCurrent}"
+        TmpWireCount.incCount()
+        val totalSizeWireST = st"__tmp_${TmpWireCount.getCurrent}"
+        TmpWireCount.incCount()
+        val leftByteStartST = st"__tmp_${TmpWireCount.getCurrent}"
+        TmpWireCount.incCount()
+
+        // compute how many bytes needed for memory copy transfer
+        val rhsBytesSt = processExpr(intrinsic.rhsBytes, F)
+        var BytesTransferST = ISZ[ST]()
+        for(i <- 0 to (anvil.config.copySize - 1)) {
+          BytesTransferST = BytesTransferST :+ st"${sharedMemName}(${tmpWireLhsST.render} + Idx + ${i}.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + ${i}.U)"
+        }
+
+        // get the jump statement ST
+        val jumpST = processJumpIntrinsic(BlockLog.getBlock)
+        val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
+        val indexerReadyDisableStr: String = if(IndexingLog.isIndexingInBlock()) s"${indexerInstanceName}_${IndexingLog.activeIndex}.io.ready := false.B" else ""
+        val indexerValidStr: String = if(IndexingLog.isIndexingInBlock()) s"when(${indexerInstanceName}_${IndexingLog.activeIndex}.io.valid) {indexerValid := true.B; ${indexerReadyDisableStr}}" else ""
+        val indexerConditionStr: String = if(IndexingLog.isIndexingInBlock()) "indexerValid & " else ""
+
+        intrinsicST =
+          st"""
+              |val ${tmpWireLhsST.render} = ${lhsAddrST.render}
+              |val ${tmpWireRhsST.render} = ${rhsAddrST.render}
+              |val ${totalSizeWireST.render} = ${rhsBytesSt.render}
+              |
+              |${indexerValidStr}
+              |when(${indexerConditionStr}Idx < ${totalSizeWireST.render}) {
+              |  ${(BytesTransferST, "\n")}
+              |  Idx := Idx + ${anvil.config.copySize}.U
+              |  LeftByteRounds := ${totalSizeWireST.render} - Idx
+              |} .elsewhen(${indexerConditionStr}IdxLeftByteRounds < LeftByteRounds) {
+              |  val ${leftByteStartST.render} = Idx - ${anvil.config.copySize}.U
+              |  ${sharedMemName}(${tmpWireLhsST.render} + ${leftByteStartST.render} + IdxLeftByteRounds) := ${sharedMemName}(${tmpWireRhsST.render} + ${leftByteStartST.render} + IdxLeftByteRounds)
+              |  IdxLeftByteRounds := IdxLeftByteRounds + 1.U
+              |} ${if(IndexingLog.isIndexingInBlock()) ".elsewhen(indexerValid) {" else ".otherwise {"}
+              |  Idx := 0.U
+              |  IdxLeftByteRounds := 0.U
+              |  LeftByteRounds := 0.U
+              |  ${jumpST.render}
+              |  ${if(IndexingLog.isIndexingInBlock()) "indexerValid := false.B" else ""}
+              |}
+            """
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Store) => {
         @strictpure def isLhsOffsetIndexing(e: AST.IR.Exp): B = e match {
