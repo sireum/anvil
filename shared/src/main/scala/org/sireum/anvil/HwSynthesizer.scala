@@ -1777,8 +1777,10 @@ import HwSynthesizer._
               |  ${indexerName}_${activeIndex}.io.start := false.B
               |}
             """
-        } else {
+        } else if(!MemCopyLog.isMemCopyInBlock() & !anvil.config.customDivRem) {
           jump
+        } else {
+          st""
         }
       }
 
