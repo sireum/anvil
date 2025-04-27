@@ -506,6 +506,11 @@ import Anvil._
 
       config.memoryAccess match {
         case Anvil.Config.MemoryAccess.Default =>
+          if (config.useIP) {
+            p = anvil.transformCopyDefaultIp(fresh, p, maxTemps)
+            output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy"), p.prettyST(anvil.printer))
+            pass = pass + 1
+          }
         case Anvil.Config.MemoryAccess.Subroutine =>
 
           p = anvil.transformTempLoadSubroutine(fresh, p, maxTemps)
@@ -1281,6 +1286,58 @@ import Anvil._
       ), AST.IR.Jump.Goto(eraseLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(endLabel, ISZ(), AST.IR.Jump.Intrinsic(
         Intrinsic.GotoLocal(T, retParam, None(), "erase", pos)))
+    }
+    return p(body = body(blocks = blocks))
+  }
+
+  def transformCopyDefaultIp(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+    val spt: AST.Typed = if (config.splitTempSizes) spType else AST.Typed.u64
+    fresh.setTemp(maxTemps.typeCount(this, spt))
+    val lhsOffsetParam = fresh.temp()
+    val rhsOffsetParam = fresh.temp()
+    val rhsElementSizeParam = fresh.temp()
+
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      b.grounds match {
+        case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.Copy)) if !in.rhsBytes.isInstanceOf[AST.IR.Exp.Int] =>
+          val copyLabel = fresh.label()
+          val t = in.rhsTipe
+          val pos = in.pos
+          var grounds = ISZ[AST.IR.Stmt.Ground]()
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(lhsOffsetParam, in.lhsOffset, pos)
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(rhsOffsetParam, in.rhs, pos)
+          val sizeInfoOpt = classSizeFieldOffsets(t.asInstanceOf[AST.Typed.Name])._2.get("size")
+          if (config.erase || sizeInfoOpt.isEmpty) {
+            grounds = grounds :+ AST.IR.Stmt.Assign.Temp(rhsElementSizeParam, in.rhsBytes, pos)
+          } else {
+            val (sizeType, sizeOffset) = sizeInfoOpt.get
+            val elementByteSize: Z = if (t == AST.Typed.string) 1 else typeByteSize(t.asInstanceOf[AST.Typed.Name].args(1))
+            var elementSize: AST.IR.Exp = AST.IR.Exp.Type(F,
+              AST.IR.Exp.Intrinsic(Intrinsic.Load(
+                AST.IR.Exp.Binary(spType, in.rhs, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, sizeOffset, pos), pos),
+                isSigned(sizeType), typeByteSize(sizeType), st"", sizeType, pos)),
+              spType, pos)
+            if (elementByteSize != 1) {
+              elementSize = AST.IR.Exp.Binary(spType, elementSize, AST.IR.Exp.Binary.Op.Mul,
+                AST.IR.Exp.Int(spType, elementByteSize, pos), pos)
+            }
+            grounds = grounds :+ AST.IR.Stmt.Assign.Temp(rhsElementSizeParam, elementSize, pos)
+          }
+          blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds, AST.IR.Jump.Goto(copyLabel, pos))
+          blocks = blocks :+ AST.IR.BasicBlock(copyLabel, ISZ(
+            AST.IR.Stmt.Intrinsic(in(
+              lhsOffset = AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
+              rhs = AST.IR.Exp.Temp(rhsOffsetParam, spType, pos),
+              rhsBytes =
+                if (config.erase) AST.IR.Exp.Temp(rhsElementSizeParam, spType, pos)
+                else AST.IR.Exp.Binary(spType,
+                  AST.IR.Exp.Temp(rhsElementSizeParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
+                  AST.IR.Exp.Int(spType, typeShaSize + typeByteSize(AST.Typed.z), pos), pos)))
+          ), b.jump)
+        case _ => blocks = blocks :+ b
+      }
     }
     return p(body = body(blocks = blocks))
   }
