@@ -2568,9 +2568,8 @@ import HwSynthesizer._
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
-              val rangeStr: String = if (anvil.typeBitSize(exp.right.tipe) > 20) "(6,0)" else ""
-              val right: ST = if (anvil.isSigned(exp.right.tipe)) st"(${rightST.render}${rangeStr}.asUInt & \"b1111111\".U)" else st"(${rightST.render}${rangeStr} & \"b1111111\".U)"
-              exprST = st"((${leftST.render})${if (anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} >> ${right.render})"
+              val right: ST = if(anvil.typeBitSize(exp.right.tipe) > 7) st"${rightST.render}(6,0)" else st"${rightST.render}"
+              exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} >> ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})"
             }
           }
           case AST.IR.Exp.Binary.Op.Ushr => {
@@ -2586,9 +2585,8 @@ import HwSynthesizer._
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
-              val rangeStr: String = if (anvil.typeBitSize(exp.right.tipe) > 20) "(6,0)" else ""
-              val right: ST = if (anvil.isSigned(exp.right.tipe)) st"(${rightST.render}${rangeStr}.asUInt & \"b1111111\".U)" else st"(${rightST.render}${rangeStr} & \"b1111111\".U)"
-              exprST = st"((${leftST.render})${if (anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} >> ${right.render})"
+              val right: ST = if(anvil.typeBitSize(exp.right.tipe) > 7) st"${rightST.render}(6,0)" else st"${rightST.render}"
+              exprST = st"(((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asUInt" else ""} >> ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ""})"
             }
           }
           case AST.IR.Exp.Binary.Op.Shl => {
@@ -2604,9 +2602,8 @@ import HwSynthesizer._
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
-              val rangeStr: String = if (anvil.typeBitSize(exp.right.tipe) > 20) "(6,0)" else ""
-              val right: ST = if (anvil.isSigned(exp.right.tipe)) st"(${rightST.render}${rangeStr}.asUInt & \"b1111111\".U)" else st"(${rightST.render}${rangeStr} & \"b1111111\".U)"
-              exprST = st"((${leftST.render})${if (anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} << ${right.render})"
+              val right: ST = if(anvil.typeBitSize(exp.right.tipe) > 7) st"${rightST.render}(6,0)" else st"${rightST.render}"
+              exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} << ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})"
             }
           }
           case _ => {
@@ -2681,41 +2678,43 @@ object HwSynthesizer {
           sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
         }
       }
-      val signed: B = isSignedExp(o.left) || isSignedExp(o.right)
-      if(o.op == AST.IR.Exp.Binary.Op.Add) {
-        inputLogic(BinaryIP(o.op, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Sub) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Add, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.And) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.And, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Or) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Xor) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Eq) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Ne) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Lt) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Lt, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Le) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Le, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Gt) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Gt, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Ge) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Ge, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Shr) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Shr, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Shl) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Shl, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Ushr) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, signed))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Div) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Div, T))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Rem) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Rem, T))
-      } else if(o.op == AST.IR.Exp.Binary.Op.Mul) {
-        inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Mul, T))
+      if(anvil.config.useIP) {
+        val signed: B = isSignedExp(o.left) || isSignedExp(o.right)
+        if (o.op == AST.IR.Exp.Binary.Op.Add) {
+          inputLogic(BinaryIP(o.op, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Sub) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Add, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.And) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.And, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Or) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Xor) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Eq) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Ne) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Lt) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Lt, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Le) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Le, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Gt) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Gt, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Ge) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Ge, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Shr) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Shr, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Shl) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Shl, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Ushr) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, signed))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Div) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Div, T))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Rem) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Rem, T))
+        } else if (o.op == AST.IR.Exp.Binary.Op.Mul) {
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Mul, T))
+        }
       }
       /*
       o.op match {
@@ -2728,24 +2727,28 @@ object HwSynthesizer {
     }
 
     override def preIntrinsicIndexing(o: Intrinsic.Indexing): MAnvilIRTransformer.PreResult[Intrinsic.Indexing] = {
-      val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(AST.IR.Exp.Intrinsic(o))).get
-      val instanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
-      val inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = getInputPort(IntrinsicIP(defaultIndexing))
-      val h: HashSMap[String, ChiselModule.Input] = inputs.get(instanceIndex).get
-      for (entry <- h.entries) {
-        sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
+      if(anvil.config.useIP) {
+        val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(AST.IR.Exp.Intrinsic(o))).get
+        val instanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
+        val inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = getInputPort(IntrinsicIP(defaultIndexing))
+        val h: HashSMap[String, ChiselModule.Input] = inputs.get(instanceIndex).get
+        for (entry <- h.entries) {
+          sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
+        }
       }
       return MAnvilIRTransformer.PreResultIntrinsicIndexing
     }
 
     override def preIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): MAnvilIRTransformer.PreResult[Intrinsic.RegisterAssign] = {
-      if(o.isInc) {
-        val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(o.value)).get
-        val instanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, F)).get
-        val inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = getInputPort(BinaryIP(AST.IR.Exp.Binary.Op.Add, F))
-        val h: HashSMap[String, ChiselModule.Input] = inputs.get(instanceIndex).get
-        for (entry <- h.entries) {
-          sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
+      if(anvil.config.useIP) {
+        if (o.isInc) {
+          val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(o.value)).get
+          val instanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, F)).get
+          val inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = getInputPort(BinaryIP(AST.IR.Exp.Binary.Op.Add, F))
+          val h: HashSMap[String, ChiselModule.Input] = inputs.get(instanceIndex).get
+          for (entry <- h.entries) {
+            sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
+          }
         }
       }
       return MAnvilIRTransformer.PreResultIntrinsicRegisterAssign
