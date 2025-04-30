@@ -1159,7 +1159,27 @@ object Util {
     }
   }
 
+  @pure def maxIPs(anvil: Anvil, p: AST.IR.Procedure): IpAlloc = {
+    var binopMap = HashSMap.empty[(B, AST.IR.Exp.Binary.Op.Type), Z]
+    var indexing: Z = 0
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    for (b <- body.blocks) {
+      val ic = IpCounter(anvil, HashSMap.empty, HashSMap.empty, 0)
+      ic.transform_langastIRBasicBlock(b)
+      if (indexing < ic.indexing) {
+        indexing = ic.indexing
+      }
+      for (k <- binopMap.keySet.union(ic.binopMap.keySet).elements) {
+        val v1 = binopMap.get(k).getOrElseEager(0)
+        val v2 = ic.binopMap.get(k).getOrElseEager(0)
+        binopMap = binopMap + k ~> (if (v1 < v2) v2 else v1)
+      }
+    }
+    return IpAlloc(HashSMap.empty, binopMap, indexing)
+  }
+
   @pure def ipAlloc(anvil: Anvil, p: AST.IR.Procedure, opMax: Z): IpAlloc = {
+    val max = maxIPs(anvil, p)
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var r = HashSMap.empty[IpAlloc.Exp, Z]
     var binopAllocMap = HashSMap.empty[(B, AST.IR.Exp.Binary.Op.Type), ISZ[Z]]
@@ -1168,7 +1188,13 @@ object Util {
       def allocate(ic: IpCounter): Unit = {
         @pure def getFirstAvailable(s: ISZ[Z]): Z = {
           if (opMax <= 0) {
-            return 0
+            var min: Z = 0
+            for (i <- 1 until s.size) {
+              if (min > s(i)) {
+                min = i
+              }
+            }
+            return min
           }
           for (j <- s.indices) {
             if (s(j) < opMax) {
@@ -1185,6 +1211,9 @@ object Util {
             val key = (anvil.isSigned(t), op)
             var alloc = getFirstAvailable(bam.get(key).getOrElseEager(ISZ()))
             alloc = alloc + n
+            if (opMax <= 0) {
+              alloc = alloc % max.binopAllocSizeMap.get(key).get
+            }
             var s = binopAllocMap.get(key).getOrElseEager(ISZ())
             while (s.size <= alloc) {
               s = s :+ 0
@@ -1199,6 +1228,9 @@ object Util {
             case AST.IR.Exp.Intrinsic(_: Intrinsic.Indexing) =>
               var alloc = getFirstAvailable(ia)
               alloc = alloc + n
+              if (opMax <= 0) {
+                alloc = alloc % max.indexingAllocSize
+              }
               var s = indexingAlloc
               while (s.size <= alloc) {
                 s = s :+ 0
