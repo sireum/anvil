@@ -219,7 +219,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}" + "op" ~> "Bool"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}" + "op" ~> "Bool"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -253,7 +253,7 @@ object ChiselModule {
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "baseOffset" ~> "UInt" + "dataOffset" ~> "UInt" + "index" ~> "UInt" +
+    HashSMap.empty[String, String] + "baseOffset" ~> "UInt" + "dataOffset" ~> "UInt" + "index" ~> "UInt" +
       "elementSize" ~> "UInt" + "mask" ~> "UInt" + "ready" ~> "Bool"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
@@ -316,7 +316,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -350,7 +350,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -384,7 +384,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -418,7 +418,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -452,7 +452,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -486,7 +486,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -520,7 +520,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -554,7 +554,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -588,7 +588,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> s"${portType}"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -622,7 +622,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> "UInt"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> "UInt"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -656,7 +656,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> "UInt"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> "UInt"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -690,7 +690,7 @@ object ChiselModule {
   @strictpure override def width: Z = widthOfPort
   val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"${portType}" + "b" ~> "UInt"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> "UInt"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -723,7 +723,7 @@ object ChiselModule {
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty + "a" ~> s"SInt" + "b" ~> "SInt"
+    HashSMap.empty[String, String] + "a" ~> s"SInt" + "b" ~> "SInt"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -757,8 +757,8 @@ object ChiselModule {
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
   @strictpure override def portList: HashSMap[String, String] = {
-    if(customDiv) HashSMap.empty + "a" ~> s"SInt" + "b" ~> "SInt" + "start" ~> "Bool"
-    else HashSMap.empty + "a" ~> s"SInt" + "b" ~> "SInt"
+    if(customDiv) HashSMap.empty[String, String] + "a" ~> s"SInt" + "b" ~> "SInt" + "start" ~> "Bool"
+    else HashSMap.empty[String, String] + "a" ~> s"SInt" + "b" ~> "SInt"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
@@ -848,8 +848,8 @@ object ChiselModule {
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
   @strictpure override def portList: HashSMap[String, String] = {
-    if(customDiv) HashSMap.empty + "a" ~> s"SInt" + "b" ~> "SInt" + "start" ~> "Bool"
-    else HashSMap.empty + "a" ~> s"SInt" + "b" ~> "SInt"
+    if(customDiv) HashSMap.empty[String, String] + "a" ~> s"SInt" + "b" ~> "SInt" + "start" ~> "Bool"
+    else HashSMap.empty[String, String] + "a" ~> s"SInt" + "b" ~> "SInt"
   }
   @strictpure override def inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputList
   @strictpure override def expression: IpType = exp
