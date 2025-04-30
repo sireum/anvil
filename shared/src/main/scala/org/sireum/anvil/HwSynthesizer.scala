@@ -1149,37 +1149,38 @@ import HwSynthesizer._
     return finalList
   }
 
-  var ipModules: ISZ[ChiselModule] = ISZ[ChiselModule]() :+
-    Adder(F, "AdderUnsigned64", "adderUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Add, F), ISZ[Z]()) :+
-    Adder(T, "AdderSigned64", "adderSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Add, T), ISZ[Z]()) :+
-    Indexer(F, "Indexer", "indexer", 16, HashSMap.empty, IntrinsicIP(defaultIndexing), ISZ[Z]()) :+
-    And(F, "AndUnsigned64", "andUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.And, F), ISZ[Z]()) :+
-    And(T, "AndSigned64", "andSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.And, T), ISZ[Z]()) :+
-    Or(F, "OrUnsigned64", "orUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Or, F), ISZ[Z]()) :+
-    Or(T, "OrSigned64", "orSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Or, T), ISZ[Z]()) :+
-    Xor(F, "XorUnsigned64", "xorUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Xor, F), ISZ[Z]()) :+
-    Xor(T, "XorSigned64", "xorSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Xor, T), ISZ[Z]()) :+
-    Eq(F, "EqUnsigned64", "eqUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Eq, F), ISZ[Z]()) :+
-    Eq(T, "EqSigned64", "eqSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Eq, T), ISZ[Z]()) :+
-    Ne(F, "NeUnsigned64", "neUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ne, F), ISZ[Z]()) :+
-    Ne(T, "NeSigned64", "neSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ne, T), ISZ[Z]()) :+
-    Gt(F, "GtUnsigned64", "gtUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Gt, F), ISZ[Z]()) :+
-    Gt(T, "GtSigned64", "gtSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Gt, T), ISZ[Z]()) :+
-    Ge(F, "GeUnsigned64", "geUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ge, F), ISZ[Z]()) :+
-    Ge(T, "GeSigned64", "geSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ge, T), ISZ[Z]()) :+
-    Lt(F, "LtUnsigned64", "ltUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Lt, F), ISZ[Z]()) :+
-    Lt(T, "LtSigned64", "ltSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Lt, T), ISZ[Z]()) :+
-    Le(F, "LeUnsigned64", "leUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Le, F), ISZ[Z]()) :+
-    Le(T, "LeSigned64", "leSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Le, T), ISZ[Z]()) :+
-    Shr(F, "ShrUnsigned64", "shrUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Shr, F), ISZ[Z]()) :+
-    Shr(T, "ShrSigned64", "shrSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Shr, T), ISZ[Z]()) :+
-    Shl(F, "ShlUnsigned64", "shlUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Shl, F), ISZ[Z]()) :+
-    Shl(T, "ShlSigned64", "shlSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Shl, T), ISZ[Z]()) :+
-    Ushr(F, "UshrUnsigned64", "ushrUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ushr, F), ISZ[Z]()) :+
-    Ushr(T, "UshrSigned64", "ushrSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ushr, T), ISZ[Z]()) :+
-    Multiplier(T, "MultiplierSigned64", "multiplierSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Mul, T), ISZ[Z]()) :+
-    Division(T, "DivisionSigned64", "divisionSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), ISZ[Z](), anvil.config.customDivRem) :+
+  var ipModules: ISZ[ChiselModule] = ISZ[ChiselModule](
+    Adder(F, "AdderUnsigned64", "adderUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Add, F), ISZ[Z]()),
+    Adder(T, "AdderSigned64", "adderSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Add, T), ISZ[Z]()),
+    Indexer(F, "Indexer", "indexer", 16, HashSMap.empty, IntrinsicIP(defaultIndexing), ISZ[Z]()),
+    And(F, "AndUnsigned64", "andUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.And, F), ISZ[Z]()),
+    And(T, "AndSigned64", "andSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.And, T), ISZ[Z]()),
+    Or(F, "OrUnsigned64", "orUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Or, F), ISZ[Z]()),
+    Or(T, "OrSigned64", "orSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Or, T), ISZ[Z]()),
+    Xor(F, "XorUnsigned64", "xorUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Xor, F), ISZ[Z]()),
+    Xor(T, "XorSigned64", "xorSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Xor, T), ISZ[Z]()),
+    Eq(F, "EqUnsigned64", "eqUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Eq, F), ISZ[Z]()),
+    Eq(T, "EqSigned64", "eqSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Eq, T), ISZ[Z]()),
+    Ne(F, "NeUnsigned64", "neUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ne, F), ISZ[Z]()),
+    Ne(T, "NeSigned64", "neSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ne, T), ISZ[Z]()),
+    Gt(F, "GtUnsigned64", "gtUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Gt, F), ISZ[Z]()),
+    Gt(T, "GtSigned64", "gtSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Gt, T), ISZ[Z]()),
+    Ge(F, "GeUnsigned64", "geUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ge, F), ISZ[Z]()),
+    Ge(T, "GeSigned64", "geSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ge, T), ISZ[Z]()),
+    Lt(F, "LtUnsigned64", "ltUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Lt, F), ISZ[Z]()),
+    Lt(T, "LtSigned64", "ltSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Lt, T), ISZ[Z]()),
+    Le(F, "LeUnsigned64", "leUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Le, F), ISZ[Z]()),
+    Le(T, "LeSigned64", "leSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Le, T), ISZ[Z]()),
+    Shr(F, "ShrUnsigned64", "shrUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Shr, F), ISZ[Z]()),
+    Shr(T, "ShrSigned64", "shrSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Shr, T), ISZ[Z]()),
+    Shl(F, "ShlUnsigned64", "shlUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Shl, F), ISZ[Z]()),
+    Shl(T, "ShlSigned64", "shlSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Shl, T), ISZ[Z]()),
+    Ushr(F, "UshrUnsigned64", "ushrUnsigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ushr, F), ISZ[Z]()),
+    Ushr(T, "UshrSigned64", "ushrSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Ushr, T), ISZ[Z]()),
+    Multiplier(T, "MultiplierSigned64", "multiplierSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Mul, T), ISZ[Z]()),
+    Division(T, "DivisionSigned64", "divisionSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), ISZ[Z](), anvil.config.customDivRem),
     Remainder(T, "RemainerSigned64", "remainerSigned64", 64, HashSMap.empty, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), ISZ[Z](), anvil.config.customDivRem)
+  )
 
   /*
     Notes/links:
