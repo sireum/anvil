@@ -78,18 +78,23 @@ object AnvilTest {
   val dontTestFileSet: HashSet[String] = HashSet.empty[String]
   val noRuntimeCheckFileSet: HashSet[String] = HashSet.empty[String] + "indexing.sc"
   val simCyclesMap: HashMap[String, Z] = HashMap.empty[String, Z] +
-    "add.sc" ~> 700 +
-    "bubble.sc" ~> 700 +
-    "construct.sc" ~> 350 +
+    "add.sc" ~> 1300 +
+    "bubble.sc" ~> 2200 +
+    "construct.sc" ~> 1200 +
     "divrem.sc" ~> 1500 +
-    "factorial.sc" ~> 700 +
-    "global.sc" ~> 200 +
-    "instanceof.sc" ~> 200 +
-    "local-reuse.sc" ~> 400 +
-    "mult.sc" ~> 1000 +
-    "printU64.sc" ~> 1000 +
-    "seq.sc" ~> 500 +
-    "sum.sc" ~> 400
+    "factorial.sc" ~> 2100 +
+    "global.sc" ~> 400 +
+    "indexing.sc" ~> 600 +
+    "indexing-obj.sc" ~> 800 +
+    "instanceof.sc" ~> 500 +
+    "local-reuse.sc" ~> 1100 +
+    "mult.sc" ~> 2950 +
+    "print-no-float.sc" ~> 1100 +
+    "printU64.sc" ~> 2900 +
+    "seq.sc" ~> 1500 +
+    "shiftS64.sc" ~> 3700 +
+    "shiftU64.sc" ~> 4000 +
+    "sum.sc" ~> 1900
 
   val defaultMemory: Z = 256
   val defaultPrintSize: Z = 128
@@ -180,9 +185,10 @@ class AnvilTest extends SireumRcSpec {
           splitTempSizes = splitTempSizes,
           tempLocal = tempLocal,
           genVerilog = T,
-          axi4 = T,
+          axi4 = F,
           ipMax = ipMax,
-          simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles))
+          simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles)),
+          memoryAccess = Anvil.Config.MemoryAccess.Default
         )
 
         if (isInGitHubAction) {
