@@ -157,7 +157,7 @@ object Anvil {
     }
     fresh.setTemp(0)
     fresh.setLabel(startingLabel)
-    return Anvil(th, tsr, name, config, 0).generateIR(isTest, fresh, output, reporter)
+    return Anvil(tsr.typeHierarchy, tsr, name, config, 0).generateIR(isTest, fresh, output, reporter)
   }
 
 }
@@ -233,6 +233,7 @@ import Anvil._
 
     var testProcs = ISZ[AST.IR.Procedure]()
     var mainProcs = ISZ[AST.IR.Procedure]()
+
     val mq: (AST.IR.MethodContext, AST.IR.Program, Z, HashSMap[ISZ[String], VarInfo]) = {
       var globals = ISZ[AST.IR.Global]()
       var procedures = ISZ[AST.IR.Procedure]()
@@ -378,6 +379,91 @@ import Anvil._
         globalMap = globalMap + g.name ~> VarInfo(isScalar(g.tipe), globalSize, size, 0, g.tipe, g.pos)
         globalSize = globalSize + size
       }
+
+      def genTraitMethod(method: TypeSpecializer.SMethod): Unit = {
+        val info: Info.Method = th.typeMap.get(method.owner).get match {
+          case inf: TypeInfo.Sig =>
+            if (!inf.ast.isExt) {
+              return
+            }
+            inf.methods.get(method.id).get
+          case inf: TypeInfo.Adt =>
+            inf.methods.get(method.id).get
+          case _ => halt("Infeasible")
+        }
+        def findMethod(receiver: AST.Typed.Name): Info.Method = {
+          val adtInfo = tsr.typeHierarchy.typeMap.get(receiver.ids).get.asInstanceOf[TypeInfo.Adt]
+          val adtSm =
+            TypeChecker.buildTypeSubstMap(receiver.ids, None(), adtInfo.ast.typeParams, receiver.args, reporter).get
+          val mInfo = adtInfo.methods.get(method.id).get
+          val mt = mInfo.methodType.tpe.subst(adtSm)
+          val rep = Reporter.create
+          val th = tsr.typeHierarchy
+          for (m <- tsr.methods.get(receiver.ids).get.elements if m.info.ast.sig.id.value == method.id) {
+            val smOpt = TypeChecker.unify(th, None(), TypeChecker.TypeRelation.Equal, m.info.methodType.tpe, mt, rep)
+            if (smOpt.nonEmpty) {
+              return m.info
+            }
+          }
+          halt(s"Infeasible: $method of $receiver}")
+        }
+        val receiver = method.receiverOpt.get
+        val methodContext = AST.IR.MethodContext(F, info.owner, method.id, method.tpe(args = receiver +: method.tpe.args))
+        var impls = ISZ[(Z, AST.Typed.Name, AST.IR.Exp)]()
+        val pos = info.posOpt.get
+        val paramNames: ISZ[String] = "this" +: (for (p <- info.ast.sig.params) yield p.id.value)
+        val label = fresh.label()
+        val thiz = AST.IR.Exp.LocalVarRef(T, methodContext, "this", methodContext.receiverType, pos)
+        for (t <- tsr.typeImpl.childrenOf(receiver).elements) {
+          val adt = th.typeMap.get(t.ids).get.asInstanceOf[TypeInfo.Adt]
+          adt.vars.get(method.id) match {
+            case Some(_) =>
+              impls = impls :+ (fresh.label(), t, AST.IR.Exp.FieldVarRef(thiz, method.id, method.tpe.ret, pos))
+            case _ =>
+              val minfo = findMethod(t)
+              var args = ISZ[AST.IR.Exp]()
+              val pt = minfo.ast.sig.funType(args = t +: minfo.ast.sig.funType.args)
+              for (ptt <- ops.ISZOps(paramNames).zip(ops.ISZOps(methodContext.t.args).zip(pt.args))) {
+                val (id, (paramType , argType)) = ptt
+                val mpos = minfo.posOpt.get
+                var arg: AST.IR.Exp = AST.IR.Exp.LocalVarRef(T, methodContext, id, paramType, mpos)
+                if (argType != paramType) {
+                  arg = AST.IR.Exp.Type(F, arg, argType.asInstanceOf[AST.Typed.Name], mpos)
+                }
+                args = args :+ arg
+              }
+              impls = impls :+ (fresh.label(), t, AST.IR.Exp.Apply(F, minfo.owner, method.id, args, pt, pos))
+          }
+        }
+        var blocks = ISZ[AST.IR.BasicBlock](
+          AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Switch(
+            AST.IR.Exp.FieldVarRef(thiz, typeFieldId, typeShaType, pos),
+            for (impl <- impls) yield AST.IR.Jump.Switch.Case(
+              AST.IR.Exp.Int(typeShaType, sha3Type(impl._2).toZ, pos), impl._1),
+            None(), pos
+          ))
+        )
+        for (impl <- impls) {
+          val (label, _, exp) = impl
+          if (method.tpe.ret == AST.Typed.unit) {
+            blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(AST.IR.Stmt.Expr(exp.asInstanceOf[AST.IR.Exp.Apply])),
+              AST.IR.Jump.Return(None(), exp.pos))
+          } else {
+            var r = exp
+            if (methodContext.t.ret != exp.tipe) {
+              r = AST.IR.Exp.Type(F, r, methodContext.t.ret.asInstanceOf[AST.Typed.Name], exp.pos)
+            }
+            blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Return(Some(r), exp.pos))
+          }
+        }
+        procedures = procedures :+ AST.IR.Procedure(F, ISZ(), method.owner, method.id, paramNames, methodContext.t,
+          AST.IR.Body.Basic(blocks), pos)
+      }
+
+      for (method <- tsr.traitMethods.elements) {
+        genTraitMethod(method)
+      }
+
       (startOpt.get.context, AST.IR.Program(threeAddressCode, globals, procedures), globalSize, globalMap)
     }
 
