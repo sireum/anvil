@@ -412,8 +412,9 @@ import Anvil._
         var impls = ISZ[(Z, AST.Typed.Name, AST.IR.Exp)]()
         val pos = info.posOpt.get
         val paramNames: ISZ[String] = "this" +: (for (p <- info.ast.sig.params) yield p.id.value)
+        fresh.setTemp(0)
         val label = fresh.label()
-        val thiz = AST.IR.Exp.LocalVarRef(T, methodContext, "this", methodContext.receiverType, pos)
+        val thiz = AST.IR.Exp.Temp(fresh.temp(), receiver, pos)
         for (t <- tsr.typeImpl.childrenOf(receiver).elements) {
           val adt = th.typeMap.get(t.ids).get.asInstanceOf[TypeInfo.Adt]
           adt.vars.get(method.id) match {
@@ -436,13 +437,17 @@ import Anvil._
           }
         }
         var blocks = ISZ[AST.IR.BasicBlock](
-          AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Switch(
+          AST.IR.BasicBlock(label, ISZ(
+            AST.IR.Stmt.Assign.Temp(thiz.n,
+              AST.IR.Exp.LocalVarRef(T, methodContext, "this", methodContext.receiverType, pos), pos)
+          ), AST.IR.Jump.Switch(
             AST.IR.Exp.FieldVarRef(thiz, typeFieldId, typeShaType, pos),
             for (impl <- impls) yield AST.IR.Jump.Switch.Case(
               AST.IR.Exp.Int(typeShaType, sha3Type(impl._2).toZ, pos), impl._1),
             None(), pos
           ))
         )
+        val temp = fresh.temp()
         for (impl <- impls) {
           val (label, _, exp) = impl
           if (method.tpe.ret == AST.Typed.unit) {
@@ -453,7 +458,9 @@ import Anvil._
             if (methodContext.t.ret != exp.tipe) {
               r = AST.IR.Exp.Type(F, r, methodContext.t.ret.asInstanceOf[AST.Typed.Name], exp.pos)
             }
-            blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Return(Some(r), exp.pos))
+            blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(
+              AST.IR.Stmt.Assign.Temp(temp, r, exp.pos)
+            ), AST.IR.Jump.Return(Some(AST.IR.Exp.Temp(temp, exp.tipe, exp.pos)), exp.pos))
           }
         }
         procedures = procedures :+ AST.IR.Procedure(F, ISZ(), method.owner, method.id, paramNames, methodContext.t,
