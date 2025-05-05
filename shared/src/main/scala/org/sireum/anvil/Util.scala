@@ -722,7 +722,7 @@ object Util {
     }
     @strictpure def stmt(stmt: AST.IR.Stmt): Option[ST] = stmt match {
       case stmt: AST.IR.Stmt.Assign.Temp if anvil.config.splitTempSizes =>
-        Some(st"${tempST(anvil, stmt.rhs.tipe, stmt.lhs)} = ${stmt.rhs.prettyST(anvil.printer)}")
+        Some(st"${tempST(anvil, stmt.rhs.tipe, stmt.lhs)} = ${stmt.rhs.prettyST(this)}")
       case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isInc =>
         ipAlloc.allocMap.get(IpAlloc.Ext.exp(in.value)) match {
           case Some(n) => Some(st"${stmt.prettyRawST(this)} /* IP#$n */")
