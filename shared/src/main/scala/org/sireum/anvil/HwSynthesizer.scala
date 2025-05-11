@@ -2460,47 +2460,10 @@ object HwSynthesizer {
       }
       val signed: B = isSignedExp(o.left) || isSignedExp(o.right)
       if(anvil.config.useIP) {
-        /*
-        if (o.op == AST.IR.Exp.Binary.Op.Add) {
-          inputLogic(BinaryIP(o.op, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Sub) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Add, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.And) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.And, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Or) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Xor) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Eq) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Ne) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Lt) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Lt, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Le) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Le, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Gt) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Gt, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Ge) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Ge, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Shr) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Shr, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Shl) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Shl, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Ushr) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Div) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Div, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Rem) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Rem, signed))
-        } else if (o.op == AST.IR.Exp.Binary.Op.Mul) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Mul, signed))
+        o.op match {
+          case AST.IR.Exp.Binary.Op.Sub => inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Add, signed))
+          case _ => inputLogic(BinaryIP(o.op, signed))
         }
-        */
-      }
-      o.op match {
-        case AST.IR.Exp.Binary.Op.Sub => inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Add, signed))
-        case _ => inputLogic(BinaryIP(o.op, signed))
       }
       return MAnvilIRTransformer.PreResult_langastIRExpBinary
     }
