@@ -120,8 +120,10 @@ object DivRemLog {
   }
 }
 
-@sig trait IpType
-@datatype class BinaryIP(t: AST.IR.Exp.Binary.Op.Type, signed: B)extends IpType
+@sig trait IpType {
+
+}
+@datatype class BinaryIP(t: AST.IR.Exp.Binary.Op.Type, signed: B) extends IpType
 @datatype class IntrinsicIP(t: AST.IR.Exp.Intrinsic.Type) extends IpType
 
 @record @unclonable class InputMap(var ipMap: HashSMap[IpType, HashSMap[Z, HashSMap[String, ChiselModule.Input]]]) {
@@ -156,8 +158,11 @@ object InputMap {
     BinaryIP(AST.IR.Exp.Binary.Op.Ushr, T) ~> HashSMap.empty,
     BinaryIP(AST.IR.Exp.Binary.Op.Ushr, F) ~> HashSMap.empty,
     BinaryIP(AST.IR.Exp.Binary.Op.Mul, T) ~> HashSMap.empty,
+    BinaryIP(AST.IR.Exp.Binary.Op.Mul, F) ~> HashSMap.empty,
     BinaryIP(AST.IR.Exp.Binary.Op.Div, T) ~> HashSMap.empty,
+    BinaryIP(AST.IR.Exp.Binary.Op.Div, F) ~> HashSMap.empty,
     BinaryIP(AST.IR.Exp.Binary.Op.Rem, T) ~> HashSMap.empty,
+    BinaryIP(AST.IR.Exp.Binary.Op.Rem, F) ~> HashSMap.empty,
     IntrinsicIP(HwSynthesizer.defaultIndexing) ~> HashSMap.empty
   ))
 }
@@ -170,69 +175,6 @@ object InputMap {
   @strictpure def expression: IpType
   @strictpure def moduleName: String
   @strictpure def instanceName: String
-  @strictpure def indexSeq: ISZ[Z]
-  @pure def instanceDeclST: ST = {
-    val moduleInstances: ST = {
-      val modDeclIns: ISZ[ST] = {
-        for(i <- 0 until indexSeq.size) yield
-          st"""val ${instanceName}_${indexSeq(i)} = Module(new ${moduleName}(${width}))"""
-      }
-
-      st"""
-          |${(modDeclIns, "\n")}
-        """
-    }
-    return moduleInstances
-  }
-  @pure def instancePortCallST: ST = {
-    var portCallST: ISZ[ST] = ISZ()
-    for(i <- 0 until indexSeq.size) {
-      portCallST = portCallST :+ st"init${instanceName}_${indexSeq(i)}()"
-    }
-    return st"""
-        |${(portCallST, "\n")}
-      """
-  }
-  @pure def instancePortFuncST(): ST = {
-
-    @pure def inputPortListSTWithoutMux(modIdx: Z): ST = {
-      @strictpure def defaultValue(portValueType: String): String = {
-        portValueType match {
-          case "UInt" => "0.U"
-          case "SInt" => "0.S"
-          case "Bool" => "false.B"
-          case _ => halt(s"${portValueType} is not support in input type")
-        }
-      }
-      var muxLogicST: ISZ[ST] = ISZ[ST]()
-
-      for(entry <- portList.entries) {
-        muxLogicST = muxLogicST :+ st"o.${instanceName}_${modIdx}.io.${entry._1} := ${defaultValue(entry._2)}"
-      }
-
-      return st"""
-          |def init${instanceName}_${modIdx}() = {
-          |  ${(muxLogicST, "\n")}
-          |}
-        """
-    }
-
-
-    val instancePort: ST = {
-      val modPortInsWithoutMux: ISZ[ST] = {
-        for(i <- 0 until indexSeq.size) yield
-          st"""${(inputPortListSTWithoutMux(indexSeq(i)), "\n")}"""
-      }
-
-        st"""
-            |${(modPortInsWithoutMux, "\n")}
-        """
-    }
-
-    return st"""
-               |${(instancePort, "\n")}
-               """
-  }
 }
 
 object ChiselModule {
@@ -246,8 +188,7 @@ object ChiselModule {
                       val moduleDeclarationName: String,
                       val moduleInstanceName: String,
                       val widthOfPort: Z,
-                      val exp: IpType,
-                      val idxSeq: ISZ[Z]) extends ChiselModule {
+                      val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -257,7 +198,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}" + "op" ~> "Bool"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -278,8 +218,7 @@ object ChiselModule {
                         val moduleDeclarationName: String,
                         val moduleInstanceName: String,
                         val widthOfPort: Z,
-                        val exp: IpType,
-                        val idxSeq: ISZ[Z]) extends ChiselModule {
+                        val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -289,7 +228,6 @@ object ChiselModule {
       "elementSize" ~> "UInt" + "mask" ~> "UInt" + "ready" ~> "Bool"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class Indexer(val width: Int = 16) extends Module {
@@ -337,8 +275,7 @@ object ChiselModule {
                     val moduleDeclarationName: String,
                     val moduleInstanceName: String,
                     val widthOfPort: Z,
-                    val exp: IpType,
-                    val idxSeq: ISZ[Z]) extends ChiselModule {
+                    val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -348,7 +285,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -368,8 +304,7 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val exp: IpType,
-                   val idxSeq: ISZ[Z]) extends ChiselModule {
+                   val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -379,7 +314,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -399,8 +333,7 @@ object ChiselModule {
                     val moduleDeclarationName: String,
                     val moduleInstanceName: String,
                     val widthOfPort: Z,
-                    val exp: IpType,
-                    val idxSeq: ISZ[Z]) extends ChiselModule {
+                    val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -410,7 +343,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -430,8 +362,7 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val exp: IpType,
-                   val idxSeq: ISZ[Z]) extends ChiselModule {
+                   val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -441,7 +372,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -461,8 +391,7 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val exp: IpType,
-                   val idxSeq: ISZ[Z]) extends ChiselModule {
+                   val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -472,7 +401,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -492,8 +420,7 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val exp: IpType,
-                   val idxSeq: ISZ[Z]) extends ChiselModule {
+                   val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -503,7 +430,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -523,8 +449,7 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val exp: IpType,
-                   val idxSeq: ISZ[Z]) extends ChiselModule {
+                   val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -534,7 +459,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -554,8 +478,7 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val exp: IpType,
-                   val idxSeq: ISZ[Z]) extends ChiselModule {
+                   val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -565,7 +488,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -585,8 +507,7 @@ object ChiselModule {
                    val moduleDeclarationName: String,
                    val moduleInstanceName: String,
                    val widthOfPort: Z,
-                   val exp: IpType,
-                   val idxSeq: ISZ[Z]) extends ChiselModule {
+                   val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -596,7 +517,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -616,8 +536,7 @@ object ChiselModule {
                     val moduleDeclarationName: String,
                     val moduleInstanceName: String,
                     val widthOfPort: Z,
-                    val exp: IpType,
-                    val idxSeq: ISZ[Z]) extends ChiselModule {
+                    val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -627,7 +546,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> "UInt"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -647,8 +565,7 @@ object ChiselModule {
                     val moduleDeclarationName: String,
                     val moduleInstanceName: String,
                     val widthOfPort: Z,
-                    val exp: IpType,
-                    val idxSeq: ISZ[Z]) extends ChiselModule {
+                    val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -658,7 +575,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> "UInt"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -678,8 +594,7 @@ object ChiselModule {
                      val moduleDeclarationName: String,
                      val moduleInstanceName: String,
                      val widthOfPort: Z,
-                     val exp: IpType,
-                     val idxSeq: ISZ[Z]) extends ChiselModule {
+                     val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -689,7 +604,6 @@ object ChiselModule {
     HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> "UInt"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
@@ -709,24 +623,23 @@ object ChiselModule {
                            val moduleDeclarationName: String,
                            val moduleInstanceName: String,
                            val widthOfPort: Z,
-                           val exp: IpType,
-                           val idxSeq: ISZ[Z]) extends ChiselModule {
+                           val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    HashSMap.empty[String, String] + "a" ~> s"SInt" + "b" ~> "SInt"
+    HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
-        |        val a = Input(SInt(width.W))
-        |        val b = Input(SInt(width.W))
-        |        val out = Output(SInt(width.W))
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(${portType}(width.W))
+        |        val out = Output(${portType}(width.W))
         |    })
         |
         |    io.out := io.a * io.b
@@ -740,29 +653,28 @@ object ChiselModule {
                          val moduleInstanceName: String,
                          val widthOfPort: Z,
                          val exp: IpType,
-                         val idxSeq: ISZ[Z],
                          val customDiv: B) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    if(customDiv) HashSMap.empty[String, String] + "a" ~> s"SInt" + "b" ~> "SInt" + "start" ~> "Bool"
-    else HashSMap.empty[String, String] + "a" ~> s"SInt" + "b" ~> "SInt"
+    if(customDiv) HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}" + "start" ~> "Bool"
+    else HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     if(customDiv)
     st"""
         |class ${moduleName}(val width: Int = 64) extends Module {
         |  val io = IO(new Bundle {
-        |    val a = Input(SInt(width.W))
-        |    val b = Input(SInt(width.W))
+        |    val a = Input(${portType}(width.W))
+        |    val b = Input(${portType}(width.W))
         |    val start = Input(Bool())
         |    val valid = Output(Bool())
-        |    val quotient = Output(SInt(width.W))
-        |    val remainder = Output(SInt(width.W))
+        |    val quotient = Output(${portType}(width.W))
+        |    val remainder = Output(${portType}(width.W))
         |  })
         |
         |  val a_neg = io.a(width-1)
@@ -804,8 +716,8 @@ object ChiselModule {
         |    }
         |  }
         |
-        |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient).asSInt
-        |  io.remainder := Mux(a_neg, -remainder, remainder).asSInt
+        |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient)${if(signedPort) ".asSInt" else ""}
+        |  io.remainder := Mux(a_neg, -remainder, remainder)${if(signedPort) ".asSInt" else ""}
         |  io.valid := count === 0.U
         |}
       """
@@ -813,9 +725,9 @@ object ChiselModule {
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
           |    val io = IO(new Bundle{
-          |        val a = Input(SInt(width.W))
-          |        val b = Input(SInt(width.W))
-          |        val out = Output(SInt(width.W))
+          |        val a = Input(${portType}(width.W))
+          |        val b = Input(${portType}(width.W))
+          |        val out = Output(${portType}(width.W))
           |    })
           |    io.out := io.a / io.b
           |}
@@ -828,29 +740,28 @@ object ChiselModule {
                          val moduleInstanceName: String,
                          val widthOfPort: Z,
                          val exp: IpType,
-                         val idxSeq: ISZ[Z],
                          val customDiv: B) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
   @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
   @strictpure override def portList: HashSMap[String, String] = {
-    if(customDiv) HashSMap.empty[String, String] + "a" ~> s"SInt" + "b" ~> "SInt" + "start" ~> "Bool"
-    else HashSMap.empty[String, String] + "a" ~> s"SInt" + "b" ~> "SInt"
+    if(customDiv) HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}" + "start" ~> "Bool"
+    else HashSMap.empty[String, String] + "a" ~> s"${portType}" + "b" ~> s"${portType}"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def indexSeq: ISZ[Z] = idxSeq
   @strictpure override def moduleST: ST = {
     if(customDiv)
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
           |  val io = IO(new Bundle {
-          |    val a = Input(SInt(width.W))
-          |    val b = Input(SInt(width.W))
+          |    val a = Input(${portType}(width.W))
+          |    val b = Input(${portType}(width.W))
           |    val start = Input(Bool())
           |    val valid = Output(Bool())
-          |    val quotient = Output(SInt(width.W))
-          |    val remainder = Output(SInt(width.W))
+          |    val quotient = Output(${portType}(width.W))
+          |    val remainder = Output(${portType}(width.W))
           |  })
           |
           |  val a_neg = io.a(width-1)
@@ -892,8 +803,8 @@ object ChiselModule {
           |    }
           |  }
           |
-          |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient).asSInt
-          |  io.remainder := Mux(a_neg, -remainder, remainder).asSInt
+          |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient)${if(signedPort) ".asSInt" else ""}
+          |  io.remainder := Mux(a_neg, -remainder, remainder)${if(signedPort) ".asSInt" else ""}
           |  io.valid := count === 0.U
           |}
       """
@@ -901,9 +812,9 @@ object ChiselModule {
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
           |    val io = IO(new Bundle{
-          |        val a = Input(SInt(width.W))
-          |        val b = Input(SInt(width.W))
-          |        val out = Output(SInt(width.W))
+          |        val a = Input(${portType}(width.W))
+          |        val b = Input(${portType}(width.W))
+          |        val out = Output(${portType}(width.W))
           |    })
           |    io.out := io.a % io.b
           |}
@@ -918,22 +829,118 @@ import HwSynthesizer._
 
   var ipAlloc: Util.IpAlloc = Util.IpAlloc(HashSMap.empty, HashSMap.empty, 0)
 
-  @pure def insertIPInput(ip: IpType, newHashSMap: HashSMap[Z, HashSMap[String, ChiselModule.Input]], instanceIndex: Z, inputMap: InputMap): Unit = {
-    @pure def updateSeq(seq: ISZ[Z], item: Z): ISZ[Z] = {
-      for(i <- 0 until seq.size) {
-        if(seq(i) == item) {
-          return seq
-        }
-      }
-      return seq :+ item
-    }
-    var index: Z = 0
+  var ipModules: ISZ[ChiselModule] = ISZ[ChiselModule](
+    Adder(F, "AdderUnsigned64", "adderUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Add, F)),
+    Adder(T, "AdderSigned64", "adderSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Add, T)),
+    Indexer(F, "Indexer", "indexer", 16, IntrinsicIP(defaultIndexing)),
+    And(F, "AndUnsigned64", "andUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.And, F)),
+    And(T, "AndSigned64", "andSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.And, T)),
+    Or(F, "OrUnsigned64", "orUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Or, F)),
+    Or(T, "OrSigned64", "orSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Or, T)),
+    Xor(F, "XorUnsigned64", "xorUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Xor, F)),
+    Xor(T, "XorSigned64", "xorSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Xor, T)),
+    Eq(F, "EqUnsigned64", "eqUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Eq, F)),
+    Eq(T, "EqSigned64", "eqSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Eq, T)),
+    Ne(F, "NeUnsigned64", "neUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ne, F)),
+    Ne(T, "NeSigned64", "neSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ne, T)),
+    Gt(F, "GtUnsigned64", "gtUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Gt, F)),
+    Gt(T, "GtSigned64", "gtSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Gt, T)),
+    Ge(F, "GeUnsigned64", "geUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ge, F)),
+    Ge(T, "GeSigned64", "geSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ge, T)),
+    Lt(F, "LtUnsigned64", "ltUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Lt, F)),
+    Lt(T, "LtSigned64", "ltSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Lt, T)),
+    Le(F, "LeUnsigned64", "leUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Le, F)),
+    Le(T, "LeSigned64", "leSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Le, T)),
+    Shr(F, "ShrUnsigned64", "shrUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shr, F)),
+    Shr(T, "ShrSigned64", "shrSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shr, T)),
+    Shl(F, "ShlUnsigned64", "shlUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shl, F)),
+    Shl(T, "ShlSigned64", "shlSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shl, T)),
+    Ushr(F, "UshrUnsigned64", "ushrUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ushr, F)),
+    Ushr(T, "UshrSigned64", "ushrSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ushr, T)),
+    Multiplier(F, "MultiplierUnsigned64", "multiplierUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Mul, F)),
+    Multiplier(T, "MultiplierSigned64", "multiplierSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Mul, T)),
+    Division(F, "DivisionUnsigned64", "divisionUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, F), anvil.config.customDivRem),
+    Division(T, "DivisionSigned64", "divisionSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), anvil.config.customDivRem),
+    Remainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, F), anvil.config.customDivRem),
+    Remainder(T, "RemainerSigned64", "remainerSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), anvil.config.customDivRem)
+  )
+
+  @pure def findChiselModule(ip: IpType): Option[ChiselModule] = {
     for(i <- 0 until ipModules.size) {
       if(ipModules(i).expression == ip) {
-        index = i
+        return Some(ipModules(i))
       }
     }
-    val idxSeq: ISZ[Z] = updateSeq(ipModules(index).indexSeq, instanceIndex)
+    return None()
+  }
+
+  @pure def insDeclST(ip: IpType, numInstances: Z): ST = {
+    val targetModule: ChiselModule = findChiselModule(ip).get
+    val moduleInstances: ST = {
+      val modDeclIns: ISZ[ST] = {
+        for(i <- 0 until numInstances) yield
+          st"""val ${targetModule.instanceName}_${i} = Module(new ${targetModule.moduleName}(${targetModule.width}))"""
+      }
+
+      st"""
+          |${(modDeclIns, "\n")}
+        """
+    }
+    return moduleInstances
+  }
+
+  @pure def insPortCallST(ip: IpType, numInstances: Z): ST = {
+    val targetModule: ChiselModule = findChiselModule(ip).get
+    var portCallST: ISZ[ST] = ISZ()
+    for(i <- 0 until numInstances) {
+      portCallST = portCallST :+ st"init${targetModule.instanceName}_${i}()"
+    }
+    return st"""
+        |${(portCallST, "\n")}
+      """
+  }
+
+  @pure def insPortFuncST(ip: IpType, numInstances: Z): ST = {
+    val targetModule: ChiselModule = findChiselModule(ip).get
+    @pure def inputPortListSTWithoutMux(modIdx: Z): ST = {
+      @strictpure def defaultValue(portValueType: String): String = {
+        portValueType match {
+          case "UInt" => "0.U"
+          case "SInt" => "0.S"
+          case "Bool" => "false.B"
+          case _ => halt(s"${portValueType} is not support in input type")
+        }
+      }
+      var muxLogicST: ISZ[ST] = ISZ[ST]()
+
+      for(entry <- targetModule.portList.entries) {
+        muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}_${modIdx}.io.${entry._1} := ${defaultValue(entry._2)}"
+      }
+
+      return st"""
+                 |def init${targetModule.instanceName}_${modIdx}() = {
+                 |  ${(muxLogicST, "\n")}
+                 |}
+        """
+    }
+
+    val instancePort: ST = {
+      val modPortInsWithoutMux: ISZ[ST] = {
+        for(i <- 0 until numInstances) yield
+          st"""${(inputPortListSTWithoutMux(i), "\n")}"""
+      }
+
+      st"""
+            |${(modPortInsWithoutMux, "\n")}
+        """
+    }
+
+    return st"""
+               |${(instancePort, "\n")}
+               """
+  }
+
+  @pure def insertIPInput(ip: IpType, newHashSMap: HashSMap[Z, HashSMap[String, ChiselModule.Input]], inputMap: InputMap): Unit = {
     var h: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputMap.ipMap.get(ip).get
     for(entry <- newHashSMap.entries) {
       h = h + entry._1 ~> entry._2
@@ -941,159 +948,6 @@ import HwSynthesizer._
 
     inputMap.ipMap = inputMap.ipMap - (ip, inputMap.ipMap.get(ip).get)
     inputMap.ipMap = inputMap.ipMap + (ip, h)
-
-    val updatedModule: ChiselModule = ip match {
-      case BinaryIP(AST.IR.Exp.Binary.Op.Add, _) => {
-        Adder(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.And, _) => {
-        And(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Or, _) => {
-        Or(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Xor, _) => {
-        Xor(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Eq, _) => {
-        Eq(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Ne, _) => {
-        Ne(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Gt, _) => {
-        Gt(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Ge, _) => {
-        Ge(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Lt, _) => {
-        Lt(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Le, _) => {
-        Le(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Shr, _) => {
-        Shr(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Shl, _) => {
-        Shl(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Ushr, _) => {
-        Ushr(ipModules(index).signed,
-          ipModules(index).moduleName,
-          ipModules(index).instanceName,
-          ipModules(index).width,
-          ipModules(index).expression,
-          idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Mul, _) => {
-        Multiplier(ipModules(index).signed,
-                   ipModules(index).moduleName,
-                   ipModules(index).instanceName,
-                   ipModules(index).width,
-                   ipModules(index).expression,
-                   idxSeq)
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Div, _) => {
-        Division(ipModules(index).signed,
-                 ipModules(index).moduleName,
-                 ipModules(index).instanceName,
-                 ipModules(index).width,
-                 ipModules(index).expression,
-                 idxSeq,
-                 anvil.config.customDivRem
-        )
-      }
-      case BinaryIP(AST.IR.Exp.Binary.Op.Rem, _) => {
-        Remainder(ipModules(index).signed,
-                  ipModules(index).moduleName,
-                  ipModules(index).instanceName,
-                  ipModules(index).width,
-                  ipModules(index).expression,
-                  idxSeq,
-                  anvil.config.customDivRem
-        )
-      }
-      case IntrinsicIP(defaultIndexing) => {
-        Indexer(ipModules(index).signed,
-                ipModules(index).moduleName,
-                ipModules(index).instanceName,
-                ipModules(index).width,
-                ipModules(index).expression,
-                idxSeq)
-      }
-    }
-    var modules: ISZ[ChiselModule] = ISZ[ChiselModule]()
-    for(j <- 0 until index) {
-      modules = modules :+ ipModules(j)
-    }
-    modules = modules :+ updatedModule
-    for(j <- index+1 until ipModules.size) {
-      modules = modules :+ ipModules(j)
-    }
-
-    ipModules = modules
   }
 
   @pure def getIpInstanceName(ip: IpType): Option[String] = {
@@ -1116,38 +970,6 @@ import HwSynthesizer._
     return finalList
   }
 
-  var ipModules: ISZ[ChiselModule] = ISZ[ChiselModule](
-    Adder(F, "AdderUnsigned64", "adderUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Add, F), ISZ[Z]()),
-    Adder(T, "AdderSigned64", "adderSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Add, T), ISZ[Z]()),
-    Indexer(F, "Indexer", "indexer", 16, IntrinsicIP(defaultIndexing), ISZ[Z]()),
-    And(F, "AndUnsigned64", "andUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.And, F), ISZ[Z]()),
-    And(T, "AndSigned64", "andSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.And, T), ISZ[Z]()),
-    Or(F, "OrUnsigned64", "orUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Or, F), ISZ[Z]()),
-    Or(T, "OrSigned64", "orSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Or, T), ISZ[Z]()),
-    Xor(F, "XorUnsigned64", "xorUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Xor, F), ISZ[Z]()),
-    Xor(T, "XorSigned64", "xorSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Xor, T), ISZ[Z]()),
-    Eq(F, "EqUnsigned64", "eqUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Eq, F), ISZ[Z]()),
-    Eq(T, "EqSigned64", "eqSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Eq, T), ISZ[Z]()),
-    Ne(F, "NeUnsigned64", "neUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ne, F), ISZ[Z]()),
-    Ne(T, "NeSigned64", "neSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ne, T), ISZ[Z]()),
-    Gt(F, "GtUnsigned64", "gtUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Gt, F), ISZ[Z]()),
-    Gt(T, "GtSigned64", "gtSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Gt, T), ISZ[Z]()),
-    Ge(F, "GeUnsigned64", "geUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ge, F), ISZ[Z]()),
-    Ge(T, "GeSigned64", "geSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ge, T), ISZ[Z]()),
-    Lt(F, "LtUnsigned64", "ltUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Lt, F), ISZ[Z]()),
-    Lt(T, "LtSigned64", "ltSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Lt, T), ISZ[Z]()),
-    Le(F, "LeUnsigned64", "leUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Le, F), ISZ[Z]()),
-    Le(T, "LeSigned64", "leSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Le, T), ISZ[Z]()),
-    Shr(F, "ShrUnsigned64", "shrUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shr, F), ISZ[Z]()),
-    Shr(T, "ShrSigned64", "shrSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shr, T), ISZ[Z]()),
-    Shl(F, "ShlUnsigned64", "shlUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shl, F), ISZ[Z]()),
-    Shl(T, "ShlSigned64", "shlSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shl, T), ISZ[Z]()),
-    Ushr(F, "UshrUnsigned64", "ushrUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ushr, F), ISZ[Z]()),
-    Ushr(T, "UshrSigned64", "ushrSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ushr, T), ISZ[Z]()),
-    Multiplier(T, "MultiplierSigned64", "multiplierSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Mul, T), ISZ[Z]()),
-    Division(T, "DivisionSigned64", "divisionSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), ISZ[Z](), anvil.config.customDivRem),
-    Remainder(T, "RemainerSigned64", "remainerSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), ISZ[Z](), anvil.config.customDivRem)
-  )
 
   /*
     Notes/links:
@@ -1595,28 +1417,33 @@ import HwSynthesizer._
 
       val instanceDeclST: ST = {
         var instanceST: ISZ[ST] = ISZ()
-        for(i <- 0 until ipModules.size) {
-          instanceST = instanceST :+ ipModules(i).instanceDeclST
+        for(entry <- ipAlloc.binopAllocSizeMap.entries) {
+          val b: IpType = BinaryIP(entry._1._2, entry._1._1)
+          instanceST = instanceST :+ insDeclST(b, entry._2)
         }
+        instanceST = instanceST :+ insDeclST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
         st"""${(instanceST, "\n")}"""
       }
 
       val instancePortFuncST: ST = {
         var instanceST: ISZ[ST] = ISZ()
-        for(i <- 0 until ipModules.size) {
-          instanceST = instanceST :+ ipModules(i).instancePortFuncST()
+        for(entry <- ipAlloc.binopAllocSizeMap.entries) {
+          val b: IpType = BinaryIP(entry._1._2, entry._1._1)
+          instanceST = instanceST :+ insPortFuncST(b, entry._2)
         }
+        instanceST = instanceST :+ insPortFuncST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
         st"""${(instanceST, "\n")}"""
       }
 
       val instancePortCallST: ST = {
         var instanceST: ISZ[ST] = ISZ()
-        for(i <- 0 until ipModules.size) {
-          instanceST = instanceST :+ ipModules(i).instancePortCallST
+        for(entry <- ipAlloc.binopAllocSizeMap.entries) {
+          val b: IpType = BinaryIP(entry._1._2, entry._1._1)
+          instanceST = instanceST :+ insPortCallST(b, entry._2)
         }
+        instanceST = instanceST :+ insPortCallST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
         st"""${(instanceST, "\n")}"""
       }
-
 
       return st"""
           |import chisel3._
@@ -1746,7 +1573,7 @@ import HwSynthesizer._
               |  ${indexerName}_${activeIndex}.io.start := false.B
               |}
             """
-        } else if(!MemCopyLog.isMemCopyInBlock() & !anvil.config.customDivRem) {
+        } else if(!MemCopyLog.isMemCopyInBlock()) {
           jump
         } else {
           st""
@@ -1797,7 +1624,6 @@ import HwSynthesizer._
       DivRemLog.disableFlagDivisionInBlock()
       DivRemLog.disableFlagRemainderInBlock()
 
-      //clearAllIPInput()
     }
 
     return basicBlockST(allGroundsST, allFunctionsST)
@@ -1907,6 +1733,9 @@ import HwSynthesizer._
 
     ipPortLogic.transform_langastIRJump(j)
     intrinsicST = intrinsicST ++ ipPortLogic.sts
+
+    ipPortLogic.sts = ISZ[ST]()
+    ipPortLogic.inputMap = InputMap.empty
 
     return st"""${(intrinsicST, "\n")}"""
   }
@@ -2088,7 +1917,7 @@ import HwSynthesizer._
             val allocIndex: Z = getIpAllocIndex(intrinsic.value)
             var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
             hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt") + "op" ~> (if (isPlus) st"true.B" else st"false.B", "Bool")
-            insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, F), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+            insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, F), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
             val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, F)).get
             intrinsicST =
               st"""
@@ -2224,7 +2053,7 @@ import HwSynthesizer._
           "mask" ~> (st"${mask}.U", "UInt") +
           "ready" ~> (st"true.B", "Bool")
 
-        insertIPInput(IntrinsicIP(defaultIndexing), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+        insertIPInput(IntrinsicIP(defaultIndexing), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
         val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
 
         exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
@@ -2280,7 +2109,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt") + "op" ~> (st"true.B", "Bool")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2296,7 +2125,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt") + "op" ~> (st"false.B", "Bool")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2310,12 +2139,11 @@ import HwSynthesizer._
               if(isSIntOperation) {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}.asSInt", "SInt") + "b" ~> (st"${rightST.render}.asSInt", "SInt")
+                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Mul, T), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Mul, T)).get
-              val placeHolder: String = if(isSIntOperation) "" else ".asUInt"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out${placeHolder}"
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Mul, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Mul, isSIntOperation)).get
+              exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
               exprST = st"(${leftST.render} * ${rightST.render})"
             }
@@ -2328,19 +2156,18 @@ import HwSynthesizer._
               if(isSIntOperation) {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}.asSInt", "SInt") + "b" ~> (st"${rightST.render}.asSInt", "SInt")
+                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               }
               if(anvil.config.customDivRem) {
                 hashSMap = hashSMap + "start" ~> (st"true.B", "Bool")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Div, T), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Div, T)).get
-              val placeHolder: String = if(isSIntOperation) "" else ".asUInt"
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation)).get
               if(anvil.config.customDivRem) {
                 DivRemLog.enableFlagDivisionInBlock()
-                exprST = st"${indexerInstanceName}_${allocIndex}.io.quotient${placeHolder}"
+                exprST = st"${indexerInstanceName}_${allocIndex}.io.quotient"
               } else {
-                exprST = st"${indexerInstanceName}_${allocIndex}.io.out${placeHolder}"
+                exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
               }
             } else {
               exprST = st"(${leftST.render} / ${rightST.render})"
@@ -2354,19 +2181,18 @@ import HwSynthesizer._
               if(isSIntOperation) {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}.asSInt", "SInt") + "b" ~> (st"${rightST.render}.asSInt", "SInt")
+                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               }
               if(anvil.config.customDivRem) {
                 hashSMap = hashSMap + "start" ~> (st"true.B", "Bool")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Rem, T)).get
-              val placeHolder: String = if(isSIntOperation) "" else ".asUInt"
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation)).get
               if(anvil.config.customDivRem) {
                 DivRemLog.enableFlagRemainderInBlock()
-                exprST = st"${indexerInstanceName}_${allocIndex}.io.remainder${placeHolder}"
+                exprST = st"${indexerInstanceName}_${allocIndex}.io.remainder"
               } else {
-                exprST = st"${indexerInstanceName}_${allocIndex}.io.out${placeHolder}"
+                exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
               }
             } else {
               exprST = st"(${leftST.render} % ${rightST.render})"
@@ -2382,7 +2208,7 @@ import HwSynthesizer._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.And, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.And, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.And, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2399,7 +2225,7 @@ import HwSynthesizer._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2416,7 +2242,7 @@ import HwSynthesizer._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2439,7 +2265,7 @@ import HwSynthesizer._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2456,7 +2282,7 @@ import HwSynthesizer._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2472,7 +2298,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2488,7 +2314,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2504,7 +2330,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2520,7 +2346,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2536,7 +2362,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2553,7 +2379,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2570,7 +2396,7 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
               }
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), allocIndex, ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation)).get
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2632,8 +2458,9 @@ object HwSynthesizer {
           sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
         }
       }
+      val signed: B = isSignedExp(o.left) || isSignedExp(o.right)
       if(anvil.config.useIP) {
-        val signed: B = isSignedExp(o.left) || isSignedExp(o.right)
+        /*
         if (o.op == AST.IR.Exp.Binary.Op.Add) {
           inputLogic(BinaryIP(o.op, signed))
         } else if (o.op == AST.IR.Exp.Binary.Op.Sub) {
@@ -2663,20 +2490,18 @@ object HwSynthesizer {
         } else if (o.op == AST.IR.Exp.Binary.Op.Ushr) {
           inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, signed))
         } else if (o.op == AST.IR.Exp.Binary.Op.Div) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Div, T))
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Div, signed))
         } else if (o.op == AST.IR.Exp.Binary.Op.Rem) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Rem, T))
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Rem, signed))
         } else if (o.op == AST.IR.Exp.Binary.Op.Mul) {
-          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Mul, T))
+          inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Mul, signed))
         }
+        */
       }
-      /*
       o.op match {
-        case AST.IR.Exp.Binary.Op.Add => inputLogic(BinaryIP(o.op, signed))
         case AST.IR.Exp.Binary.Op.Sub => inputLogic(BinaryIP(AST.IR.Exp.Binary.Op.Add, signed))
-        case _ => halt("not support in IpPortAssign.pre_langastIRExpBinary")
+        case _ => inputLogic(BinaryIP(o.op, signed))
       }
-      */
       return MAnvilIRTransformer.PreResult_langastIRExpBinary
     }
 
