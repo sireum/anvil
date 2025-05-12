@@ -1735,7 +1735,7 @@ import HwSynthesizer._
     intrinsicST = intrinsicST ++ ipPortLogic.sts
 
     ipPortLogic.sts = ISZ[ST]()
-    ipPortLogic.inputMap = InputMap.empty
+    //ipPortLogic.inputMap = InputMap.empty
 
     return st"""${(intrinsicST, "\n")}"""
   }
