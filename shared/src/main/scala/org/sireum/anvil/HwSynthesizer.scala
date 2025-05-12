@@ -1993,12 +1993,6 @@ import HwSynthesizer._
     return assignST
   }
 
-  @strictpure def isBoolType(t: AST.Typed): B = t == AST.Typed.b
-  @strictpure def is1BitVector(t: AST.Typed): B = anvil.subZOpt(t) match {
-    case Some(info) => info.ast.isBitVector && info.ast.bitWidth == 1
-    case _ => F
-  }
-
   @pure def getIpAllocIndex(e: AST.IR.Exp): Z = {
     val index: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(e)) match {
       case Some(n) => n
