@@ -224,6 +224,7 @@ import Anvil._
     }
 
     val irt = lang.IRTranslator(
+      spec = F,
       threeAddressCode = threeAddressCode,
       threeAddressExpF = should3AC _,
       th = tsr.typeHierarchy,
@@ -317,13 +318,15 @@ import Anvil._
           reporter.error(None(), kind, st"Could not find @anvil.hls methods in ${(owner, ".")}".render)
         }
       }
-      for (t <- tsr.typeImpl.nodes.keys) {
+      for (ts <- tsr.nameTypes.values; nt <- ts.elements) {
+        val t = nt.tpe
         val stmts = classInit(t)
         if (stmts.nonEmpty) {
           val posOpt = th.typeMap.get(t.ids).get.posOpt
-          procedures = procedures :+ irt.translateMethodH(F, Some(t), t.ids, newInitId, ISZ(),
-            ISZ("this"), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(t), AST.Typed.unit), posOpt.get,
+          val p = irt.translateMethodH(F, Some(t), t.ids, newInitId, ISZ(),
+            ISZ(), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), posOpt.get,
             Some(AST.Body(stmts, ISZ())))
+          procedures = procedures :+ p
         }
       }
       if (config.stackTrace) {
