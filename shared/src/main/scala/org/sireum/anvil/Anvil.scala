@@ -600,6 +600,10 @@ import Anvil._
 
       val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
 
+      p = anvil.transformSCreate(fresh, p, maxTemps)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "s-create"), p.prettyST(anvil.printer))
+      pass = pass + 1
+
       config.memoryAccess match {
         case Anvil.Config.MemoryAccess.Default =>
           if (config.useIP) {
@@ -1064,6 +1068,20 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
+  @strictpure def isConstruct(e: AST.IR.Exp): B = e match {
+    case _: AST.IR.Exp.Construct => T
+    case _: AST.IR.Exp.String => T
+    case e: AST.IR.Exp.Apply if e.id == "create" =>
+      e.owner match {
+        case AST.Typed.isName => T
+        case AST.Typed.msName => T
+        case AST.Typed.iszName => T
+        case AST.Typed.mszName => T
+        case _ => F
+      }
+    case _ => F
+  }
+
   def transformConstruct(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
     var body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
@@ -1073,7 +1091,7 @@ import Anvil._
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       for (g <- b.grounds) {
         g match {
-          case g@AST.IR.Stmt.Assign.Temp(_, rhs, _) if rhs.isInstanceOf[AST.IR.Exp.Construct] || rhs.isInstanceOf[AST.IR.Exp.String] =>
+          case g@AST.IR.Stmt.Assign.Temp(_, rhs, _) if isConstruct(rhs) =>
             val allocType: AST.Typed = rhs match {
               case rhs: AST.IR.Exp.String => allocTypeNamed(T, rhs.value.size)
               case _ => rhs.tipe
@@ -1382,6 +1400,125 @@ import Anvil._
       ), AST.IR.Jump.Goto(eraseLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(endLabel, ISZ(), AST.IR.Jump.Intrinsic(
         Intrinsic.GotoLocal(T, retParam, None(), "erase", pos)))
+    }
+    return p(body = body(blocks = blocks))
+  }
+
+  def transformSCreate(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+    @strictpure def isSCreate(e: AST.IR.Exp): B = e match {
+      case e: AST.IR.Exp.Apply if e.id == "create" =>
+        e.owner match {
+          case AST.Typed.isName => T
+          case AST.Typed.msName => T
+          case AST.Typed.iszName => T
+          case AST.Typed.mszName => T
+          case _ => F
+        }
+      case _ => F
+    }
+    @strictpure def isSCreateGround(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
+      g match {
+        case g: AST.IR.Stmt.Assign.Temp => isSCreate(g.rhs)
+        case _ => F
+      }
+    }
+    var createLabels = HashSMap.empty[AST.Typed.Name, Z]
+    val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
+    fresh.setTemp(maxTemps.typeCount(this, cpt))
+    val retParam = fresh.temp()
+    val spt: AST.Typed = if (config.splitTempSizes) spType else AST.Typed.u64
+    if (isSigned(cpt) != isSigned(spt) || typeByteSize(cpt) != typeByteSize(spt)) {
+      fresh.setTemp(maxTemps.typeCount(this, spt))
+    }
+    val lhsOffsetParam = fresh.temp()
+    val sizeParam = fresh.temp()
+    val index = fresh.temp()
+    val defaultT: AST.Typed = AST.Typed.u64
+    if (isSigned(spt) != isSigned(defaultT) || typeByteSize(spt) != typeByteSize(defaultT)) {
+      fresh.setTemp(maxTemps.typeCount(this, defaultT))
+    }
+    val defaultParam = fresh.temp()
+    val body = transformSplitTest(F, fresh, p, isSCreateGround _).body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    var insertCreate = F
+    for (b <- body.blocks) {
+      b.grounds match {
+        case ISZ(stmt: AST.IR.Stmt.Assign.Temp) if isSCreate(stmt.rhs) =>
+          insertCreate = T
+          val rhs = stmt.rhs.asInstanceOf[AST.IR.Exp.Apply]
+          val pos = rhs.pos
+          var addGoto = F
+          val retLabel: Z = b.jump match {
+            case j: AST.IR.Jump.Goto => j.label
+            case _ =>
+              addGoto = T
+              fresh.label()
+          }
+          val t = rhs.tipe.asInstanceOf[AST.Typed.Name]
+          val createLabel: Z = createLabels.get(t).getOrElse(fresh.label())
+          createLabels = createLabels + t ~> createLabel
+          var grounds = ISZ[AST.IR.Stmt.Ground]()
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(retParam, AST.IR.Exp.Int(cpType, retLabel, pos), pos)
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(lhsOffsetParam, AST.IR.Exp.Temp(stmt.lhs, spType, pos), pos)
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(sizeParam, AST.IR.Exp.Type(F, rhs.args(0), spType, pos), pos)
+          var drhs: AST.IR.Exp = rhs.args(1)
+          if (drhs.tipe != AST.Typed.u64) {
+            drhs = AST.IR.Exp.Type(F, drhs, AST.Typed.u64, pos)
+          }
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(defaultParam, drhs, pos)
+          blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds, AST.IR.Jump.Goto(createLabel, pos))
+          if (addGoto) {
+            blocks = blocks :+ AST.IR.BasicBlock(retLabel, ISZ(), b.jump)
+          }
+        case _ => blocks = blocks :+ b
+      }
+    }
+    for (entry <- createLabels.entries) {
+      val (t, createLabel) = entry
+      val maxSize = getMaxArraySize(t)
+      val pos = p.pos
+      val loop = fresh.label()
+      val loopBody = fresh.label()
+      val inc = fresh.label()
+      val end = fresh.label()
+      val elementType = t.args(1)
+      val elementSize = typeByteSize(elementType)
+      blocks = blocks :+ AST.IR.BasicBlock(createLabel, ISZ(
+        AST.IR.Stmt.Assign.Temp(lhsOffsetParam, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
+          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeShaSize + typeByteSize(AST.Typed.z), pos), pos), pos),
+        AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Int(spType, 0, pos), pos)
+      ), AST.IR.Jump.If(AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(sizeParam, spType, pos), AST.IR.Exp.Binary.Op.Le,
+        AST.IR.Exp.Int(spType, maxSize, pos), pos), loop, errorLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(loop, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Binary(spType,
+        AST.IR.Exp.Temp(index, spType, pos), AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(sizeParam, spType, pos), pos),
+        loopBody, end, pos))
+      val assign: AST.IR.Stmt.Ground = if (isScalar(elementType)) {
+        var arhs: AST.IR.Exp = AST.IR.Exp.Temp(defaultParam, AST.Typed.u64, pos)
+        if (elementType != AST.Typed.u64) {
+          arhs = AST.IR.Exp.Type(F, arhs, elementType.asInstanceOf[AST.Typed.Name], pos)
+        }
+        AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+          AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
+          isSigned(elementType), typeByteSize(elementType),
+          arhs, st"", elementType, pos))
+      } else {
+        val bytes = typeByteSize(elementType)
+        AST.IR.Stmt.Intrinsic(Intrinsic.Copy(
+          AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
+          bytes,
+          AST.IR.Exp.Int(spType, bytes, pos),
+          AST.IR.Exp.Type(F, AST.IR.Exp.Temp(defaultParam, AST.Typed.u64, pos), spType, pos),
+          st"", elementType, elementType, pos))
+      }
+      blocks = blocks :+ AST.IR.BasicBlock(loopBody, ISZ(assign), AST.IR.Jump.Goto(inc, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(inc, ISZ(
+        AST.IR.Stmt.Assign.Temp(lhsOffsetParam, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
+          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, elementSize, pos), pos), pos),
+        AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(index, spType, pos),
+          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, 1, pos), pos), pos)
+      ), AST.IR.Jump.Goto(loop, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(end, ISZ(),
+        AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(T, retParam, None(), s"screate:$t", pos)))
     }
     return p(body = body(blocks = blocks))
   }
@@ -3124,7 +3261,7 @@ import Anvil._
                       } else {
                         grounds = grounds :+ AST.IR.Stmt.Assign.Temp(n, rhsOffset, pos)
                       }
-                    case rhs if rhs.isInstanceOf[AST.IR.Exp.Construct] || rhs.isInstanceOf[AST.IR.Exp.String] =>
+                    case rhs if isConstruct(rhs) =>
                       val loffset = m.get(constructResultId(rhs.pos)).get
                       val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
                         AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset, g.pos),
@@ -3135,17 +3272,24 @@ import Anvil._
                         AST.IR.Exp.Int(AST.Typed.u32, sha.toZ, g.pos),
                         st"sha3 type signature of ${rhs.tipe}: 0x$sha", AST.Typed.u32, g.pos))
                       if (isSeq(rhs.tipe) || rhs.tipe == AST.Typed.string) {
-                        val size: Z = rhs match {
-                          case rhs: AST.IR.Exp.String => conversions.String.toU8is(rhs.value).size
-                          case rhs: AST.IR.Exp.Construct => rhs.args.size
+                        val size: AST.IR.Exp = rhs match {
+                          case rhs: AST.IR.Exp.String => AST.IR.Exp.Int(AST.Typed.z, conversions.String.toU8is(rhs.value).size, g.pos)
+                          case rhs: AST.IR.Exp.Construct => AST.IR.Exp.Int(AST.Typed.z, rhs.args.size, g.pos)
+                          case rhs: AST.IR.Exp.Apply => rhs.args(0)
                           case _ => halt(s"Infeasible")
                         }
                         val sizeOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
-                          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset + 4, g.pos),
+                          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset + typeShaSize, g.pos),
                           g.pos)
                         grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(sizeOffset,
-                          isSigned(AST.Typed.z), typeByteSize(AST.Typed.z), AST.IR.Exp.Int(AST.Typed.z, size, g.pos),
+                          isSigned(AST.Typed.z), typeByteSize(AST.Typed.z), size,
                           st"size of ${rhs.prettyST(printer)}", AST.Typed.z, g.pos))
+                        if (rhs.isInstanceOf[AST.IR.Exp.Apply]) {
+                          grounds = grounds :+ g(rhs = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
+                            AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, loffset, g.pos),
+                            g.pos))
+                          grounds = grounds :+ g
+                        }
                       }
                     case _: AST.IR.Exp.If => halt(s"Infeasible: $rhs")
                     case _: AST.IR.Exp.Intrinsic => halt(s"Infeasible: $rhs")
