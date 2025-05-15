@@ -1334,7 +1334,7 @@ import Anvil._
     if (!config.erase) {
       return p
     }
-    val eraseLabel = fresh.label()
+    val eraseLoopLabel = fresh.label()
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
     fresh.setTemp(maxTemps.typeCount(this, cpt))
     val retParam = fresh.temp()
@@ -1344,6 +1344,11 @@ import Anvil._
     }
     val offsetParam = fresh.temp()
     val untilParam = fresh.temp()
+    val bt: AST.Typed = if (config.splitTempSizes) AST.Typed.b else AST.Typed.u64
+    if (isSigned(spt) != isSigned(bt) || typeByteSize(spt) != typeByteSize(bt)) {
+      fresh.setTemp(maxTemps.typeCount(this, bt))
+    }
+    val cond = fresh.temp()
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     var insertErase = F
@@ -1373,7 +1378,7 @@ import Anvil._
               grounds = grounds :+ AST.IR.Stmt.Assign.Temp(untilParam, AST.IR.Exp.Binary(spType,
                 AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)), AST.IR.Exp.Binary.Op.Add,
                 AST.IR.Exp.Int(spType, offset + size, g.pos), g.pos), g.pos)
-              blocks = blocks :+ block(grounds = grounds, jump = AST.IR.Jump.Goto(eraseLabel, g.pos))
+              blocks = blocks :+ block(grounds = grounds, jump = AST.IR.Jump.Goto(eraseLoopLabel, g.pos))
               grounds = ISZ()
               block = AST.IR.BasicBlock(label, grounds, block.jump)
             }
@@ -1388,14 +1393,18 @@ import Anvil._
       blocks = blocks :+ block(grounds = grounds)
     }
     if (insertErase) {
-      val loopLabel = fresh.label()
+      val ifLoopLabel = fresh.label()
+      val loopBodyLabel = fresh.label()
       val incLabel = fresh.label()
       val endLabel = fresh.label()
       val pos = p.pos
-      blocks = blocks :+ AST.IR.BasicBlock(eraseLabel, ISZ(), AST.IR.Jump.If(
-        AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(offsetParam, spType, pos), AST.IR.Exp.Binary.Op.Lt,
-          AST.IR.Exp.Temp(untilParam, spType, pos), pos), loopLabel, endLabel, pos))
-      blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(
+      blocks = blocks :+ AST.IR.BasicBlock(eraseLoopLabel, ISZ(
+        AST.IR.Stmt.Assign.Temp(cond, AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(offsetParam, spType, pos),
+          AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(untilParam, spType, pos), pos), pos)
+      ), AST.IR.Jump.Goto(ifLoopLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(ifLoopLabel, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Temp(cond, AST.Typed.b, pos),
+        loopBodyLabel, endLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(loopBodyLabel, ISZ(
         AST.IR.Stmt.Intrinsic(Intrinsic.Store(
           AST.IR.Exp.Temp(offsetParam, spType, pos), isSigned(AST.Typed.u8), typeByteSize(AST.Typed.u8),
           AST.IR.Exp.Int(AST.Typed.u8, 0, pos), st"erase", AST.Typed.u8, pos))
@@ -1403,7 +1412,7 @@ import Anvil._
       blocks = blocks :+ AST.IR.BasicBlock(incLabel, ISZ(
         AST.IR.Stmt.Assign.Temp(offsetParam, AST.IR.Exp.Binary(spType,
           AST.IR.Exp.Temp(offsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, 1, pos), pos), pos)
-      ), AST.IR.Jump.Goto(eraseLabel, pos))
+      ), AST.IR.Jump.Goto(eraseLoopLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(endLabel, ISZ(), AST.IR.Jump.Intrinsic(
         Intrinsic.GotoLocal(T, retParam, None(), "erase", pos)))
     }
@@ -1444,6 +1453,12 @@ import Anvil._
       fresh.setTemp(maxTemps.typeCount(this, defaultT))
     }
     val defaultParam = fresh.temp()
+    val bt: AST.Typed = if (config.splitTempSizes) AST.Typed.b else AST.Typed.u64
+    if (isSigned(defaultT) != isSigned(bt) || typeByteSize(defaultT) != typeByteSize(bt)) {
+      fresh.setTemp(maxTemps.typeCount(this, bt))
+    }
+    val cond1 = fresh.temp()
+    val cond2 = fresh.temp()
     val body = transformSplitTest(F, fresh, p, isSCreateGround _).body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     var insertCreate = F
@@ -1483,7 +1498,9 @@ import Anvil._
       val (t, createLabel) = entry
       val maxSize = getMaxArraySize(t)
       val pos = p.pos
+      val checkMax = fresh.label()
       val loop = fresh.label()
+      val ifLoop = fresh.label()
       val loopBody = fresh.label()
       val inc = fresh.label()
       val end = fresh.label()
@@ -1492,11 +1509,17 @@ import Anvil._
       blocks = blocks :+ AST.IR.BasicBlock(createLabel, ISZ(
         AST.IR.Stmt.Assign.Temp(lhsOffsetParam, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
           AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeShaSize + typeByteSize(AST.Typed.z), pos), pos), pos),
-        AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Int(spType, 0, pos), pos)
-      ), AST.IR.Jump.If(AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(sizeParam, spType, pos), AST.IR.Exp.Binary.Op.Le,
-        AST.IR.Exp.Int(spType, maxSize, pos), pos), loop, errorLabel, pos))
-      blocks = blocks :+ AST.IR.BasicBlock(loop, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Binary(spType,
-        AST.IR.Exp.Temp(index, spType, pos), AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(sizeParam, spType, pos), pos),
+        AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Int(spType, 0, pos), pos),
+        AST.IR.Stmt.Assign.Temp(cond1, AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(sizeParam, spType, pos),
+          AST.IR.Exp.Binary.Op.Le, AST.IR.Exp.Int(spType, maxSize, pos), pos), pos)
+      ), AST.IR.Jump.Goto(checkMax, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(checkMax, ISZ(), AST.IR.Jump.If(
+        AST.IR.Exp.Temp(cond1, AST.Typed.b, pos), loop, errorLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(loop, ISZ(
+        AST.IR.Stmt.Assign.Temp(cond2, AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(index, spType, pos),
+          AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(sizeParam, spType, pos), pos), pos)
+      ), AST.IR.Jump.Goto(ifLoop, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(ifLoop, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Temp(cond2, AST.Typed.b, pos),
         loopBody, end, pos))
       val assign: AST.IR.Stmt.Ground = if (isScalar(elementType)) {
         var arhs: AST.IR.Exp = AST.IR.Exp.Temp(defaultParam, AST.Typed.u64, pos)
@@ -1594,6 +1617,11 @@ import Anvil._
     val rhsOffsetParam = fresh.temp()
     val rhsElementSizeParam = fresh.temp()
     val until = fresh.temp()
+    val bt: AST.Typed = if (config.splitTempSizes) AST.Typed.b else AST.Typed.u64
+    if (isSigned(spt) != isSigned(bt) || typeByteSize(spt) != typeByteSize(bt)) {
+      fresh.setTemp(maxTemps.typeCount(this, bt))
+    }
+    val cond = fresh.temp()
 
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
@@ -1642,6 +1670,7 @@ import Anvil._
     if (insertCopy) {
       val untilLabel = fresh.label()
       val loopLabel = fresh.label()
+      val ifLoopLabel = fresh.label()
       val bodyLabel = fresh.label()
       val incLabel = fresh.label()
       val endLabel = fresh.label()
@@ -1661,9 +1690,13 @@ import Anvil._
         blocks = blocks :+ AST.IR.BasicBlock(copyLabel, copyGrounds, AST.IR.Jump.Goto(untilLabel, pos))
         blocks = blocks :+ AST.IR.BasicBlock(untilLabel, untilGrounds, AST.IR.Jump.Goto(loopLabel, pos))
       }
-      blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Binary(AST.Typed.b,
-        AST.IR.Exp.Temp(rhsOffsetParam, spType, pos), AST.IR.Exp.Binary.Op.Lt,
-        AST.IR.Exp.Temp(until, spType, pos), pos), bodyLabel, endLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(
+        AST.IR.Stmt.Assign.Temp(cond, AST.IR.Exp.Binary(AST.Typed.b,
+          AST.IR.Exp.Temp(rhsOffsetParam, spType, pos), AST.IR.Exp.Binary.Op.Lt,
+          AST.IR.Exp.Temp(until, spType, pos), pos), pos)
+      ), AST.IR.Jump.Goto(ifLoopLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(ifLoopLabel, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Temp(cond, AST.Typed.b, pos),
+        bodyLabel, endLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(bodyLabel, ISZ(
         AST.IR.Stmt.Intrinsic(Intrinsic.Store(AST.IR.Exp.Temp(lhsOffsetParam, spType, pos), isSigned(AST.Typed.u8),
           typeByteSize(AST.Typed.u8), AST.IR.Exp.Intrinsic(Intrinsic.Load(AST.IR.Exp.Temp(rhsOffsetParam, spType, pos),
@@ -1697,6 +1730,11 @@ import Anvil._
     val rhsOffsetParam = fresh.temp()
     val rhsElementSizeParam = fresh.temp()
     val until = fresh.temp()
+    val bt: AST.Typed = if (config.splitTempSizes) AST.Typed.b else AST.Typed.u64
+    if (isSigned(spt) != isSigned(bt) || typeByteSize(spt) != typeByteSize(bt)) {
+      fresh.setTemp(maxTemps.typeCount(this, bt))
+    }
+    val cond = fresh.temp()
 
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
@@ -1745,10 +1783,12 @@ import Anvil._
     if (insertCopy) {
       val untilLabel = fresh.label()
       val loopLabel = fresh.label()
-      val bodyLabel = fresh.label()
+      val ifLoopLabel = fresh.label()
+      val loopBodyLabel = fresh.label()
       val incLabel = fresh.label()
       val loop2Label = fresh.label()
-      val body2Label = fresh.label()
+      val ifLoop2Label = fresh.label()
+      val loopBody2Label = fresh.label()
       val inc2Label = fresh.label()
       val endLabel = fresh.label()
       val pos = p.pos
@@ -1767,10 +1807,14 @@ import Anvil._
         blocks = blocks :+ AST.IR.BasicBlock(copyLabel, copyGrounds, AST.IR.Jump.Goto(untilLabel, pos))
         blocks = blocks :+ AST.IR.BasicBlock(untilLabel, untilGrounds, AST.IR.Jump.Goto(loopLabel, pos))
       }
-      blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Binary(AST.Typed.b,
-        AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(rhsOffsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
-          AST.IR.Exp.Int(spType, 8, pos), pos),
-        AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(until, spType, pos), pos), bodyLabel, loop2Label, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(
+        AST.IR.Stmt.Assign.Temp(cond, AST.IR.Exp.Binary(AST.Typed.b,
+          AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(rhsOffsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
+            AST.IR.Exp.Int(spType, 8, pos), pos),
+          AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(until, spType, pos), pos), pos)
+      ), AST.IR.Jump.Goto(ifLoopLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(ifLoopLabel, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Temp(cond, AST.Typed.b, pos),
+        loopBodyLabel, loop2Label, pos))
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       for (i <- 0 until 8) {
         var lhs: AST.IR.Exp = AST.IR.Exp.Temp(lhsOffsetParam, spType, pos)
@@ -1785,7 +1829,7 @@ import Anvil._
           typeByteSize(AST.Typed.u8), AST.IR.Exp.Intrinsic(Intrinsic.Load(rhs, isSigned(AST.Typed.u8),
             typeByteSize(AST.Typed.u8), st"", AST.Typed.u8, pos)), st"Copy", AST.Typed.u8, pos))
       }
-      blocks = blocks :+ AST.IR.BasicBlock(bodyLabel, grounds, AST.IR.Jump.Goto(incLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(loopBodyLabel, grounds, AST.IR.Jump.Goto(incLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(incLabel, ISZ(
         AST.IR.Stmt.Assign.Temp(lhsOffsetParam, AST.IR.Exp.Binary(spType,
           AST.IR.Exp.Temp(lhsOffsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
@@ -1794,10 +1838,13 @@ import Anvil._
           AST.IR.Exp.Temp(rhsOffsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add,
           AST.IR.Exp.Int(spType, 8, pos), pos), pos)
       ), AST.IR.Jump.Goto(loopLabel, pos))
-      blocks = blocks :+ AST.IR.BasicBlock(loop2Label, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Binary(AST.Typed.b,
-        AST.IR.Exp.Temp(rhsOffsetParam, spType, pos),
-        AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(until, spType, pos), pos), body2Label, endLabel, pos))
-      blocks = blocks :+ AST.IR.BasicBlock(body2Label, ISZ(
+      blocks = blocks :+ AST.IR.BasicBlock(loop2Label, ISZ(
+        AST.IR.Stmt.Assign.Temp(cond, AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(rhsOffsetParam, spType, pos),
+          AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(until, spType, pos), pos), pos)
+      ), AST.IR.Jump.Goto(ifLoop2Label, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(ifLoop2Label, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Temp(cond, AST.Typed.b, pos),
+        loopBody2Label, endLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(loopBody2Label, ISZ(
         AST.IR.Stmt.Intrinsic(Intrinsic.Store(AST.IR.Exp.Temp(lhsOffsetParam, spType, pos), isSigned(AST.Typed.u8),
           typeByteSize(AST.Typed.u8), AST.IR.Exp.Intrinsic(Intrinsic.Load(AST.IR.Exp.Temp(rhsOffsetParam, spType, pos),
             isSigned(AST.Typed.u8), typeByteSize(AST.Typed.u8), st"", AST.Typed.u8, pos)),
@@ -1833,6 +1880,12 @@ import Anvil._
       fresh.setTemp(maxTemps.typeCount(this, AST.Typed.u64))
     }
     val valueParam = fresh.temp()
+    val bt: AST.Typed = if (config.splitTempSizes) AST.Typed.b else AST.Typed.u64
+    if (isSigned(AST.Typed.u64) != isSigned(bt) || typeByteSize(AST.Typed.u64) != typeByteSize(bt)) {
+      fresh.setTemp(maxTemps.typeCount(this, bt))
+    }
+    val cond = fresh.temp()
+
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     var insertLoad = F
@@ -1861,7 +1914,8 @@ import Anvil._
     }
     if (insertLoad) {
       val loopLabel = fresh.label()
-      val bodyLabel = fresh.label()
+      val ifLoopLabel = fresh.label()
+      val loopBodyLabel = fresh.label()
       val incLabel = fresh.label()
       val endLabel = fresh.label()
       val pos = p.pos
@@ -1871,19 +1925,21 @@ import Anvil._
         AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Int(spType, 0, pos), pos),
         AST.IR.Stmt.Assign.Temp(valueParam, AST.IR.Exp.Int(AST.Typed.u64, 0, pos), pos)
       ), AST.IR.Jump.Goto(loopLabel, pos))
-      blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(), AST.IR.Jump.If(
-        AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(index, spType, pos), AST.IR.Exp.Binary.Op.Lt,
-          AST.IR.Exp.Temp(sizeParam, spType, pos), pos), bodyLabel, endLabel, pos))
-      var rhs: AST.IR.Exp = AST.IR.Exp.Temp(offsetParam, spType, pos)
+      blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(
+        AST.IR.Stmt.Assign.Temp(cond, AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(index, spType, pos),
+          AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(sizeParam, spType, pos), pos), pos)
+      ), AST.IR.Jump.Goto(ifLoopLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(ifLoopLabel, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Temp(cond, AST.Typed.b, pos),
+        loopBodyLabel, endLabel, pos))
+      var rhs: AST.IR.Exp = AST.IR.Exp.Temp(offsetParam, spType, pos) // TODO: Refactor
       rhs = AST.IR.Exp.Intrinsic(Intrinsic.Load(rhs, isSigned(AST.Typed.u8), typeByteSize(AST.Typed.u8), st"", AST.Typed.u8, pos))
       rhs = AST.IR.Exp.Type(F, rhs, AST.Typed.u64, pos)
       rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs, AST.IR.Exp.Binary.Op.Shl,
         AST.IR.Exp.Type(F, AST.IR.Exp.Temp(index, spType, pos), AST.Typed.u64, pos), pos)
       rhs = AST.IR.Exp.Binary(AST.Typed.u64, AST.IR.Exp.Temp(valueParam, AST.Typed.u64, pos),
         AST.IR.Exp.Binary.Op.Or, rhs, pos)
-      blocks = blocks :+ AST.IR.BasicBlock(bodyLabel, ISZ(
-        AST.IR.Stmt.Assign.Temp(valueParam, rhs, pos)
-      ), AST.IR.Jump.Goto(incLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(loopBodyLabel, ISZ(AST.IR.Stmt.Assign.Temp(valueParam, rhs, pos)),
+        AST.IR.Jump.Goto(incLabel, pos))
       blocks = blocks :+ AST.IR.BasicBlock(incLabel, ISZ(
         AST.IR.Stmt.Assign.Temp(offsetParam, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(offsetParam, spType, pos),
           AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, 1, pos), pos), pos),
@@ -1943,7 +1999,7 @@ import Anvil._
       blocks = blocks :+ AST.IR.BasicBlock(loadLabel, ISZ(),
         AST.IR.Jump.Switch(AST.IR.Exp.Temp(sizeParam, spType, pos), for (i <- labels.indices) yield
           AST.IR.Jump.Switch.Case(AST.IR.Exp.Int(spType, i + 2, pos), labels(i)), None(), pos))
-      for (i <- labels.indices) {
+      for (i <- labels.indices) { // TODO: Refactor
         val label = labels(i)
         var disjuncts = ISZ[AST.IR.Exp]()
         for (j <- 0 until i + 2) {
@@ -1988,6 +2044,12 @@ import Anvil._
       fresh.setTemp(maxTemps.typeCount(this, AST.Typed.u64))
     }
     val valueParam = fresh.temp()
+    val bt: AST.Typed = if (config.splitTempSizes) AST.Typed.b else AST.Typed.u64
+    if (isSigned(AST.Typed.u64) != isSigned(bt) || typeByteSize(AST.Typed.u64) != typeByteSize(bt)) {
+      fresh.setTemp(maxTemps.typeCount(this, bt))
+    }
+    val cond = fresh.temp()
+
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     var insertStore = F
@@ -2021,7 +2083,8 @@ import Anvil._
     }
     if (insertStore) {
       val loopLabel = fresh.label()
-      val bodyLabel = fresh.label()
+      val ifLoopLabel = fresh.label()
+      val loopBodyLabel = fresh.label()
       val incLabel = fresh.label()
       val endLabel = fresh.label()
       val pos = p.pos
@@ -2030,15 +2093,18 @@ import Anvil._
           AST.IR.Exp.Binary.Op.Shl, AST.IR.Exp.Int(spType, 3, pos), pos), pos),
         AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Int(spType, 0, pos), pos)
       ), AST.IR.Jump.Goto(loopLabel, pos))
-      blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(), AST.IR.Jump.If(
-        AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(index, spType, pos), AST.IR.Exp.Binary.Op.Lt,
-          AST.IR.Exp.Temp(sizeParam, spType, pos), pos), bodyLabel, endLabel, pos))
-      var rhs: AST.IR.Exp = AST.IR.Exp.Type(F, AST.IR.Exp.Temp(index, spType, pos), AST.Typed.u64, pos)
+      blocks = blocks :+ AST.IR.BasicBlock(loopLabel, ISZ(
+        AST.IR.Stmt.Assign.Temp(cond, AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(index, spType, pos),
+          AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(sizeParam, spType, pos), pos), pos)
+      ), AST.IR.Jump.Goto(ifLoopLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(ifLoopLabel, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Temp(cond, AST.Typed.b, pos),
+        loopBodyLabel, endLabel, pos))
+      var rhs: AST.IR.Exp = AST.IR.Exp.Type(F, AST.IR.Exp.Temp(index, spType, pos), AST.Typed.u64, pos) // TODO: Refactor
       rhs = AST.IR.Exp.Binary(AST.Typed.u64, AST.IR.Exp.Temp(valueParam, AST.Typed.u64, pos),
         AST.IR.Exp.Binary.Op.Ushr, rhs, pos)
       rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs, AST.IR.Exp.Binary.Op.And, AST.IR.Exp.Int(AST.Typed.u64, 0xFF, pos), pos)
       rhs = AST.IR.Exp.Type(F, rhs, AST.Typed.u8, pos)
-      blocks = blocks :+ AST.IR.BasicBlock(bodyLabel, ISZ(
+      blocks = blocks :+ AST.IR.BasicBlock(loopBodyLabel, ISZ(
         AST.IR.Stmt.Intrinsic(Intrinsic.Store(AST.IR.Exp.Temp(offsetParam, spType, pos), isSigned(AST.Typed.u8),
           typeByteSize(AST.Typed.u8), rhs, st"Store", AST.Typed.u8, pos))
       ), AST.IR.Jump.Goto(incLabel, pos))
@@ -2069,6 +2135,7 @@ import Anvil._
       fresh.setTemp(maxTemps.typeCount(this, AST.Typed.u64))
     }
     val valueParam = fresh.temp()
+
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     var insertStore = F
@@ -2109,7 +2176,7 @@ import Anvil._
       for (i <- labels.indices) {
         val label = labels(i)
         var grounds = ISZ[AST.IR.Stmt.Ground]()
-        for (j <- 0 until i + 2) {
+        for (j <- 0 until i + 2) { // TODO: Refactor
           var rhs: AST.IR.Exp = AST.IR.Exp.Temp(valueParam, AST.Typed.u64, pos)
           if (j != 0) {
             rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs,
