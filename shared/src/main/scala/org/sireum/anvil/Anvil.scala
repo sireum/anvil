@@ -743,7 +743,13 @@ import Anvil._
     output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "conversions"), r.prettyST(printer))
     pass = pass + 1
 
-    r = if (p.owner == runtimeName) r else RuntimeCheckInserter(this).transform_langastIRProcedure(r).getOrElse(r)
+    val tc = TempCollector(T, HashSMap.empty)
+    tc.transform_langastIRProcedure(r)
+    var max: Z = 0
+    for (k <- tc.r.keys if max < k) {
+      max = k
+    }
+    r = if (p.owner == runtimeName) r else RuntimeCheckInserter(this, max + 1).transform_langastIRProcedure(r).getOrElse(r)
     output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "runtime-check"), r.prettyST(printer))
     pass = pass + 1
 

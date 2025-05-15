@@ -494,7 +494,7 @@ object Util {
     }
   }
 
-  @record class RuntimeCheckInserter(val anvil: Anvil) extends MAnvilIRTransformer {
+  @record class RuntimeCheckInserter(val anvil: Anvil, val maxTemp: Z) extends MAnvilIRTransformer {
     override def post_langastIRStmtBlock(o: AST.IR.Stmt.Block): MOption[AST.IR.Stmt] = {
       if (!anvil.config.runtimeCheck) {
         return MNone()
@@ -506,22 +506,24 @@ object Util {
           val indexType = receiver.tipe.asInstanceOf[AST.Typed.Name].args(0)
           val min = anvil.minIndex(indexType)
           val lo = AST.IR.Exp.Int(indexType, min, pos)
-          var hi: AST.IR.Exp = AST.IR.Exp.FieldVarRef(receiver, "size", AST.Typed.z, pos)
+          val size = maxTemp
+          stmts = stmts :+ AST.IR.Stmt.Assign.Temp(size, AST.IR.Exp.FieldVarRef(receiver, "size", AST.Typed.z, pos), pos)
+          val hi = AST.IR.Exp.Temp(size, AST.Typed.z, pos)
           if (min != 0) {
-            hi = AST.IR.Exp.Binary(AST.Typed.z, hi, AST.IR.Exp.Binary.Op.Sub, lo, pos)
+            stmts = stmts :+ AST.IR.Stmt.Assign.Temp(size,
+              AST.IR.Exp.Binary(AST.Typed.z, hi, AST.IR.Exp.Binary.Op.Sub, lo, pos), pos)
           }
           var hil = index
           if (hil.tipe != AST.Typed.z) {
             hil = AST.IR.Exp.Type(F, hil, AST.Typed.z, pos)
           }
-          val cond = AST.IR.Exp.Binary(AST.Typed.b,
-            AST.IR.Exp.Binary(AST.Typed.b, lo, AST.IR.Exp.Binary.Op.Le, index, pos),
-            AST.IR.Exp.Binary.Op.And,
-            AST.IR.Exp.Binary(AST.Typed.b, hil, AST.IR.Exp.Binary.Op.Le, hi, pos),
-            pos)
           changed = T
-          stmts = stmts :+ AST.IR.Stmt.Assertume(T, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
-            st"Index out of bounds".render, pos))), pos)
+          stmts = stmts :+ AST.IR.Stmt.Assertume(T, AST.IR.Exp.Binary(AST.Typed.b, lo,
+            AST.IR.Exp.Binary.Op.Le, index, pos), Some(AST.IR.ExpBlock(ISZ(),
+            AST.IR.Exp.String(st"Index out of bounds (low)".render, pos))), pos)
+          stmts = stmts :+ AST.IR.Stmt.Assertume(T, AST.IR.Exp.Binary(AST.Typed.b, hil,
+            AST.IR.Exp.Binary.Op.Le, hi, pos), Some(AST.IR.ExpBlock(ISZ(),
+            AST.IR.Exp.String(st"Index out of bounds (high)".render, pos))), pos)
           stmts = stmts :+ stmt
         }
         stmt match {
