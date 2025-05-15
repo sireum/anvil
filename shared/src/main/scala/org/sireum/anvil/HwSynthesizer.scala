@@ -859,10 +859,10 @@ import HwSynthesizer._
     Ushr(T, "UshrSigned64", "ushrSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ushr, T)),
     Multiplier(F, "MultiplierUnsigned64", "multiplierUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Mul, F)),
     Multiplier(T, "MultiplierSigned64", "multiplierSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Mul, T)),
-    Division(F, "DivisionUnsigned64", "divisionUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, F), anvil.config.customDivRem),
-    Division(T, "DivisionSigned64", "divisionSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), anvil.config.customDivRem),
-    Remainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, F), anvil.config.customDivRem),
-    Remainder(T, "RemainerSigned64", "remainerSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), anvil.config.customDivRem)
+    Division(F, "DivisionUnsigned64", "divisionUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, F), anvil.config.noXilinxIp),
+    Division(T, "DivisionSigned64", "divisionSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), anvil.config.noXilinxIp),
+    Remainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, F), anvil.config.noXilinxIp),
+    Remainder(T, "RemainerSigned64", "remainerSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), anvil.config.noXilinxIp)
   )
 
   @pure def findChiselModule(ip: IpType): Option[ChiselModule] = {
@@ -1562,7 +1562,7 @@ import HwSynthesizer._
               |  ${indexerName}_${IndexingLog.activeIndex}.io.ready := false.B
               |}
             """
-        } else if(anvil.config.customDivRem && (DivRemLog.isDivisionInBlock() || DivRemLog.isRemainderInBlock())) {
+        } else if(anvil.config.noXilinxIp && (DivRemLog.isDivisionInBlock() || DivRemLog.isRemainderInBlock())) {
           val jST = processJumpIntrinsic(BlockLog.getBlock, ipPortLogic)
           val ipType: IpType = if(DivRemLog.isDivisionInBlock()) BinaryIP(AST.IR.Exp.Binary.Op.Div, T) else BinaryIP(AST.IR.Exp.Binary.Op.Rem, T)
           val indexerName: String = getIpInstanceName(ipType).get
@@ -2152,12 +2152,12 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               }
-              if(anvil.config.customDivRem) {
+              if(anvil.config.noXilinxIp) {
                 hashSMap = hashSMap + "start" ~> (st"true.B", "Bool")
               }
               insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation)).get
-              if(anvil.config.customDivRem) {
+              if(anvil.config.noXilinxIp) {
                 DivRemLog.enableFlagDivisionInBlock()
                 exprST = st"${indexerInstanceName}_${allocIndex}.io.quotient"
               } else {
@@ -2177,12 +2177,12 @@ import HwSynthesizer._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               }
-              if(anvil.config.customDivRem) {
+              if(anvil.config.noXilinxIp) {
                 hashSMap = hashSMap + "start" ~> (st"true.B", "Bool")
               }
               insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation)).get
-              if(anvil.config.customDivRem) {
+              if(anvil.config.noXilinxIp) {
                 DivRemLog.enableFlagRemainderInBlock()
                 exprST = st"${indexerInstanceName}_${allocIndex}.io.remainder"
               } else {

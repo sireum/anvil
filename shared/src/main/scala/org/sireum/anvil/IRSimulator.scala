@@ -1366,7 +1366,7 @@ import IRSimulator._
       return ic.count > 0
     }
 
-    if (anvil.config.customDivRem) {
+    if (anvil.config.noXilinxIp) {
       b.grounds match {
         case ISZ(AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.Binary, _)) if isDivRem(rhs.op) =>
           if (anvil.typeByteSize(rhs.tipe) <= 32) {
