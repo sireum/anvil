@@ -2638,7 +2638,7 @@ import Anvil._
                     AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, paramInfo.get(resultLocalId).get.loc, g.pos), g.pos)
                   if (isScalar(called.tipe.ret)) {
                     rhsOffset = AST.IR.Exp.Intrinsic(Intrinsic.Load(rhsOffset,
-                      isSigned(spType), typeByteSize(spType), st"", t, g.pos))
+                      isSigned(spType), typeByteSize(spType), st"", spType, g.pos))
                   }
                   bgrounds = AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(lhs, rhsOffset,
                     isSigned(t), typeByteSize(t), st"$$$lhs = $resultLocalId", t, g.pos)) +: bgrounds
