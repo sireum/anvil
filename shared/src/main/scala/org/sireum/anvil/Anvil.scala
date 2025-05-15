@@ -598,11 +598,11 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-indexing"), p.prettyST(anvil.printer))
       pass = pass + 1
 
-      val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
-
-      p = anvil.transformSCreate(fresh, p, maxTemps)
+      p = anvil.transformSCreate(fresh, p, programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p))))
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "s-create"), p.prettyST(anvil.printer))
       pass = pass + 1
+
+      val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
 
       config.memoryAccess match {
         case Anvil.Config.MemoryAccess.Default =>
