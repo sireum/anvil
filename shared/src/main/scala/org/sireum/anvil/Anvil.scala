@@ -1972,6 +1972,7 @@ import Anvil._
       fresh.setTemp(maxTemps.typeCount(this, AST.Typed.u64))
     }
     val valueParam = fresh.temp()
+
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     var insertLoad = F
@@ -1999,34 +2000,52 @@ import Anvil._
       }
     }
     if (insertLoad) {
-      val labels: ISZ[Z] = for (_ <- z"2" to z"8") yield fresh.label()
+      val labels: ISZ[(Z, Z, Z, Z)] = for (_ <- z"2" to z"8") yield (fresh.label(), fresh.label(), fresh.label(), fresh.label())
       val pos = p.pos
       blocks = blocks :+ AST.IR.BasicBlock(loadLabel, ISZ(),
         AST.IR.Jump.Switch(AST.IR.Exp.Temp(sizeParam, spType, pos), for (i <- labels.indices) yield
-          AST.IR.Jump.Switch.Case(AST.IR.Exp.Int(spType, i + 2, pos), labels(i)), None(), pos))
-      for (i <- labels.indices) { // TODO: Refactor
-        val label = labels(i)
+          AST.IR.Jump.Switch.Case(AST.IR.Exp.Int(spType, i + 2, pos), labels(i)._1), None(), pos))
+      for (i <- labels.indices) {
+        val (label1, label2, label3, label4) = labels(i)
         var disjuncts = ISZ[AST.IR.Exp]()
+        var temps = ISZ[Z]()
+        var grounds = ISZ[AST.IR.Stmt.Ground]()
         for (j <- 0 until i + 2) {
           var disjunct: AST.IR.Exp = AST.IR.Exp.Temp(offsetParam, spType, pos)
           if (j != 0) {
             disjunct = AST.IR.Exp.Binary(spType, disjunct,
               AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, j, pos), pos)
           }
-          disjunct = AST.IR.Exp.Intrinsic(Intrinsic.Load(disjunct, isSigned(AST.Typed.u8), typeByteSize(AST.Typed.u8),
-            st"", AST.Typed.u8, pos))
+          val temp = fresh.temp()
+          temps = temps :+ temp
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, AST.IR.Exp.Type(F, disjunct, AST.Typed.u64, pos), pos)
+        }
+        blocks = blocks :+ AST.IR.BasicBlock(label1, grounds, AST.IR.Jump.Goto(label2, pos))
+        grounds = ISZ()
+        for (j <- 0 until i + 2) {
+          var disjunct: AST.IR.Exp = AST.IR.Exp.Intrinsic(Intrinsic.Load(
+            AST.IR.Exp.Type(F, AST.IR.Exp.Temp(temps(j), AST.Typed.u64, pos), spType, pos), isSigned(AST.Typed.u8),
+            typeByteSize(AST.Typed.u8), st"", AST.Typed.u8, pos))
           disjunct = AST.IR.Exp.Type(F, disjunct, AST.Typed.u64, pos)
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temps(j), disjunct, pos)
+        }
+        blocks = blocks :+ AST.IR.BasicBlock(label2, grounds, AST.IR.Jump.Goto(label3, pos))
+        grounds = ISZ()
+        for (j <- 0 until i + 2) {
+          var disjunct: AST.IR.Exp = AST.IR.Exp.Temp(temps(j), AST.Typed.u64, pos)
           if (j != 0) {
             disjunct = AST.IR.Exp.Binary(AST.Typed.u64, disjunct, AST.IR.Exp.Binary.Op.Shl,
               AST.IR.Exp.Int(AST.Typed.u64, j * 8, pos), pos)
           }
-          disjuncts = disjuncts :+ disjunct
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temps(j), disjunct, pos)
+          disjuncts = disjuncts :+ AST.IR.Exp.Temp(temps(j), AST.Typed.u64, pos)
         }
+        blocks = blocks :+ AST.IR.BasicBlock(label3, grounds, AST.IR.Jump.Goto(label4, pos))
         var rhs = disjuncts(0)
         for (j <- 1 until disjuncts.size) {
           rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs, AST.IR.Exp.Binary.Op.Or, disjuncts(j), pos)
         }
-        blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(AST.IR.Stmt.Assign.Temp(valueParam, rhs, pos)),
+        blocks = blocks :+ AST.IR.BasicBlock(label4, ISZ(AST.IR.Stmt.Assign.Temp(valueParam, rhs, pos)),
           AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(T, retParam, None(), "load", pos)))
       }
     }
