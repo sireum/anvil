@@ -2178,21 +2178,30 @@ import Anvil._
       }
     }
     if (insertStore) {
-      val labels: ISZ[Z] = for (_ <- z"2" to z"8") yield fresh.label()
+      val labels: ISZ[(Z, Z)] = for (_ <- z"2" to z"8") yield (fresh.label(), fresh.label())
       val pos = p.pos
       blocks = blocks :+ AST.IR.BasicBlock(storeLabel, ISZ(),
         AST.IR.Jump.Switch(AST.IR.Exp.Temp(sizeParam, spType, pos), for (i <- labels.indices) yield
-          AST.IR.Jump.Switch.Case(AST.IR.Exp.Int(spType, i + 2, pos), labels(i)), None(), pos))
+          AST.IR.Jump.Switch.Case(AST.IR.Exp.Int(spType, i + 2, pos), labels(i)._1), None(), pos))
       for (i <- labels.indices) {
-        val label = labels(i)
+        val (label1, label2) = labels(i)
         var grounds = ISZ[AST.IR.Stmt.Ground]()
-        for (j <- 0 until i + 2) { // TODO: Refactor
+        var temps = ISZ[Z]()
+        for (j <- 0 until i + 2) {
           var rhs: AST.IR.Exp = AST.IR.Exp.Temp(valueParam, AST.Typed.u64, pos)
           if (j != 0) {
             rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs,
               AST.IR.Exp.Binary.Op.Ushr, AST.IR.Exp.Int(AST.Typed.u64, j * 8, pos), pos)
           }
-          rhs = AST.IR.Exp.Binary(AST.Typed.u64, rhs, AST.IR.Exp.Binary.Op.And, AST.IR.Exp.Int(AST.Typed.u64, 0xFF, pos), pos)
+          val temp = fresh.temp()
+          temps = temps :+ temp
+          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, rhs, pos)
+        }
+        blocks = blocks :+ AST.IR.BasicBlock(label1, grounds, AST.IR.Jump.Goto(label2, pos))
+        grounds = ISZ[AST.IR.Stmt.Ground]()
+        for (j <- 0 until i + 2) {
+          var rhs: AST.IR.Exp = AST.IR.Exp.Binary(AST.Typed.u64, AST.IR.Exp.Temp(temps(j), AST.Typed.u64, pos),
+            AST.IR.Exp.Binary.Op.And, AST.IR.Exp.Int(AST.Typed.u64, 0xFF, pos), pos)
           rhs = AST.IR.Exp.Type(F, rhs, AST.Typed.u8, pos)
           var lhs: AST.IR.Exp = AST.IR.Exp.Temp(offsetParam, spType, pos)
           if (j != 0) {
@@ -2203,7 +2212,7 @@ import Anvil._
             lhs, isSigned(AST.Typed.u8),
             typeByteSize(AST.Typed.u8), rhs, st"Store", AST.Typed.u8, pos))
         }
-        blocks = blocks :+ AST.IR.BasicBlock(label, grounds,
+        blocks = blocks :+ AST.IR.BasicBlock(label2, grounds,
           AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(T, retParam, None(), "store", pos)))
       }
     }
