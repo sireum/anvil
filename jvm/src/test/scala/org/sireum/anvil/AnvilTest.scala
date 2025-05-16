@@ -236,16 +236,16 @@ class AnvilTest extends SireumRcSpec {
         if (config.genVerilog) {
           Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$verilogCommandStr").
             at(chiselDir).env(envVars).echo.console.runCheck()
-        }
-        if (config.axi4) {
+        } else if (config.axi4) {
           Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$axiWrapperVerilogCommandStr").
             at(chiselDir).env(envVars).echo.console.runCheck()
-        }
-        config.simOpt match {
-          case Some(_) if verilatorBin.exists =>
-            Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$simCommandStr").
-              at(chiselDir).env(envVars).echo.console.runCheck()
-          case _ =>
+        } else {
+          config.simOpt match {
+            case Some(_) if verilatorBin.exists =>
+              Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$simCommandStr").
+                at(chiselDir).env(envVars).echo.console.runCheck()
+            case _ =>
+          }
         }
         return T
       case _ => return F
