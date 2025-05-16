@@ -117,9 +117,9 @@ object AnvilTest {
     var config = Anvil.Config.empty
     val splitTempSizes = p.last.contains(splitTempId)
     val tempLocal = p.last.contains(tempLocalId)
-    val ipMax: Z = if (p.last.contains(withIpId)) 16 else 0
+    val ipMax: Z = if (p.last.contains(withIpId)) 0 else -1
     config = config(
-      memory = memoryFileMap(T, F).get(file).getOrElse(defaultMemory),
+      memory = memoryFileMap(splitTempSizes, tempLocal).get(file).getOrElse(defaultMemory),
       printSize = printFileMap.get(file).getOrElse(defaultPrintSize),
       stackTrace = stackTraceFileSet.contains(file),
       erase = eraseFileSet.contains(file),
