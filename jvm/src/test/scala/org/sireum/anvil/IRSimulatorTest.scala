@@ -48,7 +48,7 @@ class IRSimulatorTest extends SireumRcSpec {
   }
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith(".sc") }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith("bubble.sc") }
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
@@ -135,21 +135,7 @@ class IRSimulatorTest extends SireumRcSpec {
             }
           }
           out.removeAll()
-          var config = Anvil.Config.empty
-          val splitTempSizes = p.last.contains(AnvilTest.splitTempId)
-          val tempLocal = p.last.contains(AnvilTest.tempLocalId)
-          config = config(
-            memory = AnvilTest.memoryFileMap(splitTempSizes, tempLocal).get(file).getOrElse(AnvilTest.defaultMemory),
-            printSize = AnvilTest.printFileMap.get(file).getOrElse(AnvilTest.defaultPrintSize),
-            stackTrace = AnvilTest.stackTraceFileSet.contains(file),
-            erase = AnvilTest.eraseFileSet.contains(file),
-            maxArraySize = AnvilTest.maxArrayFileMap.get(file).getOrElse(AnvilTest.defaultMaxArraySize),
-            runtimeCheck = !AnvilTest.noRuntimeCheckFileSet.contains(file),
-            splitTempSizes = splitTempSizes,
-            tempLocal = tempLocal,
-            ipMax = 0,
-            memoryAccess = Anvil.Config.MemoryAccess.Subroutine
-          )
+          val config = AnvilTest.getConfig(file, p)
           Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, AnvilOutput(F, "", out), reporter) match {
             case Some(ir) =>
               val state = IRSimulator.State.create(ir.anvil.config.splitTempSizes, ir.anvil.config.memory,

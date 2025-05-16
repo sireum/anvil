@@ -112,6 +112,29 @@ object AnvilTest {
   val withoutIpId = "without-ip"
 
   val isInGitHubAction: B = Os.env("GITHUB_ACTIONS").nonEmpty
+
+  def getConfig(file: String, p: Vector[Predef.String]): Anvil.Config = {
+    var config = Anvil.Config.empty
+    val splitTempSizes = p.last.contains(splitTempId)
+    val tempLocal = p.last.contains(tempLocalId)
+    val ipMax: Z = if (p.last.contains(withIpId)) 16 else 0
+    config = config(
+      memory = memoryFileMap(T, F).get(file).getOrElse(defaultMemory),
+      printSize = printFileMap.get(file).getOrElse(defaultPrintSize),
+      stackTrace = stackTraceFileSet.contains(file),
+      erase = eraseFileSet.contains(file),
+      maxArraySize = maxArrayFileMap.get(file).getOrElse(defaultMaxArraySize),
+      runtimeCheck = !noRuntimeCheckFileSet.contains(file),
+      splitTempSizes = splitTempSizes,
+      tempLocal = tempLocal,
+      genVerilog = T,
+      axi4 = F,
+      ipMax = ipMax,
+      simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles)),
+      memoryAccess = Anvil.Config.MemoryAccess.Default
+    )
+    return config
+  }
 }
 
 import AnvilTest._
@@ -174,25 +197,7 @@ class AnvilTest extends SireumRcSpec {
       case Some(program) if !reporter.hasError =>
         val (th2, _) = lang.FrontEnd.checkWorksheet(100, Some(th), program, reporter)
         (dir / path(0)).removeAll()
-        var config = Anvil.Config.empty
-        val splitTempSizes = p.last.contains(splitTempId)
-        val tempLocal = p.last.contains(tempLocalId)
-        val ipMax: Z = if (p.last.contains(withIpId)) 16 else 0
-        config = config(
-          memory = memoryFileMap(T, F).get(file).getOrElse(defaultMemory),
-          printSize = printFileMap.get(file).getOrElse(defaultPrintSize),
-          stackTrace = stackTraceFileSet.contains(file),
-          erase = eraseFileSet.contains(file),
-          maxArraySize = maxArrayFileMap.get(file).getOrElse(defaultMaxArraySize),
-          runtimeCheck = !noRuntimeCheckFileSet.contains(file),
-          splitTempSizes = splitTempSizes,
-          tempLocal = tempLocal,
-          genVerilog = T,
-          axi4 = F,
-          ipMax = ipMax,
-          simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles)),
-          memoryAccess = Anvil.Config.MemoryAccess.Default
-        )
+        var config = getConfig(file, p)
 
         if (isInGitHubAction) {
           config = config(simOpt = None())
