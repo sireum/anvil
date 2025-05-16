@@ -35,12 +35,12 @@ object AnvilTest {
       "bubble.sc" ~> (if (tempLocal) 128 + 8 * 6 else 128 + 8 * 12) +
       "construct.sc" ~> (if (tempLocal) 128 + 8 * 13 else 256 + 8 * 3) +
       "divrem.sc" ~> (if (tempLocal) 128 + 8 * 0 else 128 + 8 * 7) +
-      "dll.sc" ~> (if (tempLocal) 768 + 8 * 10 else 768 + 8 * 10) +
+      "dll.sc" ~> (if (tempLocal) 768 + 8 * 9 else 768 + 8 * 10) +
       "factorial.sc" ~> (if (tempLocal) 128 + 8 * 0 else 128 + 8 * 6) +
       "global.sc" ~> (if (tempLocal) 64 + 8 * 5 else 128 + 8 * 3) +
       "indexing.sc" ~> (if (tempLocal) 128 + 8 * 1 else 128 + 8 * 6) +
       "indexing-obj.sc" ~> (if (tempLocal) 128 + 8 * 6 else 128 + 8 * 10) +
-      "instanceof.sc" ~> (if (tempLocal) 64 + 8 * 5 else 128 + 8 * 3) +
+      "instanceof.sc" ~> (if (tempLocal) 64 + 8 * 5 else if (splitTempSizes) 128 + 8 * 3 else 128 + 8 * 2) +
       "local-reuse.sc" ~> (if (tempLocal) 64 + 8 * 6 else 128 + 8 * 4) +
       "mult.sc" ~> (if (tempLocal) 128 + 8 * 4 else 128 + 8 * 10) +
       "print.sc" ~> (if (tempLocal) 768 + 8 * 20  else 768 + 8 * 23) +
@@ -49,9 +49,7 @@ object AnvilTest {
       "seq.sc" ~> (if (tempLocal) 128 + 8 * 14 else 256 + 8 * 2) +
       "shiftS64.sc" ~> (if (tempLocal) 128 + 8 * 6 else 256 + 8 * 1) +
       "shiftU64.sc" ~> (if (tempLocal) 128 + 8 * 5 else 256 + 8 * 1) +
-      "sum.sc" ~> (
-        if (splitTempSizes) if (tempLocal) 128 + 8 * 8 else 256 + 8 * 7
-        else if (tempLocal) 128 + 8 * 8 else 256 + 8 * 6)
+      "sum.sc" ~> (if (tempLocal) 128 + 8 * 3 else if (splitTempSizes) 256 + 8 * 7 else 256 + 8 * 6)
   }
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "dll" ~> 3 +

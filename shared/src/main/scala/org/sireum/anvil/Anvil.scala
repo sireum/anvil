@@ -201,6 +201,31 @@ import Anvil._
   @strictpure def irProcedurePath(procedureId: String, pType: AST.Typed.Fun, stage: Z, pass: Z, id: String): ISZ[String] =
     ISZ("ir", "procedures", s"$procedureId-${sha3Type(pType)}", s"$stage-$pass-$id.sir")
 
+  @memoize def isParam(mc: AST.IR.MethodContext, id: String): B = {
+    id match {
+      case Util.newInitId => return F
+      case Util.objInitId => return F
+      case string"this" => return T
+      case _ =>
+    }
+    val params: ISZ[AST.Param] = if (mc.isInObject) {
+      th.nameMap.get(mc.owner :+ mc.id) match {
+        case Some(info: Info.Method) => info.ast.sig.params
+        case _ => halt(s"Infeasible: $mc")
+      }
+    } else {
+      th.typeMap.get(mc.owner) match {
+        case Some(tinfo: TypeInfo.Adt) => tinfo.methods.get(id).get.ast.sig.params
+        case Some(tinfo: TypeInfo.Sig) => tinfo.methods.get(id).get.ast.sig.params
+        case _ => halt(s"Infeasible: $mc")
+      }
+    }
+    for (p <- params if p.id.value == id) {
+      return T
+    }
+    return F
+  }
+
   def generateIR(isTest: B, fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): Option[IR] = {
     val threeAddressCode = T
     @strictpure def isLit(e: AST.IR.Exp): B = e match {
@@ -219,7 +244,7 @@ import Anvil._
       case _: AST.IR.Exp.F64 => F
       case _: AST.IR.Exp.R => F
       case _: AST.IR.Exp.String => F
-      case _: AST.IR.Exp.LocalVarRef => !config.tempLocal || !isScalar(e.tipe)
+      case e: AST.IR.Exp.LocalVarRef => config.tempLocal ___>: !(isScalar(e.tipe) || isParam(e.context, e.id))
       case _ => T
     }
 

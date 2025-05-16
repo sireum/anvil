@@ -1429,9 +1429,11 @@ import IRSimulator._
       }
     }
 
+    assert(maxMemoryBox.value + 9 > state.memory.size, s"The configured memory size ${state.memory.size} is larger than needed (${maxMemoryBox.value + 1})")
+
     if (DEBUG) {
       println(
-        st"""End state (approx. cycles = $approxCycles, max memory offset touched: ${maxMemoryBox.value}):
+        st"""End state (approx. cycles = $approxCycles):
             |  ${state.prettyST(this)}""".render)
     }
   }
