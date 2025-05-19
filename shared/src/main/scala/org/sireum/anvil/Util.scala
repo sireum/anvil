@@ -976,7 +976,9 @@ object Util {
                           var indexing: Z) extends MAnvilIRTransformer {
     override def pre_langastIRExpBinary(o: Exp.Binary): MAnvilIRTransformer.PreResult[IR.Exp] = {
       val t: AST.Typed = if (anvil.isScalar(o.tipe)) o.left.tipe else anvil.spType
-      val op: AST.IR.Exp.Binary.Op.Type = if (o.op == AST.IR.Exp.Binary.Op.Sub) AST.IR.Exp.Binary.Op.Add else o.op
+      val op: AST.IR.Exp.Binary.Op.Type =
+        if (anvil.config.noXilinxIp && o.op == AST.IR.Exp.Binary.Op.Sub) AST.IR.Exp.Binary.Op.Add
+        else o.op
       val key = (anvil.isSigned(t), op)
       val n = binopMap.get(key).getOrElseEager(0)
       ipMap = ipMap + IpAlloc.Ext.exp(o) ~> n
