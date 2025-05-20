@@ -28,14 +28,14 @@ import org.sireum._
 import org.sireum.test._
 
 object AnvilTest {
-  @memoize def memoryFileMap(splitTempSizes: B, tempLocal: B): HashMap[String, Z] = {
+  @memoize def memoryFileMap(printSize: Z, splitTempSizes: B, tempLocal: B): HashMap[String, Z] = {
     return HashMap.empty[String, Z] +
       "add.sc" ~> (if (tempLocal) 64 + 8 * 6  else 128 + 8 * 4) +
       "assert.sc" ~> (if (tempLocal) 256 + 8 * 3 else 256 + 8 * 14) +
       "bubble.sc" ~> (if (tempLocal) 128 + 8 * 6 else 128 + 8 * 12) +
       "construct.sc" ~> (if (tempLocal) 128 + 8 * 13 else 256 + 8 * 3) +
       "divrem.sc" ~> (if (tempLocal) 128 + 8 * 0 else 128 + 8 * 7) +
-      "dll.sc" ~> (if (tempLocal) 768 + 8 * 9 else 768 + 8 * 10) +
+      "dll.sc" ~> (if (printSize > 0) if (tempLocal) 768 + 8 * 9 else 768 + 8 * 10 else 768 + 8 * 8) +
       "factorial.sc" ~> (if (tempLocal) 128 + 8 * 0 else 128 + 8 * 6) +
       "global.sc" ~> (if (tempLocal) 64 + 8 * 5 else 128 + 8 * 3) +
       "indexing.sc" ~> (if (tempLocal) 128 + 8 * 1 else 128 + 8 * 6) +
@@ -61,7 +61,7 @@ object AnvilTest {
     "bubble.sc" ~> 16 +
     "construct.sc" ~> 16 +
     "divrem.sc" ~> 32 +
-    "dll.sc" ~> 2 +
+    "dll.sc" ~> 0 +
     "factorial.sc" ~> 32 +
     "global.sc" ~> 2 +
     "indexing.sc" ~> 8 +
@@ -118,9 +118,10 @@ object AnvilTest {
     val splitTempSizes = p.last.contains(splitTempId)
     val tempLocal = p.last.contains(tempLocalId)
     val ipMax: Z = if (p.last.contains(withIpId)) 0 else -1
+    val printSize: Z = printFileMap.get(file).getOrElse(defaultPrintSize)
     config = config(
-      memory = memoryFileMap(splitTempSizes, tempLocal).get(file).getOrElse(defaultMemory),
-      printSize = printFileMap.get(file).getOrElse(defaultPrintSize),
+      memory = memoryFileMap(printSize, splitTempSizes, tempLocal).get(file).getOrElse(defaultMemory),
+      printSize = printSize,
       stackTrace = stackTraceFileSet.contains(file),
       erase = eraseFileSet.contains(file),
       maxArraySize = maxArrayFileMap.get(file).getOrElse(defaultMaxArraySize),
