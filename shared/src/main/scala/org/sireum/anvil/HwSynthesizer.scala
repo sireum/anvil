@@ -1100,7 +1100,7 @@ import HwSynthesizer._
       }
 
       return st"""
-                 |def init${targetModule.instanceName}_${modIdx}() = {
+                 |def init${targetModule.instanceName}_${modIdx}(): Unit = {
                  |  ${(muxLogicST, "\n")}
                  |}
         """
@@ -1469,7 +1469,33 @@ import HwSynthesizer._
   }
 
   @pure def buildSbtST(): ST = {
-    val sbtST: ST =
+    val sbtST: ST = {
+      st"""
+          |ThisBuild / scalaVersion     := "2.13.16"
+          |ThisBuild / version          := "0.1.0"
+          |ThisBuild / organization     := "Kansas State University"
+          |
+          |val chiselVersion = "6.7.0"
+          |
+          |lazy val root = (project in file("."))
+          |  .settings(
+          |    name := "Chisel6-Test",
+          |    libraryDependencies ++= Seq(
+          |      "org.chipsalliance" %% "chisel" % chiselVersion,
+          |      "edu.berkeley.cs" %% "chiseltest" % "6.0.0" % Test,
+          |      "org.scalatest" %% "scalatest" % "3.2.17" % "test",
+          |    ),
+          |    scalacOptions ++= Seq(
+          |      "-language:reflectiveCalls",
+          |      "-deprecation",
+          |      "-feature",
+          |      "-Xcheckinit",
+          |      "-Ymacro-annotations",
+          |    ),
+          |    addCompilerPlugin("org.chipsalliance" % "chisel-plugin" % chiselVersion cross CrossVersion.full),
+          |)
+        """
+      /*
       st"""scalaVersion := "2.13.10"
           |
           |
@@ -1483,6 +1509,8 @@ import HwSynthesizer._
           |libraryDependencies += "edu.berkeley.cs" %% "chisel3" % "3.5.6"
           |libraryDependencies += "edu.berkeley.cs" %% "chiseltest" % "0.5.6"
         """
+       */
+    }
 
     return sbtST
   }
@@ -2020,7 +2048,7 @@ import HwSynthesizer._
           |}
           |
           |object ${name} {
-          |  def init(o: ${name}) {
+          |  def init(o: ${name}): Unit = {
           |    import o._
           |    ${if(anvil.config.useIP) instancePortFuncST else st""}
           |    ${if(anvil.config.useIP) instancePortCallST else st""}
@@ -2081,7 +2109,7 @@ import HwSynthesizer._
         val functionDefinitionST: ST =
           st"""
               |object Block_${b.label} {
-              |  def block_${b.label}(o: ${name}) {
+              |  def block_${b.label}(o: ${name}): Unit = {
               |    import o._
               |    /*
               |    ${(commentST, "\n")}
