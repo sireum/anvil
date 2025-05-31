@@ -94,6 +94,7 @@ object IndexingLog {
 }
 @datatype class BinaryIP(t: AST.IR.Exp.Binary.Op.Type, signed: B) extends IpType
 @datatype class IntrinsicIP(t: AST.IR.Exp.Intrinsic.Type) extends IpType
+@datatype class BlockMemoryIP() extends IpType
 
 @record @unclonable class InputMap(var ipMap: HashSMap[IpType, HashSMap[Z, HashSMap[String, ChiselModule.Input]]]) {
 }
@@ -134,7 +135,8 @@ object InputMap {
     BinaryIP(AST.IR.Exp.Binary.Op.Div, F) ~> HashSMap.empty,
     BinaryIP(AST.IR.Exp.Binary.Op.Rem, T) ~> HashSMap.empty,
     BinaryIP(AST.IR.Exp.Binary.Op.Rem, F) ~> HashSMap.empty,
-    IntrinsicIP(HwSynthesizer.defaultIndexing) ~> HashSMap.empty
+    IntrinsicIP(HwSynthesizer.defaultIndexing) ~> HashSMap.empty,
+    BlockMemoryIP() ~> HashSMap.empty
   ))
 }
 
@@ -950,6 +952,51 @@ object ChiselModule {
   }
 }
 
+@datatype class BlockMemory(val signedPort: B,
+                            val moduleDeclarationName: String,
+                            val moduleInstanceName: String,
+                            val widthOfBRAM: Z,
+                            val depthOfBRAM: Z,
+                            val exp: IpType,
+                            val nonXilinxIP: B) extends ChiselModule {
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfBRAM
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty[String, String] + "en" ~> "Bool" + "we" ~> "Bool" + "addr" ~> "UInt" + "din" ~> "UInt"
+  }
+  @strictpure override def expression: IpType = exp
+  @strictpure override def moduleST: ST = {
+    if(nonXilinxIP)
+      st"""
+          |class ${moduleName}(val depth: Int = ${depthOfBRAM}, val width: Int = ${widthOfBRAM}) extends Module {
+          |  val io = IO(new Bundle {
+          |    val en = Input(Bool())
+          |    val we = Input(Bool())
+          |    val addr = Input(UInt(log2Ceil(depth).W))
+          |    val din = Input(UInt(width.W))
+          |    val dout = Output(UInt(width.W))
+          |  })
+          |
+          |  val mem = SyncReadMem(depth, UInt(8.W))
+          |  io.dout := 0.U
+          |
+          |  when(io.en) {
+          |      when(io.we) {
+          |          mem.write(io.addr, io.din)
+          |      } .otherwise {
+          |          io.dout := mem.read(io.addr, io.en)
+          |      }
+          |  }
+          |}
+      """
+    else
+      st"""
+        """
+  }
+}
+
 import HwSynthesizer._
 @record class HwSynthesizer(val anvil: Anvil) {
   val sharedMemName: String = "arrayRegFiles"
@@ -993,7 +1040,8 @@ import HwSynthesizer._
     Division(F, "DivisionUnsigned64", "divisionUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, F), xilinxIPValid),
     Division(T, "DivisionSigned64", "divisionSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), xilinxIPValid),
     Remainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, F), xilinxIPValid),
-    Remainder(T, "RemainerSigned64", "remainerSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), xilinxIPValid)
+    Remainder(T, "RemainerSigned64", "remainerSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), xilinxIPValid),
+    BlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory, BlockMemoryIP(), xilinxIPValid)
   )
 
   @pure def findChiselModule(ip: IpType): Option[ChiselModule] = {
@@ -1008,8 +1056,11 @@ import HwSynthesizer._
   @pure def insDeclST(ip: IpType, numInstances: Z): ST = {
     val targetModule: ChiselModule = findChiselModule(ip).get
     val moduleInstances: ST = {
-      val modDeclIns: ISZ[ST] = {
-        for(i <- 0 until numInstances) yield
+      val modDeclIns: ISZ[ST] = if(targetModule.expression == BlockMemoryIP()) {
+        for (i <- 0 until numInstances) yield
+          st"""val ${targetModule.instanceName}_${i} = Module(new ${targetModule.moduleName}(${anvil.config.memory}, ${targetModule.width}))"""
+      } else {
+        for (i <- 0 until numInstances) yield
           st"""val ${targetModule.instanceName}_${i} = Module(new ${targetModule.moduleName}(${targetModule.width}))"""
       }
 
@@ -1875,6 +1926,7 @@ import HwSynthesizer._
           instanceST = instanceST :+ insDeclST(b, entry._2)
         }
         instanceST = instanceST :+ insDeclST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
+        instanceST = instanceST :+ insDeclST(BlockMemoryIP(), 1)
         st"""${(instanceST, "\n")}"""
       }
 
@@ -1885,6 +1937,7 @@ import HwSynthesizer._
           instanceST = instanceST :+ insPortFuncST(b, entry._2)
         }
         instanceST = instanceST :+ insPortFuncST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
+        instanceST = instanceST :+ insPortFuncST(BlockMemoryIP(), 1)
         st"""${(instanceST, "\n")}"""
       }
 
@@ -1895,6 +1948,7 @@ import HwSynthesizer._
           instanceST = instanceST :+ insPortCallST(b, entry._2)
         }
         instanceST = instanceST :+ insPortCallST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
+        instanceST = instanceST :+ insPortCallST(BlockMemoryIP(), 1)
         st"""${(instanceST, "\n")}"""
       }
 
