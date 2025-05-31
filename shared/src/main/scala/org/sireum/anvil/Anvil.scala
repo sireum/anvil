@@ -318,16 +318,20 @@ import Anvil._
           AST.IR.Stmt.Assign.Temp(tempNum, AST.IR.Exp.GlobalVarRef(testNumName, AST.Typed.z, pos), pos)
         )
         val temp = AST.IR.Exp.Temp(tempNum, AST.Typed.z, pos)
+        val tempL = AST.IR.Exp.Temp(tempNum + 1, AST.Typed.b, pos)
+        val tempR = AST.IR.Exp.Temp(tempNum + 2, AST.Typed.b, pos)
         val zero = AST.IR.Exp.Int(AST.Typed.z, 0, pos)
         var i: Z = 0
         for (p <- testProcs) {
-          stmts = stmts :+ AST.IR.Stmt.If(
-            AST.IR.Exp.Binary(
-              AST.Typed.b,
-              AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Lt, zero, pos),
-              AST.IR.Exp.Binary.Op.Or,
-              AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Eq, AST.IR.Exp.Int(AST.Typed.z, i, pos), pos),
-              pos),
+          stmts = stmts :+ AST.IR.Stmt.Assign.Temp(tempL.n, AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Lt, zero, pos), pos)
+          stmts = stmts :+ AST.IR.Stmt.Assign.Temp(tempR.n, AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Eq, AST.IR.Exp.Int(AST.Typed.z, i, pos), pos), pos)
+          stmts = stmts :+ AST.IR.Stmt.Assign.Temp(tempL.n, AST.IR.Exp.Binary(
+            AST.Typed.b,
+            AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Lt, zero, pos),
+            AST.IR.Exp.Binary.Op.Or,
+            AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Eq, AST.IR.Exp.Int(AST.Typed.z, i, pos), pos),
+            pos), pos)
+          stmts = stmts :+ AST.IR.Stmt.If(tempL,
             AST.IR.Stmt.Block(ISZ(
               AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, p.context.owner, p.context.id, ISZ(), p.tipe, pos))
             ), pos), AST.IR.Stmt.Block(ISZ(), pos), pos)
