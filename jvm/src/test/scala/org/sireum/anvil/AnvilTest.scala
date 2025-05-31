@@ -61,7 +61,7 @@ object AnvilTest {
     "bubble.sc" ~> 16 +
     "construct.sc" ~> 16 +
     "divrem.sc" ~> 32 +
-    "dll.sc" ~> 0 +
+    "dll.sc" ~> 2 +
     "factorial.sc" ~> 32 +
     "global.sc" ~> 2 +
     "indexing.sc" ~> 8 +
