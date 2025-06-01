@@ -65,10 +65,6 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRExpBool: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
-  val PreResultIntrinsicLoad: PreResult[Intrinsic.Load] = PreResult(T, MNone())
-
-  val PostResultIntrinsicLoad: MOption[Intrinsic.Load] = MNone()
-
   val PreResult_langastIRExpInt: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
   val PostResult_langastIRExpInt: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
@@ -77,9 +73,9 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRExpF32: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
-  val PreResultIntrinsicIndexing: PreResult[Intrinsic.Indexing] = PreResult(T, MNone())
+  val PreResultIntrinsicLoad: PreResult[Intrinsic.Load] = PreResult(T, MNone())
 
-  val PostResultIntrinsicIndexing: MOption[Intrinsic.Indexing] = MNone()
+  val PostResultIntrinsicLoad: MOption[Intrinsic.Load] = MNone()
 
   val PreResult_langastIRExpF64: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
@@ -89,13 +85,13 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRExpR: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
+  val PreResultIntrinsicIndexing: PreResult[Intrinsic.Indexing] = PreResult(T, MNone())
+
+  val PostResultIntrinsicIndexing: MOption[Intrinsic.Indexing] = MNone()
+
   val PreResult_langastIRExpString: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
   val PostResult_langastIRExpString: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
-
-  val PreResultIntrinsicStore: PreResult[Intrinsic.Store] = PreResult(T, MNone())
-
-  val PostResultIntrinsicStore: MOption[Intrinsic.Store] = MNone()
 
   val PreResult_langastIRExpTemp: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
@@ -105,13 +101,13 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRExpLocalVarRef: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
+  val PreResultIntrinsicStore: PreResult[Intrinsic.Store] = PreResult(T, MNone())
+
+  val PostResultIntrinsicStore: MOption[Intrinsic.Store] = MNone()
+
   val PreResult_langastIRExpGlobalVarRef: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
   val PostResult_langastIRExpGlobalVarRef: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
-
-  val PreResultIntrinsicCopy: PreResult[Intrinsic.Copy] = PreResult(T, MNone())
-
-  val PostResultIntrinsicCopy: MOption[Intrinsic.Copy] = MNone()
 
   val PreResult_langastIRExpEnumElementRef: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
@@ -121,17 +117,25 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRExpFieldVarRef: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
-  val PreResultIntrinsicDecl: PreResult[Intrinsic.Decl] = PreResult(T, MNone())
-
-  val PostResultIntrinsicDecl: MOption[Intrinsic.Decl] = MNone()
-
   val PreResult_langastIRExpUnary: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
   val PostResult_langastIRExpUnary: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
+  val PreResultIntrinsicCopy: PreResult[Intrinsic.Copy] = PreResult(T, MNone())
+
+  val PostResultIntrinsicCopy: MOption[Intrinsic.Copy] = MNone()
+
+  val PreResultIntrinsicDecl: PreResult[Intrinsic.Decl] = PreResult(T, MNone())
+
+  val PostResultIntrinsicDecl: MOption[Intrinsic.Decl] = MNone()
+
   val PreResultIntrinsicDeclLocal: PreResult[Intrinsic.Decl.Local] = PreResult(T, MNone())
 
   val PostResultIntrinsicDeclLocal: MOption[Intrinsic.Decl.Local] = MNone()
+
+  val PreResult_langastIRExpBinary: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
+
+  val PostResult_langastIRExpBinary: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
   val PreResultIntrinsicRegister: PreResult[Intrinsic.Register] = PreResult(T, MNone())
 
@@ -140,10 +144,6 @@ object MAnvilIRTransformer {
   val PreResultIntrinsicRegisterAssign: PreResult[Intrinsic.RegisterAssign] = PreResult(T, MNone())
 
   val PostResultIntrinsicRegisterAssign: MOption[Intrinsic.RegisterAssign] = MNone()
-
-  val PreResult_langastIRExpBinary: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
-
-  val PostResult_langastIRExpBinary: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
   val PreResultIntrinsicGotoLocal: PreResult[Intrinsic.GotoLocal] = PreResult(T, MNone())
 
@@ -375,10 +375,6 @@ import MAnvilIRTransformer._
     return PreResult_langastIRExpBool
   }
 
-  def preIntrinsicLoad(o: Intrinsic.Load): PreResult[Intrinsic.Load] = {
-    return PreResultIntrinsicLoad
-  }
-
   def pre_langastIRExpInt(o: org.sireum.lang.ast.IR.Exp.Int): PreResult[org.sireum.lang.ast.IR.Exp] = {
     return PreResult_langastIRExpInt
   }
@@ -387,8 +383,8 @@ import MAnvilIRTransformer._
     return PreResult_langastIRExpF32
   }
 
-  def preIntrinsicIndexing(o: Intrinsic.Indexing): PreResult[Intrinsic.Indexing] = {
-    return PreResultIntrinsicIndexing
+  def preIntrinsicLoad(o: Intrinsic.Load): PreResult[Intrinsic.Load] = {
+    return PreResultIntrinsicLoad
   }
 
   def pre_langastIRExpF64(o: org.sireum.lang.ast.IR.Exp.F64): PreResult[org.sireum.lang.ast.IR.Exp] = {
@@ -399,12 +395,12 @@ import MAnvilIRTransformer._
     return PreResult_langastIRExpR
   }
 
-  def pre_langastIRExpString(o: org.sireum.lang.ast.IR.Exp.String): PreResult[org.sireum.lang.ast.IR.Exp] = {
-    return PreResult_langastIRExpString
+  def preIntrinsicIndexing(o: Intrinsic.Indexing): PreResult[Intrinsic.Indexing] = {
+    return PreResultIntrinsicIndexing
   }
 
-  def preIntrinsicStore(o: Intrinsic.Store): PreResult[Intrinsic.Store] = {
-    return PreResultIntrinsicStore
+  def pre_langastIRExpString(o: org.sireum.lang.ast.IR.Exp.String): PreResult[org.sireum.lang.ast.IR.Exp] = {
+    return PreResult_langastIRExpString
   }
 
   def pre_langastIRExpTemp(o: org.sireum.lang.ast.IR.Exp.Temp): PreResult[org.sireum.lang.ast.IR.Exp] = {
@@ -415,12 +411,12 @@ import MAnvilIRTransformer._
     return PreResult_langastIRExpLocalVarRef
   }
 
-  def pre_langastIRExpGlobalVarRef(o: org.sireum.lang.ast.IR.Exp.GlobalVarRef): PreResult[org.sireum.lang.ast.IR.Exp] = {
-    return PreResult_langastIRExpGlobalVarRef
+  def preIntrinsicStore(o: Intrinsic.Store): PreResult[Intrinsic.Store] = {
+    return PreResultIntrinsicStore
   }
 
-  def preIntrinsicCopy(o: Intrinsic.Copy): PreResult[Intrinsic.Copy] = {
-    return PreResultIntrinsicCopy
+  def pre_langastIRExpGlobalVarRef(o: org.sireum.lang.ast.IR.Exp.GlobalVarRef): PreResult[org.sireum.lang.ast.IR.Exp] = {
+    return PreResult_langastIRExpGlobalVarRef
   }
 
   def pre_langastIRExpEnumElementRef(o: org.sireum.lang.ast.IR.Exp.EnumElementRef): PreResult[org.sireum.lang.ast.IR.Exp] = {
@@ -431,16 +427,24 @@ import MAnvilIRTransformer._
     return PreResult_langastIRExpFieldVarRef
   }
 
-  def preIntrinsicDecl(o: Intrinsic.Decl): PreResult[Intrinsic.Decl] = {
-    return PreResultIntrinsicDecl
-  }
-
   def pre_langastIRExpUnary(o: org.sireum.lang.ast.IR.Exp.Unary): PreResult[org.sireum.lang.ast.IR.Exp] = {
     return PreResult_langastIRExpUnary
   }
 
+  def preIntrinsicCopy(o: Intrinsic.Copy): PreResult[Intrinsic.Copy] = {
+    return PreResultIntrinsicCopy
+  }
+
+  def preIntrinsicDecl(o: Intrinsic.Decl): PreResult[Intrinsic.Decl] = {
+    return PreResultIntrinsicDecl
+  }
+
   def preIntrinsicDeclLocal(o: Intrinsic.Decl.Local): PreResult[Intrinsic.Decl.Local] = {
     return PreResultIntrinsicDeclLocal
+  }
+
+  def pre_langastIRExpBinary(o: org.sireum.lang.ast.IR.Exp.Binary): PreResult[org.sireum.lang.ast.IR.Exp] = {
+    return PreResult_langastIRExpBinary
   }
 
   def preIntrinsicRegister(o: Intrinsic.Register): PreResult[Intrinsic.Register] = {
@@ -449,10 +453,6 @@ import MAnvilIRTransformer._
 
   def preIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): PreResult[Intrinsic.RegisterAssign] = {
     return PreResultIntrinsicRegisterAssign
-  }
-
-  def pre_langastIRExpBinary(o: org.sireum.lang.ast.IR.Exp.Binary): PreResult[org.sireum.lang.ast.IR.Exp] = {
-    return PreResult_langastIRExpBinary
   }
 
   def preIntrinsicGotoLocal(o: Intrinsic.GotoLocal): PreResult[Intrinsic.GotoLocal] = {
@@ -906,10 +906,6 @@ import MAnvilIRTransformer._
     return PostResult_langastIRExpBool
   }
 
-  def postIntrinsicLoad(o: Intrinsic.Load): MOption[Intrinsic.Load] = {
-    return PostResultIntrinsicLoad
-  }
-
   def post_langastIRExpInt(o: org.sireum.lang.ast.IR.Exp.Int): MOption[org.sireum.lang.ast.IR.Exp] = {
     return PostResult_langastIRExpInt
   }
@@ -918,8 +914,8 @@ import MAnvilIRTransformer._
     return PostResult_langastIRExpF32
   }
 
-  def postIntrinsicIndexing(o: Intrinsic.Indexing): MOption[Intrinsic.Indexing] = {
-    return PostResultIntrinsicIndexing
+  def postIntrinsicLoad(o: Intrinsic.Load): MOption[Intrinsic.Load] = {
+    return PostResultIntrinsicLoad
   }
 
   def post_langastIRExpF64(o: org.sireum.lang.ast.IR.Exp.F64): MOption[org.sireum.lang.ast.IR.Exp] = {
@@ -930,12 +926,12 @@ import MAnvilIRTransformer._
     return PostResult_langastIRExpR
   }
 
-  def post_langastIRExpString(o: org.sireum.lang.ast.IR.Exp.String): MOption[org.sireum.lang.ast.IR.Exp] = {
-    return PostResult_langastIRExpString
+  def postIntrinsicIndexing(o: Intrinsic.Indexing): MOption[Intrinsic.Indexing] = {
+    return PostResultIntrinsicIndexing
   }
 
-  def postIntrinsicStore(o: Intrinsic.Store): MOption[Intrinsic.Store] = {
-    return PostResultIntrinsicStore
+  def post_langastIRExpString(o: org.sireum.lang.ast.IR.Exp.String): MOption[org.sireum.lang.ast.IR.Exp] = {
+    return PostResult_langastIRExpString
   }
 
   def post_langastIRExpTemp(o: org.sireum.lang.ast.IR.Exp.Temp): MOption[org.sireum.lang.ast.IR.Exp] = {
@@ -946,12 +942,12 @@ import MAnvilIRTransformer._
     return PostResult_langastIRExpLocalVarRef
   }
 
-  def post_langastIRExpGlobalVarRef(o: org.sireum.lang.ast.IR.Exp.GlobalVarRef): MOption[org.sireum.lang.ast.IR.Exp] = {
-    return PostResult_langastIRExpGlobalVarRef
+  def postIntrinsicStore(o: Intrinsic.Store): MOption[Intrinsic.Store] = {
+    return PostResultIntrinsicStore
   }
 
-  def postIntrinsicCopy(o: Intrinsic.Copy): MOption[Intrinsic.Copy] = {
-    return PostResultIntrinsicCopy
+  def post_langastIRExpGlobalVarRef(o: org.sireum.lang.ast.IR.Exp.GlobalVarRef): MOption[org.sireum.lang.ast.IR.Exp] = {
+    return PostResult_langastIRExpGlobalVarRef
   }
 
   def post_langastIRExpEnumElementRef(o: org.sireum.lang.ast.IR.Exp.EnumElementRef): MOption[org.sireum.lang.ast.IR.Exp] = {
@@ -962,16 +958,24 @@ import MAnvilIRTransformer._
     return PostResult_langastIRExpFieldVarRef
   }
 
-  def postIntrinsicDecl(o: Intrinsic.Decl): MOption[Intrinsic.Decl] = {
-    return PostResultIntrinsicDecl
-  }
-
   def post_langastIRExpUnary(o: org.sireum.lang.ast.IR.Exp.Unary): MOption[org.sireum.lang.ast.IR.Exp] = {
     return PostResult_langastIRExpUnary
   }
 
+  def postIntrinsicCopy(o: Intrinsic.Copy): MOption[Intrinsic.Copy] = {
+    return PostResultIntrinsicCopy
+  }
+
+  def postIntrinsicDecl(o: Intrinsic.Decl): MOption[Intrinsic.Decl] = {
+    return PostResultIntrinsicDecl
+  }
+
   def postIntrinsicDeclLocal(o: Intrinsic.Decl.Local): MOption[Intrinsic.Decl.Local] = {
     return PostResultIntrinsicDeclLocal
+  }
+
+  def post_langastIRExpBinary(o: org.sireum.lang.ast.IR.Exp.Binary): MOption[org.sireum.lang.ast.IR.Exp] = {
+    return PostResult_langastIRExpBinary
   }
 
   def postIntrinsicRegister(o: Intrinsic.Register): MOption[Intrinsic.Register] = {
@@ -980,10 +984,6 @@ import MAnvilIRTransformer._
 
   def postIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): MOption[Intrinsic.RegisterAssign] = {
     return PostResultIntrinsicRegisterAssign
-  }
-
-  def post_langastIRExpBinary(o: org.sireum.lang.ast.IR.Exp.Binary): MOption[org.sireum.lang.ast.IR.Exp] = {
-    return PostResult_langastIRExpBinary
   }
 
   def postIntrinsicGotoLocal(o: Intrinsic.GotoLocal): MOption[Intrinsic.GotoLocal] = {
@@ -1432,9 +1432,9 @@ import MAnvilIRTransformer._
     val r: MOption[Intrinsic.TempLoad] = if (preR.continu) {
       val o2: Intrinsic.TempLoad = preR.resultOpt.getOrElse(o)
       val hasChanged: B = preR.resultOpt.nonEmpty
-      val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhsOffset)
+      val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.base)
       if (hasChanged || r0.nonEmpty)
-        MSome(o2(rhsOffset = r0.getOrElse(o2.rhsOffset)))
+        MSome(o2(base = r0.getOrElse(o2.base)))
       else
         MNone()
     } else if (preR.resultOpt.nonEmpty) {
@@ -1593,9 +1593,9 @@ import MAnvilIRTransformer._
     val r: MOption[Intrinsic.Load] = if (preR.continu) {
       val o2: Intrinsic.Load = preR.resultOpt.getOrElse(o)
       val hasChanged: B = preR.resultOpt.nonEmpty
-      val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhsOffset)
+      val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.base)
       if (hasChanged || r0.nonEmpty)
-        MSome(o2(rhsOffset = r0.getOrElse(o2.rhsOffset)))
+        MSome(o2(base = r0.getOrElse(o2.base)))
       else
         MNone()
     } else if (preR.resultOpt.nonEmpty) {
@@ -1648,10 +1648,10 @@ import MAnvilIRTransformer._
     val r: MOption[Intrinsic.Store] = if (preR.continu) {
       val o2: Intrinsic.Store = preR.resultOpt.getOrElse(o)
       val hasChanged: B = preR.resultOpt.nonEmpty
-      val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.lhsOffset)
+      val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.base)
       val r1: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhs)
       if (hasChanged || r0.nonEmpty || r1.nonEmpty)
-        MSome(o2(lhsOffset = r0.getOrElse(o2.lhsOffset), rhs = r1.getOrElse(o2.rhs)))
+        MSome(o2(base = r0.getOrElse(o2.base), rhs = r1.getOrElse(o2.rhs)))
       else
         MNone()
     } else if (preR.resultOpt.nonEmpty) {
@@ -1840,9 +1840,9 @@ import MAnvilIRTransformer._
       val hasChanged: B = preR.resultOpt.nonEmpty
       val rOpt: MOption[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = o2 match {
         case o2: Intrinsic.Load =>
-          val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhsOffset)
+          val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.base)
           if (hasChanged || r0.nonEmpty)
-            MSome(o2(rhsOffset = r0.getOrElse(o2.rhsOffset)))
+            MSome(o2(base = r0.getOrElse(o2.base)))
           else
             MNone()
         case o2: Intrinsic.Indexing =>
@@ -2193,16 +2193,16 @@ import MAnvilIRTransformer._
       val hasChanged: B = preR.resultOpt.nonEmpty
       val rOpt: MOption[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = o2 match {
         case o2: Intrinsic.TempLoad =>
-          val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhsOffset)
+          val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.base)
           if (hasChanged || r0.nonEmpty)
-            MSome(o2(rhsOffset = r0.getOrElse(o2.rhsOffset)))
+            MSome(o2(base = r0.getOrElse(o2.base)))
           else
             MNone()
         case o2: Intrinsic.Store =>
-          val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.lhsOffset)
+          val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.base)
           val r1: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.rhs)
           if (hasChanged || r0.nonEmpty || r1.nonEmpty)
-            MSome(o2(lhsOffset = r0.getOrElse(o2.lhsOffset), rhs = r1.getOrElse(o2.rhs)))
+            MSome(o2(base = r0.getOrElse(o2.base), rhs = r1.getOrElse(o2.rhs)))
           else
             MNone()
         case o2: Intrinsic.Copy =>

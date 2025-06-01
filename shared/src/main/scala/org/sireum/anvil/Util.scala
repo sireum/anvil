@@ -124,20 +124,21 @@ object Util {
     @strictpure def localOffsetMap: HashMap[String, Z] = localOffsetInfo.offsetMap
     override def post_langastIRExpLocalVarRef(o: AST.IR.Exp.LocalVarRef): MOption[AST.IR.Exp] = {
       val localOffset = localOffsetMap.get(o.id).get
-      val lhsOffset = AST.IR.Exp.Binary(anvil.spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, anvil.spType, o.pos)),
-        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType, localOffset, o.pos), o.pos)
       if (anvil.isScalar(o.tipe) || paramSet.contains(o.id)) {
         val t: AST.Typed = if (anvil.isScalar(o.tipe)) o.tipe else anvil.spType
         return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(
-          lhsOffset, anvil.isSigned(t), anvil.typeByteSize(t), o.prettyST(anvil.printer), t, o.pos)))
+          AST.IR.Exp.Intrinsic(Intrinsic.Register(T, anvil.spType, o.pos)), localOffset, anvil.isSigned(t),
+          anvil.typeByteSize(t), o.prettyST(anvil.printer), t, o.pos)))
       } else {
+        val lhsOffset = AST.IR.Exp.Binary(anvil.spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, anvil.spType, o.pos)),
+          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType, localOffset, o.pos), o.pos)
         return MSome(lhsOffset)
       }
     }
     override def post_langastIRExpGlobalVarRef(o: AST.IR.Exp.GlobalVarRef): MOption[AST.IR.Exp] = {
       val globalOffset = AST.IR.Exp.Int(anvil.spType, globalMap.get(o.name).get.loc, o.pos)
       if (anvil.isScalar(o.tipe)) {
-        return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(globalOffset, anvil.isSigned(o.tipe),
+        return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(globalOffset, 0, anvil.isSigned(o.tipe),
           anvil.typeByteSize(o.tipe), st"", o.tipe, o.pos)))
       } else {
         return MSome(globalOffset)
@@ -147,44 +148,22 @@ object Util {
       if (anvil.isSeq(o.receiver.tipe)) {
         assert(o.id == "size")
         return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(
-          AST.IR.Exp.Binary(anvil.spType, o.receiver,
-            AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType, anvil.typeShaSize, o.pos), o.pos),
-          T, anvil.typeByteSize(o.tipe), o.prettyST(anvil.printer), o.tipe, o.pos)))
+          o.receiver, anvil.typeShaSize, T, anvil.typeByteSize(o.tipe), o.prettyST(anvil.printer), o.tipe, o.pos)))
       } else {
         val (ft, offset) = anvil.classSizeFieldOffsets(o.receiver.tipe.asInstanceOf[AST.Typed.Name]).
           _2.get(o.id).get
-        val rhsOffset: AST.IR.Exp = if (offset != 0) AST.IR.Exp.Binary(anvil.spType, o.receiver,
-          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType, offset, o.pos), o.pos) else o.receiver
         if (anvil.isScalar(ft)) {
-          return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(rhsOffset,
+          return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(o.receiver, offset,
             anvil.isSigned(ft), anvil.typeByteSize(ft), st"", ft, o.pos)))
         } else {
+          val rhsOffset: AST.IR.Exp = if (offset != 0) AST.IR.Exp.Binary(anvil.spType, o.receiver,
+            AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(anvil.spType, offset, o.pos), o.pos) else o.receiver
           return MSome(rhsOffset)
         }
       }
     }
     override def post_langastIRExpIndexing(o: AST.IR.Exp.Indexing): MOption[AST.IR.Exp] = {
-      val seqType = o.exp.tipe.asInstanceOf[AST.Typed.Name]
-      val indexType = seqType.args(0)
-      val elementType = seqType.args(1)
-      val min: Z = anvil.minIndex(indexType)
-      var index = o.index
-      if (index.tipe != anvil.spType) {
-        index = AST.IR.Exp.Type(F, index, anvil.spType, index.pos)
-      }
-      val indexOffset: AST.IR.Exp = if (min == 0) index else AST.IR.Exp.Binary(
-        anvil.spType, index, AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(anvil.spType, min, index.pos), index.pos)
-      val elementSize = anvil.typeByteSize(elementType)
-      val elementOffset: AST.IR.Exp = if (elementSize == 1) indexOffset else AST.IR.Exp.Binary(anvil.spType,
-        indexOffset, AST.IR.Exp.Binary.Op.Mul, AST.IR.Exp.Int(anvil.spType, anvil.typeByteSize(elementType),
-          index.pos), index.pos)
-      val rhsOffset = AST.IR.Exp.Binary(anvil.spType, o.exp, AST.IR.Exp.Binary.Op.Add, elementOffset, o.exp.pos)
-      if (anvil.isScalar(elementType)) {
-        return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(rhsOffset,
-          anvil.isSigned(elementType), anvil.typeByteSize(elementType), o.prettyST(anvil.printer), elementType, o.pos)))
-      } else {
-        return MSome(rhsOffset)
-      }
+      halt("Infeasible")
     }
   }
 
@@ -316,7 +295,7 @@ object Util {
 
     override def post_langastIRStmtIntrinsic(o: AST.IR.Stmt.Intrinsic): MOption[AST.IR.Stmt.Ground] = {
       o.intrinsic match {
-        case in@Intrinsic.Store(AST.IR.Exp.Intrinsic(_: Intrinsic.Register), _, _, i@AST.IR.Exp.Int(_, cp, _), _, _, _) =>
+        case in@Intrinsic.Store(AST.IR.Exp.Intrinsic(_: Intrinsic.Register), _, _, _, i@AST.IR.Exp.Int(t, cp, _), _, _, _) if t == anvil.cpType =>
           return MSome(o(intrinsic = in(rhs = i(value = cpSubstMap.get(cp).get))))
         case _ =>
       }
@@ -1051,6 +1030,8 @@ object Util {
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
   val syntheticMethodIds: HashSet[String] = HashSet.empty[String] + objInitId + newInitId + testId
   val ignoredTempLocal: HashSet[String] = HashSet.empty[String] + sfLocId + sfDescId + sfCallerId + sfCurrentId + s"$resultLocalId$dataId"
+
+  val spType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "SP"), ISZ())
 
   @strictpure def tempST(anvil: Anvil, tipe: AST.Typed, n: Z): ST = {
     val t: AST.Typed =

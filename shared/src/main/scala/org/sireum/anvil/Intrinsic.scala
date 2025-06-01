@@ -33,12 +33,19 @@ object Intrinsic {
 
   // Replaces AST.IR.Exp.LocalVarRef, AST.IR.Exp.GlobalVarRef, AST.IR.Exp.Field, AST.IR.Exp.Index
   @datatype class TempLoad(val temp: Z,
-                           val rhsOffset: AST.IR.Exp,
+                           val base: AST.IR.Exp,
+                           val offset: Z,
                            val isSigned: B,
                            val bytes: Z,
                            val comment: ST,
                            val tipe: AST.Typed,
                            val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def rhsOffset: AST.IR.Exp = {
+      val (op, n): (AST.IR.Exp.Binary.Op.Type, Z) =
+        if (offset < 0) (AST.IR.Exp.Binary.Op.Sub, -offset) else (AST.IR.Exp.Binary.Op.Add, offset)
+      if (n == 0) base
+      else AST.IR.Exp.Binary(Util.spType, base, op, AST.IR.Exp.Int(Util.spType, n, pos), pos)
+    }
     @strictpure def prettyST(p: AST.IR.Printer): ST = {
       val lhs: ST =
         if (p.asInstanceOf[Util.AnvilIRPrinter].anvil.config.splitTempSizes)
@@ -49,12 +56,19 @@ object Intrinsic {
   }
 
   // Replaces AST.IR.Exp.LocalVarRef, AST.IR.Exp.GlobalVarRef, AST.IR.Exp.Field, AST.IR.Exp.Index
-  @datatype class Load(val rhsOffset: AST.IR.Exp,
+  @datatype class Load(val base: AST.IR.Exp,
+                       val offset: Z,
                        val isSigned: B,
                        val bytes: Z,
                        val comment: ST,
                        val tipe: AST.Typed,
                        val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
+    @strictpure def rhsOffset: AST.IR.Exp = {
+      val (op, n): (AST.IR.Exp.Binary.Op.Type, Z) =
+        if (offset < 0) (AST.IR.Exp.Binary.Op.Sub, -offset) else (AST.IR.Exp.Binary.Op.Add, offset)
+      if (n == 0) base
+      else AST.IR.Exp.Binary(Util.spType, base, op, AST.IR.Exp.Int(Util.spType, n, pos), pos)
+    }
     @strictpure def prettyST(p: AST.IR.Printer): ST = st"*${rhsOffset.prettyST(p)}"
     @strictpure def numOfTemps: Z = rhsOffset.numOfTemps
     @strictpure def depth: Z = 1 + rhsOffset.depth
@@ -77,13 +91,21 @@ object Intrinsic {
   }
 
   // Replaces AST.IR.Stmt.Assign.Local, AST.IR.Stmt.Assign.Field, AST.IR.Stmt.Assign.Global, AST.IR.Stmt.Assign.Index
-  @datatype class Store(val lhsOffset: AST.IR.Exp,
+  @datatype class Store(val base: AST.IR.Exp,
+                        val offset: Z,
                         val isSigned: B,
                         val bytes: Z,
                         val rhs: AST.IR.Exp,
                         val comment: ST,
                         val tipe: AST.Typed,
                         val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def lhsOffset: AST.IR.Exp = {
+      val (op, n): (AST.IR.Exp.Binary.Op.Type, Z) =
+        if (offset < 0) (AST.IR.Exp.Binary.Op.Sub, -offset) else (AST.IR.Exp.Binary.Op.Add, offset)
+      if (n == 0) base
+      else AST.IR.Exp.Binary(Util.spType, base, op, AST.IR.Exp.Int(Util.spType, n, pos), pos)
+    }
+
     @strictpure def prettyST(p: AST.IR.Printer): ST = {
       val rhsST = st"${rhs.prettyST(p)} [${if (isSigned) "signed" else "unsigned"}, $tipe, $bytes]  // $comment"
       lhsOffset match {
