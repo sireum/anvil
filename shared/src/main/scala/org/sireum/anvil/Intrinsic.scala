@@ -116,7 +116,8 @@ object Intrinsic {
   }
 
   // Replaces AST.IR.Stmt.Assign.Local, AST.IR.Stmt.Assign.Field, AST.IR.Stmt.Assign.Global, AST.IR.Stmt.Assign.Index
-  @datatype class Copy(val lhsOffset: AST.IR.Exp,
+  @datatype class Copy(val lbase: AST.IR.Exp,
+                       val loffset: Z,
                        val lhsBytes: Z,
                        val rhsBytes: AST.IR.Exp,
                        val rhs: AST.IR.Exp,
@@ -124,6 +125,9 @@ object Intrinsic {
                        val tipe: AST.Typed,
                        val rhsTipe: AST.Typed,
                        val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def lhsOffset: AST.IR.Exp =
+      if (loffset == 0) lbase
+      else AST.IR.Exp.Binary(Util.spType, lbase, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(Util.spType, loffset, pos), pos)
     @strictpure def prettyST(p: AST.IR.Printer): ST = st"${lhsOffset.prettyST(p)} [$tipe, $lhsBytes]  <-  ${rhs.prettyST(p)} [$rhsTipe, ${rhsBytes.prettyST(p)}]  // $comment"
   }
 

@@ -1564,7 +1564,7 @@ import Anvil._
       } else {
         val bytes = typeByteSize(elementType)
         AST.IR.Stmt.Intrinsic(Intrinsic.Copy(
-          AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
+          AST.IR.Exp.Temp(lhsOffsetParam, spType, pos), 0,
           bytes,
           AST.IR.Exp.Int(spType, bytes, pos),
           AST.IR.Exp.Type(F, AST.IR.Exp.Temp(defaultParam, AST.Typed.u64, pos), spType, pos),
@@ -1620,7 +1620,7 @@ import Anvil._
           blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds, AST.IR.Jump.Goto(copyLabel, pos))
           blocks = blocks :+ AST.IR.BasicBlock(copyLabel, ISZ(
             AST.IR.Stmt.Intrinsic(in(
-              lhsOffset = AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
+              lbase = AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
               rhs = AST.IR.Exp.Temp(rhsOffsetParam, spType, pos),
               rhsBytes =
                 if (config.erase) AST.IR.Exp.Temp(rhsElementSizeParam, spType, pos)
@@ -2822,9 +2822,9 @@ import Anvil._
                       addGrounds = addGrounds :+ AST.IR.Stmt.Assign.Temp(paramInfo.get(resultLocalId).get.loc, exp, exp.pos)
                     } else {
                       val lhsOffset: AST.IR.Exp = AST.IR.Exp.Temp(paramInfo.get(resultLocalId).get.loc, spType, exp.pos)
-                      addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset,
-                        typeByteSize(p.context.t.ret), copySize(exp), exp, st"$resultLocalId = ${exp.prettyST(printer)}",
-                        p.context.t.ret, exp.tipe, exp.pos))
+                      addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset, 0,
+                        typeByteSize(p.context.t.ret), copySize(exp), exp,
+                        st"$resultLocalId = ${exp.prettyST(printer)}", p.context.t.ret, exp.tipe, exp.pos))
                     }
                   } else {
                     val lhsOffset: AST.IR.Exp = AST.IR.Exp.Intrinsic(Intrinsic.Load(
@@ -2834,9 +2834,9 @@ import Anvil._
                       addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(lhsOffset, 0,
                         isSigned(exp.tipe), typeByteSize(exp.tipe), exp, st"$resultLocalId = ${exp.prettyST(printer)}", exp.tipe, exp.pos))
                     } else {
-                      addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset,
-                        typeByteSize(p.context.t.ret), copySize(exp), exp, st"$resultLocalId = ${exp.prettyST(printer)}",
-                        p.context.t.ret, exp.tipe, exp.pos))
+                      addGrounds = addGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset, 0,
+                        typeByteSize(p.context.t.ret), copySize(exp), exp,
+                        st"$resultLocalId = ${exp.prettyST(printer)}", p.context.t.ret, exp.tipe, exp.pos))
                     }
                   }
                 case _ =>
@@ -3308,7 +3308,7 @@ import Anvil._
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(globalOffset, 0, isSigned(tipe),
                       typeByteSize(tipe), newRhs, g.prettyST(printer), tipe, g.pos))
                   } else {
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(globalOffset, typeByteSize(tipe),
+                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(globalOffset, 0, typeByteSize(tipe),
                       copySize(newRhs), newRhs, g.prettyST(printer), tipe, newRhs.tipe, g.pos))
                   }
                 case AST.IR.Stmt.Assign.Local(_, lhs, t, rhs, pos) =>
@@ -3322,24 +3322,22 @@ import Anvil._
                     if (paramSet.contains(lhs)) {
                       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(AST.IR.Exp.Intrinsic(
                         Intrinsic.Load(AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, newRhs.pos)), localOffset,
-                          isSigned(spType), typeByteSize(spType), st"", spType, pos)),
-                        typeByteSize(t), copySize(newRhs), newRhs, st"$lhs = ${newRhs.prettyST(printer)}", t, newRhs.tipe, pos))
+                          isSigned(spType), typeByteSize(spType), st"", spType, pos)), 0,
+                        typeByteSize(t), copySize(newRhs), newRhs,
+                        st"$lhs = ${newRhs.prettyST(printer)}", t, newRhs.tipe, pos))
                     } else {
-                      val lhsOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, newRhs.pos)),
-                        AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, localOffset, newRhs.pos), newRhs.pos)
-                      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset,
+                      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(
+                        AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, newRhs.pos)), localOffset,
                         typeByteSize(t), copySize(newRhs), newRhs, st"$lhs = ${newRhs.prettyST(printer)}", t, newRhs.tipe, pos))
                     }
                   }
                 case AST.IR.Stmt.Assign.Field(receiver, id, _, rhs, pos) =>
                   val (ft, offset) = classSizeFieldOffsets(receiver.tipe.asInstanceOf[AST.Typed.Name])._2.get(id).get
-                  val lhsOffset = AST.IR.Exp.Binary(spType, receiver, AST.IR.Exp.Binary.Op.Add,
-                    AST.IR.Exp.Int(spType, offset, rhs.pos), rhs.pos)
                   if (isScalar(ft)) {
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(receiver, offset, isSigned(ft),
                       typeByteSize(ft), rhs, g.prettyST(printer), ft, pos))
                   } else {
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(lhsOffset, typeByteSize(ft),
+                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(receiver, offset, typeByteSize(ft),
                       copySize(rhs), rhs, g.prettyST(printer), ft, rhs.tipe, pos))
                   }
                 case AST.IR.Stmt.Assign.Index(rcv, idx, rhs, pos) =>
@@ -3351,7 +3349,7 @@ import Anvil._
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(receiverOffset, 0,
                       isSigned(elementType), typeByteSize(elementType), newRhs, g.prettyST(printer), elementType, g.pos))
                   } else {
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(receiverOffset, typeByteSize(elementType),
+                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(receiverOffset, 0, typeByteSize(elementType),
                       copySize(newRhs), newRhs, g.prettyST(printer), elementType, newRhs.tipe, g.pos))
                   }
                 case g@AST.IR.Stmt.Assign.Temp(n, rhs, pos) =>
