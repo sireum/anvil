@@ -615,8 +615,8 @@ import Anvil._
       @pure def isCopyStoreLoad(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
         g match {
           case AST.IR.Stmt.Intrinsic(_: Intrinsic.Copy) => return T
-          case AST.IR.Stmt.Intrinsic(in: Intrinsic.Store) => return in.bytes > 1 && in.tipe != cpType && !ops.StringOps(in.comment.render).contains("save")
-          case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return in.bytes > 1 && in.tipe != cpType && !ops.StringOps(in.comment.render).contains("restore")
+          case AST.IR.Stmt.Intrinsic(in: Intrinsic.Store) => return in.bytes > 1 && in.tipe != cpType
+          case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return in.bytes > 1 && in.tipe != cpType
           case _ => return F
         }
       }
