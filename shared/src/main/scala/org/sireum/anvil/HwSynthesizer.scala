@@ -185,9 +185,9 @@ object ChiselModule {
           |    })
           |
           |    val state = RegInit(0.U(2.W))
-          |    val regA = Reg(${portType}(64.W))
-          |    val regB = Reg(${portType}(64.W))
-          |    val result = Reg(${portType}(64.W))
+          |    val regA = Reg(${portType}(width.W))
+          |    val regB = Reg(${portType}(width.W))
+          |    val result = Reg(${portType}(width.W))
           |
           |    io.valid := Mux(state === 2.U, true.B, false.B)
           |    io.out := Mux(state === 2.U, result, 0.${if(signedPort) "S" else "U"})
@@ -256,9 +256,9 @@ object ChiselModule {
           |        val valid = Output(Bool())
           |    })
           |    val state = RegInit(0.U(2.W))
-          |    val regA = Reg(${portType}(64.W))
-          |    val regB = Reg(${portType}(64.W))
-          |    val result = Reg(${portType}(64.W))
+          |    val regA = Reg(${portType}(width.W))
+          |    val regB = Reg(${portType}(width.W))
+          |    val result = Reg(${portType}(width.W))
           |
           |    io.valid := Mux(state === 2.U, true.B, false.B)
           |    io.out := Mux(state === 2.U, result, 0.${if (signedPort) "S" else "U"})
