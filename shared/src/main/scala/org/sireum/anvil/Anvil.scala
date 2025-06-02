@@ -72,6 +72,7 @@ object Anvil {
       "Default"
       "Subroutine"
       "SubroutineFast"
+      "Ip"
     }
 
     @datatype class Sim(val threads: Z, val cycles: Z)
@@ -673,6 +674,8 @@ import Anvil._
           p = anvil.transformCopySubroutineFast(fresh, p, maxTemps)
           output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy-access"), p.prettyST(anvil.printer))
           pass = pass + 1
+
+        case Anvil.Config.MemoryAccess.Ip =>
       }
 
       p = anvil.transformErase(fresh, p, maxTemps)
