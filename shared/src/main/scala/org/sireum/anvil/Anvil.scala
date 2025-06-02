@@ -635,39 +635,43 @@ import Anvil._
 
       val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
 
+      p = anvil.transformCopyIntrinsicBase(fresh, p, maxTemps)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy-base"), p.prettyST(anvil.printer))
+      pass = pass + 1
+
       config.memoryAccess match {
         case Anvil.Config.MemoryAccess.Default =>
           if (config.useIP) {
             p = anvil.transformCopyDefaultIp(fresh, p, maxTemps)
-            output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy"), p.prettyST(anvil.printer))
+            output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy-access"), p.prettyST(anvil.printer))
             pass = pass + 1
           }
         case Anvil.Config.MemoryAccess.Subroutine =>
 
           p = anvil.transformTempLoadSubroutine(fresh, p, maxTemps)
-          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load"), p.prettyST(anvil.printer))
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load-access"), p.prettyST(anvil.printer))
           pass = pass + 1
 
           p = anvil.transformStoreSubroutine(fresh, p, maxTemps)
-          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "store"), p.prettyST(anvil.printer))
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "store-access"), p.prettyST(anvil.printer))
           pass = pass + 1
 
           p = anvil.transformCopySubroutine(fresh, p, maxTemps)
-          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy"), p.prettyST(anvil.printer))
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy-access"), p.prettyST(anvil.printer))
           pass = pass + 1
 
         case Anvil.Config.MemoryAccess.SubroutineFast =>
 
           p = anvil.transformTempLoadSubroutineFast(fresh, p, maxTemps)
-          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load"), p.prettyST(anvil.printer))
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load-access"), p.prettyST(anvil.printer))
           pass = pass + 1
 
           p = anvil.transformStoreSubroutineFast(fresh, p, maxTemps)
-          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "store"), p.prettyST(anvil.printer))
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "store-access"), p.prettyST(anvil.printer))
           pass = pass + 1
 
           p = anvil.transformCopySubroutineFast(fresh, p, maxTemps)
-          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy"), p.prettyST(anvil.printer))
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy-access"), p.prettyST(anvil.printer))
           pass = pass + 1
       }
 
@@ -3241,6 +3245,32 @@ import Anvil._
       work = next
     }
     return p(body = body(blocks = blockMap.values))
+  }
+
+  def transformCopyIntrinsicBase(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+    @strictpure def shouldSplit(e: AST.IR.Exp): B = e match {
+      case AST.IR.Exp.Intrinsic(in) => in.isInstanceOf[Intrinsic.Load] || in.isInstanceOf[Intrinsic.Indexing]
+      case _ => F
+    }
+    val spt: AST.Typed = if (config.splitTempSizes) spType else AST.Typed.u64
+    val temp = maxTemps.typeCount(this, spt)
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      b.grounds match {
+        case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.Copy)) if shouldSplit(in.lbase) =>
+          val label = fresh.label()
+          val pos = in.lbase.pos
+          blocks = blocks :+ b(grounds = ISZ(
+            AST.IR.Stmt.Assign.Temp(temp, in.lbase, pos)
+          ), jump = AST.IR.Jump.Goto(label, pos))
+          blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(
+            AST.IR.Stmt.Intrinsic(in(lbase = AST.IR.Exp.Temp(temp, spType, pos)))
+          ), b.jump)
+        case _ => blocks = blocks :+ b
+      }
+    }
+    return p(body = body(blocks = blocks))
   }
 
   def transformOffset(globalMap: HashSMap[ISZ[String], VarInfo],
