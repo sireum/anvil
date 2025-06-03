@@ -2111,7 +2111,6 @@ import HwSynthesizer._
           |    Seq(ChiselGeneratorAnnotation(() => new AXIWrapperChiselGenerated${moduleName}()))
           |  )
           |}
-          |
         """
 
     return verilogGenST
@@ -2240,6 +2239,7 @@ import HwSynthesizer._
 
   @pure def buildSbtST(): ST = {
     val sbtST: ST = {
+      /*
       st"""
           |ThisBuild / scalaVersion     := "2.13.16"
           |ThisBuild / version          := "0.1.0"
@@ -2265,7 +2265,7 @@ import HwSynthesizer._
           |    addCompilerPlugin("org.chipsalliance" % "chisel-plugin" % chiselVersion cross CrossVersion.full),
           |)
         """
-      /*
+       */
       st"""scalaVersion := "2.13.10"
           |
           |
@@ -2279,7 +2279,6 @@ import HwSynthesizer._
           |libraryDependencies += "edu.berkeley.cs" %% "chisel3" % "3.5.6"
           |libraryDependencies += "edu.berkeley.cs" %% "chiseltest" % "0.5.6"
         """
-       */
     }
 
     return sbtST
@@ -2833,8 +2832,8 @@ import HwSynthesizer._
               |  ${sharedMemName}.io.mode := Mux(${sharedMemName}.io.readValid, 0.U, 1.U)
               |  ${sharedMemName}.io.readAddr := io.arrayReadAddr
               |  ${sharedMemName}.io.readOffset := 0.U
-              |  io.arrayRData := ${sharedMemName}.io.readData
               |}
+              |io.arrayRData := Mux(io.arrayRe & ${sharedMemName}.io.readValid, ${sharedMemName}.io.readData, 0.U)
             """
         } else {
           st"""
@@ -3194,11 +3193,12 @@ import HwSynthesizer._
           val tempST: ST = st"${if (!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"}"
           val byteST: ST = st"(${intrinsic.bytes * 8 - 1}, 0)"
           val signedST: ST = if(intrinsic.isSigned) st".asSInt" else st""
+          val readOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S.asUInt" else st"${intrinsic.offset}.U"
           intrinsicST =
             st"""
                 |${indexerInstanceName}.io.mode := 1.U
                 |${indexerInstanceName}.io.readAddr := ${readAddrST.render}
-                |${indexerInstanceName}.io.readOffset := ${intrinsic.offset}.U
+                |${indexerInstanceName}.io.readOffset := ${readOffsetST.render}
                 |when(${indexerInstanceName}.io.readValid) {
                 |  ${tempST.render} := ${indexerInstanceName}.io.readData${byteST.render}${signedST.render}
                 |  ${indexerInstanceName}.io.mode := 0.U
@@ -3313,7 +3313,7 @@ import HwSynthesizer._
         }
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
           val writeAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic)
-          val writeOffsetST: ST = st"${intrinsic.offset}.U"
+          val writeOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S.asUInt" else st"${intrinsic.offset}.U"
           val writeLenST: ST = st"${intrinsic.bytes}.U"
           val writeDataST: ST = processExpr(intrinsic.rhs, F, ipPortLogic)
           val signedST: ST = if(intrinsic.isSigned) st".asUInt" else st""
