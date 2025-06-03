@@ -695,11 +695,12 @@ object Util {
       e match {
         case e: AST.IR.Exp.Temp if anvil.config.splitTempSizes => Some(tempST(anvil, e.tipe, e.n))
         case _ =>
+          val sign: String = if (anvil.isSigned(e.tipe)) ".S" else ".U"
           val op: String = e match {
-            case e: AST.IR.Exp.Binary => e.op.string
-            case e: AST.IR.Exp.Int => if (e.value >= 0) "Add" else "Sub"
+            case e: AST.IR.Exp.Binary => s"${e.op}$sign"
+            case e: AST.IR.Exp.Int => if (e.value >= 0) s"Add$sign" else s"Sub$sign"
             case AST.IR.Exp.Intrinsic(_: Intrinsic.Indexing) => "Indexing"
-            case _ => "Add"
+            case _ => s"Add$sign"
           }
           ipAlloc.allocMap.get(IpAlloc.Ext.exp(e)) match {
             case Some(n) =>
@@ -719,7 +720,7 @@ object Util {
               case v: AST.IR.Exp.Int if v.value < 0 => "Sub"
               case _ => "Add"
             }
-            Some(st"${stmt.prettyRawST(this)} /* IP#$n $op */")
+            Some(st"${stmt.prettyRawST(this)} /* IP#$n $op.U */")
           case _ => None()
         }
       case _ => None()
