@@ -1702,7 +1702,11 @@ import HwSynthesizer._
       var muxLogicST: ISZ[ST] = ISZ[ST]()
 
       for(entry <- targetModule.portList.entries) {
-        muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}_${modIdx}.io.${entry._1} := ${defaultValue(entry._2)}"
+        if(ip == BlockMemoryIP()) {
+          muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}.io.${entry._1} := ${defaultValue(entry._2)}"
+        } else {
+          muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}_${modIdx}.io.${entry._1} := ${defaultValue(entry._2)}"
+        }
       }
 
       return st"""
@@ -2822,6 +2826,59 @@ import HwSynthesizer._
         st"""${(instanceST, "\n")}"""
       }
 
+      val memReadST: ST = {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+          st"""
+              |when(io.arrayRe) {
+              |  ${sharedMemName}.io.mode := Mux(${sharedMemName}.io.readValid, 0.U, 1.U)
+              |  ${sharedMemName}.io.readAddr := io.arrayReadAddr
+              |  ${sharedMemName}.io.readOffset := 0.U
+              |  io.arrayRData := ${sharedMemName}.io.readData
+              |}
+            """
+        } else {
+          st"""
+              |io.arrayRData := Mux(io.arrayRe, Cat(${sharedMemName}(io.arrayReadAddr + 3.U),
+              |                                     ${sharedMemName}(io.arrayReadAddr + 2.U),
+              |                                     ${sharedMemName}(io.arrayReadAddr + 1.U),
+              |                                     ${sharedMemName}(io.arrayReadAddr + 0.U)), 0.U)
+            """
+        }
+      }
+
+      val memWritST: ST = {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+          st"""
+              |val arrayStrb = io.arrayStrb
+              |val arrayWData = io.arrayWData
+              |val arrayWe = io.arrayWe
+              |val validWriteByteCount = PopCount(arrayStrb)
+              |val validWriteBytes = (0 until (C_S_AXI_DATA_WIDTH/8)).map { i =>
+              |  val byte = arrayWData((i + 1) * 8 - 1, i * 8)
+              |  Mux(arrayWe & arrayStrb(i), byte, 0.U(8.W))
+              |}
+              |val mergedValidData = Cat(validWriteBytes.reverse)
+              |
+              |when(arrayWe) {
+              |  ${sharedMemName}.io.mode := Mux(${sharedMemName}.io.writeValid, 0.U, 2.U)
+              |  ${sharedMemName}.io.writeAddr := io.arrayWriteAddr
+              |  ${sharedMemName}.io.writeOffset := 0.U
+              |  ${sharedMemName}.io.writeLen := validWriteByteCount
+              |  ${sharedMemName}.io.writeData := mergedValidData
+              |}
+            """
+        } else {
+          st"""
+              |for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
+              |  when(io.arrayWe & (io.arrayStrb(byteIndex.U) === 1.U)) {
+              |    ${sharedMemName}(io.arrayWriteAddr + byteIndex.U) := io.arrayWData((byteIndex * 8) + 7, byteIndex * 8)
+              |  }
+              |}
+            """
+        }
+      }
+
+
       return st"""
           |import chisel3._
           |import chisel3.util._
@@ -2851,7 +2908,6 @@ import HwSynthesizer._
           |        val arrayRData     = Output(UInt(C_S_AXI_DATA_WIDTH.W))
           |    })
           |
-          |    // reg for share array between software and IP
           |    ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip) s"val ${sharedMemName} = RegInit(VecInit(Seq.fill(ARRAY_REG_DEPTH)(0.U(ARRAY_REG_WIDTH.W))))" else ""}
           |    // reg for general purpose
           |    ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
@@ -2872,17 +2928,10 @@ import HwSynthesizer._
           |    init(this)
           |
           |    // write operation
-          |    for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
-          |      when(io.arrayWe & (io.arrayStrb(byteIndex.U) === 1.U)) {
-          |        ${sharedMemName}(io.arrayWriteAddr + byteIndex.U) := io.arrayWData((byteIndex * 8) + 7, byteIndex * 8)
-          |      }
-          |    }
+          |    ${memWritST.render}
           |
           |    // read operation
-          |    io.arrayRData := Mux(io.arrayRe, Cat(${sharedMemName}(io.arrayReadAddr + 3.U),
-          |                                         ${sharedMemName}(io.arrayReadAddr + 2.U),
-          |                                         ${sharedMemName}(io.arrayReadAddr + 1.U),
-          |                                         ${sharedMemName}(io.arrayReadAddr + 0.U)), 0.U)
+          |    ${memReadST.render}
           |
           |    io.ready := Mux(CP === 0.U, 1.U, 0.U) | Mux(CP === 1.U, 2.U, 0.U)
           |
@@ -3150,8 +3199,9 @@ import HwSynthesizer._
                 |${indexerInstanceName}.io.mode := 1.U
                 |${indexerInstanceName}.io.readAddr := ${readAddrST.render}
                 |${indexerInstanceName}.io.readOffset := ${intrinsic.offset}.U
-                |when(${indexerInstanceName}.io.valid) {
-                |  ${tempST.render} := ${indexerInstanceName}.io.out${byteST.render}${signedST.render}
+                |when(${indexerInstanceName}.io.readValid) {
+                |  ${tempST.render} := ${indexerInstanceName}.io.readData${byteST.render}${signedST.render}
+                |  ${indexerInstanceName}.io.mode := 0.U
                 |}
               """
         } else {
@@ -3185,7 +3235,22 @@ import HwSynthesizer._
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Copy) => {
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
-
+          val dmaDstAddrST: ST = processExpr(intrinsic.lbase, F, ipPortLogic)
+          val dmaDstOffsetST: ST = st"${intrinsic.loffset}.U"
+          val dmaLengthST: ST = processExpr(intrinsic.rhsBytes, F, ipPortLogic)
+          val dmaSrcAddrST: ST = processExpr(intrinsic.rhs, F, ipPortLogic)
+          val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+          intrinsicST =
+            st"""
+                |${indexerInstanceName}.io.mode := 3.U
+                |${indexerInstanceName}.io.dmaSrcAddr := ${dmaSrcAddrST.render}
+                |${indexerInstanceName}.io.dmaDstAddr := ${dmaDstAddrST.render}
+                |${indexerInstanceName}.io.dmaDstOffset := ${dmaDstOffsetST.render}
+                |${indexerInstanceName}.io.dmaLength := ${dmaLengthST.render}
+                |when(${indexerInstanceName}.io.dmaValid) {
+                |  ${indexerInstanceName}.io.mode := 0.U
+                |}
+              """
         } else {
           MemCopyLog.enableFlagMemCopyInBlock()
 
@@ -3247,7 +3312,23 @@ import HwSynthesizer._
           case _ => F
         }
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
-
+          val writeAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic)
+          val writeOffsetST: ST = st"${intrinsic.offset}.U"
+          val writeLenST: ST = st"${intrinsic.bytes}.U"
+          val writeDataST: ST = processExpr(intrinsic.rhs, F, ipPortLogic)
+          val signedST: ST = if(intrinsic.isSigned) st".asUInt" else st""
+          val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+          intrinsicST =
+            st"""
+                |${indexerInstanceName}.io.mode := 2.U
+                |${indexerInstanceName}.io.writeAddr := ${writeAddrST.render}
+                |${indexerInstanceName}.io.writeOffset := ${writeOffsetST.render}
+                |${indexerInstanceName}.io.writeLen := ${writeLenST.render}
+                |${indexerInstanceName}.io.writeData := ${writeDataST.render}${signedST.render}
+                |when(${indexerInstanceName}.io.writeValid) {
+                |  ${indexerInstanceName}.io.mode := 0.U
+                |}
+              """
         } else {
           val lhsOffsetST = processExpr(intrinsic.lhsOffset, F, ipPortLogic)
           val rhsST = processExpr(intrinsic.rhs, intrinsic.isSigned, ipPortLogic)
@@ -3860,7 +3941,6 @@ object HwSynthesizer {
         val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(AST.IR.Exp.Intrinsic(o))).get
         val instanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
         val inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = getInputPort(IntrinsicIP(defaultIndexing))
-        println(BlockLog.getBlock.label)
         val h: HashSMap[String, ChiselModule.Input] = inputs.get(instanceIndex).get
         for (entry <- h.entries) {
           sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
