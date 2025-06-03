@@ -971,7 +971,11 @@ object Util {
     override def preIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): MAnvilIRTransformer.PreResult[Intrinsic.RegisterAssign] = {
       if (o.isInc) {
         val t: AST.Typed = if (o.isSP) anvil.spType else anvil.dpType
-        val key = (anvil.isSigned(t), AST.IR.Exp.Binary.Op.Add)
+        val op: AST.IR.Exp.Binary.Op.Type = o.value match {
+          case v: AST.IR.Exp.Int if v.value < 0 => AST.IR.Exp.Binary.Op.Sub
+          case _ => AST.IR.Exp.Binary.Op.Add
+        }
+        val key = (anvil.isSigned(t), op)
         val n = binopMap.get(key).getOrElseEager(0)
         ipMap = ipMap + IpAlloc.Ext.exp(o.value) ~> n
         binopMap = binopMap + key ~> (n + 1)
