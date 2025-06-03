@@ -695,8 +695,16 @@ object Util {
       e match {
         case e: AST.IR.Exp.Temp if anvil.config.splitTempSizes => Some(tempST(anvil, e.tipe, e.n))
         case _ =>
+          val op: String = e match {
+            case e: AST.IR.Exp.Binary => e.op.string
+            case e: AST.IR.Exp.Int => if (e.value >= 0) "Add" else "Sub"
+            case AST.IR.Exp.Intrinsic(_: Intrinsic.Indexing) => "Indexing"
+            case _ => "Add"
+          }
           ipAlloc.allocMap.get(IpAlloc.Ext.exp(e)) match {
-            case Some(n) => Some(st"${e.prettyRawST(this)} /* IP#$n */")
+            case Some(n) =>
+              assert(op != "", s"$e")
+              Some(st"${e.prettyRawST(this)} /* IP#$n $op */")
             case _ => None()
           }
       }
@@ -706,7 +714,12 @@ object Util {
         Some(st"${tempST(anvil, stmt.rhs.tipe, stmt.lhs)} = ${stmt.rhs.prettyST(this)}")
       case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isInc =>
         ipAlloc.allocMap.get(IpAlloc.Ext.exp(in.value)) match {
-          case Some(n) => Some(st"${stmt.prettyRawST(this)} /* IP#$n */")
+          case Some(n) =>
+            val op: String = in.value match {
+              case v: AST.IR.Exp.Int if v.value < 0 => "Sub"
+              case _ => "Add"
+            }
+            Some(st"${stmt.prettyRawST(this)} /* IP#$n $op */")
           case _ => None()
         }
       case _ => None()
@@ -1223,6 +1236,7 @@ object Util {
               }
               r = r + ipe ~> alloc
               indexingAlloc = s(alloc ~> (s(alloc) + 1))
+            case e: AST.IR.Exp.Int => binop(e.tipe, if (e.value < 0) AST.IR.Exp.Binary.Op.Sub else AST.IR.Exp.Binary.Op.Add)
             case e => binop(e.tipe, AST.IR.Exp.Binary.Op.Add)
           }
         }
