@@ -3194,15 +3194,14 @@ import HwSynthesizer._
           val byteST: ST = st"(${intrinsic.bytes * 8 - 1}, 0)"
           val signedST: ST = if(intrinsic.isSigned) st".asSInt" else st""
           val readOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S.asUInt" else st"${intrinsic.offset}.U"
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.readValid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${tempST.render} := ${indexerInstanceName}.io.readData${byteST.render}${signedST.render}"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
           intrinsicST =
             st"""
                 |${indexerInstanceName}.io.mode := 1.U
                 |${indexerInstanceName}.io.readAddr := ${readAddrST.render}
                 |${indexerInstanceName}.io.readOffset := ${readOffsetST.render}
-                |when(${indexerInstanceName}.io.readValid) {
-                |  ${tempST.render} := ${indexerInstanceName}.io.readData${byteST.render}${signedST.render}
-                |  ${indexerInstanceName}.io.mode := 0.U
-                |}
               """
         } else {
           var internalST = ISZ[ST]()
@@ -3240,6 +3239,8 @@ import HwSynthesizer._
           val dmaLengthST: ST = processExpr(intrinsic.rhsBytes, F, ipPortLogic)
           val dmaSrcAddrST: ST = processExpr(intrinsic.rhs, F, ipPortLogic)
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.dmaValid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
           intrinsicST =
             st"""
                 |${indexerInstanceName}.io.mode := 3.U
@@ -3247,9 +3248,6 @@ import HwSynthesizer._
                 |${indexerInstanceName}.io.dmaDstAddr := ${dmaDstAddrST.render}
                 |${indexerInstanceName}.io.dmaDstOffset := ${dmaDstOffsetST.render}
                 |${indexerInstanceName}.io.dmaLength := ${dmaLengthST.render}
-                |when(${indexerInstanceName}.io.dmaValid) {
-                |  ${indexerInstanceName}.io.mode := 0.U
-                |}
               """
         } else {
           MemCopyLog.enableFlagMemCopyInBlock()
@@ -3318,6 +3316,8 @@ import HwSynthesizer._
           val writeDataST: ST = processExpr(intrinsic.rhs, F, ipPortLogic)
           val signedST: ST = if(intrinsic.isSigned) st".asUInt" else st""
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.writeValid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
           intrinsicST =
             st"""
                 |${indexerInstanceName}.io.mode := 2.U
@@ -3325,9 +3325,6 @@ import HwSynthesizer._
                 |${indexerInstanceName}.io.writeOffset := ${writeOffsetST.render}
                 |${indexerInstanceName}.io.writeLen := ${writeLenST.render}
                 |${indexerInstanceName}.io.writeData := ${writeDataST.render}${signedST.render}
-                |when(${indexerInstanceName}.io.writeValid) {
-                |  ${indexerInstanceName}.io.mode := 0.U
-                |}
               """
         } else {
           val lhsOffsetST = processExpr(intrinsic.lhsOffset, F, ipPortLogic)
