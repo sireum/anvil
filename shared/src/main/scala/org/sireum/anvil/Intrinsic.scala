@@ -81,7 +81,13 @@ object Intrinsic {
                            val elementSize: Z,
                            val tipe: AST.Typed,
                            val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
-    @strictpure def prettyST(p: AST.IR.Printer): ST = st"${baseOffset.prettyST(p)}[+$dataOffset](${index.prettyST(p)}[*$elementSize])"
+    @strictpure def prettyST(p: AST.IR.Printer): ST = {
+      val indexST: ST = maskOpt match {
+        case Some(mask) => st"(${index.prettyST(p)} & $mask)"
+        case _ => index.prettyST(p)
+      }
+      st"${baseOffset.prettyST(p)}[+$dataOffset]($indexST[*$elementSize])"
+    }
     @strictpure def numOfTemps: Z = baseOffset.numOfTemps + index.numOfTemps
     @strictpure def depth: Z = {
       val bd = baseOffset.depth
