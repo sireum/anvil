@@ -330,9 +330,9 @@ import Anvil._
           stmts = stmts :+ AST.IR.Stmt.Assign.Temp(tempR.n, AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Eq, AST.IR.Exp.Int(AST.Typed.z, i, pos), pos), pos)
           stmts = stmts :+ AST.IR.Stmt.Assign.Temp(tempL.n, AST.IR.Exp.Binary(
             AST.Typed.b,
-            AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Lt, zero, pos),
+            AST.IR.Exp.Temp(tempL.n, AST.Typed.b, pos),
             AST.IR.Exp.Binary.Op.Or,
-            AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Eq, AST.IR.Exp.Int(AST.Typed.z, i, pos), pos),
+            AST.IR.Exp.Temp(tempR.n, AST.Typed.b, pos),
             pos), pos)
           stmts = stmts :+ AST.IR.Stmt.If(tempL,
             AST.IR.Stmt.Block(ISZ(
