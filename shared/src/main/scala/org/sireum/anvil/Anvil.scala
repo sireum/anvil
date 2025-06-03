@@ -636,8 +636,8 @@ import Anvil._
 
       val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
 
-      p = anvil.transformStoreCopyIntrinsic(fresh, p, maxTemps)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "store-copy-base"), p.prettyST(anvil.printer))
+      p = anvil.transformLoadStoreCopyIntrinsic(fresh, p, maxTemps)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load-store-copy"), p.prettyST(anvil.printer))
       pass = pass + 1
 
       config.memoryAccess match {
@@ -3250,7 +3250,7 @@ import Anvil._
     return p(body = body(blocks = blockMap.values))
   }
 
-  def transformStoreCopyIntrinsic(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+  def transformLoadStoreCopyIntrinsic(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     @strictpure def shouldSplit(e: AST.IR.Exp): B = e match {
       case AST.IR.Exp.Intrinsic(in) => in.isInstanceOf[Intrinsic.Load] || in.isInstanceOf[Intrinsic.Indexing]
       case _ => F
@@ -3261,6 +3261,15 @@ import Anvil._
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
       b.grounds match {
+        case ISZ(AST.IR.Stmt.Intrinsic(in@Intrinsic.TempLoad(_, base, _, _, _, _, _, _))) if shouldSplit(base) =>
+          val label = fresh.label()
+          val pos = base.pos
+          blocks = blocks :+ b(grounds = ISZ(
+            AST.IR.Stmt.Assign.Temp(temp, base, pos)
+          ), jump = AST.IR.Jump.Goto(label, pos))
+          blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(
+            AST.IR.Stmt.Intrinsic(in(base = AST.IR.Exp.Temp(temp, spType, pos)))
+          ), b.jump)
         case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.Copy)) if shouldSplit(in.lbase) =>
           val label = fresh.label()
           val pos = in.lbase.pos
