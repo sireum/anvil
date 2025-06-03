@@ -3761,22 +3761,23 @@ import Anvil._
     var grounds = ISZ[AST.IR.Stmt.Ground](
       AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, F, AST.IR.Exp.Int(spType, globalSize, p.pos), p.pos))
     )
+    var stores = ISZ[AST.IR.Stmt.Ground]()
     if (config.stackTrace) {
       val memInfo = globalMap.get(memName).get
       val memTypeInfo = globalMap.get(memTypeName).get
       val memSizeInfo = globalMap.get(memSizeName).get
       val sha3t = sha3Type(displayType)
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+      stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(spType, memInfo.loc, p.pos), 0, isSigned(spType), typeByteSize(spType),
         AST.IR.Exp.Int(spType, memTypeInfo.loc, p.pos), st"${memName(0)}", spType, p.pos))
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+      stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(spType, memTypeInfo.loc, p.pos), 0, isSigned(typeShaType), typeShaSize,
         AST.IR.Exp.Int(typeShaType, sha3t.toZ, p.pos), st"memory $typeFieldId ($displayType: 0x$sha3t)", typeShaType, p.pos))
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+      stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(spType, memSizeInfo.loc, p.pos), 0, isSigned(AST.Typed.z), typeByteSize(AST.Typed.z),
         AST.IR.Exp.Int(AST.Typed.z, config.memory, p.pos), st"memory $sizeFieldId", AST.Typed.z, p.pos))
       val sfCallerInfo = procedureParamInfo(PBox(p))._2.get(sfCallerId).get
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+      stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(spType, globalSize + sfCallerInfo.loc, p.pos), 0, isSigned(spType), typeByteSize(spType),
         AST.IR.Exp.Int(spType, 0, p.pos), st"$sfCallerId = 0", spType, p.pos))
     }
@@ -3784,10 +3785,10 @@ import Anvil._
       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, F, AST.IR.Exp.Int(dpType, 0, p.pos), p.pos))
       val displayInfo = globalMap.get(displayName).get
       val sha3t = sha3Type(displayType)
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+      stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(typeShaType, displayInfo.loc + typeByteSize(spType), p.pos), 0, isSigned(typeShaType), typeShaSize,
         AST.IR.Exp.Int(typeShaType, sha3t.toZ, p.pos), st"$displayId.$typeFieldId ($displayType: 0x$sha3t)", typeShaType, p.pos))
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+      stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(spType, displayInfo.loc + typeByteSize(spType) + typeByteSize(typeShaType), p.pos), 0,
         isSigned(AST.Typed.z), typeByteSize(AST.Typed.z),
         AST.IR.Exp.Int(AST.Typed.z, dpMask + 1, p.pos), st"$displayId.size", AST.Typed.z, p.pos))
@@ -3797,25 +3798,33 @@ import Anvil._
       grounds = grounds :+ AST.IR.Stmt.Assign.Temp(paramInfo.get(returnLocalId).get.loc,
         AST.IR.Exp.Int(cpType, 0, p.pos), p.pos)
     } else {
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+      stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(cpType, globalSize + paramInfo.get(returnLocalId).get.loc, p.pos), 0, isSigned(cpType),
         typeByteSize(cpType), AST.IR.Exp.Int(cpType, 0, p.pos), st"$returnLocalId", cpType, p.pos))
     }
     if (p.tipe.ret != AST.Typed.unit) {
       val offset = paramInfo.get(resultLocalId).get.loc
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+      stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(spType, offset, p.pos), 0, isSigned(spType), typeByteSize(spType),
         AST.IR.Exp.Int(spType, offset + typeByteSize(spType), p.pos), st"data address of $resultLocalId (size = ${typeByteSize(p.tipe.ret)})", spType, p.pos))
     }
     for (pid <- p.paramNames) {
       val info = paramInfo.get(pid).get
       if (!isScalar(info.tipe)) {
-        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+        stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
           AST.IR.Exp.Int(spType, info.loc, p.pos), 0, isSigned(spType), typeByteSize(spType),
           AST.IR.Exp.Int(spType, info.loc + typeByteSize(spType), p.pos), st"data address of $pid (size = ${typeByteSize(info.tipe)})", spType, p.pos))
       }
     }
-    return p(body = body(AST.IR.BasicBlock(fresh.label(), grounds, AST.IR.Jump.Goto(startingLabel, p.pos)) +: body.blocks))
+    var blocks = ISZ(AST.IR.BasicBlock(fresh.label(), grounds, AST.IR.Jump.Goto(startingLabel, p.pos)))
+    for (g <- stores) {
+      val label = fresh.label()
+      val last = blocks.size - 1
+      val lastBlock = blocks(last)
+      blocks = blocks(last ~> lastBlock(jump = AST.IR.Jump.Goto(label, p.pos)))
+      blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(g), AST.IR.Jump.Goto(startingLabel, p.pos))
+    }
+    return p(body = body(blocks ++ body.blocks))
   }
 
   @memoize def subZOpt(t: AST.Typed): Option[TypeInfo.SubZ] = {
