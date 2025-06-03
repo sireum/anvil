@@ -135,7 +135,7 @@ class IRSimulatorTest extends SireumRcSpec {
             }
           }
           out.removeAll()
-          val config = AnvilTest.getConfig(file, p)
+          val config = AnvilTest.getConfig(file, p, F)
           Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, AnvilOutput(F, "", out), reporter) match {
             case Some(ir) =>
               val state = IRSimulator.State.create(ir.anvil.config.splitTempSizes, ir.anvil.config.memory,

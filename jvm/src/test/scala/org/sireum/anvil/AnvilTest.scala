@@ -113,11 +113,11 @@ object AnvilTest {
 
   val isInGitHubAction: B = Os.env("GITHUB_ACTIONS").nonEmpty
 
-  def getConfig(file: String, p: Vector[Predef.String]): Anvil.Config = {
+  def getConfig(file: String, p: Vector[Predef.String], forceIP: B): Anvil.Config = {
     var config = Anvil.Config.empty
     val splitTempSizes = p.last.contains(splitTempId)
     val tempLocal = p.last.contains(tempLocalId)
-    val ipMax: Z = if (p.last.contains(withIpId)) 0 else -1
+    val ipMax: Z = if (p.last.contains(withIpId) || forceIP) 0 else -1
     val printSize: Z = printFileMap.get(file).getOrElse(defaultPrintSize)
     config = config(
       memory = memoryFileMap(printSize, splitTempSizes, tempLocal, ipMax >= 0).get(file).getOrElse(defaultMemory),
@@ -198,7 +198,7 @@ class AnvilTest extends SireumRcSpec {
       case Some(program) if !reporter.hasError =>
         val (th2, _) = lang.FrontEnd.checkWorksheet(100, Some(th), program, reporter)
         (dir / path(0)).removeAll()
-        var config = getConfig(file, p)
+        var config = getConfig(file, p, F)
 
         if (isInGitHubAction) {
           config = config(simOpt = None())
