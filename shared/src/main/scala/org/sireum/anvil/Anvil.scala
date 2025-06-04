@@ -636,7 +636,7 @@ import Anvil._
 
       val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
 
-      p = anvil.transformLoadStoreCopyIntrinsic(fresh, p, maxTemps)
+      p = anvil.transformIfLoadStoreCopyIntrinsic(fresh, p, maxTemps)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load-store-copy"), p.prettyST(anvil.printer))
       pass = pass + 1
 
@@ -3250,13 +3250,14 @@ import Anvil._
     return p(body = body(blocks = blockMap.values))
   }
 
-  def transformLoadStoreCopyIntrinsic(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+  def transformIfLoadStoreCopyIntrinsic(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
     @strictpure def shouldSplit(e: AST.IR.Exp): B = e match {
       case AST.IR.Exp.Intrinsic(in) => in.isInstanceOf[Intrinsic.Load] || in.isInstanceOf[Intrinsic.Indexing]
-      case _ => F
+      case _ => e.isInstanceOf[AST.IR.Exp.Binary]
     }
     val spt: AST.Typed = if (config.splitTempSizes) spType else AST.Typed.u64
     val temp = maxTemps.typeCount(this, spt)
+    val tempB: Z = if (config.splitTempSizes) maxTemps.typeCount(this, AST.Typed.b) else temp
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
@@ -3288,7 +3289,18 @@ import Anvil._
           blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(
             AST.IR.Stmt.Intrinsic(in(base = AST.IR.Exp.Temp(temp, spType, pos)))
           ), b.jump)
-        case _ => blocks = blocks :+ b
+        case _ =>
+          b.jump match {
+            case j: AST.IR.Jump.If if shouldSplit(j.cond) =>
+              val label = fresh.label()
+              val pos = j.cond.pos
+              blocks = blocks :+ b(grounds = ISZ(
+                AST.IR.Stmt.Assign.Temp(tempB, j.cond, pos)
+              ), jump = AST.IR.Jump.Goto(label, pos))
+              blocks = blocks :+ AST.IR.BasicBlock(label, b.grounds, j(cond = AST.IR.Exp.Temp(tempB, AST.Typed.b, pos)))
+            case _ =>
+              blocks = blocks :+ b
+          }
       }
     }
     return p(body = body(blocks = blocks))
