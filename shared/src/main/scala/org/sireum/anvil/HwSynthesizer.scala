@@ -2091,7 +2091,7 @@ import HwSynthesizer._
 
     anvil.config.simOpt match {
       case Some(simConfig) => {
-        //output.add(T, ISZ("chisel/src/test/scala", s"AXIWrapperChiselGenerated${name}Bench.scala"), AXI4WrapperTestBenchST(name, simConfig.cycles))
+        output.add(T, ISZ("chisel/src/test/scala", s"AXIWrapperChiselGenerated${name}Bench.scala"), AXI4WrapperTestBenchST(name, simConfig.cycles))
         output.add(T, ISZ("chisel/src/test/scala", s"${name}Bench.scala"), testBenchST(name, simConfig.cycles))
       }
       case _ =>
@@ -2134,6 +2134,16 @@ import HwSynthesizer._
   }
 
   @pure def testBenchST(moduleName: String, cycles: Z): ST = {
+    val memoryIPReadST: ST =
+      st"""
+          |for(i <- 0 until ${anvil.config.printSize / 4 + 1}) {
+          |  dut.io.arrayRe.poke(true.B)
+          |  dut.io.arrayReadAddr.poke((20 + i * 4).U)
+          |  dut.clock.step(7)
+          |  dut.io.arrayRe.poke(false.B)
+          |  dut.clock.step()
+          |}
+        """
     val benchST: ST =
       st"""
           |import chisel3._
@@ -2157,19 +2167,27 @@ import HwSynthesizer._
           |      dut.io.arrayWriteAddr.poke(0.U)
           |      dut.io.arrayWData.poke("hFFFFFFFF".U)
           |      dut.io.arrayStrb.poke("b1111".U)
-          |      dut.clock.step()
+          |      ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) "dut.clock.step(9)" else "dut.clock.step()"}
+          |      ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
+                    st"""
+                        |dut.io.arrayWe.poke(false.B)
+                        |dut.clock.step()
+                        """
+                   else st""}
           |
           |      dut.io.arrayWe.poke(true.B)
           |      dut.io.arrayWriteAddr.poke(4.U)
           |      dut.io.arrayWData.poke("hFFFFFFFF".U)
           |      dut.io.arrayStrb.poke("b1111".U)
-          |      dut.clock.step()
+          |      ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) "dut.clock.step(9)" else "dut.clock.step()"}
           |
           |      dut.io.arrayWe.poke(false.B)
           |      dut.io.valid.poke(true.B)
           |      for(i <- 0 until ${cycles}) {
           |        dut.clock.step()
           |      }
+          |
+          |      ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) memoryIPReadST.render else st""}
           |
           |    }
           |  }
@@ -2833,14 +2851,14 @@ import HwSynthesizer._
               |  ${sharedMemName}.io.readAddr := io.arrayReadAddr
               |  ${sharedMemName}.io.readOffset := 0.U
               |}
-              |io.arrayRData := Mux(io.arrayRe & ${sharedMemName}.io.readValid, ${sharedMemName}.io.readData, 0.U)
+              |io.arrayRData := Mux(io.arrayRe & ${sharedMemName}.io.readValid, ${sharedMemName}.io.readData(C_S_AXI_DATA_WIDTH - 1, 0), 0.U)
             """
         } else {
           st"""
-              |io.arrayRData := Mux(io.arrayRe, Cat(${sharedMemName}(io.arrayReadAddr + 3.U),
-              |                                     ${sharedMemName}(io.arrayReadAddr + 2.U),
-              |                                     ${sharedMemName}(io.arrayReadAddr + 1.U),
-              |                                     ${sharedMemName}(io.arrayReadAddr + 0.U)), 0.U)
+              |val readBytes = Seq.tabulate(C_S_AXI_DATA_WIDTH/8) { i =>
+              |  sharedMem(io.arrayReadAddr + i.U)
+              |}
+              |io.arrayRData := Mux(io.arrayRe, Cat(readBytes.reverse), 0.U)
             """
         }
       }
