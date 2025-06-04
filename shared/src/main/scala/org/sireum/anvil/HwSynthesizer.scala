@@ -3185,6 +3185,22 @@ import HwSynthesizer._
   @pure def processStmtIntrinsic(i: AST.IR.Stmt.Intrinsic, ipPortLogic: HwSynthesizer.IpPortAssign): ST = {
     var intrinsicST = st""
 
+    @pure def log2Up(x: Z): Z = {
+      if (x <= 1) {
+        return 0
+      }
+
+      var result: Z = 0
+      var value: Z = x - 1
+
+      while (value > 0) {
+        value = value / 2
+        result = result + 1
+      }
+
+      return result
+    }
+
     i match {
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.TempLoad) => {
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
@@ -3193,7 +3209,8 @@ import HwSynthesizer._
           val tempST: ST = st"${if (!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"}"
           val byteST: ST = st"(${intrinsic.bytes * 8 - 1}, 0)"
           val signedST: ST = if(intrinsic.isSigned) st".asSInt" else st""
-          val readOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S.asUInt" else st"${intrinsic.offset}.U"
+          val offsetWidth: Z = log2Up(anvil.config.memory * 8)
+          val readOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.readValid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${tempST.render} := ${indexerInstanceName}.io.readData${byteST.render}${signedST.render}"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
@@ -3234,8 +3251,9 @@ import HwSynthesizer._
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Copy) => {
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+          val offsetWidth: Z = log2Up(anvil.config.memory * 8)
           val dmaDstAddrST: ST = processExpr(intrinsic.lbase, F, ipPortLogic)
-          val dmaDstOffsetST: ST = st"${intrinsic.loffset}.U"
+          val dmaDstOffsetST: ST = if(intrinsic.loffset < 0) st"(${intrinsic.loffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.loffset}.U"
           val dmaLengthST: ST = processExpr(intrinsic.rhsBytes, F, ipPortLogic)
           val dmaSrcAddrST: ST = processExpr(intrinsic.rhs, F, ipPortLogic)
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
@@ -3310,8 +3328,9 @@ import HwSynthesizer._
           case _ => F
         }
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+          val offsetWidth: Z = log2Up(anvil.config.memory * 8)
           val writeAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic)
-          val writeOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S.asUInt" else st"${intrinsic.offset}.U"
+          val writeOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
           val writeLenST: ST = st"${intrinsic.bytes}.U"
           val writeDataST: ST = processExpr(intrinsic.rhs, F, ipPortLogic)
           val signedST: ST = if(intrinsic.isSigned) st".asUInt" else st""
