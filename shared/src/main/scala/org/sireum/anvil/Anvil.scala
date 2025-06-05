@@ -484,16 +484,16 @@ import Anvil._
         )
         val temp = fresh.temp()
         for (impl <- impls) {
-          val (label, _, exp) = impl
+          val (lbl, _, exp) = impl
           if (method.tpe.ret == AST.Typed.unit) {
-            blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(AST.IR.Stmt.Expr(exp.asInstanceOf[AST.IR.Exp.Apply])),
+            blocks = blocks :+ AST.IR.BasicBlock(lbl, ISZ(AST.IR.Stmt.Expr(exp.asInstanceOf[AST.IR.Exp.Apply])),
               AST.IR.Jump.Return(None(), exp.pos))
           } else {
             var r = exp
             if (methodContext.t.ret != exp.tipe) {
               r = AST.IR.Exp.Type(F, r, methodContext.t.ret.asInstanceOf[AST.Typed.Name], exp.pos)
             }
-            blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(
+            blocks = blocks :+ AST.IR.BasicBlock(lbl, ISZ(
               AST.IR.Stmt.Assign.Temp(temp, r, exp.pos)
             ), AST.IR.Jump.Return(Some(AST.IR.Exp.Temp(temp, exp.tipe, exp.pos)), exp.pos))
           }
@@ -3395,12 +3395,12 @@ import Anvil._
                     }
                   }
                 case AST.IR.Stmt.Assign.Field(receiver, id, _, rhs, pos) =>
-                  val (ft, offset) = classSizeFieldOffsets(receiver.tipe.asInstanceOf[AST.Typed.Name])._2.get(id).get
+                  val (ft, foffset) = classSizeFieldOffsets(receiver.tipe.asInstanceOf[AST.Typed.Name])._2.get(id).get
                   if (isScalar(ft)) {
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(receiver, offset, isSigned(ft),
+                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(receiver, foffset, isSigned(ft),
                       typeByteSize(ft), rhs, g.prettyST(printer), ft, pos))
                   } else {
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(receiver, offset, typeByteSize(ft),
+                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(receiver, foffset, typeByteSize(ft),
                       copySize(rhs), rhs, g.prettyST(printer), ft, rhs.tipe, pos))
                   }
                 case AST.IR.Stmt.Assign.Index(rcv, idx, rhs, pos) =>
@@ -3451,14 +3451,14 @@ import Anvil._
                           temp, receiver, typeShaSize, T, typeByteSize(rhs.tipe), g.prettyST(printer), rhs.tipe, pos))
                       } else {
                         val temp = n
-                        val (ft, offset) = classSizeFieldOffsets(rhs.receiver.tipe.asInstanceOf[AST.Typed.Name]).
+                        val (ft, foffset) = classSizeFieldOffsets(rhs.receiver.tipe.asInstanceOf[AST.Typed.Name]).
                           _2.get(rhs.id).get
                         if (isScalar(ft)) {
-                          grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp, receiver, offset,
+                          grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp, receiver, foffset,
                             isSigned(ft), typeByteSize(ft), g.prettyST(printer), ft, pos))
                         } else {
-                          val rhsOffset: AST.IR.Exp = if (offset != 0) AST.IR.Exp.Binary(spType, receiver,
-                            AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, offset, rhs.pos), rhs.pos) else receiver
+                          val rhsOffset: AST.IR.Exp = if (foffset != 0) AST.IR.Exp.Binary(spType, receiver,
+                            AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, foffset, rhs.pos), rhs.pos) else receiver
                           grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, rhsOffset, pos)
                         }
                       }
