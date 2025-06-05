@@ -36,7 +36,7 @@ import org.sireum.S8._
 import org.sireum.S16._
 import org.sireum.S32._
 import org.sireum.S64._
-import org.sireum.anvil.Util.IndexingCounter
+import org.sireum.anvil.Util.CyclesApprox
 import org.sireum.lang.symbol.Resolver.QName
 
 object IRSimulator {
@@ -209,7 +209,6 @@ object IRSimulator {
       @pure def reads: Accesses
       @pure def writes: Accesses
       def update(state: State): Undo
-      @strictpure def approxCycles(config: Anvil.Config): Z = 1
       @pure def maxMemoryOffset: Z = {
         var r: Z = 0
         for (offset <- reads.memory.keys ++ writes.memory.keys) {
@@ -375,13 +374,12 @@ object IRSimulator {
         }
       }
 
-      @datatype class Memory(val offset: Z, val values: ISZ[U8], val reads: Accesses, val cycles: Z) extends Edit {
-        @strictpure override def approxCycles(config: Anvil.Config): Z = (cycles / config.copySize) + (cycles % config.copySize)
+      @datatype class Memory(val offset: Z, val values: ISZ[U8], val reads: Accesses) extends Edit {
         @strictpure def writes: Accesses = Accesses.empty.addMemory(offset, values)
         def update(state: State): Undo = {
           val r = Memory(offset, for (i <- values.indices) yield state.memory(offset + i),
             Accesses(reads.temps, reads.memory -- (for (i <- values.indices) yield offset + i)).
-              addMemory(offset, values), cycles)
+              addMemory(offset, values))
           if (DEBUG_EDIT) {
             if (values.size == 1) {
               println(s"* memory(${shortenHexString(conversions.Z.toU64(offset))} ($offset)) = ${values(0)}  (old ${r.values(0)})")
@@ -1199,8 +1197,7 @@ import IRSimulator._
             for (i <- 0 until size.value) {
               bs = bs :+ state.memory(rhsOffset.value + i)
             }
-            return State.Edit.Memory(lhsOffset.value, bs, acs,
-              if (in.rhsBytes.isInstanceOf[AST.IR.Exp.Int]) 1 else size.value)
+            return State.Edit.Memory(lhsOffset.value, bs, acs)
           case in: Intrinsic.RegisterAssign =>
             val (v, acs) = evalExp(state, in.value)
             if (in.isSP) {
@@ -1345,11 +1342,14 @@ import IRSimulator._
     var r = ISZ[State.Undo]()
     val edits = evalBlock(state, b)
     var i: Z = 0
-    var cycles: Z = 1
+    var copyBytes: Z = 1
     while (i < edits.size) {
-      val ec = edits(i).approxCycles(anvil.config)
-      if (ec > cycles) {
-        cycles = ec
+      edits(i) match {
+        case e: State.Edit.Memory =>
+          if (e.values.size > copyBytes) {
+            copyBytes = e.values.size
+          }
+        case _ =>
       }
       val offset = edits(i).maxMemoryOffset
       if (offset > maxMemory.value) {
@@ -1358,35 +1358,15 @@ import IRSimulator._
       r = r :+ edits(i).update(state)
       i = i + 1
     }
-    @strictpure def isDivRem(op: AST.IR.Exp.Binary.Op.Type): B =
-      op == AST.IR.Exp.Binary.Op.Div || op == AST.IR.Exp.Binary.Op.Rem
-    @pure def hasIndexing: B = {
-      val ic = IndexingCounter(0)
-      ic.transform_langastIRBasicBlock(b)
-      return ic.count > 0
-    }
-
-    if (anvil.config.noXilinxIp) {
-      b.grounds match {
-        case ISZ(AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.Binary, _)) if isDivRem(rhs.op) =>
-          if (anvil.typeByteSize(rhs.tipe) <= 32) {
-            cycles = 33
-          } else {
-            cycles = 65
-          }
-          cycles = cycles + 2
-        case _ =>
-      }
-    } else if (anvil.config.useIP && hasIndexing) {
-      if (cycles < 4) {
-        cycles = 4
-      } else {
-        cycles = cycles + 4
-      }
-    }
     checkAccesses(state, b.label, r)
-    blockCycles.value = cycles
+    blockCycles.value = computeCycles(b, copyBytes)
     return r
+  }
+
+  def computeCycles(b: AST.IR.BasicBlock, copyBytes: Z): Z = {
+    val ca = CyclesApprox(anvil, copyBytes, 1)
+    ca.transform_langastIRBasicBlock(b)
+    return ca.cycles
   }
 
   def evalProcedure(state: State, p: AST.IR.Procedure): Unit = {
@@ -1459,6 +1439,6 @@ import IRSimulator._
       val b = conversions.U64.toU8((value >> conversions.Z.toU64(i * 8)) & u64"0xFF")
       bs = bs :+ b
     }
-    return State.Edit.Memory(offset, bs, acs, 1)
+    return State.Edit.Memory(offset, bs, acs)
   }
 }

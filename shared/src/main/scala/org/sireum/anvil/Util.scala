@@ -27,8 +27,6 @@ package org.sireum.anvil
 
 import org.sireum._
 import org.sireum.alir.MonotonicDataflowFramework
-import org.sireum.lang.ast.IR
-import org.sireum.lang.ast.IR.Exp
 import org.sireum.lang.symbol.Info
 import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.{ast => AST}
@@ -967,7 +965,7 @@ object Util {
                           var ipMap: HashSMap[IpAlloc.Exp, Z],
                           var binopMap: HashSMap[(B, AST.IR.Exp.Binary.Op.Type), Z],
                           var indexing: Z) extends MAnvilIRTransformer {
-    override def pre_langastIRExpBinary(o: Exp.Binary): MAnvilIRTransformer.PreResult[IR.Exp] = {
+    override def pre_langastIRExpBinary(o: AST.IR.Exp.Binary): MAnvilIRTransformer.PreResult[AST.IR.Exp] = {
       val t: AST.Typed = if (anvil.isScalar(o.tipe)) o.left.tipe else anvil.spType
       val key = (anvil.isSigned(t), o.op)
       val n = binopMap.get(key).getOrElseEager(0)
@@ -995,6 +993,75 @@ object Util {
         binopMap = binopMap + key ~> (n + 1)
       }
       return MAnvilIRTransformer.PreResultIntrinsicRegisterAssign
+    }
+  }
+
+  @record class CyclesApprox(val anvil: Anvil, val copyBytes: Z, var cycles: Z) extends MAnvilIRTransformer {
+    val useIP: B = anvil.config.useIP
+    val xilinxIP: B = !anvil.config.noXilinxIp
+    def updateCycles(n: Z): Unit = {
+      if (n > cycles) {
+        cycles = n
+      }
+    }
+    override def post_langastIRExpBinary(o: AST.IR.Exp.Binary): MOption[AST.IR.Exp] = {
+      o.op match {
+        case AST.IR.Exp.Binary.Op.Add => if (useIP) {
+          updateCycles(if (xilinxIP) 6 else 3)
+        }
+        case AST.IR.Exp.Binary.Op.Sub => if (useIP) {
+          updateCycles(if (xilinxIP) 6 else 3)
+        }
+        case AST.IR.Exp.Binary.Op.Mul => if (useIP) {
+          updateCycles(if (xilinxIP) 20 else 2)
+        }
+        case AST.IR.Exp.Binary.Op.Div => if (useIP) {
+          updateCycles(70)
+        }
+        case AST.IR.Exp.Binary.Op.Rem => if (useIP) {
+          updateCycles(70)
+        }
+        case _ =>
+      }
+      return MNone()
+    }
+
+    override def postIntrinsicIndexing(o: Intrinsic.Indexing): MOption[Intrinsic.Indexing] = {
+      if (useIP) {
+        updateCycles(4)
+      }
+      return MNone()
+    }
+
+    override def postIntrinsicLoad(o: Intrinsic.Load): MOption[Intrinsic.Load] = {
+      if (useIP) {
+        updateCycles(8)
+      }
+      return MNone()
+    }
+
+    override def postIntrinsicTempLoad(o: Intrinsic.TempLoad): MOption[Intrinsic.TempLoad] = {
+      if (useIP) {
+        updateCycles(8)
+      }
+      return MNone()
+    }
+
+    override def postIntrinsicStore(o: Intrinsic.Store): MOption[Intrinsic.Store] = {
+      if (useIP) {
+        updateCycles(10)
+      }
+      return MNone()
+    }
+
+    override def postIntrinsicCopy(o: Intrinsic.Copy): MOption[Intrinsic.Copy] = {
+      anvil.config.memoryAccess match {
+        case Anvil.Config.MemoryAccess.Default => updateCycles((copyBytes / anvil.config.copySize) + (copyBytes % anvil.config.copySize))
+        case Anvil.Config.MemoryAccess.Subroutine =>
+        case Anvil.Config.MemoryAccess.SubroutineFast => updateCycles((copyBytes / anvil.config.copySize) + (copyBytes % anvil.config.copySize))
+        case Anvil.Config.MemoryAccess.Ip => updateCycles(copyBytes * 4)
+      }
+      return MNone()
     }
   }
 
