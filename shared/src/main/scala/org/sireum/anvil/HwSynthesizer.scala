@@ -958,7 +958,8 @@ object ChiselModule {
                             val widthOfBRAM: Z,
                             val depthOfBRAM: Z,
                             val exp: IpType,
-                            val nonXilinxIP: B) extends ChiselModule {
+                            val nonXilinxIP: B,
+                            val erase: B) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -966,229 +967,14 @@ object ChiselModule {
   @strictpure def depth: Z = depthOfBRAM
   @strictpure override def portList: HashSMap[String, String] = {
     HashSMap.empty[String, String] + "mode" ~> "UInt" + "readAddr" ~> "UInt" + "readOffset" ~> "UInt" +
-      "writeAddr" ~> "UInt" + "writeOffset" ~> "UInt" + "writeLen" ~> "UInt" + "writeData" ~> "UInt" +
-      "dmaSrcAddr" ~> "UInt" + "dmaDstAddr" ~> "UInt" + "dmaDstOffset" ~> "UInt" + "dmaLength" ~> "UInt"
+      "readLen" ~> "UInt" + "writeAddr" ~> "UInt" + "writeOffset" ~> "UInt" + "writeLen" ~> "UInt" +
+      "writeData" ~> "UInt" + "dmaSrcAddr" ~> "UInt" + "dmaDstAddr" ~> "UInt" + "dmaDstOffset" ~> "UInt" +
+      "dmaSrcLen" ~> "UInt" + "dmaDstLen" ~> "UInt"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure def spAdderUnsignedST: ST = {
-    if(nonXilinxIP) {
-      st"""
-          |class SPAdderUnsigned(val width: Int = 16) extends Module {
-          |    val io = IO(new Bundle{
-          |        val a = Input(UInt(width.W))
-          |        val b = Input(UInt(width.W))
-          |        val start = Input(Bool())
-          |        val out = Output(UInt(width.W))
-          |        val valid = Output(Bool())
-          |    })
-          |
-          |    val state = RegInit(0.U(2.W))
-          |    val regA = Reg(UInt(width.W))
-          |    val regB = Reg(UInt(width.W))
-          |    val result = Reg(UInt(width.W))
-          |
-          |    io.valid := Mux(state === 2.U, true.B, false.B)
-          |    io.out := Mux(state === 2.U, result, 0.U)
-          |    switch(state) {
-          |        is(0.U) {
-          |            state := Mux(io.start, 1.U, 0.U)
-          |            regA := Mux(io.start, io.a, regA)
-          |            regB := Mux(io.start, io.b, regB)
-          |        }
-          |        is(1.U) {
-          |            result := regA + regB
-          |            state := 2.U
-          |        }
-          |        is(2.U) {
-          |            state := 0.U
-          |        }
-          |    }
-          |}
-        """
-    } else {
-      st"""
-          |class SPAdderUnsigned(val width: Int = 16) extends Module {
-          |    val io = IO(new Bundle{
-          |        val a = Input(UInt(width.W))
-          |        val b = Input(UInt(width.W))
-          |        val start = Input(Bool())
-          |        val out = Output(UInt(width.W))
-          |        val valid = Output(Bool())
-          |    })
-          |
-          |    val adder = Module(new XilinxSPAdderUnsignedWrapper)
-          |    adder.io.clk := clock.asBool
-          |    adder.io.A := io.a
-          |    adder.io.B := io.b
-          |    adder.io.ce := io.start
-          |    io.valid := adder.io.valid
-          |    io.out := adder.io.S
-          |}
-        """
-    }
-  }
-  @strictpure def spAdderUnsigned8bitST: ST = {
-    if(nonXilinxIP) {
-      st"""
-          |class SPAdderUnsigned8bit extends Module {
-          |    val io = IO(new Bundle{
-          |        val a = Input(UInt(8.W))
-          |        val b = Input(UInt(8.W))
-          |        val start = Input(Bool())
-          |        val out = Output(UInt(8.W))
-          |        val valid = Output(Bool())
-          |    })
-          |
-          |    val state = RegInit(0.U(1.W))
-          |    val result = Reg(UInt(8.W))
-          |
-          |    io.valid := Mux(state === 1.U, true.B, false.B)
-          |    io.out := Mux(state === 1.U, result, 0.U)
-          |    switch(state) {
-          |        is(0.U) {
-          |            state := Mux(io.start, 1.U, 0.U)
-          |            result := io.a + io.b
-          |        }
-          |        is(1.U) {
-          |            state := 0.U
-          |        }
-          |    }
-          |}
-        """
-    } else {
-      st"""
-          |class SPAdderUnsigned8bit extends Module {
-          |    val io = IO(new Bundle{
-          |        val a = Input(UInt(8.W))
-          |        val b = Input(UInt(8.W))
-          |        val start = Input(Bool())
-          |        val out = Output(UInt(8.W))
-          |        val valid = Output(Bool())
-          |    })
-          |
-          |    val adder = Module(new XilinxSPAdderUnsigned8bitWrapper)
-          |    adder.io.clk := clock.asBool
-          |    adder.io.A := io.a
-          |    adder.io.B := io.b
-          |    adder.io.ce := io.start
-          |    io.valid := adder.io.valid
-          |    io.out := adder.io.S
-          |}
-        """
-    }
-  }
-  @strictpure def spSubtractorUnsignedST: ST = {
-    if(nonXilinxIP) {
-      st"""
-          |class SPSubtractorUnsigned(val width: Int = 16) extends Module {
-          |    val io = IO(new Bundle{
-          |        val a = Input(UInt(width.W))
-          |        val b = Input(UInt(width.W))
-          |        val start = Input(Bool())
-          |        val out = Output(UInt(width.W))
-          |        val valid = Output(Bool())
-          |    })
-          |
-          |    val state = RegInit(0.U(2.W))
-          |    val regA = Reg(UInt(width.W))
-          |    val regB = Reg(UInt(width.W))
-          |    val result = Reg(UInt(width.W))
-          |
-          |    io.valid := Mux(state === 2.U, true.B, false.B)
-          |    io.out := Mux(state === 2.U, result, 0.U)
-          |    switch(state) {
-          |        is(0.U) {
-          |            state := Mux(io.start, 1.U, 0.U)
-          |            regA := Mux(io.start, io.a, regA)
-          |            regB := Mux(io.start, io.b, regB)
-          |        }
-          |        is(1.U) {
-          |            result := regA - regB
-          |            state := 2.U
-          |        }
-          |        is(2.U) {
-          |            state := 0.U
-          |        }
-          |    }
-          |}
-        """
-    } else {
-      st"""
-          |class SPSubtractorUnsigned(val width: Int = 16) extends Module {
-          |    val io = IO(new Bundle{
-          |        val a = Input(UInt(width.W))
-          |        val b = Input(UInt(width.W))
-          |        val start = Input(Bool())
-          |        val out = Output(UInt(width.W))
-          |        val valid = Output(Bool())
-          |    })
-          |
-          |    val adder = Module(new XilinxSPSubtractorUnsignedWrapper)
-          |    adder.io.clk := clock.asBool
-          |    adder.io.A := io.a
-          |    adder.io.B := io.b
-          |    adder.io.ce := io.start
-          |    io.valid := adder.io.valid
-          |    io.out := adder.io.S
-          |}
-        """
-    }
-  }
-  @strictpure def spAdderConstant1ST: ST = {
-    if(nonXilinxIP) {
-      st"""
-          |class SPAdderConstant1(val width: Int = 16) extends Module {
-          |    val io = IO(new Bundle{
-          |        val a = Input(UInt(width.W))
-          |        val start = Input(Bool())
-          |        val out = Output(UInt(width.W))
-          |        val valid = Output(Bool())
-          |    })
-          |
-          |    val state = RegInit(0.U(2.W))
-          |    val regA = Reg(UInt(width.W))
-          |    val result = Reg(UInt(width.W))
-          |
-          |    io.valid := Mux(state === 2.U, true.B, false.B)
-          |    io.out := Mux(state === 2.U, result, 0.U)
-          |    switch(state) {
-          |        is(0.U) {
-          |            state := Mux(io.start, 1.U, 0.U)
-          |            regA := Mux(io.start, io.a, regA)
-          |        }
-          |        is(1.U) {
-          |            result := regA + 1.U
-          |            state := 2.U
-          |        }
-          |        is(2.U) {
-          |            state := 0.U
-          |        }
-          |    }
-          |}
-        """
-    } else {
-      st"""
-          |class SPAdderConstant1(val width: Int = 16) extends Module {
-          |    val io = IO(new Bundle{
-          |        val a = Input(UInt(width.W))
-          |        val start = Input(Bool())
-          |        val out = Output(UInt(width.W))
-          |        val valid = Output(Bool())
-          |    })
-          |
-          |    val adder = Module(new XilinxSPAdderConstant1Wrapper)
-          |    adder.io.clk := clock.asBool
-          |    adder.io.A := io.a
-          |    adder.io.ce := io.start
-          |    io.valid := adder.io.valid
-          |    io.out := adder.io.S
-          |}
-        """
-    }
-  }
   @strictpure def bramIpST: ST = {
     st"""
-        |class BRAMIP (val depth: Int = 1024, val width: Int = 64) extends Module {
+        |class BRAMIP (val depth: Int = 1024, val width: Int = 8) extends Module {
         |    val io = IO(new Bundle{
         |        val ena = Input(Bool())
         |        val wea = Input(Bool())
@@ -1226,109 +1012,52 @@ object ChiselModule {
         |}
       """
   }
-  @strictpure def bramAddrCompST: ST = {
-    st"""
-        |class BRAMAddrComp(val spWidth: Int = 16, val shiftAmount: Int = 3, val dataWidth: Int = 64) extends Module {
-        |  val io = IO(new Bundle {
-        |    val addr     = Input(UInt(spWidth.W))
-        |    val offset   = Input(UInt(spWidth.W))
-        |    val start    = Input(Bool())
-        |    val isWrite  = Input(Bool())
-        |    val writeLen = Input(UInt(4.W))
-        |
-        |    val currAddr          = Output(UInt((spWidth - shiftAmount).W))
-        |    val nextAddr          = Output(UInt((spWidth - shiftAmount).W))
-        |    val mask              = Output(UInt((shiftAmount*2).W))
-        |    val writeMaskFullBits = Output(UInt((dataWidth*2).W))
-        |    val valid             = Output(Bool())
-        |  })
-        |
-        |  val mask_r = Reg(UInt((shiftAmount * 2).W))
-        |  val validReg = RegInit(false.B)
-        |
-        |  // Adder for write
-        |  val writeLen = RegInit(0.U(8.W))
-        |  writeLen := io.writeLen << shiftAmount
-        |  val writeMaskAdder = Module(new SPAdderUnsigned8bit)
-        |  val writeMaskAdderResult = Reg(UInt(8.W))
-        |  val writeMaskValid = RegInit(true.B)
-        |  writeMaskAdder.io.a := mask_r
-        |  writeMaskAdder.io.b := writeLen
-        |  writeMaskAdder.io.start := io.isWrite & validReg
-        |  when(writeMaskAdder.io.valid) {
-        |    writeMaskAdderResult := writeMaskAdder.io.out
-        |  }
-        |
-        |  val maskFullBits = VecInit(Seq.tabulate(128) { i =>
-        |    ((i.U >= mask_r) && (i.U < writeMaskAdderResult))
-        |  }).asUInt
-        |
-        |  // 1st Adder: addr + offset
-        |  val adder1 = Module(new SPAdderUnsigned(spWidth))
-        |  adder1.io.a := io.addr
-        |  adder1.io.b := io.offset
-        |  adder1.io.start := io.start
-        |
-        |  val currAddr = Reg(UInt((spWidth - shiftAmount).W))
-        |  when(adder1.io.valid) {
-        |    currAddr := adder1.io.out >> shiftAmount
-        |    mask_r   := adder1.io.out(shiftAmount-1, 0) << shiftAmount
-        |    validReg := true.B
-        |  }
-        |
-        |  // 2nd Adder: base + 1
-        |  val adder2 = Module(new SPAdderConstant1(spWidth - shiftAmount))
-        |  adder2.io.a := currAddr
-        |  adder2.io.start := validReg
-        |
-        |  when(adder2.io.valid) {
-        |    validReg := false.B
-        |  }
-        |
-        |  io.valid             := adder2.io.valid
-        |  io.currAddr          := currAddr
-        |  io.nextAddr          := adder2.io.out
-        |  io.mask              := mask_r
-        |  io.writeMaskFullBits := maskFullBits
-        |}
-      """
-  }
   @strictpure override def moduleST: ST = {
     val bramInsST: ST =
-      if(nonXilinxIP) st"val bram = Module(new BRAMIP(${depthOfBRAM}, 64))"
+      if(nonXilinxIP) st"val bram = Module(new BRAMIP(${depthOfBRAM}, 8))"
       else
         st"""
             |val bram = Module(new XilinxBRAMWrapper)
             |bram.io.clk := clock.asBool
           """
+    val dmaZeroOutST: ST =
+      if(erase)
+        st"""
+            |when((r_dmaDstCount >= io.dmaDstLen) & (r_dmaSrcCount >= io.dmaSrcLen)) {
+            |  r_dmaState := sDmaDone
+            |}
+          """
+      else
+        st"""
+            |when(r_dmaSrcCount >= io.dmaSrcLen) {
+            |  r_dmaState := sDmaDone
+            |}
+          """
     st"""
-        |${spAdderUnsignedST}
-        |${spAdderUnsigned8bitST}
-        |${spSubtractorUnsignedST}
-        |${spAdderConstant1ST}
         |${if(nonXilinxIP) bramIpST else st""}
-        |${bramAddrCompST}
         |class ${moduleName}(val depth: Int = ${depthOfBRAM}, val width: Int = ${widthOfBRAM}) extends Module {
         |  val io = IO(new Bundle {
         |    val mode = Input(UInt(2.W)) // 00 -> disable, 01 -> read, 10 -> write, 11 -> DMA
         |
         |    // Byte level read/write port
-        |    val readAddr    = Input(UInt(log2Ceil(depth * width).W))
-        |    val readOffset  = Input(UInt(log2Ceil(depth * width).W))
+        |    val readAddr    = Input(UInt(log2Ceil(depth).W))
+        |    val readOffset  = Input(UInt(log2Ceil(depth).W))
+        |    val readLen     = Input(UInt(4.W))
         |    val readData    = Output(UInt(64.W))
         |    val readValid   = Output(Bool())
         |
-        |    val writeAddr   = Input(UInt(log2Ceil(depth * width).W))
-        |    val writeOffset = Input(UInt(log2Ceil(depth * width).W))
+        |    val writeAddr   = Input(UInt(log2Ceil(depth).W))
+        |    val writeOffset = Input(UInt(log2Ceil(depth).W))
         |    val writeLen    = Input(UInt(4.W))
         |    val writeData   = Input(UInt(64.W))
         |    val writeValid  = Output(Bool())
         |
         |    // DMA
-        |    val dmaSrcAddr   = Input(UInt(log2Ceil(depth * width).W))  // byte address
-        |    val dmaDstAddr   = Input(UInt(log2Ceil(depth * width).W))  // byte address
-        |    val dmaDstOffset = Input(UInt(log2Ceil(depth * width).W))
-        |    val dmaLength    = Input(UInt((log2Ceil(depth * width)).W)) // byte count
+        |    val dmaSrcAddr   = Input(UInt(log2Ceil(depth).W))  // byte address
+        |    val dmaDstAddr   = Input(UInt(log2Ceil(depth).W))  // byte address
+        |    val dmaDstOffset = Input(UInt(log2Ceil(depth).W))
+        |    val dmaSrcLen    = Input(UInt(log2Ceil(depth).W)) // byte count
+        |    val dmaDstLen    = Input(UInt(log2Ceil(depth).W)) // byte count
         |    val dmaValid     = Output(Bool())
         |  })
         |
@@ -1345,259 +1074,179 @@ object ChiselModule {
         |  bram.io.addrb := 0.U
         |  bram.io.dinb := 0.U
         |
-        |  val shiftAmount = log2Ceil(width/8)
-        |
-        |  val readEnable  = io.mode === 1.U
-        |  val writeEnable = io.mode === 2.U
-        |  val dmaEnable   = io.mode === 3.U
-        |
-        |  // SPAdder
-        |  val bramAdderComp = Module(new BRAMAddrComp(log2Ceil(depth * width), shiftAmount))
-        |  val done = RegInit(false.B)
-        |
-        |  bramAdderComp.io.start    := !done & (readEnable | writeEnable)
-        |  bramAdderComp.io.isWrite  := writeEnable
-        |  bramAdderComp.io.writeLen := io.writeLen
-        |  bramAdderComp.io.addr     := 0.U
-        |  bramAdderComp.io.offset   := 0.U
-        |  when(readEnable & !done) {
-        |    bramAdderComp.io.addr   := io.readAddr
-        |    bramAdderComp.io.offset := io.readOffset
-        |  }
-        |  when(writeEnable & !done) {
-        |    bramAdderComp.io.addr   := io.writeAddr
-        |    bramAdderComp.io.offset := io.writeOffset
-        |  }
-        |
-        |  when(bramAdderComp.io.valid) {
-        |    done := true.B
-        |  }
-        |
-        |  when(io.readValid | io.writeValid) {
-        |    done := false.B
-        |  }
+        |  val w_readEnable  = io.mode === 1.U
+        |  val w_writeEnable = io.mode === 2.U
+        |  val w_dmaEnable   = io.mode === 3.U
         |
         |  // === READ Operation ===
-        |  val readEnable_r = RegNext(bramAdderComp.io.valid, false.B)
-        |  val readStart = readEnable & bramAdderComp.io.valid & !readEnable_r
+        |  val sReadIdle :: sReadFirst :: sReadTrans :: sReadEnd :: Nil = Enum(4)
         |
-        |  val r_offset = bramAdderComp.io.mask
-        |  val r_word0  = bramAdderComp.io.currAddr
-        |  val r_word1  = bramAdderComp.io.nextAddr
+        |  val r_readCnt      = Reg(UInt(4.W))
+        |  val r_lastReadCnt  = Reg(UInt(4.W))
+        |  val r_readAddr     = Reg(UInt(log2Ceil(depth).W))
+        |  val r_readState    = RegInit(sReadIdle)
+        |  val r_readBytes    = Reg(Vec(8, UInt(8.W)))
         |
-        |  val r_dataA1 = Reg(UInt(width.W))
-        |  r_dataA1 := bram.io.douta
-        |  val r_dataB1 = Reg(UInt(width.W))
-        |  r_dataB1 := bram.io.doutb
+        |  switch(r_readState) {
+        |    is(sReadIdle) {
+        |      when(w_readEnable) {
+        |        r_readState   := sReadFirst
+        |        r_readCnt     := 0.U
+        |        r_lastReadCnt := 0.U
+        |        r_readAddr    := io.readAddr + io.readOffset
+        |      }
+        |      r_readBytes(0) := 0.U
+        |      r_readBytes(1) := 0.U
+        |      r_readBytes(2) := 0.U
+        |      r_readBytes(3) := 0.U
+        |      r_readBytes(4) := 0.U
+        |      r_readBytes(5) := 0.U
+        |      r_readBytes(6) := 0.U
+        |      r_readBytes(7) := 0.U
+        |    }
+        |    is(sReadFirst) {
+        |      bram.io.addra := r_readAddr
+        |      bram.io.ena   := true.B
+        |      bram.io.wea   := false.B
         |
-        |  val r_comb = Cat(r_dataB1, r_dataA1) >> r_offset
-        |  io.readData := r_comb(63, 0)
-        |  io.readValid := RegNext(RegNext(readStart))
+        |      r_lastReadCnt := r_readCnt
+        |      r_readCnt     := r_readCnt + 1.U
+        |      r_readAddr    := r_readAddr + 1.U
+        |      r_readState   := sReadTrans
+        |    }
+        |    is(sReadTrans) {
+        |      r_readBytes(r_lastReadCnt) := bram.io.douta
+        |
+        |      bram.io.addra          := r_readAddr
+        |      bram.io.ena            := true.B
+        |      bram.io.wea            := false.B
+        |
+        |      r_lastReadCnt          := r_readCnt
+        |      r_readCnt              := r_readCnt + 1.U
+        |      r_readAddr             := r_readAddr + 1.U
+        |
+        |      r_readState            := Mux(io.readLen === 1.U, sReadEnd, Mux(r_readCnt < io.readLen, sReadTrans, sReadEnd))
+        |    }
+        |    is(sReadEnd) {
+        |      r_readState   := sReadIdle
+        |    }
+        |  }
+        |
+        |  io.readData  := Cat(r_readBytes(7.U),
+        |                      r_readBytes(6.U),
+        |                      r_readBytes(5.U),
+        |                      r_readBytes(4.U),
+        |                      r_readBytes(3.U),
+        |                      r_readBytes(2.U),
+        |                      r_readBytes(1.U),
+        |                      r_readBytes(0.U))
+        |  io.readValid := Mux(r_readState === sReadEnd, true.B, false.B)
         |
         |  // === WRITE Operation ===
-        |  val writeEnable_r = RegNext(bramAdderComp.io.valid, false.B)
-        |  val writeStart = writeEnable & bramAdderComp.io.valid && !writeEnable_r
+        |  val sWriteIdle :: sWriteTrans :: sWriteEnd :: Nil = Enum(3)
         |
-        |  val w_valid0 = RegNext(writeStart, init = false.B)
-        |  val w_valid1 = RegNext(w_valid0, init = false.B)
-        |  val w_valid2 = RegNext(w_valid1, init = false.B)
-        |  val w_valid3 = RegNext(w_valid2, init = false.B)
+        |  val r_writeCnt      = Reg(UInt(4.W))
+        |  val r_writeAddr     = Reg(UInt(log2Ceil(depth).W))
+        |  val r_writeState    = RegInit(sWriteIdle)
+        |  val r_writeBytes    = Reg(Vec(8, UInt(8.W)))
+        |  val r_writeLen      = Reg(UInt(4.W))
         |
-        |  val w_word0 = RegInit(0.U(log2Ceil(depth * 8).W))
-        |  val w_word1 = RegInit(0.U(log2Ceil(depth * 8).W))
-        |  val w_offset = RegInit(0.U((shiftAmount*2).W))
-        |  val maskFullBits = RegInit(0.U((width*2).W))
-        |  when(bramAdderComp.io.valid) {
-        |    w_word0 := bramAdderComp.io.currAddr
-        |    w_word1 := bramAdderComp.io.nextAddr
-        |    w_offset := bramAdderComp.io.mask
-        |    maskFullBits := bramAdderComp.io.writeMaskFullBits
+        |  switch(r_writeState) {
+        |    is(sWriteIdle) {
+        |      when(w_writeEnable) {
+        |        r_writeState      := sWriteTrans
+        |        r_writeCnt        := 0.U
+        |        r_writeAddr       := io.writeAddr + io.writeOffset
+        |        r_writeLen        := io.writeLen - 1.U
+        |
+        |        r_writeBytes(0.U) := io.writeData(7, 0)
+        |        r_writeBytes(1.U) := io.writeData(15, 8)
+        |        r_writeBytes(2.U) := io.writeData(23, 16)
+        |        r_writeBytes(3.U) := io.writeData(31, 24)
+        |        r_writeBytes(4.U) := io.writeData(39, 32)
+        |        r_writeBytes(5.U) := io.writeData(47, 40)
+        |        r_writeBytes(6.U) := io.writeData(55, 48)
+        |        r_writeBytes(7.U) := io.writeData(63, 56)
+        |      }
+        |    }
+        |    is(sWriteTrans) {
+        |      bram.io.addrb := r_writeAddr
+        |      bram.io.enb   := true.B
+        |      bram.io.web   := true.B
+        |      bram.io.dinb  := r_writeBytes(r_writeCnt)
+        |
+        |      r_writeCnt    := r_writeCnt + 1.U
+        |      r_writeAddr   := r_writeAddr + 1.U
+        |      r_writeState  := Mux(r_writeCnt < r_writeLen, sWriteTrans, sWriteEnd)
+        |    }
+        |    is(sWriteEnd) {
+        |      r_writeState  := sWriteIdle
+        |    }
         |  }
         |
-        |  val w_data = io.writeData
-        |
-        |  val w_oldA = bram.io.douta
-        |  val w_oldB = bram.io.doutb
-        |
-        |  val fullOld = Cat(w_oldB, w_oldA)
-        |  val shifted = (Cat(0.U(width.W), w_data) << w_offset)(width*2-1,0)
-        |  val newAll = Reg(UInt((width*2).W))
-        |  newAll := (fullOld & ~maskFullBits) | (shifted & maskFullBits)
-        |  val newA = newAll(63, 0)
-        |  val newB = newAll(127, 64)
-        |
-        |  io.writeValid := w_valid3
-        |
-        |  // === Unified BRAM Port A & B Control via Mux ===
-        |  when(readEnable | writeEnable) {
-        |    bram.io.ena := readEnable | writeEnable
-        |    bram.io.wea := w_valid2
-        |    bram.io.addra := Mux(w_valid0, w_word0, Mux(w_valid2, w_word0, r_word0))
-        |    bram.io.dina := Mux(w_valid2, newA, 0.U)
-        |
-        |    bram.io.enb := readEnable | writeEnable
-        |    bram.io.web := w_valid2
-        |    bram.io.addrb := Mux(w_valid0, w_word1, Mux(w_valid2, w_word1, r_word1))
-        |    bram.io.dinb := Mux(w_valid2, newB, 0.U)
-        |  }
+        |  io.writeValid := Mux(r_writeState === sWriteEnd, true.B, false.B)
         |
         |  // DMA logic
-        |  // FSM States
-        |  val sIdle :: sUpdateBytes :: sUpdatePtr :: sReadResp :: sMask :: sUpdateRemaining :: sWrite :: sDone :: Nil = Enum(8)
-        |  val state = RegInit(sIdle)
+        |  val sDmaIdle :: sDmaFirstRead :: sDmaTrans :: sDmaDone :: Nil = Enum(4)
         |
-        |  val dmaSPAdder0 = Module(new SPAdderUnsigned(log2Ceil(depth * width)))
-        |  dmaSPAdder0.io.a     := 0.U
-        |  dmaSPAdder0.io.b     := 0.U
-        |  dmaSPAdder0.io.start := false.B
-        |  val dmaSPAdder1 = Module(new SPAdderUnsigned(log2Ceil(depth * width)))
-        |  dmaSPAdder1.io.a     := 0.U
-        |  dmaSPAdder1.io.b     := 0.U
-        |  dmaSPAdder1.io.start := false.B
-        |  val dmaSPSubtractor = Module(new SPSubtractorUnsigned(log2Ceil(depth * width)))
-        |  dmaSPSubtractor.io.a     := 0.U
-        |  dmaSPSubtractor.io.b     := 0.U
-        |  dmaSPSubtractor.io.start := false.B
+        |  val r_dmaSrcCount = Reg(UInt(log2Ceil(depth).W))
+        |  val r_dmaDstCount = Reg(UInt(log2Ceil(depth).W))
+        |  val r_dmaSrcAddr  = Reg(UInt(log2Ceil(depth).W))
+        |  val r_dmaDstAddr  = Reg(UInt(log2Ceil(depth).W))
+        |  val r_dmaState    = RegInit(sDmaIdle)
         |
-        |  val srcPtr = Reg(UInt(log2Ceil(depth * width).W))
-        |  val dstPtr = Reg(UInt(log2Ceil(depth * width).W))
-        |  val nextSrcPtr = Reg(UInt(log2Ceil(depth * width).W))
-        |  val nextDstPtr = Reg(UInt(log2Ceil(depth * width).W))
-        |  val remaining = Reg(UInt(log2Ceil(depth * width).W))
-        |  val nextRemaining = Reg(UInt(log2Ceil(depth * width).W))
+        |  switch(r_dmaState) {
+        |    is(sDmaIdle) {
+        |      when(w_dmaEnable) {
+        |        r_dmaState    := Mux(io.dmaSrcLen === 0.U, sDmaTrans, sDmaFirstRead)
         |
-        |  val srcWordAddr = srcPtr >> shiftAmount
-        |  val dstWordAddr = dstPtr >> shiftAmount
-        |  val srcOffset = srcPtr(shiftAmount-1, 0)
-        |  val dstOffset = dstPtr(shiftAmount-1, 0)
-        |  val srcOffsetBits_r = Reg(UInt((shiftAmount*2).W))
-        |  val dstOffsetBits_r = Reg(UInt((shiftAmount*2).W))
-        |  srcOffsetBits_r := srcOffset << shiftAmount
-        |  dstOffsetBits_r := dstOffset << shiftAmount
+        |        r_dmaSrcCount := 0.U
+        |        r_dmaDstCount := 0.U
+        |        r_dmaSrcAddr  := io.dmaSrcAddr
+        |        r_dmaDstAddr  := io.dmaDstAddr + io.dmaDstOffset
+        |      }
+        |    }
+        |    is(sDmaFirstRead) {
+        |      r_dmaState    := sDmaTrans
         |
-        |  // bytes need to be transfered
-        |  val bytesLeft = Reg(UInt((log2Ceil(depth * width) + 1).W))
-        |  val byteCount = Mux(remaining < bytesLeft, remaining, bytesLeft)(shiftAmount,0)
+        |      // first read
+        |      bram.io.addra := r_dmaSrcAddr
+        |      bram.io.ena   := true.B
+        |      bram.io.wea   := false.B
         |
-        |  val readSrcData = Reg(UInt(width.W))
-        |  val readDstData = Reg(UInt(width.W))
+        |      r_dmaSrcAddr  := r_dmaSrcAddr + 1.U
+        |      r_dmaSrcCount := r_dmaSrcCount + 1.U
+        |    }
+        |    is(sDmaTrans) {
+        |      // write the data from the read port
+        |      when(r_dmaDstCount < io.dmaDstLen) {
+        |        bram.io.addrb := r_dmaDstAddr
+        |        bram.io.enb   := true.B
+        |        bram.io.web   := true.B
+        |        bram.io.dinb  := Mux(r_dmaDstCount >= r_dmaSrcCount, 0.U, bram.io.douta)
         |
-        |  val maskBits = Reg(UInt((width*2).W))
-        |  val srcShifted = Reg(UInt((width*2).W))
-        |  val newData = (readDstData & ~maskBits) | (srcShifted << dstOffsetBits_r)
+        |        r_dmaDstAddr  := r_dmaDstAddr + 1.U
+        |        r_dmaDstCount := r_dmaDstCount + 1.U
+        |      }
         |
-        |  // output
-        |  io.dmaValid := (state === sDone)
-        |  when(dmaEnable) {
-        |    bram.io.ena := true.B
-        |    bram.io.enb := true.B
+        |      // keep all the data from read port valid
+        |      bram.io.ena   := true.B
+        |      when(r_dmaSrcCount < io.dmaSrcLen) {
+        |        bram.io.addra := r_dmaSrcAddr
+        |        bram.io.wea   := false.B
+        |
+        |        r_dmaSrcAddr  := r_dmaSrcAddr + 1.U
+        |        r_dmaSrcCount := r_dmaSrcCount + 1.U
+        |      }
+        |
+        |      ${dmaZeroOutST.render}
+        |    }
+        |    is(sDmaDone) {
+        |      r_dmaState := sDmaIdle
+        |    }
         |  }
         |
-        |  switch(state) {
-        |    is(sIdle) {
-        |      when(dmaEnable) {
-        |        dmaSPAdder0.io.a     := io.dmaDstAddr
-        |        dmaSPAdder0.io.b     := io.dmaDstOffset
-        |        dmaSPAdder0.io.start := true.B
-        |        when(dmaSPAdder0.io.valid) {
-        |          srcPtr := io.dmaSrcAddr
-        |          dstPtr := dmaSPAdder0.io.out
-        |          remaining := io.dmaLength
-        |          state := sUpdateBytes
-        |        }
-        |      }
-        |    }
-        |
-        |    is(sUpdateBytes) {
-        |      dmaSPSubtractor.io.a     := 8.U
-        |      dmaSPSubtractor.io.b     := Mux(srcOffset > dstOffset, srcOffset, dstOffset)
-        |      dmaSPSubtractor.io.start := true.B
-        |      when(dmaSPSubtractor.io.valid) {
-        |        bytesLeft := dmaSPSubtractor.io.out
-        |        state := sUpdatePtr
-        |      }
-        |    }
-        |
-        |    is(sUpdatePtr) {
-        |      dmaSPAdder0.io.a     := srcPtr
-        |      dmaSPAdder0.io.b     := byteCount
-        |      dmaSPAdder0.io.start := true.B
-        |      dmaSPAdder1.io.a     := dstPtr
-        |      dmaSPAdder1.io.b     := byteCount
-        |      dmaSPAdder1.io.start := true.B
-        |      when(dmaSPAdder0.io.valid & dmaSPAdder1.io.valid) {
-        |        nextSrcPtr := dmaSPAdder0.io.out
-        |        nextDstPtr := dmaSPAdder1.io.out
-        |
-        |        // read request
-        |        bram.io.addra := srcWordAddr
-        |        bram.io.addrb := dstWordAddr
-        |
-        |        state := sReadResp
-        |      }
-        |    }
-        |
-        |    is(sReadResp) {
-        |      readSrcData := bram.io.douta
-        |      readDstData := bram.io.doutb
-        |
-        |      //maskBits := ((1.U(64.W) << (byteCount << 3)) - 1.U)
-        |      val bitCount = byteCount << shiftAmount
-        |      maskBits := VecInit(Seq.tabulate(128)(i =>
-        |        (i.U < bitCount)
-        |      )).asUInt
-        |
-        |      state := sMask
-        |    }
-        |
-        |    is(sMask) {
-        |      // maskBits := maskBits << (dstOffset << 3)
-        |      // srcShifted := (readSrcData >> (srcOffset << 3)) & maskBits
-        |      maskBits := VecInit(Seq.tabulate(128)(i =>
-        |        Mux(i.U >= dstOffsetBits_r & (i.U - dstOffsetBits_r) < 128.U,
-        |            maskBits(i.U - dstOffsetBits_r),
-        |            0.U
-        |        )
-        |      )).asUInt
-        |
-        |      srcShifted := VecInit(Seq.tabulate(128)(i =>
-        |        Mux(i.U + srcOffsetBits_r < 128.U, readSrcData(i.U + srcOffsetBits_r), 0.U)
-        |      )).asUInt & maskBits
-        |
-        |      state := sUpdateRemaining
-        |    }
-        |
-        |    is(sUpdateRemaining) {
-        |      dmaSPSubtractor.io.a     := remaining
-        |      dmaSPSubtractor.io.b     := byteCount
-        |      dmaSPSubtractor.io.start := true.B
-        |      when(dmaSPSubtractor.io.valid) {
-        |        nextRemaining := dmaSPSubtractor.io.out
-        |        state := sWrite
-        |      }
-        |    }
-        |
-        |    is(sWrite) {
-        |      bram.io.addra := dstWordAddr
-        |      bram.io.dina := newData
-        |      bram.io.wea := true.B
-        |
-        |      srcPtr := nextSrcPtr
-        |      dstPtr := nextDstPtr
-        |      remaining := nextRemaining
-        |      when(remaining <= byteCount) {
-        |        state := sDone
-        |      }.otherwise {
-        |        state := sUpdateBytes
-        |      }
-        |    }
-        |
-        |    is(sDone) {
-        |      when(!dmaEnable) {
-        |        state := sIdle
-        |      }
-        |    }
-        |  }
+        |  io.dmaValid := Mux(r_dmaState === sDmaDone, true.B, false.B)
         |}
     """
   }
@@ -1647,7 +1296,7 @@ import HwSynthesizer._
     Division(T, "DivisionSigned64", "divisionSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), xilinxIPValid),
     Remainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, F), xilinxIPValid),
     Remainder(T, "RemainerSigned64", "remainerSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), xilinxIPValid),
-    BlockMemory(T, "BlockMemory", s"${sharedMemName}", 64, (anvil.config.memory * 8) / 64 + 1, BlockMemoryIP(), xilinxIPValid)
+    BlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory + 1, BlockMemoryIP(), xilinxIPValid, anvil.config.erase)
   )
 
   @pure def findChiselModule(ip: IpType): Option[ChiselModule] = {
@@ -1919,13 +1568,13 @@ import HwSynthesizer._
             |    input wire ena,
             |    input wire wea,
             |    input wire [9:0] addra,
-            |    input wire [63:0] dina,
-            |    output wire [63:0] douta,
+            |    input wire [7:0] dina,
+            |    output wire [7:0] douta,
             |    input wire enb,
             |    input wire web,
             |    input wire [9:0] addrb,
-            |    input wire [63:0] dinb,
-            |    output wire [63:0] doutb
+            |    input wire [7:0] dinb,
+            |    output wire [7:0] doutb
             |);
             |
             |  XilinxBRAM u_XilinxBRAM (
@@ -1933,138 +1582,16 @@ import HwSynthesizer._
             |    .ena(ena),      // input wire ena
             |    .wea(wea),      // input wire [0 : 0] wea
             |    .addra(addra),  // input wire [9 : 0] addra
-            |    .dina(dina),    // input wire [63 : 0] dina
-            |    .douta(douta),  // output wire [63 : 0] douta
+            |    .dina(dina),    // input wire [7: 0] dina
+            |    .douta(douta),  // output wire [7: 0] douta
             |    .clkb(clk),    // input wire clkb
             |    .enb(enb),      // input wire enb
             |    .web(web),      // input wire [0 : 0] web
             |    .addrb(addrb),  // input wire [9 : 0] addrb
-            |    .dinb(dinb),    // input wire [63 : 0] dinb
-            |    .doutb(doutb)  // output wire [63 : 0] doutb
+            |    .dinb(dinb),    // input wire [7: 0] dinb
+            |    .doutb(doutb)  // output wire [7: 0] doutb
             |  );
             |
-            |endmodule
-          """
-      }
-      @strictpure def xilinxSPAdderConstant1WrapperST: ST = {
-        st"""
-            |module XilinxSPAdderConstant1Wrapper(
-            |    input wire clk,
-            |    input wire ce,
-            |    input wire [15:0] A,
-            |    output wire valid,
-            |    output wire [15:0] S);
-            |
-            |  reg [1:0] valid_shift = 2'b0;
-            |
-            |  XilinxSPAdderConstant1 u_XilinxSPAdderConstant1 (
-            |    .CLK(clk),
-            |    .CE(ce),
-            |    .A(A),
-            |    .S(S)
-            |  );
-            |
-            |  always @(posedge clk) begin
-            |    if (ce)
-            |      valid_shift <= {valid_shift[0], 1'b1};
-            |    else
-            |      valid_shift <= 0;
-            |  end
-            |
-            |  assign valid = valid_shift[1];
-            |endmodule
-          """
-      }
-      @strictpure def xilinxSPAdderUnsigned8bitWrapperST: ST = {
-        st"""
-            |module XilinxSPAdderUnsigned8bitWrapper(
-            |    input wire clk,
-            |    input wire ce,
-            |    input wire [7:0] A,
-            |    input wire [7:0] B,
-            |    output wire valid,
-            |    output wire [7:0] S);
-            |
-            |  reg [0:0] valid_shift = 1'b0;
-            |
-            |  XilinxSPAdderUnsigned8bit u_XilinxSPAdderUnsigned8bit (
-            |    .CLK(clk),
-            |    .CE(ce),
-            |    .A(A),
-            |    .B(B),
-            |    .S(S)
-            |  );
-            |
-            |  always @(posedge clk) begin
-            |    if (ce)
-            |      valid_shift <= 1'b1;
-            |    else
-            |      valid_shift <= 0;
-            |  end
-            |
-            |  assign valid = valid_shift;
-            |endmodule
-          """
-      }
-      @strictpure def xilinxSPAdderUnsignedWrapperST: ST = {
-        st"""
-            |module XilinxSPAdderUnsignedWrapper(
-            |    input wire clk,
-            |    input wire ce,
-            |    input wire [15:0] A,
-            |    input wire [15:0] B,
-            |    output wire valid,
-            |    output wire [15:0] S);
-            |
-            |  reg [1:0] valid_shift = 2'b0;
-            |
-            |  XilinxSPAdderUnsigned u_XilinxSPAdderUnsigned (
-            |    .CLK(clk),
-            |    .CE(ce),
-            |    .A(A),
-            |    .B(B),
-            |    .S(S)
-            |  );
-            |
-            |  always @(posedge clk) begin
-            |    if (ce)
-            |      valid_shift <= {valid_shift[0], 1'b1};
-            |    else
-            |      valid_shift <= 0;
-            |  end
-            |
-            |  assign valid = valid_shift[1];
-            |endmodule
-          """
-      }
-      @strictpure def xilinxSPSubtractorUnsignedWrapperST: ST = {
-        st"""
-            |module XilinxSPSubtractorUnsignedWrapper(
-            |    input wire clk,
-            |    input wire ce,
-            |    input wire [15:0] A,
-            |    input wire [15:0] B,
-            |    output wire valid,
-            |    output wire [15:0] S);
-            |
-            |  reg [1:0] valid_shift = 2'b0;
-            |
-            |  XilinxSPSubtractorUnsigned u_XilinxSPSubtractorUnsigned (
-            |    .CLK(clk),
-            |    .CE(ce),
-            |    .A(A),
-            |    .B(B),
-            |    .S(S)
-            |  );
-            |
-            |  always @(posedge clk) begin
-            |    if (ce)
-            |      valid_shift <= {valid_shift[0], 1'b1};
-            |    else
-            |      valid_shift <= 0;
-            |  end
-            |
-            |  assign valid = valid_shift[1];
             |endmodule
           """
       }
@@ -2077,43 +1604,20 @@ import HwSynthesizer._
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxDividerUnsigned64Wrapper.v"), xilinxDiv64ST(F))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxMultiplierSigned64Wrapper.v"), xilinxMul64ST(T))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxBRAMWrapper.v"), xilinxBRAMWrapperST)
-      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxSPAdderConstant1Wrapper.v"), xilinxSPAdderConstant1WrapperST)
-      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxSPAdderUnsigned8bitWrapper.v"), xilinxSPAdderUnsigned8bitWrapperST)
-      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxSPAdderUnsignedWrapper.v"), xilinxSPAdderUnsignedWrapperST)
-      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxSPSubtractorUnsignedWrapper.v"), xilinxSPSubtractorUnsignedWrapperST)
     }
 
     if (anvil.config.genVerilog) {
       output.add(T, ISZ("chisel/src/test/scala", s"${name}VerilogGeneration.scala"), verilogGenerationST(name))
-    } else if (anvil.config.axi4) {
-      output.add(T, ISZ("chisel/src/test/scala", s"AXIWrapperChiselGenerated${name}VerilogGeneration.scala"), axiWrapperVerilogGenerationST(name))
     }
 
     anvil.config.simOpt match {
       case Some(simConfig) => {
-        output.add(T, ISZ("chisel/src/test/scala", s"AXIWrapperChiselGenerated${name}Bench.scala"), AXI4WrapperTestBenchST(name, simConfig.cycles))
         output.add(T, ISZ("chisel/src/test/scala", s"${name}Bench.scala"), testBenchST(name, simConfig.cycles))
       }
       case _ =>
     }
 
     return
-  }
-
-  @pure def axiWrapperVerilogGenerationST(moduleName: String): ST = {
-    val verilogGenST: ST =
-      st"""
-          |import chisel3.stage.{ChiselStage,ChiselGeneratorAnnotation}
-          |
-          |object AXIWrapperChiselGenerated${moduleName}VerilogGeneration extends App {
-          |  (new ChiselStage).execute(
-          |    Array("--target-dir", "generated_verilog"),
-          |    Seq(ChiselGeneratorAnnotation(() => new AXIWrapperChiselGenerated${moduleName}()))
-          |  )
-          |}
-        """
-
-    return verilogGenST
   }
 
   @pure def verilogGenerationST(moduleName: String): ST = {
@@ -2134,16 +1638,6 @@ import HwSynthesizer._
   }
 
   @pure def testBenchST(moduleName: String, cycles: Z): ST = {
-    val memoryIPReadST: ST =
-      st"""
-          |for(i <- 0 until ${anvil.config.printSize / 4 + 1}) {
-          |  dut.io.arrayRe.poke(true.B)
-          |  dut.io.arrayReadAddr.poke((20 + i * 4).U)
-          |  dut.clock.step(7)
-          |  dut.io.arrayRe.poke(false.B)
-          |  dut.clock.step()
-          |}
-        """
     val benchST: ST =
       st"""
           |import chisel3._
@@ -2163,90 +1657,55 @@ import HwSynthesizer._
           |      dut.reset.poke(false.B)
           |      dut.clock.step()
           |
-          |      dut.io.arrayWe.poke(true.B)
-          |      dut.io.arrayWriteAddr.poke(0.U)
-          |      dut.io.arrayWData.poke("hFFFFFFFF".U)
-          |      dut.io.arrayStrb.poke("b1111".U)
-          |      ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) "dut.clock.step(9)" else "dut.clock.step()"}
-          |      ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
-                    st"""
-                        |dut.io.arrayWe.poke(false.B)
-                        |dut.clock.step()
-                        """
-                   else st""}
-          |
-          |      dut.io.arrayWe.poke(true.B)
-          |      dut.io.arrayWriteAddr.poke(4.U)
-          |      dut.io.arrayWData.poke("hFFFFFFFF".U)
-          |      dut.io.arrayStrb.poke("b1111".U)
-          |      ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) "dut.clock.step(9)" else "dut.clock.step()"}
-          |
-          |      dut.io.arrayWe.poke(false.B)
-          |      dut.io.valid.poke(true.B)
-          |      for(i <- 0 until ${cycles}) {
-          |        dut.clock.step()
-          |      }
-          |
-          |      ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) memoryIPReadST.render else st""}
-          |
-          |    }
-          |  }
-          |}
-        """
-
-    return benchST
-  }
-
-  @pure def AXI4WrapperTestBenchST(moduleName: String, cycles: Z): ST = {
-
-    val benchST: ST =
-      st"""
-          |import chisel3._
-          |import chiseltest._
-          |import chiseltest.simulator.WriteVcdAnnotation
-          |import org.scalatest.flatspec.AnyFlatSpec
-          |
-          |class AXIWrapperChiselGenerated${moduleName}Bench extends AnyFlatSpec with ChiselScalatestTester {
-          |  "AXIWrapperChiselGenerated${moduleName}Bench" should "work" in {
-          |    test(new AXIWrapperChiselGenerated${moduleName}()).withAnnotations(Seq(WriteVcdAnnotation, VerilatorBackendAnnotation)) { dut =>
-          |      dut.clock.setTimeout(10000)
-          |
-          |      dut.reset.poke(false.B)
-          |      for (i <- 0 until (5)) {
-          |        dut.clock.step()
-          |      }
-          |      dut.reset.poke(true.B)
-          |      dut.clock.step()
-          |
-          |      // write valid signal
+          |      // write 8 FF to testNum
           |      dut.io.S_AXI_AWVALID.poke(true.B)
           |      dut.io.S_AXI_AWADDR.poke(0.U)
           |      dut.clock.step()
           |
+          |      dut.io.S_AXI_AWVALID.poke(false.B)
           |      dut.io.S_AXI_WVALID.poke(true.B)
-          |      dut.io.S_AXI_WDATA.poke(1.S)
-          |      dut.io.S_AXI_WSTRB.poke("b1111".U)
+          |      dut.io.S_AXI_WDATA.poke("hFFFFFFFFFFFFFFFF".U)
+          |      dut.io.S_AXI_WSTRB.poke("hFF".U)
           |      dut.clock.step()
           |
+          |      dut.io.S_AXI_WVALID.poke(false.B)
           |      dut.io.S_AXI_BREADY.poke(true.B)
+          |      while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
+          |        dut.clock.step(1)
+          |      }
+          |
+          |      // write valid signal
+          |      dut.io.S_AXI_AWVALID.poke(true.B)
+          |      dut.io.S_AXI_AWADDR.poke(${anvil.config.memory}.U)
           |      dut.clock.step()
           |
           |      dut.io.S_AXI_AWVALID.poke(false.B)
-          |      dut.io.S_AXI_WVALID.poke(false.B)
-          |      dut.io.S_AXI_BREADY.poke(false.B)
-          |
-          |      for(i <- 0 until(${cycles})) {
-          |        dut.clock.step()
-          |      }
-          |
-          |      // read ready signals
-          |      dut.io.S_AXI_ARVALID.poke(true.B)
-          |      dut.io.S_AXI_ARADDR.poke(4.U)
+          |      dut.io.S_AXI_WVALID.poke(true.B)
+          |      dut.io.S_AXI_WDATA.poke("h01".U)
+          |      dut.io.S_AXI_WSTRB.poke("h01".U)
           |      dut.clock.step()
           |
-          |      dut.io.S_AXI_RREADY.poke(true.B)
-          |      dut.clock.step(20)
+          |      dut.io.S_AXI_WVALID.poke(false.B)
+          |      dut.io.S_AXI_BREADY.poke(true.B)
+          |      while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
+          |        dut.clock.step(1)
+          |      }
           |
+          |      dut.clock.step(${cycles})
+          |
+          |      for(i <- 0 until ${anvil.config.printSize / 8 + 1}) {
+          |        dut.io.S_AXI_ARVALID.poke(true.B)
+          |        dut.io.S_AXI_ARADDR.poke((20 + i * 8).U)
+          |        dut.clock.step(1)
+          |
+          |        dut.io.S_AXI_ARVALID.poke(false.B)
+          |        dut.io.S_AXI_RREADY.poke(true.B)
+          |        while (!dut.io.S_AXI_RVALID.peek().litToBoolean) {
+          |          dut.clock.step(1)
+          |        }
+          |      }
+          |
+          |      dut.clock.step(50)
           |    }
           |  }
           |}
@@ -2303,286 +1762,6 @@ import HwSynthesizer._
   }
 
   @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector): ST = {
-
-    @strictpure def axi4WrapperST(): ST =
-      st"""
-          |class AXIWrapperChiselGenerated${name}(val C_S_AXI_DATA_WIDTH:  Int = 32,
-          |                                         val C_S_AXI_ADDR_WIDTH:  Int = 32,
-          |                                         val ARRAY_REG_WIDTH:     Int = 8,
-          |                                         val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
-          |                                         ${if(!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
-          |                                         ${if(!anvil.config.splitTempSizes) s"val GENERAL_REG_DEPTH:   Int = ${maxRegisters.maxCount}," else ""}
-          |                                         val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize*8},
-          |                                         val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize*8})  extends Module {
-          |    val io = IO(new Bundle{
-          |        // write address channel
-          |        val S_AXI_AWADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
-          |        val S_AXI_AWPROT  = Input(UInt(3.W))
-          |        val S_AXI_AWVALID = Input(Bool())
-          |        val S_AXI_AWREADY = Output(Bool())
-
-          |        // write data channel
-          |        val S_AXI_WDATA  = Input(SInt(C_S_AXI_DATA_WIDTH.W))
-          |        val S_AXI_WSTRB  = Input(UInt((C_S_AXI_DATA_WIDTH/8).W))
-          |        val S_AXI_WVALID = Input(Bool())
-          |        val S_AXI_WREADY = Output(Bool())
-
-          |        // write response channel
-          |        val S_AXI_BRESP  = Output(UInt(2.W))
-          |        val S_AXI_BVALID = Output(Bool())
-          |        val S_AXI_BREADY = Input(Bool())
-
-          |        // read address channel
-          |        val S_AXI_ARADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
-          |        val S_AXI_ARPROT  = Input(UInt(3.W))
-          |        val S_AXI_ARVALID = Input(Bool())
-          |        val S_AXI_ARREADY = Output(Bool())
-
-          |        // read data channel
-          |        val S_AXI_RDATA  = Output(SInt(C_S_AXI_DATA_WIDTH.W))
-          |        val S_AXI_RRESP  = Output(UInt(2.W))
-          |        val S_AXI_RVALID = Output(Bool())
-          |        val S_AXI_RREADY = Input(Bool())
-          |    })
-          |
-          |    val lowActiveReset = !reset.asBool
-          |  withReset(lowActiveReset) {
-          |
-          |    // AXI4LITE signals, the signals need to be saved
-          |    val axi_awaddr  = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
-          |    val axi_araddr  = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
-          |    // AXI4LITE output signal
-          |    val axi_awready = Reg(Bool())
-          |    val axi_wready  = Reg(Bool())
-          |    val axi_bresp   = Reg(UInt(2.W))
-          |    val axi_bvalid  = Reg(Bool())
-          |    val axi_arready = Reg(Bool())
-          |    val axi_rdata   = Reg(SInt(C_S_AXI_DATA_WIDTH.W))
-          |    val axi_rresp   = Reg(UInt(2.W))
-          |    val axi_rvalid  = Reg(Bool())
-          |
-          |
-          |    // Example-specific design signals
-          |    // local parameter for addressing 32 bit / 64 bit C_S_AXI_DATA_WIDTH
-          |    // ADDR_LSB is used for addressing 32/64 bit registers/memories
-          |    // ADDR_LSB = 2 for 32 bits (n downto 2)
-          |    // ADDR_LSB = 3 for 64 bits (n downto 3)
-          |    val ADDR_LSB: Int = (C_S_AXI_DATA_WIDTH/32) + 1
-          |    val OPT_MEM_ADDR_BITS: Int = 10
-          |
-          |    //----------------------------------------------
-          |    //-- Signals for user logic register space example
-          |    //------------------------------------------------
-          |    val slv_reg_rden = Wire(Bool())
-          |    val slv_reg_wren = Wire(Bool())
-          |    val reg_data_out = Wire(SInt(C_S_AXI_DATA_WIDTH.W))
-          |    val aw_en        = Reg(Bool())
-          |
-          |    // Registers for target module port
-          |    val io_valid_reg = Reg(UInt(32.W))
-          |    val io_ready_reg = Reg(UInt(32.W))
-          |
-          |    // instantiate the target module
-          |    val arrayReadAddrValid = (axi_araddr(log2Ceil(ARRAY_REG_DEPTH), 0) >= 8.U) && ((axi_araddr(log2Ceil(ARRAY_REG_DEPTH), 0) + 3.U) < (ARRAY_REG_DEPTH.U + 8.U))
-          |    val arrayWriteAddrValid = (axi_awaddr(log2Ceil(ARRAY_REG_DEPTH), 0) >= 8.U) && ((axi_awaddr(log2Ceil(ARRAY_REG_DEPTH), 0) + 3.U) < (ARRAY_REG_DEPTH.U + 8.U))
-          |    val arrayWriteValid = slv_reg_wren & arrayWriteAddrValid
-          |    val arrayReadValid = arrayReadAddrValid & axi_arready & io.S_AXI_ARVALID & ~axi_rvalid
-          |    val arrayReady = axi_araddr(log2Ceil(ARRAY_REG_DEPTH), 0) === 4.U
-          |    val mod${name} = Module(new ${name}(C_S_AXI_DATA_WIDTH  = C_S_AXI_DATA_WIDTH ,
-          |                                        C_S_AXI_ADDR_WIDTH  = C_S_AXI_ADDR_WIDTH ,
-          |                                        ARRAY_REG_WIDTH     = ARRAY_REG_WIDTH    ,
-          |                                        ARRAY_REG_DEPTH     = ARRAY_REG_DEPTH    ,
-          |                                        ${if(!anvil.config.splitTempSizes) "GENERAL_REG_WIDTH   = GENERAL_REG_WIDTH  ," else ""}
-          |                                        ${if(!anvil.config.splitTempSizes) "GENERAL_REG_DEPTH   = GENERAL_REG_DEPTH  ," else ""}
-          |                                        STACK_POINTER_WIDTH = STACK_POINTER_WIDTH,
-          |                                        CODE_POINTER_WIDTH  = CODE_POINTER_WIDTH  ))
-          |    mod${name}.io.valid := Mux(io_valid_reg(0) & (io_ready_reg === 0.U), true.B, false.B)
-          |    io_ready_reg := mod${name}.io.ready
-          |    mod${name}.io.arrayRe := arrayReadValid
-          |    mod${name}.io.arrayWe := arrayWriteValid
-          |    mod${name}.io.arrayStrb := Mux(arrayWriteValid, io.S_AXI_WSTRB, 0.U)
-          |    mod${name}.io.arrayWriteAddr := Mux(arrayWriteValid,
-          |                                                    Cat(axi_awaddr(log2Ceil(ARRAY_REG_DEPTH) - 1, ADDR_LSB), 0.U(ADDR_LSB.W)) - 8.U,
-          |                                                    0.U)
-          |    mod${name}.io.arrayReadAddr  := Mux(arrayReadValid,
-          |                                                    Cat(axi_araddr(log2Ceil(ARRAY_REG_DEPTH) - 1, ADDR_LSB), 0.U(ADDR_LSB.W)) - 8.U,
-          |                                                    0.U)
-          |    mod${name}.io.arrayWData := Mux(arrayWriteValid, io.S_AXI_WDATA.asUInt, 0.U)
-          |
-          |    when(arrayReady) {
-          |        reg_data_out := io_ready_reg.asSInt
-          |    } .elsewhen(arrayReadValid) {
-          |        reg_data_out := mod${name}.io.arrayRData.asSInt
-          |    } .otherwise {
-          |        reg_data_out := 0.S
-          |    }
-          |
-          |    when(lowActiveReset.asBool) {
-          |        io_ready_reg := 0.U
-          |    } .otherwise {
-          |        io_ready_reg := mod${name}.io.ready
-          |    }
-          |
-          |    // I/O Connections assignments
-          |    io.S_AXI_AWREADY := axi_awready;
-          |    io.S_AXI_WREADY  := axi_wready;
-          |    io.S_AXI_BRESP   := axi_bresp;
-          |    io.S_AXI_BVALID	 := axi_bvalid;
-          |    io.S_AXI_ARREADY := axi_arready;
-          |    io.S_AXI_RDATA   := axi_rdata;
-          |    io.S_AXI_RRESP   := axi_rresp;
-          |    io.S_AXI_RVALID  := axi_rvalid;
-          |
-          |    // Implement axi_awready generation
-          |    // axi_awready is asserted for one S_AXI_ACLK clock cycle when both
-          |    // S_AXI_AWVALID and S_AXI_WVALID are asserted. axi_awready is
-          |    // de-asserted when reset is low.
-          |    when(lowActiveReset.asBool) {
-          |        axi_awready := false.B
-          |        aw_en       := true.B
-          |    } .otherwise {
-          |        when(~axi_awready && io.S_AXI_AWVALID && io.S_AXI_WVALID && aw_en) {
-          |            // slave is ready to accept write address when
-          |            // there is a valid write address and write data
-          |            // on the write address and data bus. This design
-          |            // expects no outstanding transactions.
-          |            axi_awready := true.B
-          |            aw_en       := false.B
-          |        } .elsewhen(io.S_AXI_BREADY && axi_bvalid) {
-          |            // the current operation is finished
-          |            // prepare for the next write operation
-          |            axi_awready := false.B
-          |            aw_en       := true.B
-          |        } .otherwise {
-          |            axi_awready  := false.B
-          |        }
-          |    }
-          |
-          |    // Implement axi_awaddr latching
-          |    // This process is used to latch the address when both
-          |    // S_AXI_AWVALID and S_AXI_WVALID are valid.
-          |    when(lowActiveReset.asBool) {
-          |        axi_awaddr := 0.U
-          |    } .otherwise {
-          |        when(~axi_awready && io.S_AXI_AWVALID && io.S_AXI_WVALID && aw_en) {
-          |            axi_awaddr := io.S_AXI_AWADDR
-          |        }
-          |    }
-          |
-          |    // Implement axi_wready generation
-          |    // axi_wready is asserted for one S_AXI_ACLK clock cycle when both
-          |    // S_AXI_AWVALID and S_AXI_WVALID are asserted. axi_wready is
-          |    // de-asserted when reset is low.
-          |    when(lowActiveReset.asBool) {
-          |        axi_wready := false.B
-          |    } .otherwise {
-          |        when(~axi_wready && io.S_AXI_WVALID && io.S_AXI_AWVALID && aw_en) {
-          |            // slave is ready to accept write data when
-          |            // there is a valid write address and write data
-          |            // on the write address and data bus. This design
-          |            // expects no outstanding transactions.
-          |            axi_wready := true.B
-          |        } .otherwise {
-          |            axi_wready := false.B
-          |        }
-          |    }
-          |
-          |    // Implement memory mapped register select and write logic generation
-          |    // The write data is accepted and written to memory mapped registers when
-          |    // axi_awready, S_AXI_WVALID, axi_wready and S_AXI_WVALID are asserted. Write strobes are used to
-          |    // select byte enables of slave registers while writing.
-          |    // These registers are cleared when reset (active low) is applied.
-          |    // Slave register write enable is asserted when valid address and data are available
-          |    // and the slave is ready to accept the write address and write data.
-          |    slv_reg_wren := axi_wready && io.S_AXI_WVALID && axi_awready && io.S_AXI_AWVALID
-          |
-          |    val writeEffectiveAddr = axi_awaddr(log2Ceil(ARRAY_REG_DEPTH), 0)
-          |
-          |    when(lowActiveReset.asBool) {
-          |        io_valid_reg := 0.U
-          |    } .otherwise {
-          |        when(slv_reg_wren && writeEffectiveAddr === 0.U) {
-          |                io_valid_reg := io.S_AXI_WDATA.asUInt
-          |        }
-          |    }
-          |
-          |    // Implement write response logic generation
-          |    // The write response and response valid signals are asserted by the slave
-          |    // when axi_wready, S_AXI_WVALID, axi_wready and S_AXI_WVALID are asserted.
-          |    // This marks the acceptance of address and indicates the status of
-          |    // write transaction.
-          |    when(lowActiveReset.asBool) {
-          |        axi_bvalid := false.B
-          |        axi_bresp  := 0.U
-          |    } .otherwise {
-          |        when(axi_awready && io.S_AXI_AWVALID && ~axi_bvalid && axi_wready && io.S_AXI_WVALID) {
-          |            axi_bvalid := true.B
-          |            axi_bresp  := 0.U
-          |        } .otherwise {
-          |            when(io.S_AXI_BREADY && axi_bvalid) {
-          |                axi_bvalid := false.B
-          |            }
-          |        }
-          |    }
-          |
-          |    // Implement axi_arready generation
-          |    // axi_arready is asserted for one S_AXI_ACLK clock cycle when
-          |    // S_AXI_ARVALID is asserted. axi_awready is
-          |    // de-asserted when reset (active low) is asserted.
-          |    // The read address is also latched when S_AXI_ARVALID is
-          |    // asserted. axi_araddr is reset to zero on reset assertion.
-          |    when(lowActiveReset.asBool) {
-          |        axi_arready := false.B
-          |        axi_araddr  := 0.U
-          |    } .otherwise {
-          |        when(~axi_arready && io.S_AXI_ARVALID) {
-          |            // indicates that the slave has acceped the valid read address
-          |            axi_arready := true.B
-          |            axi_araddr  := io.S_AXI_ARADDR
-          |        } .otherwise {
-          |            axi_arready := false.B
-          |        }
-          |    }
-          |
-          |    // Implement axi_arvalid generation
-          |    // axi_rvalid is asserted for one S_AXI_ACLK clock cycle when both
-          |    // S_AXI_ARVALID and axi_arready are asserted. The slave registers
-          |    // data are available on the axi_rdata bus at this instance. The
-          |    // assertion of axi_rvalid marks the validity of read data on the
-          |    // bus and axi_rresp indicates the status of read transaction.axi_rvalid
-          |    // is deasserted on reset (active low). axi_rresp and axi_rdata are
-          |    // cleared to zero on reset (active low).
-          |    when(lowActiveReset.asBool) {
-          |        axi_rvalid := false.B
-          |        axi_rresp  := 0.U
-          |    } .otherwise {
-          |        when(axi_arready && io.S_AXI_ARVALID && ~axi_rvalid) {
-          |            axi_rvalid := true.B
-          |            axi_rresp  := 0.U
-          |        } .elsewhen(axi_rvalid && io.S_AXI_RREADY) {
-          |            axi_rvalid := false.B
-          |        }
-          |    }
-          |
-          |    // Implement memory mapped register select and read logic generation
-          |    // Slave register read enable is asserted when valid address is available
-          |    // and the slave is ready to accept the read address.
-          |    slv_reg_rden := axi_arready & io.S_AXI_ARVALID & ~axi_rvalid;
-          |
-          |    // Output register or memory read data
-          |    when(lowActiveReset.asBool) {
-          |        axi_rdata := 0.S
-          |    } .otherwise {
-          |        // When there is a valid read address (S_AXI_ARVALID) with
-          |        // acceptance of read address by the slave (axi_arready),
-          |        // output the read dada
-          |        when(slv_reg_rden) {
-          |            axi_rdata := reg_data_out
-          |        }
-          |    }
-          |  }
-          |}
-        """
 
     @pure def generalPurposeRegisterST: ST = {
       var generalRegMap: HashMap[String, (Z,Z,B)] = HashMap.empty[String, (Z,Z,B)]
@@ -2847,9 +2026,10 @@ import HwSynthesizer._
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
           st"""
               |when(io.arrayRe) {
-              |  ${sharedMemName}.io.mode := Mux(${sharedMemName}.io.readValid, 0.U, 1.U)
+              |  ${sharedMemName}.io.mode := 1.U
               |  ${sharedMemName}.io.readAddr := io.arrayReadAddr
               |  ${sharedMemName}.io.readOffset := 0.U
+              |  ${sharedMemName}.io.readLen := 4.U
               |}
               |io.arrayRData := Mux(io.arrayRe & ${sharedMemName}.io.readValid, ${sharedMemName}.io.readData(C_S_AXI_DATA_WIDTH - 1, 0), 0.U)
             """
@@ -2866,6 +2046,7 @@ import HwSynthesizer._
       val memWritST: ST = {
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
           st"""
+              |${sharedMemName}.io.mode := 0.U
               |val arrayStrb = io.arrayStrb
               |val arrayWData = io.arrayWData
               |val arrayWe = io.arrayWe
@@ -2877,7 +2058,7 @@ import HwSynthesizer._
               |val mergedValidData = Cat(validWriteBytes.reverse)
               |
               |when(arrayWe) {
-              |  ${sharedMemName}.io.mode := Mux(${sharedMemName}.io.writeValid, 0.U, 2.U)
+              |  ${sharedMemName}.io.mode := 2.U
               |  ${sharedMemName}.io.writeAddr := io.arrayWriteAddr
               |  ${sharedMemName}.io.writeOffset := 0.U
               |  ${sharedMemName}.io.writeLen := validWriteByteCount
@@ -2904,8 +2085,8 @@ import HwSynthesizer._
           |${if (anvil.config.useIP) moduleDeclST else st""}
           |
           |import ${name}._
-          |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 32,
-          |               val C_S_AXI_ADDR_WIDTH:  Int = 32,
+          |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 64,
+          |               val C_S_AXI_ADDR_WIDTH:  Int = ${log2Up(anvil.config.memory)},
           |               val ARRAY_REG_WIDTH:     Int = 8,
           |               val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
           |               ${if (!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
@@ -2913,46 +2094,187 @@ import HwSynthesizer._
           |               val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize * 8},
           |               val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize * 8}) extends Module {
           |
-          |    val io = IO(new Bundle{
-          |        val valid          = Input(Bool())
-          |        val ready          = Output(UInt(2.W))
-          |        val arrayRe        = Input(Bool())
-          |        val arrayWe        = Input(Bool())
-          |        val arrayStrb      = Input(UInt((C_S_AXI_DATA_WIDTH/8).W))
-          |        val arrayReadAddr  = Input(UInt((log2Ceil(ARRAY_REG_DEPTH)).W))
-          |        val arrayWriteAddr = Input(UInt((log2Ceil(ARRAY_REG_DEPTH)).W))
-          |        val arrayWData     = Input(UInt(C_S_AXI_DATA_WIDTH.W))
-          |        val arrayRData     = Output(UInt(C_S_AXI_DATA_WIDTH.W))
-          |    })
+          |  val io = IO(new Bundle{
+          |    // write address channel
+          |    val S_AXI_AWADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |    val S_AXI_AWPROT  = Input(UInt(3.W))
+          |    val S_AXI_AWVALID = Input(Bool())
+          |    val S_AXI_AWREADY = Output(Bool())
           |
-          |    ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip) s"val ${sharedMemName} = RegInit(VecInit(Seq.fill(ARRAY_REG_DEPTH)(0.U(ARRAY_REG_WIDTH.W))))" else ""}
-          |    // reg for general purpose
-          |    ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
-          |    // reg for code pointer
-          |    val CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
-          |    // reg for stack pointer
-          |    val SP = RegInit(0.U(STACK_POINTER_WIDTH.W))
-          |    // reg for display pointer
-          |    val DP = RegInit(0.U(64.W))
-          |    // reg for index in memcopy
-          |    val Idx = RegInit(0.U(16.W))
-          |    // reg for recording how many rounds needed for the left bytes
-          |    val LeftByteRounds = RegInit(0.U(8.W))
-          |    val IdxLeftByteRounds = RegInit(0.U(8.W))
-          |    ${if(anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
+          |    // write data channel
+          |    val S_AXI_WDATA  = Input(UInt(C_S_AXI_DATA_WIDTH.W))
+          |    val S_AXI_WSTRB  = Input(UInt((C_S_AXI_DATA_WIDTH/8).W))
+          |    val S_AXI_WVALID = Input(Bool())
+          |    val S_AXI_WREADY = Output(Bool())
           |
-          |    ${if(anvil.config.useIP) instanceDeclST else st""}
-          |    init(this)
+          |    // write response channel
+          |    val S_AXI_BRESP  = Output(UInt(2.W))
+          |    val S_AXI_BVALID = Output(Bool())
+          |    val S_AXI_BREADY = Input(Bool())
           |
-          |    // write operation
-          |    ${memWritST.render}
+          |    // read address channel
+          |    val S_AXI_ARADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |    val S_AXI_ARPROT  = Input(UInt(3.W))
+          |    val S_AXI_ARVALID = Input(Bool())
+          |    val S_AXI_ARREADY = Output(Bool())
           |
-          |    // read operation
-          |    ${memReadST.render}
+          |    // read data channel
+          |    val S_AXI_RDATA  = Output(UInt(C_S_AXI_DATA_WIDTH.W))
+          |    val S_AXI_RRESP  = Output(UInt(2.W))
+          |    val S_AXI_RVALID = Output(Bool())
+          |    val S_AXI_RREADY = Input(Bool())
+          |  })
           |
-          |    io.ready := Mux(CP === 0.U, 1.U, 0.U) | Mux(CP === 1.U, 2.U, 0.U)
+          |  ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip) s"val ${sharedMemName} = RegInit(VecInit(Seq.fill(ARRAY_REG_DEPTH)(0.U(ARRAY_REG_WIDTH.W))))" else ""}
+          |  // reg for general purpose
+          |  ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
+          |  // reg for code pointer
+          |  val CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
+          |  // reg for stack pointer
+          |  val SP = RegInit(0.U(STACK_POINTER_WIDTH.W))
+          |  // reg for display pointer
+          |  val DP = RegInit(0.U(64.W))
+          |  // reg for index in memcopy
+          |  val Idx = RegInit(0.U(16.W))
+          |  // reg for recording how many rounds needed for the left bytes
+          |  val LeftByteRounds = RegInit(0.U(8.W))
+          |  val IdxLeftByteRounds = RegInit(0.U(8.W))
+          |  ${if(anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
           |
-          |    ${(stateMachineST, "")}
+          |  // registers for diff channels
+          |  val r_s_axi_awready = Reg(Bool())
+          |  val r_s_axi_wready  = Reg(Bool())
+          |  val r_s_axi_bvalid  = Reg(Bool())
+          |  val r_s_axi_arready = Reg(Bool())
+          |  val r_s_axi_rdata   = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
+          |  val r_s_axi_rvalid  = Reg(Bool())
+          |
+          |  // registers for valid and ready
+          |  val r_valid = RegInit(false.B)
+          |  val r_ready = RegInit(0.U(2.W))
+          |
+          |  ${if(anvil.config.useIP) instanceDeclST else st""}
+          |  init(this)
+          |
+          |  // BRAM default
+          |  ${sharedMemName}.io.mode         := 0.U
+          |  ${sharedMemName}.io.readAddr     := 0.U
+          |  ${sharedMemName}.io.readOffset   := 0.U
+          |  ${sharedMemName}.io.readLen      := 0.U
+          |  ${sharedMemName}.io.writeAddr    := 0.U
+          |  ${sharedMemName}.io.writeOffset  := 0.U
+          |  ${sharedMemName}.io.writeLen     := 0.U
+          |  ${sharedMemName}.io.writeData    := 0.U
+          |  ${sharedMemName}.io.dmaSrcAddr   := 0.U
+          |  ${sharedMemName}.io.dmaDstAddr   := 0.U
+          |  ${sharedMemName}.io.dmaDstOffset := 0.U
+          |  ${sharedMemName}.io.dmaSrcLen    := 0.U
+          |  ${sharedMemName}.io.dmaDstLen    := 0.U
+          |
+          |  // write state machine
+          |  val sWriteIdle :: sWriteTrans :: sWriteEnd :: Nil = Enum(3)
+          |  val r_writeState = RegInit(sWriteIdle)
+          |  val r_writeLen   = Reg(UInt(8.W))
+          |  val r_writeData  = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
+          |  val r_writeAddr  = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |
+          |  // read state machine
+          |  val sReadIdle :: sReadTrans :: sReadEnd :: Nil = Enum(3)
+          |  val r_readState     = RegInit(sReadIdle)
+          |  val r_readLen       = (C_S_AXI_DATA_WIDTH / 8).U
+          |  val r_readAddr      = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |  val r_readData      = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
+          |
+          |  // write address channel
+          |  io.S_AXI_AWREADY := r_s_axi_awready
+          |
+          |  // write channel
+          |  io.S_AXI_WREADY  := true.B
+          |
+          |  // write response channel
+          |  io.S_AXI_BRESP   := 0.U
+          |  io.S_AXI_BVALID  := r_s_axi_bvalid
+          |
+          |  // read address channel
+          |  io.S_AXI_ARREADY := r_s_axi_arready
+          |
+          |  // read channel
+          |  io.S_AXI_RDATA   := r_s_axi_rdata
+          |  io.S_AXI_RRESP   := 0.U
+          |  io.S_AXI_RVALID  := r_s_axi_rvalid
+          |
+          |  r_s_axi_awready := Mux(reset.asBool | (io.S_AXI_WREADY& io.S_AXI_WVALID), true.B,
+          |                         Mux(io.S_AXI_AWVALID && io.S_AXI_AWREADY, false.B, r_s_axi_awready))
+          |
+          |  r_s_axi_bvalid  := Mux(reset.asBool, false.B,
+          |                         Mux(r_writeState === sWriteEnd, true.B, false.B))
+          |
+          |  r_s_axi_arready := Mux(reset.asBool, true.B,
+          |                         Mux(io.S_AXI_ARVALID & io.S_AXI_ARREADY, true.B, r_s_axi_arready))
+          |
+          |  r_s_axi_rvalid  := Mux(reset.asBool, false.B,
+          |                         Mux(r_readState === sReadEnd, true.B, false.B))
+          |
+          |  r_s_axi_rdata   := Mux(r_readState === sReadEnd, r_readData, r_s_axi_rdata)
+          |
+          |  // valid and ready registers for memoryIP
+          |  r_valid := Mux(io.S_AXI_WVALID & io.S_AXI_WREADY & (r_writeAddr === ${anvil.config.memory}.U), io.S_AXI_WDATA(0), r_valid)
+          |  r_ready := Mux(CP === 0.U, 1.U, 0.U) | Mux(CP === 1.U, 2.U, 0.U)
+          |
+          |  // write state machine
+          |  switch(r_writeState) {
+          |    is(sWriteIdle) {
+          |      when(io.S_AXI_AWVALID && io.S_AXI_AWREADY) {
+          |        r_writeAddr  := io.S_AXI_AWADDR
+          |      }
+          |      when(io.S_AXI_WVALID & io.S_AXI_WREADY) {
+          |        r_writeState := Mux(r_writeAddr < ${anvil.config.memory}.U, sWriteTrans, sWriteEnd)
+          |        r_writeLen   := PopCount(io.S_AXI_WSTRB)
+          |        r_writeData  := io.S_AXI_WDATA
+          |      }
+          |    }
+          |    is(sWriteTrans) {
+          |      ${sharedMemName}.io.mode        := 2.U
+          |      ${sharedMemName}.io.writeAddr   := r_writeAddr
+          |      ${sharedMemName}.io.writeOffset := 0.U
+          |      ${sharedMemName}.io.writeLen    := r_writeLen
+          |      ${sharedMemName}.io.writeData   := r_writeData
+          |      when(${sharedMemName}.io.writeValid) {
+          |        ${sharedMemName}.io.mode  := 0.U
+          |        r_writeState    := sWriteEnd
+          |      }
+          |    }
+          |    is(sWriteEnd) {
+          |      r_writeState    := sWriteIdle
+          |    }
+          |  }
+          |
+          |  // read state machine
+          |  switch(r_readState) {
+          |    is(sReadIdle) {
+          |      when(io.S_AXI_ARREADY & io.S_AXI_ARVALID) {
+          |        r_readState := Mux(io.S_AXI_ARADDR === ${anvil.config.memory}.U , sReadEnd, sReadTrans)
+          |        r_readData  := Mux(io.S_AXI_ARADDR === ${anvil.config.memory}.U , r_ready, r_readData)
+          |        r_readAddr  := io.S_AXI_ARADDR
+          |      }
+          |    }
+          |    is(sReadTrans) {
+          |      ${sharedMemName}.io.mode        := 1.U
+          |      ${sharedMemName}.io.readAddr    := r_readAddr
+          |      ${sharedMemName}.io.readOffset  := 0.U
+          |      ${sharedMemName}.io.readLen     := r_readLen
+          |      when(${sharedMemName}.io.readValid) {
+          |        r_readData     := ${sharedMemName}.io.readData
+          |        ${sharedMemName}.io.mode := 0.U
+          |        r_readState    := sReadEnd
+          |      }
+          |    }
+          |    is(sReadEnd) {
+          |      r_readState := sReadIdle
+          |    }
+          |  }
+          |
+          |  ${(stateMachineST, "")}
           |}
           |
           |object ${name} {
@@ -2963,8 +2285,6 @@ import HwSynthesizer._
           |  }
           |}
           |${(stateFunctionObjectST, "\n")}
-          |
-          |${if (anvil.config.axi4) axi4WrapperST().render else ""}
           """
     }
 
@@ -2975,17 +2295,83 @@ import HwSynthesizer._
 
   @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock]): (ST, ST) = {
     val ipPortLogic = HwSynthesizer.IpPortAssign(anvil, ipAlloc, ISZ[ST](), ipModules, InputMap.empty, ISZ[ST](), ISZ[ST]())
-    @strictpure def basicBlockST(grounds: ISZ[ST], functions: ISZ[ST]): (ST, ST) =
-      (st"""
-          |switch(CP) {
-          |  is(2.U) {
-          |    CP := Mux(io.valid, 3.U, CP)
-          |  }
-          |  ${(grounds, "")}
-          |}""",
+    @pure def basicBlockST(grounds: ISZ[ST], functions: ISZ[ST]): (ST, ST) = {
+      def chunk(start: Z, size: Z): ISZ[ST] = {
+        var res = ISZ[ST]()
+        var i = start
+        val end: Z = if (start + size < grounds.length) start + size else grounds.length
+        while (i < end) {
+          res = res :+ grounds(i)
+          i = i + 1
+        }
+        return res
+      }
+
+      var chunks = ISZ[ISZ[ST]]()
+      var idx: Z = 0
+
+      if (grounds.size >= 999) {
+        chunks = chunks :+ chunk(idx, 999)
+        idx = idx + 999
+        while (idx < grounds.size) {
+          chunks = chunks :+ chunk(idx, 1000)
+          idx = idx + 1000
+        }
+      } else {
+        chunks = chunks :+ chunk(0, grounds.size)
+      }
+
+      var chunkST: ISZ[ST] = ISZ[ST]()
+      for(i <- 0 until (chunks.length)) {
+        if(i == 0) {
+          chunkST = chunkST :+
+            st"""
+                |def stateMachine_${i}(): Unit = {
+                |  switch(CP) {
+                |    is(2.U) {
+                |      CP := Mux(r_valid, 3.U, CP)
+                |    }
+                |    ${(chunks(i), "\n")}
+                |  }
+                |}
+              """
+        } else {
+          chunkST = chunkST :+
+            st"""
+                |def stateMachine_${i}(): Unit = {
+                |  switch(CP) {
+                |    ${(chunks(i), "\n")}
+                |  }
+                |}
+              """
+        }
+      }
+
+      var chunkFunST: ISZ[ST] = {
+        for(i <- 0 until (chunks.length)) yield
+          st"""
+              |stateMachine_${i}()
+            """
+      }
+
+      val stateMachineFunST: ST =
+        st"""
+            |def stateMachineAll(): Unit = {
+            |  ${(chunkFunST, "\n")}
+            |}
+            |stateMachineAll()
+          """
+
+      chunkST = chunkST :+ stateMachineFunST
+
+      return (
+        st"""
+            |${(chunkST, "")}
+          """,
         st"""
             |${(functions, "")}"""
       )
+    }
 
     @pure def groundST(b: AST.IR.BasicBlock, ground: ST, jump: ST): (ST, ST) = {
       var commentST = ISZ[ST]()
@@ -3056,7 +2442,6 @@ import HwSynthesizer._
                 |  ${jump}
                 |}
               """
-
         }
         val g = groundST(b, processedGroundST, jump)
         ipPortLogic.whenCondST = ISZ[ST]()
@@ -3200,24 +2585,24 @@ import HwSynthesizer._
     return s"${generalRegName}${if(anvil.isSigned(t)) "S" else "U"}${anvil.typeBitSize(t)}"
   }
 
+  @pure def log2Up(x: Z): Z = {
+    if (x <= 1) {
+      return 0
+    }
+
+    var result: Z = 0
+    var value: Z = x - 1
+
+    while (value > 0) {
+      value = value / 2
+      result = result + 1
+    }
+
+    return result
+  }
+
   @pure def processStmtIntrinsic(i: AST.IR.Stmt.Intrinsic, ipPortLogic: HwSynthesizer.IpPortAssign): ST = {
     var intrinsicST = st""
-
-    @pure def log2Up(x: Z): Z = {
-      if (x <= 1) {
-        return 0
-      }
-
-      var result: Z = 0
-      var value: Z = x - 1
-
-      while (value > 0) {
-        value = value / 2
-        result = result + 1
-      }
-
-      return result
-    }
 
     i match {
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.TempLoad) => {
@@ -3237,6 +2622,7 @@ import HwSynthesizer._
                 |${indexerInstanceName}.io.mode := 1.U
                 |${indexerInstanceName}.io.readAddr := ${readAddrST.render}
                 |${indexerInstanceName}.io.readOffset := ${readOffsetST.render}
+                |${indexerInstanceName}.io.readLen := ${intrinsic.bytes}.U
               """
         } else {
           var internalST = ISZ[ST]()
@@ -3272,7 +2658,7 @@ import HwSynthesizer._
           val offsetWidth: Z = log2Up(anvil.config.memory * 8)
           val dmaDstAddrST: ST = processExpr(intrinsic.lbase, F, ipPortLogic)
           val dmaDstOffsetST: ST = if(intrinsic.loffset < 0) st"(${intrinsic.loffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.loffset}.U"
-          val dmaLengthST: ST = processExpr(intrinsic.rhsBytes, F, ipPortLogic)
+          val dmaSrcLenST: ST = processExpr(intrinsic.rhsBytes, F, ipPortLogic)
           val dmaSrcAddrST: ST = processExpr(intrinsic.rhs, F, ipPortLogic)
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.dmaValid"
@@ -3283,7 +2669,8 @@ import HwSynthesizer._
                 |${indexerInstanceName}.io.dmaSrcAddr := ${dmaSrcAddrST.render}
                 |${indexerInstanceName}.io.dmaDstAddr := ${dmaDstAddrST.render}
                 |${indexerInstanceName}.io.dmaDstOffset := ${dmaDstOffsetST.render}
-                |${indexerInstanceName}.io.dmaLength := ${dmaLengthST.render}
+                |${indexerInstanceName}.io.dmaSrcLen := ${dmaSrcLenST.render}
+                |${indexerInstanceName}.io.dmaDstLen := ${intrinsic.lhsBytes}.U
               """
         } else {
           MemCopyLog.enableFlagMemCopyInBlock()
@@ -3485,18 +2872,39 @@ import HwSynthesizer._
       case _ => F
     }
 
+    @strictpure def getBaseOffsetOfIntrinsicLoad(e: AST.IR.Exp): Option[(AST.IR.Exp, Z)] = e match {
+      case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => Some((intrinsic.base, intrinsic.offset))
+      case _ => None()
+    }
+
     a match {
       case a: AST.IR.Stmt.Assign.Temp => {
         val regNo = a.lhs
         val lhsST: ST = if(!anvil.config.splitTempSizes)  st"${generalRegName}(${regNo}.U)" else st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
         val rhsST = processExpr(a.rhs, F, ipPortLogic)
         if(isIntrinsicLoad(a.rhs)) {
-          assignST =
-            st"""
-                |${lhsST} := Cat{
-                |  ${rhsST.render}
-                |}
+          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+            val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+            val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic)
+            val offsetWidth: Z = log2Up(anvil.config.memory * 8)
+            val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
+            val readOffsetST: ST = if(intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
+            assignST =
+              st"""
+                  |${indexerInstanceName}.io.mode := 1.U
+                  |${indexerInstanceName}.io.readAddr := ${readAddrST.render}
+                  |${indexerInstanceName}.io.readOffset := ${readOffsetST.render}
+                  |${indexerInstanceName}.io.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U
                 """
+          } else {
+            assignST =
+              st"""
+                  |${lhsST} := Cat{
+                  |  ${rhsST.render}
+                  |}
+                """
+          }
         } else {
           val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
           val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
@@ -3531,20 +2939,29 @@ import HwSynthesizer._
         exprST = if(intrinsic.isSP) st"SP" else st"DP"
       }
       case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => {
-        var rhsExprST = ISZ[ST]()
-        val rhsExpr = processExpr(intrinsic.rhsOffset, F, ipPortLogic)
-        for(i <- intrinsic.bytes-1 to 0 by -1) {
-          if(i == 0) {
-            rhsExprST = rhsExprST :+ st"${sharedMemName}(${rhsExpr.render} + ${i}.U)"
-          } else {
-            rhsExprST = rhsExprST :+ st"${sharedMemName}(${rhsExpr.render} + ${i}.U),"
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+          val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+          val byteST: ST = st"(${intrinsic.bytes * 8 - 1}, 0)"
+          val signedST: ST = if(intrinsic.isSigned) st".asSInt" else st""
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.readValid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
+          exprST = st"${indexerInstanceName}.io.readData${byteST.render}${signedST.render}"
+        } else {
+          var rhsExprST = ISZ[ST]()
+          val rhsExpr = processExpr(intrinsic.rhsOffset, F, ipPortLogic)
+          for (i <- intrinsic.bytes - 1 to 0 by -1) {
+            if (i == 0) {
+              rhsExprST = rhsExprST :+ st"${sharedMemName}(${rhsExpr.render} + ${i}.U)"
+            } else {
+              rhsExprST = rhsExprST :+ st"${sharedMemName}(${rhsExpr.render} + ${i}.U),"
+            }
           }
+          exprST =
+            st"""
+                |Cat(
+                |  ${(rhsExprST, "\n")}
+                |)${if (intrinsic.isSigned) ".asSInt" else ""}"""
         }
-        exprST =
-          st"""
-              |Cat(
-              |  ${(rhsExprST, "\n")}
-              |)${if(intrinsic.isSigned) ".asSInt" else ""}"""
       }
       case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Indexing) => {
         IndexingLog.enableFlagIndexingInBlock()
