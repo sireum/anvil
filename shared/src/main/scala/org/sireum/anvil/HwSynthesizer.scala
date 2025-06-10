@@ -2023,59 +2023,39 @@ import HwSynthesizer._
       }
 
       val memReadST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
           st"""
-              |when(io.arrayRe) {
-              |  ${sharedMemName}.io.mode := 1.U
-              |  ${sharedMemName}.io.readAddr := io.arrayReadAddr
-              |  ${sharedMemName}.io.readOffset := 0.U
-              |  ${sharedMemName}.io.readLen := 4.U
-              |}
-              |io.arrayRData := Mux(io.arrayRe & ${sharedMemName}.io.readValid, ${sharedMemName}.io.readData(C_S_AXI_DATA_WIDTH - 1, 0), 0.U)
+              |r_readState := Mux(io.S_AXI_ARADDR === ${anvil.config.memory}.U , sReadEnd, sReadTrans)
+              |r_readData  := Mux(io.S_AXI_ARADDR === ${anvil.config.memory}.U , r_ready, r_readData)
+              |r_readAddr  := io.S_AXI_ARADDR
             """
-        } else {
+        else
           st"""
+              |r_readState := sReadEnd
               |val readBytes = Seq.tabulate(C_S_AXI_DATA_WIDTH/8) { i =>
-              |  sharedMem(io.arrayReadAddr + i.U)
+              |  ${sharedMemName}(io.S_AXI_ARADDR + i.U)
               |}
-              |io.arrayRData := Mux(io.arrayRe, Cat(readBytes.reverse), 0.U)
+              |r_readData := Cat(readBytes.reverse)
             """
-        }
       }
 
-      val memWritST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+      val memWriteST: ST = {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
           st"""
-              |${sharedMemName}.io.mode := 0.U
-              |val arrayStrb = io.arrayStrb
-              |val arrayWData = io.arrayWData
-              |val arrayWe = io.arrayWe
-              |val validWriteByteCount = PopCount(arrayStrb)
-              |val validWriteBytes = (0 until (C_S_AXI_DATA_WIDTH/8)).map { i =>
-              |  val byte = arrayWData((i + 1) * 8 - 1, i * 8)
-              |  Mux(arrayWe & arrayStrb(i), byte, 0.U(8.W))
-              |}
-              |val mergedValidData = Cat(validWriteBytes.reverse)
-              |
-              |when(arrayWe) {
-              |  ${sharedMemName}.io.mode := 2.U
-              |  ${sharedMemName}.io.writeAddr := io.arrayWriteAddr
-              |  ${sharedMemName}.io.writeOffset := 0.U
-              |  ${sharedMemName}.io.writeLen := validWriteByteCount
-              |  ${sharedMemName}.io.writeData := mergedValidData
-              |}
+              |r_writeState := Mux(r_writeAddr < ${anvil.config.memory}.U, sWriteTrans, sWriteEnd)
+              |r_writeLen   := PopCount(io.S_AXI_WSTRB)
+              |r_writeData  := io.S_AXI_WDATA
             """
-        } else {
+        else
           st"""
+              |r_writeState := sWriteEnd
               |for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
-              |  when(io.arrayWe & (io.arrayStrb(byteIndex.U) === 1.U)) {
-              |    ${sharedMemName}(io.arrayWriteAddr + byteIndex.U) := io.arrayWData((byteIndex * 8) + 7, byteIndex * 8)
+              |  when(io.arrayStrb(byteIndex.U) === 1.U) {
+              |    ${sharedMemName}(r_writeAddr + byteIndex.U) := io.S_AXI_WDATA((byteIndex * 8) + 7, byteIndex * 8)
               |  }
               |}
             """
-        }
       }
-
 
       return st"""
           |import chisel3._
@@ -2228,9 +2208,7 @@ import HwSynthesizer._
           |        r_writeAddr  := io.S_AXI_AWADDR
           |      }
           |      when(io.S_AXI_WVALID & io.S_AXI_WREADY) {
-          |        r_writeState := Mux(r_writeAddr < ${anvil.config.memory}.U, sWriteTrans, sWriteEnd)
-          |        r_writeLen   := PopCount(io.S_AXI_WSTRB)
-          |        r_writeData  := io.S_AXI_WDATA
+          |        ${memWriteST.render}
           |      }
           |    }
           |    is(sWriteTrans) {
@@ -2253,9 +2231,7 @@ import HwSynthesizer._
           |  switch(r_readState) {
           |    is(sReadIdle) {
           |      when(io.S_AXI_ARREADY & io.S_AXI_ARVALID) {
-          |        r_readState := Mux(io.S_AXI_ARADDR === ${anvil.config.memory}.U , sReadEnd, sReadTrans)
-          |        r_readData  := Mux(io.S_AXI_ARADDR === ${anvil.config.memory}.U , r_ready, r_readData)
-          |        r_readAddr  := io.S_AXI_ARADDR
+          |        ${memReadST.render}
           |      }
           |    }
           |    is(sReadTrans) {
@@ -3052,6 +3028,10 @@ import HwSynthesizer._
             }
           }
           case AST.IR.Exp.Binary.Op.Sub => {
+            if(BlockLog.getBlock.label == 14)
+              {
+                println("hehe")
+              }
             if(anvil.config.useIP) {
               val allocIndex: Z = getIpAllocIndex(exp)
               var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
