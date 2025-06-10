@@ -966,11 +966,7 @@ object Util {
                           var binopMap: HashSMap[(B, AST.IR.Exp.Binary.Op.Type), Z],
                           var indexing: Z) extends MAnvilIRTransformer {
     override def pre_langastIRExpBinary(o: AST.IR.Exp.Binary): MAnvilIRTransformer.PreResult[AST.IR.Exp] = {
-      val t: AST.Typed = if (anvil.isScalar(o.tipe)) o.left.tipe else anvil.spType
-      val key = (anvil.isSigned(t), o.op)
-      val n = binopMap.get(key).getOrElseEager(0)
-      ipMap = ipMap + IpAlloc.Ext.exp(o) ~> n
-      binopMap = binopMap + key ~> (n + 1)
+      binExp(o)
       return MAnvilIRTransformer.PreResult_langastIRExpBinary
     }
 
@@ -978,6 +974,38 @@ object Util {
       ipMap = ipMap + IpAlloc.Ext.exp(AST.IR.Exp.Intrinsic(o)) ~> indexing
       indexing = indexing + 1
       return MAnvilIRTransformer.PreResultIntrinsicIndexing
+    }
+
+    def binExp(o: AST.IR.Exp): Unit = {
+      o match {
+        case o: AST.IR.Exp.Binary =>
+          val t: AST.Typed = if (anvil.isScalar(o.tipe)) o.left.tipe else anvil.spType
+          val key = (anvil.isSigned(t), o.op)
+          val n = binopMap.get(key).getOrElseEager(0)
+          ipMap = ipMap + IpAlloc.Ext.exp(o) ~> n
+          binopMap = binopMap + key ~> (n + 1)
+        case _ =>
+      }
+    }
+
+    override def preIntrinsicCopy(o: Intrinsic.Copy): MAnvilIRTransformer.PreResult[Intrinsic.Copy] = {
+      binExp(o.lhsOffset)
+      return MAnvilIRTransformer.PreResultIntrinsicCopy
+    }
+
+    override def preIntrinsicTempLoad(o: Intrinsic.TempLoad): MAnvilIRTransformer.PreResult[Intrinsic.TempLoad] = {
+      binExp(o.rhsOffset)
+      return MAnvilIRTransformer.PreResultIntrinsicTempLoad
+    }
+
+    override def preIntrinsicLoad(o: Intrinsic.Load): MAnvilIRTransformer.PreResult[Intrinsic.Load] = {
+      binExp(o.rhsOffset)
+      return MAnvilIRTransformer.PreResultIntrinsicLoad
+    }
+
+    override def preIntrinsicStore(o: Intrinsic.Store): MAnvilIRTransformer.PreResult[Intrinsic.Store] = {
+      binExp(o.lhsOffset)
+      return MAnvilIRTransformer.PreResultIntrinsicStore
     }
 
     override def preIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): MAnvilIRTransformer.PreResult[Intrinsic.RegisterAssign] = {

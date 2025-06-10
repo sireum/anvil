@@ -40,11 +40,14 @@ object Intrinsic {
                            val comment: ST,
                            val tipe: AST.Typed,
                            val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def rhsOffset: AST.IR.Exp = {
+    @memoize def rhsOffset: AST.IR.Exp = {
       val (op, n): (AST.IR.Exp.Binary.Op.Type, Z) =
         if (offset < 0) (AST.IR.Exp.Binary.Op.Sub, -offset) else (AST.IR.Exp.Binary.Op.Add, offset)
-      if (n == 0) base
-      else AST.IR.Exp.Binary(Util.spType, base, op, AST.IR.Exp.Int(Util.spType, n, pos), pos)
+      if (n == 0) {
+        return base
+      } else {
+        return AST.IR.Exp.Binary(Util.spType, base, op, AST.IR.Exp.Int(Util.spType, n, pos), pos)
+      }
     }
     @strictpure def prettyST(p: AST.IR.Printer): ST = {
       val lhs: ST =
@@ -63,11 +66,14 @@ object Intrinsic {
                        val comment: ST,
                        val tipe: AST.Typed,
                        val pos: Position) extends AST.IR.Exp.Intrinsic.Type {
-    @strictpure def rhsOffset: AST.IR.Exp = {
+    @memoize def rhsOffset: AST.IR.Exp = {
       val (op, n): (AST.IR.Exp.Binary.Op.Type, Z) =
         if (offset < 0) (AST.IR.Exp.Binary.Op.Sub, -offset) else (AST.IR.Exp.Binary.Op.Add, offset)
-      if (n == 0) base
-      else AST.IR.Exp.Binary(Util.spType, base, op, AST.IR.Exp.Int(Util.spType, n, pos), pos)
+      if (n == 0) {
+        return base
+      } else {
+        return AST.IR.Exp.Binary(Util.spType, base, op, AST.IR.Exp.Int(Util.spType, n, pos), pos)
+      }
     }
     @strictpure def prettyST(p: AST.IR.Printer): ST = st"*${rhsOffset.prettyST(p)}"
     @strictpure def numOfTemps: Z = rhsOffset.numOfTemps
@@ -105,11 +111,14 @@ object Intrinsic {
                         val comment: ST,
                         val tipe: AST.Typed,
                         val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def lhsOffset: AST.IR.Exp = {
+    @memoize def lhsOffset: AST.IR.Exp = {
       val (op, n): (AST.IR.Exp.Binary.Op.Type, Z) =
         if (offset < 0) (AST.IR.Exp.Binary.Op.Sub, -offset) else (AST.IR.Exp.Binary.Op.Add, offset)
-      if (n == 0) base
-      else AST.IR.Exp.Binary(Util.spType, base, op, AST.IR.Exp.Int(Util.spType, n, pos), pos)
+      if (n == 0) {
+        return base
+      } else {
+        return AST.IR.Exp.Binary(Util.spType, base, op, AST.IR.Exp.Int(Util.spType, n, pos), pos)
+      }
     }
 
     @strictpure def prettyST(p: AST.IR.Printer): ST = {
@@ -131,9 +140,14 @@ object Intrinsic {
                        val tipe: AST.Typed,
                        val rhsTipe: AST.Typed,
                        val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
-    @strictpure def lhsOffset: AST.IR.Exp =
-      if (loffset == 0) lbase
-      else AST.IR.Exp.Binary(Util.spType, lbase, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(Util.spType, loffset, pos), pos)
+    @memoize def lhsOffset: AST.IR.Exp = {
+      if (loffset == 0) {
+        return lbase
+      } else {
+        return AST.IR.Exp.Binary(Util.spType, lbase, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(Util.spType, loffset, pos), pos)
+      }
+    }
+
     @strictpure def prettyST(p: AST.IR.Printer): ST = st"${lhsOffset.prettyST(p)} [$tipe, $lhsBytes]  <-  ${rhs.prettyST(p)} [$rhsTipe, ${rhsBytes.prettyST(p)}]  // $comment"
   }
 
