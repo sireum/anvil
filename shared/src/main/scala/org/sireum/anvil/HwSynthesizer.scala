@@ -1296,7 +1296,7 @@ import HwSynthesizer._
     Division(T, "DivisionSigned64", "divisionSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), xilinxIPValid),
     Remainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, F), xilinxIPValid),
     Remainder(T, "RemainerSigned64", "remainerSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), xilinxIPValid),
-    BlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory + 1, BlockMemoryIP(), xilinxIPValid, anvil.config.erase)
+    BlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory, BlockMemoryIP(), xilinxIPValid, anvil.config.erase)
   )
 
   @pure def findChiselModule(ip: IpType): Option[ChiselModule] = {
@@ -2050,12 +2050,61 @@ import HwSynthesizer._
           st"""
               |r_writeState := sWriteEnd
               |for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
-              |  when(io.arrayStrb(byteIndex.U) === 1.U) {
+              |  when(io.S_AXI_WSTRB(byteIndex.U) === 1.U) {
               |    ${sharedMemName}(r_writeAddr + byteIndex.U) := io.S_AXI_WDATA((byteIndex * 8) + 7, byteIndex * 8)
               |  }
               |}
             """
       }
+
+      val bramDefaultPortValueST: ST =
+        st"""
+            |// BRAM default
+            |${sharedMemName}.io.mode         := 0.U
+            |${sharedMemName}.io.readAddr     := 0.U
+            |${sharedMemName}.io.readOffset   := 0.U
+            |${sharedMemName}.io.readLen      := 0.U
+            |${sharedMemName}.io.writeAddr    := 0.U
+            |${sharedMemName}.io.writeOffset  := 0.U
+            |${sharedMemName}.io.writeLen     := 0.U
+            |${sharedMemName}.io.writeData    := 0.U
+            |${sharedMemName}.io.dmaSrcAddr   := 0.U
+            |${sharedMemName}.io.dmaDstAddr   := 0.U
+            |${sharedMemName}.io.dmaDstOffset := 0.U
+            |${sharedMemName}.io.dmaSrcLen    := 0.U
+            |${sharedMemName}.io.dmaDstLen    := 0.U
+          """
+
+      val writeTransST: ST =
+        st"""
+            |is(sWriteTrans) {
+            |  ${sharedMemName}.io.mode        := 2.U
+            |  ${sharedMemName}.io.writeAddr   := r_writeAddr
+            |  ${sharedMemName}.io.writeOffset := 0.U
+            |  ${sharedMemName}.io.writeLen    := r_writeLen
+            |  ${sharedMemName}.io.writeData   := r_writeData
+            |  when(${sharedMemName}.io.writeValid) {
+            |    ${sharedMemName}.io.mode  := 0.U
+            |    r_writeState    := sWriteEnd
+            |  }
+            |}
+          """
+
+      val readTransST: ST =
+        st"""
+            |is(sReadTrans) {
+            |  ${sharedMemName}.io.mode        := 1.U
+            |  ${sharedMemName}.io.readAddr    := r_readAddr
+            |  ${sharedMemName}.io.readOffset  := 0.U
+            |  ${sharedMemName}.io.readLen     := r_readLen
+            |  when(${sharedMemName}.io.readValid) {
+            |    r_readData     := ${sharedMemName}.io.readData
+            |    ${sharedMemName}.io.mode := 0.U
+            |    r_readState    := sReadEnd
+            |  }
+            |}
+          """
+
 
       return st"""
           |import chisel3._
@@ -2136,20 +2185,7 @@ import HwSynthesizer._
           |  ${if(anvil.config.useIP) instanceDeclST else st""}
           |  init(this)
           |
-          |  // BRAM default
-          |  ${sharedMemName}.io.mode         := 0.U
-          |  ${sharedMemName}.io.readAddr     := 0.U
-          |  ${sharedMemName}.io.readOffset   := 0.U
-          |  ${sharedMemName}.io.readLen      := 0.U
-          |  ${sharedMemName}.io.writeAddr    := 0.U
-          |  ${sharedMemName}.io.writeOffset  := 0.U
-          |  ${sharedMemName}.io.writeLen     := 0.U
-          |  ${sharedMemName}.io.writeData    := 0.U
-          |  ${sharedMemName}.io.dmaSrcAddr   := 0.U
-          |  ${sharedMemName}.io.dmaDstAddr   := 0.U
-          |  ${sharedMemName}.io.dmaDstOffset := 0.U
-          |  ${sharedMemName}.io.dmaSrcLen    := 0.U
-          |  ${sharedMemName}.io.dmaDstLen    := 0.U
+          |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) bramDefaultPortValueST.render else st""}
           |
           |  // write state machine
           |  val sWriteIdle :: sWriteTrans :: sWriteEnd :: Nil = Enum(3)
@@ -2211,17 +2247,7 @@ import HwSynthesizer._
           |        ${memWriteST.render}
           |      }
           |    }
-          |    is(sWriteTrans) {
-          |      ${sharedMemName}.io.mode        := 2.U
-          |      ${sharedMemName}.io.writeAddr   := r_writeAddr
-          |      ${sharedMemName}.io.writeOffset := 0.U
-          |      ${sharedMemName}.io.writeLen    := r_writeLen
-          |      ${sharedMemName}.io.writeData   := r_writeData
-          |      when(${sharedMemName}.io.writeValid) {
-          |        ${sharedMemName}.io.mode  := 0.U
-          |        r_writeState    := sWriteEnd
-          |      }
-          |    }
+          |    ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) writeTransST.render else st""}
           |    is(sWriteEnd) {
           |      r_writeState    := sWriteIdle
           |    }
@@ -2234,17 +2260,7 @@ import HwSynthesizer._
           |        ${memReadST.render}
           |      }
           |    }
-          |    is(sReadTrans) {
-          |      ${sharedMemName}.io.mode        := 1.U
-          |      ${sharedMemName}.io.readAddr    := r_readAddr
-          |      ${sharedMemName}.io.readOffset  := 0.U
-          |      ${sharedMemName}.io.readLen     := r_readLen
-          |      when(${sharedMemName}.io.readValid) {
-          |        r_readData     := ${sharedMemName}.io.readData
-          |        ${sharedMemName}.io.mode := 0.U
-          |        r_readState    := sReadEnd
-          |      }
-          |    }
+          |    ${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) readTransST.render else st""}
           |    is(sReadEnd) {
           |      r_readState := sReadIdle
           |    }
@@ -3028,10 +3044,6 @@ import HwSynthesizer._
             }
           }
           case AST.IR.Exp.Binary.Op.Sub => {
-            if(BlockLog.getBlock.label == 14)
-              {
-                println("hehe")
-              }
             if(anvil.config.useIP) {
               val allocIndex: Z = getIpAllocIndex(exp)
               var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
@@ -3350,7 +3362,8 @@ object HwSynthesizer {
       } else {
         anvil.isSigned(anvil.spType)
       }
-    override def pre_langastIRExpBinary(o: Exp.Binary): MAnvilIRTransformer.PreResult[IR.Exp] = {
+
+    @strictpure def binExp(o: AST.IR.Exp): Unit = {
       @pure def inputLogic(ipt: IpType): Unit = {
         val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(o)).get
         val instanceName: String = getIpInstanceName(ipt).get
@@ -3360,11 +3373,39 @@ object HwSynthesizer {
           sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
         }
       }
-      val signed: B = isSignedExp(o.left) || isSignedExp(o.right)
-      if(anvil.config.useIP) {
-        inputLogic(BinaryIP(o.op, signed))
+      o match {
+        case o: AST.IR.Exp.Binary =>
+          if(anvil.config.useIP) {
+            val signed: B = isSignedExp(o.left) || isSignedExp(o.right)
+            inputLogic(BinaryIP(o.op, signed))
+          }
+        case _ =>
       }
+    }
+
+    override def pre_langastIRExpBinary(o: Exp.Binary): MAnvilIRTransformer.PreResult[IR.Exp] = {
+      binExp(o)
       return MAnvilIRTransformer.PreResult_langastIRExpBinary
+    }
+
+    override def preIntrinsicCopy(o: Intrinsic.Copy): MAnvilIRTransformer.PreResult[Intrinsic.Copy] = {
+      binExp(o.lhsOffset)
+      return MAnvilIRTransformer.PreResultIntrinsicCopy
+    }
+
+    override def preIntrinsicTempLoad(o: Intrinsic.TempLoad): MAnvilIRTransformer.PreResult[Intrinsic.TempLoad] = {
+      binExp(o.rhsOffset)
+      return MAnvilIRTransformer.PreResultIntrinsicTempLoad
+    }
+
+    override def preIntrinsicLoad(o: Intrinsic.Load): MAnvilIRTransformer.PreResult[Intrinsic.Load] = {
+      binExp(o.rhsOffset)
+      return MAnvilIRTransformer.PreResultIntrinsicLoad
+    }
+
+    override def preIntrinsicStore(o: Intrinsic.Store): MAnvilIRTransformer.PreResult[Intrinsic.Store] = {
+      binExp(o.lhsOffset)
+      return MAnvilIRTransformer.PreResultIntrinsicStore
     }
 
     override def preIntrinsicIndexing(o: Intrinsic.Indexing): MAnvilIRTransformer.PreResult[Intrinsic.Indexing] = {
