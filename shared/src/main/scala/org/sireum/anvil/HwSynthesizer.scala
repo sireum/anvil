@@ -26,7 +26,7 @@
 package org.sireum.anvil
 
 import org.sireum._
-import org.sireum.anvil.Util.{AnvilIRPrinter, constructLocalId, indexing}
+import org.sireum.anvil.Util.{AnvilIRPrinter, constructLocalId, indexing, spType}
 import org.sireum.lang.ast.{IR, Typed}
 import org.sireum.lang.ast.IR.{Exp, Jump}
 import org.sireum.lang.{ast => AST}
@@ -304,7 +304,8 @@ object ChiselModule {
                         val moduleDeclarationName: String,
                         val moduleInstanceName: String,
                         val widthOfPort: Z,
-                        val exp: IpType) extends ChiselModule {
+                        val exp: IpType,
+                        val nonXilinxIP: B) extends ChiselModule {
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
   @strictpure override def instanceName: String = moduleInstanceName
@@ -314,46 +315,176 @@ object ChiselModule {
       "elementSize" ~> "UInt" + "mask" ~> "UInt" + "ready" ~> "Bool"
   }
   @strictpure override def expression: IpType = exp
-  @strictpure override def moduleST: ST = {
+  @strictpure def indexAdderST: ST = {
     st"""
-        |class Indexer(val width: Int = 16) extends Module {
+        |class IndexAdder(val width: Int = 64) extends Module {
         |    val io = IO(new Bundle{
-        |        val baseOffset = Input(UInt(width.W))
-        |        val dataOffset = Input(UInt(width.W))
-        |        val index = Input(UInt(width.W))
-        |        val elementSize = Input(UInt(width.W))
-        |        val mask = Input(UInt(width.W))
-        |        val ready = Input(Bool())
-        |        val valid = Output(Bool())
+        |        val a = Input(UInt(width.W))
+        |        val b = Input(UInt(width.W))
+        |        val start = Input(Bool())
         |        val out = Output(UInt(width.W))
+        |        val valid = Output(Bool())
         |    })
         |
-        |    val stateReg = RegInit(0.U(2.W))
-        |    switch(stateReg) {
-        |        is(0.U) {
-        |            stateReg := Mux(io.ready, 1.U, 0.U)
-        |        }
-        |        is(1.U) {
-        |            stateReg := 2.U
-        |        }
-        |        is(2.U) {
-        |            stateReg := 3.U
-        |        }
-        |        is(3.U) {
-        |            stateReg := Mux(!io.ready, 0.U, 3.U)
-        |        }
-        |    }
-        |
-        |    io.valid := Mux(stateReg === 3.U, true.B, false.B)
-        |
-        |    val regBaseAddr = RegNext(io.baseOffset + io.dataOffset)
-        |
-        |    val regIndex = RegNext(io.index)
-        |    val regMult = RegNext(regIndex * io.elementSize)
-        |
-        |    io.out := RegNext(regBaseAddr + (regMult & io.mask))
+        |    val add = Module(new XilinxIndexAdderWrapper)
+        |    add.io.clk := clock.asBool
+        |    add.io.ce  := io.start
+        |    add.io.A   := io.a
+        |    add.io.B   := io.b
+        |    io.valid   := add.io.valid
+        |    io.out     := add.io.S
         |}
       """
+  }
+  @strictpure def indexMultiplierST: ST = {
+    st"""
+        |class IndexMultiplier(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a     = Input(UInt(width.W))
+        |        val b     = Input(UInt(width.W))
+        |        val start = Input(Bool())
+        |        val out   = Output(UInt(width.W))
+        |        val valid = Output(Bool())
+        |    })
+        |
+        |    val mult = Module(new XilinxIndexMultiplierWrapper)
+        |    mult.io.clk := clock.asBool
+        |    mult.io.ce  := io.start
+        |    mult.io.A   := io.a
+        |    mult.io.B   := io.b
+        |    io.valid    := mult.io.valid
+        |    io.out      := mult.io.P
+        |}
+      """
+  }
+  @strictpure override def moduleST: ST = {
+    if(nonXilinxIP)
+      st"""
+          |class Indexer(val width: Int = 16) extends Module {
+          |    val io = IO(new Bundle{
+          |        val baseOffset = Input(UInt(width.W))
+          |        val dataOffset = Input(UInt(width.W))
+          |        val index = Input(UInt(width.W))
+          |        val elementSize = Input(UInt(width.W))
+          |        val mask = Input(UInt(width.W))
+          |        val ready = Input(Bool())
+          |        val valid = Output(Bool())
+          |        val out = Output(UInt(width.W))
+          |    })
+          |
+          |    val stateReg = RegInit(0.U(2.W))
+          |    switch(stateReg) {
+          |        is(0.U) {
+          |            stateReg := Mux(io.ready, 1.U, 0.U)
+          |        }
+          |        is(1.U) {
+          |            stateReg := 2.U
+          |        }
+          |        is(2.U) {
+          |            stateReg := 3.U
+          |        }
+          |        is(3.U) {
+          |            stateReg := Mux(!io.ready, 0.U, 3.U)
+          |        }
+          |    }
+          |
+          |    io.valid := Mux(stateReg === 3.U, true.B, false.B)
+          |
+          |    val regBaseAddr = RegNext(io.baseOffset + io.dataOffset)
+          |
+          |    val regIndex = RegNext(io.index)
+          |    val regMult = RegNext(regIndex * io.elementSize)
+          |
+          |    io.out := RegNext(regBaseAddr + (regMult & io.mask))
+          |}
+        """
+    else
+      st"""
+          |${indexAdderST}
+          |${indexMultiplierST}
+          |class Indexer(val width: Int = 16) extends Module {
+          |    val io = IO(new Bundle{
+          |        val baseOffset = Input(UInt(width.W))
+          |        val dataOffset = Input(UInt(width.W))
+          |        val index = Input(UInt(width.W))
+          |        val elementSize = Input(UInt(width.W))
+          |        val mask = Input(UInt(width.W))
+          |        val ready = Input(Bool())
+          |        val valid = Output(Bool())
+          |        val out = Output(UInt(width.W))
+          |    })
+          |
+          |
+          |    val sIdle :: sAdd1 :: sMult :: sAdd2 :: sEnd :: Nil = Enum(5)
+          |    val stateReg        = RegInit(sIdle)
+          |    val regBaseAddr     = Reg(UInt(width.W))
+          |    val regIndex        = Reg(UInt(width.W))
+          |    val regElementSize  = Reg(UInt(width.W))
+          |    val regMult         = Reg(UInt(width.W))
+          |    val regMask         = Reg(UInt(width.W))
+          |    val result          = Reg(UInt(width.W))
+          |
+          |    val adder           = Module(new IndexAdder(width))
+          |    val multiplier      = Module(new IndexMultiplier(width))
+          |
+          |    adder.io.a          := 0.U
+          |    adder.io.b          := 0.U
+          |    adder.io.start      := false.B
+          |    multiplier.io.a     := 0.U
+          |    multiplier.io.b     := 0.U
+          |    multiplier.io.start := false.B
+          |
+          |    switch(stateReg) {
+          |        is(sIdle) {
+          |            stateReg       := Mux(io.ready, sAdd1, sIdle)
+          |
+          |            regIndex       := io.index
+          |            regElementSize := io.elementSize
+          |            regMask        := io.mask
+          |        }
+          |        is(sAdd1) {
+          |            adder.io.a     := io.baseOffset
+          |            adder.io.b     := io.dataOffset
+          |            adder.io.start := true.B
+          |
+          |            when(adder.io.valid) {
+          |                adder.io.start      := false.B
+          |
+          |                stateReg            := sMult
+          |                regBaseAddr         := adder.io.out
+          |            }
+          |        }
+          |        is(sMult) {
+          |            multiplier.io.a     := regIndex
+          |            multiplier.io.b     := regElementSize
+          |            multiplier.io.start := true.B
+          |
+          |            when(multiplier.io.valid) {
+          |                multiplier.io.start := false.B
+          |                regMult             := multiplier.io.out & regMask
+          |                stateReg            := sAdd2
+          |            }
+          |        }
+          |        is(sAdd2) {
+          |            adder.io.a     := regBaseAddr
+          |            adder.io.b     := regMult
+          |            adder.io.start := true.B
+          |
+          |            when(adder.io.valid) {
+          |              adder.io.start := false.B
+          |              result         := adder.io.out
+          |              stateReg       := sEnd
+          |            }
+          |        }
+          |        is(sEnd) {
+          |            stateReg := sIdle
+          |        }
+          |    }
+          |
+          |    io.out   := Mux(stateReg === sEnd, result, 0.U)
+          |    io.valid := Mux(stateReg === sEnd, true.B, false.B)
+          |}
+        """
   }
 }
 
@@ -1265,7 +1396,7 @@ import HwSynthesizer._
     Adder(T, "AdderSigned64", "adderSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Add, T), xilinxIPValid),
     Subtractor(F, "SubtractorUnsigned64", "subtractorUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Sub, F), xilinxIPValid),
     Subtractor(T, "SubtractorSigned64", "subtractorSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Sub, T), xilinxIPValid),
-    Indexer(F, "Indexer", "indexer", 16, IntrinsicIP(defaultIndexing)),
+    Indexer(F, "Indexer", "indexer", anvil.typeBitSize(spType), IntrinsicIP(defaultIndexing), xilinxIPValid),
     And(F, "AndUnsigned64", "andUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.And, F)),
     And(T, "AndSigned64", "andSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.And, T)),
     Or(F, "OrUnsigned64", "orUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Or, F)),
@@ -1595,7 +1726,353 @@ import HwSynthesizer._
             |endmodule
           """
       }
+      @strictpure def cyclesXilinxAdder(width: Z): Z = {
+        width match {
+          case w if w <= 12 => 1
+          case w if w <= 24 => 2
+          case w if w <= 36 => 3
+          case w if w <= 48 => 4
+          case w if w <= 60 => 5
+          case w if w <= 64 => 6
+          case _ => halt("not support this width")
+        }
+      }
+      @strictpure def cyclesXilinxMultiplier(width: Z): Z = {
+        width match {
+          case w if w <= 2 => 1
+          case w if w <= 4 => 2
+          case w if w <= 8 => 3
+          case w if w <= 16 => 4
+          case w if w <= 32 => 5
+          case w if w <= 64 => 6
+          case _ => halt("not support this width")
+        }
+      }
+      @strictpure def xilinxIndexAdderWrapperST(width: Z): ST = {
+        val latencyST: ST =
+          if(cyclesXilinxAdder(width) == 1)
+            st"""1'b1"""
+          else
+            st"""{valid_shift[LATENCY-2:0], 1'b1}"""
 
+        st"""
+            |module XilinxIndexAdderWrapper (
+            |    input wire clk,
+            |    input wire ce,
+            |    input wire [${width-1}:0] A,
+            |    input wire [${width-1}:0] B,
+            |    output wire valid,
+            |    output wire [${width-1}:0] S);
+            |
+            |  localparam LATENCY = ${cyclesXilinxAdder(anvil.typeBitSize(spType))};
+            |  reg [LATENCY-1:0] valid_shift = 'd0;
+            |
+            |  XilinxIndexAdder u_XilinxIndexAdder (
+            |    .CLK(clk),
+            |    .CE(ce),
+            |    .A(A),
+            |    .B(B),
+            |    .S(S)
+            |  );
+            |
+            |  always @(posedge clk) begin
+            |    if (ce)
+            |      valid_shift <= ${latencyST.render};
+            |    else
+            |      valid_shift <= 0;
+            |  end
+            |
+            |  assign valid = valid_shift[LATENCY-1];
+            |endmodule
+          """
+      }
+      @strictpure def xilinxIndexMultiplierWrapperST(width: Z): ST = {
+        val latencyST: ST =
+          if(cyclesXilinxMultiplier(width) == 1)
+            st"""1'b1"""
+          else
+            st"""{valid_shift[LATENCY-2:0], 1'b1}"""
+
+        st"""
+            |module XilinxIndexMultiplierWrapper (
+            |    input wire clk,
+            |    input wire ce,
+            |    input wire [${width-1}:0] A,
+            |    input wire [${width-1}:0] B,
+            |    output wire valid,
+            |    output wire [${width-1}:0] P);
+            |
+            |  localparam LATENCY = ${cyclesXilinxMultiplier(anvil.typeBitSize(spType))};
+            |  reg [LATENCY-1:0] valid_shift = 'd0;
+            |
+            |  XilinxIndexMultiplier u_XilinxIndexMultiplier (
+            |    .CLK(clk),
+            |    .CE(ce),
+            |    .A(A),
+            |    .B(B),
+            |    .P(P)
+            |  );
+            |
+            |  always @(posedge clk) begin
+            |    if (ce)
+            |      valid_shift <= ${latencyST.render};
+            |    else
+            |      valid_shift <= 0;
+            |  end
+            |
+            |  assign valid = valid_shift[LATENCY-1];
+            |endmodule
+          """
+      }
+
+      val ipGenerationTclST: ST =
+        st"""
+            |set PROJECT_PATH [lindex $$argv 0]
+            |set PROJECT_NAME [lindex $$argv 1]
+            |set FREQ_HZ [lindex $$argv 2]
+            |set FILE_PATH $${PROJECT_PATH}/chisel/generated_verilog
+            |
+            |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP
+            |create_project $$PROJECT_NAME $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME -part xczu9eg-ffvb1156-2-e
+            |
+            |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
+            |
+            |set_property target_language Verilog [current_project]
+            |
+            |# /home/kejun/Desktop/ip.v
+            |add_files -norecurse [glob $$FILE_PATH/*.v]
+            |update_compile_order -fileset sources_1
+            |
+            |# add xilinx IPs
+            |create_ip -name div_gen -vendor xilinx.com -library ip -version 5.1 -module_name XilinxDividerSigned64
+            |set_property -dict [list \
+            |  CONFIG.ARESETN {true} \
+            |  CONFIG.FlowControl {Blocking} \
+            |  CONFIG.dividend_and_quotient_width {64} \
+            |  CONFIG.divisor_width {64} \
+            |  CONFIG.fractional_width {64} \
+            |  CONFIG.latency {69} \
+            |] [get_ips XilinxDividerSigned64]
+            |
+            |create_ip -name div_gen -vendor xilinx.com -library ip -version 5.1 -module_name XilinxDividerUnsigned64
+            |set_property -dict [list \
+            |  CONFIG.ARESETN {true} \
+            |  CONFIG.FlowControl {Blocking} \
+            |  CONFIG.dividend_and_quotient_width {64} \
+            |  CONFIG.divisor_width {64} \
+            |  CONFIG.fractional_width {64} \
+            |  CONFIG.latency {67} \
+            |  CONFIG.operand_sign {Unsigned} \
+            |] [get_ips XilinxDividerUnsigned64]
+            |
+            |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxMultiplierUnsigned64
+            |set_property -dict [list \
+            |  CONFIG.ClockEnable {true} \
+            |  CONFIG.Multiplier_Construction {Use_Mults} \
+            |  CONFIG.OutputWidthHigh {63} \
+            |  CONFIG.PipeStages {18} \
+            |  CONFIG.PortAType {Unsigned} \
+            |  CONFIG.PortAWidth {64} \
+            |  CONFIG.PortBType {Unsigned} \
+            |  CONFIG.PortBWidth {64} \
+            |  CONFIG.Use_Custom_Output_Width {true} \
+            |] [get_ips XilinxMultiplierUnsigned64]
+            |
+            |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxMultiplierSigned64
+            |set_property -dict [list \
+            |  CONFIG.ClockEnable {true} \
+            |  CONFIG.Multiplier_Construction {Use_Mults} \
+            |  CONFIG.OutputWidthHigh {63} \
+            |  CONFIG.PipeStages {18} \
+            |  CONFIG.PortAWidth {64} \
+            |  CONFIG.PortBWidth {64} \
+            |  CONFIG.Use_Custom_Output_Width {true} \
+            |] [get_ips XilinxMultiplierSigned64]
+            |
+            |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxAdderSigned64
+            |set_property -dict [list \
+            |  CONFIG.A_Width {64} \
+            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} \
+            |  CONFIG.B_Width {64} \
+            |  CONFIG.Latency {6} \
+            |  CONFIG.Latency_Configuration {Automatic} \
+            |  CONFIG.Out_Width {64} \
+            |] [get_ips XilinxAdderSigned64]
+            |
+            |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxAdderUnsigned64
+            |set_property -dict [list \
+            |  CONFIG.A_Type {Unsigned} \
+            |  CONFIG.A_Width {64} \
+            |  CONFIG.B_Type {Unsigned} \
+            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} \
+            |  CONFIG.B_Width {64} \
+            |  CONFIG.Latency {6} \
+            |  CONFIG.Latency_Configuration {Automatic} \
+            |  CONFIG.Out_Width {64} \
+            |] [get_ips XilinxAdderUnsigned64]
+            |
+            |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxSubtractorSigned64
+            |set_property -dict [list \
+            |  CONFIG.A_Width {64} \
+            |  CONFIG.Add_Mode {Subtract} \
+            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} \
+            |  CONFIG.B_Width {64} \
+            |  CONFIG.Latency {6} \
+            |  CONFIG.Latency_Configuration {Automatic} \
+            |  CONFIG.Out_Width {64} \
+            |] [get_ips XilinxSubtractorSigned64]
+            |
+            |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxSubtractorUnsigned64
+            |set_property -dict [list \
+            |  CONFIG.A_Type {Unsigned} \
+            |  CONFIG.A_Width {64} \
+            |  CONFIG.Add_Mode {Subtract} \
+            |  CONFIG.B_Type {Unsigned} \
+            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} \
+            |  CONFIG.B_Width {64} \
+            |  CONFIG.Latency {6} \
+            |  CONFIG.Latency_Configuration {Automatic} \
+            |  CONFIG.Out_Width {64} \
+            |] [get_ips XilinxSubtractorUnsigned64]
+            |
+            |# need to be customzied for different benchmarks
+            |create_ip -name blk_mem_gen -vendor xilinx.com -library ip -version 8.4 -module_name XilinxBRAM
+            |set_property -dict [list \
+            |  CONFIG.Memory_Type {True_Dual_Port_RAM} \
+            |  CONFIG.Operating_Mode_A {NO_CHANGE} \
+            |  CONFIG.Operating_Mode_B {NO_CHANGE} \
+            |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} \
+            |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} \
+            |  CONFIG.Write_Depth_A {${anvil.config.memory}} \
+            |  CONFIG.Write_Width_A {8} \
+            |] [get_ips XilinxBRAM]
+            |
+            |# need to be customzied for different benchmarks
+            |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxIndexMultiplier
+            |set_property -dict [list \
+            |  CONFIG.ClockEnable {true} \
+            |  CONFIG.OutputWidthHigh {${anvil.typeBitSize(spType) - 1}} \
+            |  CONFIG.PipeStages {${cyclesXilinxMultiplier(anvil.typeBitSize(spType))}} \
+            |  CONFIG.PortAType {Unsigned} \
+            |  CONFIG.PortAWidth {${anvil.typeBitSize(spType)}} \
+            |  CONFIG.PortBType {Unsigned} \
+            |  CONFIG.PortBWidth {${anvil.typeBitSize(spType)}} \
+            |  CONFIG.Use_Custom_Output_Width {true} \
+            |] [get_ips XilinxIndexMultiplier]
+            |
+            |# need to be customzied for different benchmarks
+            |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxIndexAdder
+            |set_property -dict [list \
+            |  CONFIG.A_Type {Unsigned} \
+            |  CONFIG.A_Width {${anvil.typeBitSize(spType)}} \
+            |  CONFIG.B_Type {Unsigned} \
+            |  CONFIG.B_Value {00000000} \
+            |  CONFIG.B_Width {${anvil.typeBitSize(spType)}} \
+            |  CONFIG.Latency {${cyclesXilinxAdder(anvil.typeBitSize(spType))}} \
+            |  CONFIG.Latency_Configuration {Automatic} \
+            |  CONFIG.Out_Width {${anvil.typeBitSize(spType)}} \
+            |] [get_ips XilinxIndexAdder]
+            |
+            |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP/IP_dir
+            |ipx::package_project -root_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME//IP_dir -vendor user.org -library user -taxonomy /UserIP -import_files -set_current false
+            |ipx::unload_core $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME//IP_dir/component.xml
+            |ipx::edit_ip_in_project -upgrade true -name tmp_edit_project -directory $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir/component.xml
+            |
+            |update_compile_order -fileset sources_1
+            |set_property core_revision 2 [ipx::current_core]
+            |ipx::update_source_project_archive -component [ipx::current_core]
+            |ipx::create_xgui_files [ipx::current_core]
+            |ipx::update_checksums [ipx::current_core]
+            |ipx::save_core [ipx::current_core]
+            |ipx::move_temp_component_back -component [ipx::current_core]
+            |close_project -delete
+            |set_property  ip_repo_paths  $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir [current_project]
+            |update_ip_catalog
+          """
+
+      val synthImplST: ST =
+        st"""
+            |set PROJECT_PATH [lindex $$argv 0]
+            |set PROJECT_NAME [lindex $$argv 1]
+            |set IP_DIR [lindex $$argv 2]
+            |set IP_NAME [lindex $$argv 3]
+            |set FREQ_HZ [lindex $$argv 4]
+            |puts $$FREQ_HZ
+            |# /home/kejun/development/HLS_slang/zcu102/TestSystem
+            |create_project $$PROJECT_NAME $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME -part xczu9eg-ffvb1156-2-e
+            |
+            |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
+            |
+            |set_property target_language Verilog [current_project]
+            |
+            |create_bd_design "design_1"
+            |update_compile_order -fileset sources_1
+            |
+            |create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e:3.5 zynq_ultra_ps_e_0
+            |
+            |apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_board_preset "1" }  [get_bd_cells zynq_ultra_ps_e_0]
+            |
+            |set_property -dict [list CONFIG.PSU__USE__M_AXI_GP0 {0} CONFIG.PSU__USE__M_AXI_GP1 {0} CONFIG.PSU__USE__M_AXI_GP2 {1}] [get_bd_cells zynq_ultra_ps_e_0]
+            |
+            |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP/IP_dir
+            |set_property  ip_repo_paths  $$IP_DIR [current_project]
+            |update_ip_catalog
+            |
+            |# instantiate the generated IP
+            |create_bd_cell -type ip -vlnv user.org:user:$$IP_NAME:1.0 GeneratedIP
+            |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_LPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI Interconnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
+            |
+            |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ] [get_bd_cells zynq_ultra_ps_e_0]
+            |
+            |save_bd_design
+            |
+            |# /home/kejun/development/HLS_slang/zcu102/TestSystem/TestSystem.srcs/sources_1/bd/design_1/design_1.bd
+            |make_wrapper -files [get_files $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/$$PROJECT_NAME.srcs/sources_1/bd/design_1/design_1.bd] -top
+            |
+            |# /home/kejun/development/HLS_slang/zcu102/TestSystem/TestSystem.srcs/sources_1/bd/design_1/hdl/design_1_wrapper.v
+            |add_files -norecurse $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/$$PROJECT_NAME.srcs/sources_1/bd/design_1/hdl/design_1_wrapper.v
+            |
+            |launch_runs impl_1 -to_step write_bitstream -jobs 30
+            |wait_on_run impl_1
+            |
+            |# /home/kejun/development/HLS_slang/zcu102/TestSystem/TestSystem.srcs/sources_1/bd/design_1/design_1.bd
+            |set_property pfm_name {} [get_files -all $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/$$PROJECT_NAME.srcs/sources_1/bd/design_1/design_1.bd]
+            |
+            |# /home/kejun/development/HLS_slang/zcu102/TestSystem/design_1_wrapper.xsa
+            |write_hw_platform -fixed -include_bit -force -file $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/design_1_wrapper.xsa
+            |
+            |open_run impl_1
+            |
+            |report_utilization -file $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/utilization_report.txt -name utilization_1
+            |report_timing_summary -delay_type max -report_unconstrained -check_timing_verbose -max_paths 20 -input_pins -routable_nets -name timing_1 -file $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/timing_report.txt
+          """
+
+      val autoShScriptST: ST =
+        st"""
+            |#!/bin/bash
+            |
+            |TCL_PATH=$$1
+            |PROJECT_PATH=$$2
+            |IP_NAME=$$3
+            |SoC_NAME=$$4
+            |FREQ_HZ=$$5
+            |
+            |vivado -mode batch -source $${TCL_PATH}/ip_generation.tcl -tclargs $${PROJECT_PATH} $${IP_NAME} $${FREQ_HZ}
+            |
+            |vivado -mode batch -source $${TCL_PATH}/synthesize_zcu102_zynq.tcl -tclargs $${PROJECT_PATH} $${SoC_NAME} $${PROJECT_PATH}/$$FREQ_HZ/$${IP_NAME}/IP_dir $${IP_NAME} $${FREQ_HZ}
+          """
+
+      val testManyShScriptST: ST =
+        st"""
+            |#!/bin/sh
+            |
+            |./auto_script.sh . ../add_sc_split-temp_temp-local_with-ip AXIWrapperChiselGenerated${name} TestSystem 100
+          """
+
+      output.add(T, ISZ("chisel/../", "test_many.sh"), testManyShScriptST)
+      output.add(T, ISZ("chisel/../", "auto_script.sh"), autoShScriptST)
+      output.add(T, ISZ("chisel/../", "synthesize_zcu102_zynq.tcl"), synthImplST)
+      output.add(T, ISZ("chisel/../", "ip_generation.tcl"), ipGenerationTclST)
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxAdderSigned64Wrapper.v"), xilinxAddSub64ST(T ,T))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxAdderUnsigned64Wrapper.v"), xilinxAddSub64ST(T, F))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxSubtractorSigned64Wrapper.v"), xilinxAddSub64ST(F, T))
@@ -1603,7 +2080,10 @@ import HwSynthesizer._
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxDividerSigned64Wrapper.v"), xilinxDiv64ST(T))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxDividerUnsigned64Wrapper.v"), xilinxDiv64ST(F))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxMultiplierSigned64Wrapper.v"), xilinxMul64ST(T))
+      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxMultiplierUnsigned64Wrapper.v"), xilinxMul64ST(F))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxBRAMWrapper.v"), xilinxBRAMWrapperST)
+      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxIndexAdderWrapper.v"), xilinxIndexAdderWrapperST(anvil.typeBitSize(spType)))
+      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxIndexMultiplierWrapper.v"), xilinxIndexMultiplierWrapperST(anvil.typeBitSize(spType)))
     }
 
     if (anvil.config.genVerilog) {
@@ -1628,7 +2108,7 @@ import HwSynthesizer._
           |object ${moduleName}VerilogGeneration extends App {
           |  (new ChiselStage).execute(
           |    Array("--target-dir", "generated_verilog"),
-          |    Seq(ChiselGeneratorAnnotation(() => new ${moduleName}()))
+          |    Seq(ChiselGeneratorAnnotation(() => new AXIWrapperChiselGenerated${moduleName}()))
           |  )
           |}
           |
@@ -1664,8 +2144,24 @@ import HwSynthesizer._
           |
           |      dut.io.S_AXI_AWVALID.poke(false.B)
           |      dut.io.S_AXI_WVALID.poke(true.B)
-          |      dut.io.S_AXI_WDATA.poke("hFFFFFFFFFFFFFFFF".U)
-          |      dut.io.S_AXI_WSTRB.poke("hFF".U)
+          |      dut.io.S_AXI_WDATA.poke("hFFFFFFFF".U)
+          |      dut.io.S_AXI_WSTRB.poke("hF".U)
+          |      dut.clock.step()
+          |
+          |      dut.io.S_AXI_WVALID.poke(false.B)
+          |      dut.io.S_AXI_BREADY.poke(true.B)
+          |      while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
+          |        dut.clock.step(1)
+          |      }
+          |
+          |      dut.io.S_AXI_AWVALID.poke(true.B)
+          |      dut.io.S_AXI_AWADDR.poke(4.U)
+          |      dut.clock.step()
+          |
+          |      dut.io.S_AXI_AWVALID.poke(false.B)
+          |      dut.io.S_AXI_WVALID.poke(true.B)
+          |      dut.io.S_AXI_WDATA.poke("hFFFFFFFF".U)
+          |      dut.io.S_AXI_WSTRB.poke("hF".U)
           |      dut.clock.step()
           |
           |      dut.io.S_AXI_WVALID.poke(false.B)
@@ -1682,7 +2178,7 @@ import HwSynthesizer._
           |      dut.io.S_AXI_AWVALID.poke(false.B)
           |      dut.io.S_AXI_WVALID.poke(true.B)
           |      dut.io.S_AXI_WDATA.poke("h01".U)
-          |      dut.io.S_AXI_WSTRB.poke("h01".U)
+          |      dut.io.S_AXI_WSTRB.poke("h1".U)
           |      dut.clock.step()
           |
           |      dut.io.S_AXI_WVALID.poke(false.B)
@@ -1693,9 +2189,9 @@ import HwSynthesizer._
           |
           |      dut.clock.step(${cycles})
           |
-          |      for(i <- 0 until ${anvil.config.printSize / 8 + 1}) {
+          |      for(i <- 0 until ${anvil.config.printSize / 4 + 1}) {
           |        dut.io.S_AXI_ARVALID.poke(true.B)
-          |        dut.io.S_AXI_ARADDR.poke((20 + i * 8).U)
+          |        dut.io.S_AXI_ARADDR.poke((20 + i * 4).U)
           |        dut.clock.step(1)
           |
           |        dut.io.S_AXI_ARVALID.poke(false.B)
@@ -1899,53 +2395,6 @@ import HwSynthesizer._
           """
       val memoryIpST =
         st"""
-            |class XilinxSPAdderUnsignedWrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk   = Input(Bool())
-            |    val ce    = Input(Bool())
-            |    val A     = Input(UInt(16.W))
-            |    val B     = Input(UInt(16.W))
-            |    val valid = Output(Bool())
-            |    val S     = Output(UInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxSPAdderUnsignedWrapper.v")
-            |}
-            |class XilinxSPAdderUnsigned8bitWrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk   = Input(Bool())
-            |    val ce    = Input(Bool())
-            |    val A     = Input(UInt(16.W))
-            |    val B     = Input(UInt(16.W))
-            |    val valid = Output(Bool())
-            |    val S     = Output(UInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxSPAdderUnsigned8bitWrapper.v")
-            |}
-            |class XilinxSPSubtractorUnsignedWrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk   = Input(Bool())
-            |    val ce    = Input(Bool())
-            |    val A     = Input(UInt(16.W))
-            |    val B     = Input(UInt(16.W))
-            |    val valid = Output(Bool())
-            |    val S     = Output(UInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxSPSubtractorUnsignedWrapper.v")
-            |}
-            |class XilinxSPAdderConstant1Wrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk   = Input(Bool())
-            |    val ce    = Input(Bool())
-            |    val A     = Input(UInt(16.W))
-            |    val valid = Output(Bool())
-            |    val S     = Output(UInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxSPAdderConstant1Wrapper.v")
-            |}
             |class XilinxBRAMWrapper extends BlackBox with HasBlackBoxResource {
             |  val io = IO(new Bundle {
             |    val clk = Input(Bool())
@@ -1964,6 +2413,34 @@ import HwSynthesizer._
             |  addResource("/verilog/XilinxBRAMWrapper.v")
             |}
           """
+      val indexIpST =
+        st"""
+            |class XilinxIndexAdderWrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clk   = Input(Bool())
+            |    val ce    = Input(Bool())
+            |    val A     = Input(UInt(16.W))
+            |    val B     = Input(UInt(16.W))
+            |    val valid = Output(Bool())
+            |    val S     = Output(UInt(16.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxIndexAdderWrapper.v")
+            |}
+            |
+            |class XilinxIndexMultiplierWrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clk   = Input(Bool())
+            |    val ce    = Input(Bool())
+            |    val A     = Input(UInt(16.W))
+            |    val B     = Input(UInt(16.W))
+            |    val valid = Output(Bool())
+            |    val P     = Output(UInt(16.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxIndexMultiplierWrapper.v")
+            |}
+          """
 
       val moduleDeclST: ST = {
         var moduleST: ISZ[ST] = ISZ()
@@ -1975,6 +2452,7 @@ import HwSynthesizer._
           moduleST = moduleST :+ divisionBlackBoxST
           moduleST = moduleST :+ multiplierBlackBoxST
           moduleST = moduleST :+ adderSubtractorBlackBoxST
+          moduleST = moduleST :+ indexIpST
           if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
             moduleST = moduleST :+ memoryIpST
           }
@@ -2105,6 +2583,87 @@ import HwSynthesizer._
             |}
           """
 
+      val topModuleST: ST =
+        st"""
+            |class AXIWrapperChiselGenerated${name} (
+            |               val C_S_AXI_DATA_WIDTH:  Int = 32,
+            |               val C_S_AXI_ADDR_WIDTH:  Int = ${log2Up(anvil.config.memory)},
+            |               val ARRAY_REG_WIDTH:     Int = 8,
+            |               val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
+            |               ${if (!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
+            |               ${if (!anvil.config.splitTempSizes) s"val GENERAL_REG_DEPTH:   Int = ${maxRegisters.maxCount}," else ""}
+            |               val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize * 8},
+            |               val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize * 8}) extends Module {
+            |
+            |  val io = IO(new Bundle{
+            |    // write address channel
+            |    val S_AXI_AWADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
+            |    val S_AXI_AWPROT  = Input(UInt(3.W))
+            |    val S_AXI_AWVALID = Input(Bool())
+            |    val S_AXI_AWREADY = Output(Bool())
+            |
+            |    // write data channel
+            |    val S_AXI_WDATA  = Input(UInt(C_S_AXI_DATA_WIDTH.W))
+            |    val S_AXI_WSTRB  = Input(UInt((C_S_AXI_DATA_WIDTH/8).W))
+            |    val S_AXI_WVALID = Input(Bool())
+            |    val S_AXI_WREADY = Output(Bool())
+            |
+            |    // write response channel
+            |    val S_AXI_BRESP  = Output(UInt(2.W))
+            |    val S_AXI_BVALID = Output(Bool())
+            |    val S_AXI_BREADY = Input(Bool())
+            |
+            |    // read address channel
+            |    val S_AXI_ARADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
+            |    val S_AXI_ARPROT  = Input(UInt(3.W))
+            |    val S_AXI_ARVALID = Input(Bool())
+            |    val S_AXI_ARREADY = Output(Bool())
+            |
+            |    // read data channel
+            |    val S_AXI_RDATA  = Output(UInt(C_S_AXI_DATA_WIDTH.W))
+            |    val S_AXI_RRESP  = Output(UInt(2.W))
+            |    val S_AXI_RVALID = Output(Bool())
+            |    val S_AXI_RREADY = Input(Bool())
+            |  })
+            |
+            |  withReset(!reset.asBool) {
+            |    val mod = Module(new ${name}(
+            |      C_S_AXI_DATA_WIDTH  = C_S_AXI_DATA_WIDTH,
+            |      C_S_AXI_ADDR_WIDTH  = C_S_AXI_ADDR_WIDTH,
+            |      ARRAY_REG_WIDTH     = ARRAY_REG_WIDTH,
+            |      ARRAY_REG_DEPTH     = ARRAY_REG_DEPTH,
+            |      ${if (!anvil.config.splitTempSizes) "GENERAL_REG_WIDTH    = GENERAL_REG_WIDTH," else ""}
+            |      ${if (!anvil.config.splitTempSizes) s"GENERAL_REG_DEPTH    = GENERAL_REG_DEPTH," else ""}
+            |      STACK_POINTER_WIDTH = STACK_POINTER_WIDTH,
+            |      CODE_POINTER_WIDTH  = CODE_POINTER_WIDTH
+            |    ))
+            |
+            |    mod.io.S_AXI_AWADDR  := io.S_AXI_AWADDR
+            |    mod.io.S_AXI_AWPROT  := io.S_AXI_AWPROT
+            |    mod.io.S_AXI_AWVALID := io.S_AXI_AWVALID
+            |    io.S_AXI_AWREADY     := mod.io.S_AXI_AWREADY
+            |
+            |    mod.io.S_AXI_WDATA   := io.S_AXI_WDATA
+            |    mod.io.S_AXI_WSTRB   := io.S_AXI_WSTRB
+            |    mod.io.S_AXI_WVALID  := io.S_AXI_WVALID
+            |    io.S_AXI_WREADY      := mod.io.S_AXI_WREADY
+            |
+            |    io.S_AXI_BRESP       := mod.io.S_AXI_BRESP
+            |    io.S_AXI_BVALID      := mod.io.S_AXI_BVALID
+            |    mod.io.S_AXI_BREADY  := io.S_AXI_BREADY
+            |
+            |    mod.io.S_AXI_ARADDR  := io.S_AXI_ARADDR
+            |    mod.io.S_AXI_ARPROT  := io.S_AXI_ARPROT
+            |    mod.io.S_AXI_ARVALID := io.S_AXI_ARVALID
+            |    io.S_AXI_ARREADY     := mod.io.S_AXI_ARREADY
+            |
+            |    io.S_AXI_RDATA       := mod.io.S_AXI_RDATA
+            |    io.S_AXI_RRESP       := mod.io.S_AXI_RRESP
+            |    io.S_AXI_RVALID      := mod.io.S_AXI_RVALID
+            |    mod.io.S_AXI_RREADY  := io.S_AXI_RREADY
+            |  }
+            |}
+          """
 
       return st"""
           |import chisel3._
@@ -2114,7 +2673,7 @@ import HwSynthesizer._
           |${if (anvil.config.useIP) moduleDeclST else st""}
           |
           |import ${name}._
-          |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 64,
+          |class ${name} (val C_S_AXI_DATA_WIDTH:  Int = 32,
           |               val C_S_AXI_ADDR_WIDTH:  Int = ${log2Up(anvil.config.memory)},
           |               val ARRAY_REG_WIDTH:     Int = 8,
           |               val ARRAY_REG_DEPTH:     Int = ${anvil.config.memory},
@@ -2190,7 +2749,7 @@ import HwSynthesizer._
           |  // write state machine
           |  val sWriteIdle :: sWriteTrans :: sWriteEnd :: Nil = Enum(3)
           |  val r_writeState = RegInit(sWriteIdle)
-          |  val r_writeLen   = Reg(UInt(8.W))
+          |  val r_writeLen   = Reg(UInt(4.W))
           |  val r_writeData  = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
           |  val r_writeAddr  = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
           |
@@ -2277,6 +2836,8 @@ import HwSynthesizer._
           |  }
           |}
           |${(stateFunctionObjectST, "\n")}
+          |
+          |${if(anvil.config.genVerilog) topModuleST.render else st""}
           """
     }
 
@@ -2291,7 +2852,7 @@ import HwSynthesizer._
       def chunk(start: Z, size: Z): ISZ[ST] = {
         var res = ISZ[ST]()
         var i = start
-        val end: Z = if (start + size < grounds.length) start + size else grounds.length
+        val end: Z = if (start + size < grounds.size) start + size else grounds.size
         while (i < end) {
           res = res :+ grounds(i)
           i = i + 1
@@ -2314,7 +2875,7 @@ import HwSynthesizer._
       }
 
       var chunkST: ISZ[ST] = ISZ[ST]()
-      for(i <- 0 until (chunks.length)) {
+      for(i <- 0 until (chunks.size)) {
         if(i == 0) {
           chunkST = chunkST :+
             st"""
@@ -2340,7 +2901,7 @@ import HwSynthesizer._
       }
 
       var chunkFunST: ISZ[ST] = {
-        for(i <- 0 until (chunks.length)) yield
+        for(i <- 0 until (chunks.size)) yield
           st"""
               |stateMachine_${i}()
             """
@@ -3363,7 +3924,7 @@ object HwSynthesizer {
         anvil.isSigned(anvil.spType)
       }
 
-    @strictpure def binExp(o: AST.IR.Exp): Unit = {
+    @pure def binExp(o: AST.IR.Exp): Unit = {
       @pure def inputLogic(ipt: IpType): Unit = {
         val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(o)).get
         val instanceName: String = getIpInstanceName(ipt).get
@@ -3389,22 +3950,30 @@ object HwSynthesizer {
     }
 
     override def preIntrinsicCopy(o: Intrinsic.Copy): MAnvilIRTransformer.PreResult[Intrinsic.Copy] = {
-      binExp(o.lhsOffset)
+      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip){
+        binExp(o.lhsOffset)
+      }
       return MAnvilIRTransformer.PreResultIntrinsicCopy
     }
 
     override def preIntrinsicTempLoad(o: Intrinsic.TempLoad): MAnvilIRTransformer.PreResult[Intrinsic.TempLoad] = {
-      binExp(o.rhsOffset)
+      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip) {
+        binExp(o.rhsOffset)
+      }
       return MAnvilIRTransformer.PreResultIntrinsicTempLoad
     }
 
     override def preIntrinsicLoad(o: Intrinsic.Load): MAnvilIRTransformer.PreResult[Intrinsic.Load] = {
-      binExp(o.rhsOffset)
+      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip) {
+        binExp(o.rhsOffset)
+      }
       return MAnvilIRTransformer.PreResultIntrinsicLoad
     }
 
     override def preIntrinsicStore(o: Intrinsic.Store): MAnvilIRTransformer.PreResult[Intrinsic.Store] = {
-      binExp(o.lhsOffset)
+      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip) {
+        binExp(o.lhsOffset)
+      }
       return MAnvilIRTransformer.PreResultIntrinsicStore
     }
 
