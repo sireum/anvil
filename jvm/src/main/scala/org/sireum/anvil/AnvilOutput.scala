@@ -29,15 +29,27 @@ package org.sireum.anvil
 import org.sireum._
 
 @datatype class AnvilOutput(val finalOnly: B, val sbtVersion: String, val out: Os.Path) extends Anvil.Output {
-  override def add(isFinal: B, path: => ISZ[String], content: => ST): Unit = {
+  def addH(isFinal: B, path: => ISZ[String], content: => ST, maskOpt: Option[String]): Unit = {
     if (isFinal || !finalOnly) {
       val f = out /+ path
       f.up.mkdirAll()
       f.writeOver(content.render)
+      maskOpt match {
+        case Some(perm) => f.chmod(perm)
+        case _ =>
+      }
       if (isFinal) {
         println(s"Wrote $f")
       }
     }
+  }
+
+  override def add(isFinal: B, path: => ISZ[String], content: => ST): Unit = {
+    addH(isFinal, path, content, None())
+  }
+
+  override def addPerm(isFinal: B, path: => ISZ[String], content: => ST, mask: String): Unit = {
+    addH(isFinal, path, content, Some(mask))
   }
 }
 
