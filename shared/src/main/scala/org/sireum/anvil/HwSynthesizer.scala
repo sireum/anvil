@@ -2066,11 +2066,11 @@ import HwSynthesizer._
         st"""
             |#!/bin/sh
             |
-            |./auto_script.sh . ../add_sc_split-temp_temp-local_with-ip AXIWrapperChiselGenerated${name} TestSystem 100
+            |./auto_script.sh . ./ AXIWrapperChiselGenerated${name} TestSystem 100
           """
 
-      output.add(T, ISZ("chisel/../", "test_many.sh"), testManyShScriptST)
-      output.add(T, ISZ("chisel/../", "auto_script.sh"), autoShScriptST)
+      output.addPerm(T, ISZ("chisel/../", "test_many.sh"), testManyShScriptST, "+x")
+      output.addPerm(T, ISZ("chisel/../", "auto_script.sh"), autoShScriptST, "+x")
       output.add(T, ISZ("chisel/../", "synthesize_zcu102_zynq.tcl"), synthImplST)
       output.add(T, ISZ("chisel/../", "ip_generation.tcl"), ipGenerationTclST)
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxAdderSigned64Wrapper.v"), xilinxAddSub64ST(T ,T))
