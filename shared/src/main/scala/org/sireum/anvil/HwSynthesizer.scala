@@ -1555,6 +1555,21 @@ import HwSynthesizer._
     var r = HashSMap.empty[ISZ[String], ST]
     val processedProcedureST = processProcedure(name, o, maxRegisters)
     r = r + ISZ(name) ~> o.prettyST(anvil.printer)
+
+    val configST: ST =
+      st"""
+          |runtimeCheck = ${if(anvil.config.runtimeCheck) "true" else "false"},
+          |printSize = ${anvil.config.printSize},
+          |memory = ${anvil.config.memory},
+          |erase = ${if(anvil.config.erase) "true" else "false"},
+          |noXilinxIp = ${if(anvil.config.noXilinxIp) "true" else "false"},
+          |splitTempSizes = ${if(anvil.config.splitTempSizes) "true" else  "false"},
+          |tempLocal = ${if(anvil.config.tempLocal) "true" else "false"},
+          |memoryAccess = ${anvil.config.memoryAccess.string},
+          |ipMax = ${anvil.config.ipMax}
+        """
+
+    output.add(T, ISZ("config.txt"), configST)
     output.add(T, ISZ("chisel/src/main/scala", s"chisel-${name}.scala"), processedProcedureST)
     output.add(T, ISZ("chisel", "build.sbt"), buildSbtST())
     output.add(T, ISZ("chisel", "project", "build.properties"), st"sbt.version=${output.sbtVersion}")
@@ -1825,6 +1840,7 @@ import HwSynthesizer._
           """
       }
 
+      val backslash = "\\"
       val ipGenerationTclST: ST =
         st"""
             |set PROJECT_PATH [lindex $$argv 0]
@@ -1845,132 +1861,132 @@ import HwSynthesizer._
             |
             |# add xilinx IPs
             |create_ip -name div_gen -vendor xilinx.com -library ip -version 5.1 -module_name XilinxDividerSigned64
-            |set_property -dict [list \
-            |  CONFIG.ARESETN {true} \
-            |  CONFIG.FlowControl {Blocking} \
-            |  CONFIG.dividend_and_quotient_width {64} \
-            |  CONFIG.divisor_width {64} \
-            |  CONFIG.fractional_width {64} \
-            |  CONFIG.latency {69} \
+            |set_property -dict [list $backslash
+            |  CONFIG.ARESETN {true} $backslash
+            |  CONFIG.FlowControl {Blocking} $backslash
+            |  CONFIG.dividend_and_quotient_width {64} $backslash
+            |  CONFIG.divisor_width {64} $backslash
+            |  CONFIG.fractional_width {64} $backslash
+            |  CONFIG.latency {69} $backslash
             |] [get_ips XilinxDividerSigned64]
             |
             |create_ip -name div_gen -vendor xilinx.com -library ip -version 5.1 -module_name XilinxDividerUnsigned64
-            |set_property -dict [list \
-            |  CONFIG.ARESETN {true} \
-            |  CONFIG.FlowControl {Blocking} \
-            |  CONFIG.dividend_and_quotient_width {64} \
-            |  CONFIG.divisor_width {64} \
-            |  CONFIG.fractional_width {64} \
-            |  CONFIG.latency {67} \
-            |  CONFIG.operand_sign {Unsigned} \
+            |set_property -dict [list $backslash
+            |  CONFIG.ARESETN {true} $backslash
+            |  CONFIG.FlowControl {Blocking} $backslash
+            |  CONFIG.dividend_and_quotient_width {64} $backslash
+            |  CONFIG.divisor_width {64} $backslash
+            |  CONFIG.fractional_width {64} $backslash
+            |  CONFIG.latency {67} $backslash
+            |  CONFIG.operand_sign {Unsigned} $backslash
             |] [get_ips XilinxDividerUnsigned64]
             |
             |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxMultiplierUnsigned64
-            |set_property -dict [list \
-            |  CONFIG.ClockEnable {true} \
-            |  CONFIG.Multiplier_Construction {Use_Mults} \
-            |  CONFIG.OutputWidthHigh {63} \
-            |  CONFIG.PipeStages {18} \
-            |  CONFIG.PortAType {Unsigned} \
-            |  CONFIG.PortAWidth {64} \
-            |  CONFIG.PortBType {Unsigned} \
-            |  CONFIG.PortBWidth {64} \
-            |  CONFIG.Use_Custom_Output_Width {true} \
+            |set_property -dict [list $backslash
+            |  CONFIG.ClockEnable {true} $backslash
+            |  CONFIG.Multiplier_Construction {Use_Mults} $backslash
+            |  CONFIG.OutputWidthHigh {63} $backslash
+            |  CONFIG.PipeStages {18} $backslash
+            |  CONFIG.PortAType {Unsigned} $backslash
+            |  CONFIG.PortAWidth {64} $backslash
+            |  CONFIG.PortBType {Unsigned} $backslash
+            |  CONFIG.PortBWidth {64} $backslash
+            |  CONFIG.Use_Custom_Output_Width {true} $backslash
             |] [get_ips XilinxMultiplierUnsigned64]
             |
             |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxMultiplierSigned64
-            |set_property -dict [list \
-            |  CONFIG.ClockEnable {true} \
-            |  CONFIG.Multiplier_Construction {Use_Mults} \
-            |  CONFIG.OutputWidthHigh {63} \
-            |  CONFIG.PipeStages {18} \
-            |  CONFIG.PortAWidth {64} \
-            |  CONFIG.PortBWidth {64} \
-            |  CONFIG.Use_Custom_Output_Width {true} \
+            |set_property -dict [list $backslash
+            |  CONFIG.ClockEnable {true} $backslash
+            |  CONFIG.Multiplier_Construction {Use_Mults} $backslash
+            |  CONFIG.OutputWidthHigh {63} $backslash
+            |  CONFIG.PipeStages {18} $backslash
+            |  CONFIG.PortAWidth {64} $backslash
+            |  CONFIG.PortBWidth {64} $backslash
+            |  CONFIG.Use_Custom_Output_Width {true} $backslash
             |] [get_ips XilinxMultiplierSigned64]
             |
             |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxAdderSigned64
-            |set_property -dict [list \
-            |  CONFIG.A_Width {64} \
-            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} \
-            |  CONFIG.B_Width {64} \
-            |  CONFIG.Latency {6} \
-            |  CONFIG.Latency_Configuration {Automatic} \
-            |  CONFIG.Out_Width {64} \
+            |set_property -dict [list $backslash
+            |  CONFIG.A_Width {64} $backslash
+            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+            |  CONFIG.B_Width {64} $backslash
+            |  CONFIG.Latency {6} $backslash
+            |  CONFIG.Latency_Configuration {Automatic} $backslash
+            |  CONFIG.Out_Width {64} $backslash
             |] [get_ips XilinxAdderSigned64]
             |
             |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxAdderUnsigned64
-            |set_property -dict [list \
-            |  CONFIG.A_Type {Unsigned} \
-            |  CONFIG.A_Width {64} \
-            |  CONFIG.B_Type {Unsigned} \
-            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} \
-            |  CONFIG.B_Width {64} \
-            |  CONFIG.Latency {6} \
-            |  CONFIG.Latency_Configuration {Automatic} \
-            |  CONFIG.Out_Width {64} \
+            |set_property -dict [list $backslash
+            |  CONFIG.A_Type {Unsigned} $backslash
+            |  CONFIG.A_Width {64} $backslash
+            |  CONFIG.B_Type {Unsigned} $backslash
+            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+            |  CONFIG.B_Width {64} $backslash
+            |  CONFIG.Latency {6} $backslash
+            |  CONFIG.Latency_Configuration {Automatic} $backslash
+            |  CONFIG.Out_Width {64} $backslash
             |] [get_ips XilinxAdderUnsigned64]
             |
             |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxSubtractorSigned64
-            |set_property -dict [list \
-            |  CONFIG.A_Width {64} \
-            |  CONFIG.Add_Mode {Subtract} \
-            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} \
-            |  CONFIG.B_Width {64} \
-            |  CONFIG.Latency {6} \
-            |  CONFIG.Latency_Configuration {Automatic} \
-            |  CONFIG.Out_Width {64} \
+            |set_property -dict [list $backslash
+            |  CONFIG.A_Width {64} $backslash
+            |  CONFIG.Add_Mode {Subtract} $backslash
+            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+            |  CONFIG.B_Width {64} $backslash
+            |  CONFIG.Latency {6} $backslash
+            |  CONFIG.Latency_Configuration {Automatic} $backslash
+            |  CONFIG.Out_Width {64} $backslash
             |] [get_ips XilinxSubtractorSigned64]
             |
             |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxSubtractorUnsigned64
-            |set_property -dict [list \
-            |  CONFIG.A_Type {Unsigned} \
-            |  CONFIG.A_Width {64} \
-            |  CONFIG.Add_Mode {Subtract} \
-            |  CONFIG.B_Type {Unsigned} \
-            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} \
-            |  CONFIG.B_Width {64} \
-            |  CONFIG.Latency {6} \
-            |  CONFIG.Latency_Configuration {Automatic} \
-            |  CONFIG.Out_Width {64} \
+            |set_property -dict [list $backslash
+            |  CONFIG.A_Type {Unsigned} $backslash
+            |  CONFIG.A_Width {64} $backslash
+            |  CONFIG.Add_Mode {Subtract} $backslash
+            |  CONFIG.B_Type {Unsigned} $backslash
+            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+            |  CONFIG.B_Width {64} $backslash
+            |  CONFIG.Latency {6} $backslash
+            |  CONFIG.Latency_Configuration {Automatic} $backslash
+            |  CONFIG.Out_Width {64} $backslash
             |] [get_ips XilinxSubtractorUnsigned64]
             |
             |# need to be customzied for different benchmarks
             |create_ip -name blk_mem_gen -vendor xilinx.com -library ip -version 8.4 -module_name XilinxBRAM
-            |set_property -dict [list \
-            |  CONFIG.Memory_Type {True_Dual_Port_RAM} \
-            |  CONFIG.Operating_Mode_A {NO_CHANGE} \
-            |  CONFIG.Operating_Mode_B {NO_CHANGE} \
-            |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} \
-            |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} \
-            |  CONFIG.Write_Depth_A {${anvil.config.memory}} \
-            |  CONFIG.Write_Width_A {8} \
+            |set_property -dict [list $backslash
+            |  CONFIG.Memory_Type {True_Dual_Port_RAM} $backslash
+            |  CONFIG.Operating_Mode_A {NO_CHANGE} $backslash
+            |  CONFIG.Operating_Mode_B {NO_CHANGE} $backslash
+            |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
+            |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
+            |  CONFIG.Write_Depth_A {${anvil.config.memory}} $backslash
+            |  CONFIG.Write_Width_A {8} $backslash
             |] [get_ips XilinxBRAM]
             |
             |# need to be customzied for different benchmarks
             |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxIndexMultiplier
-            |set_property -dict [list \
-            |  CONFIG.ClockEnable {true} \
-            |  CONFIG.OutputWidthHigh {${anvil.typeBitSize(spType) - 1}} \
-            |  CONFIG.PipeStages {${cyclesXilinxMultiplier(anvil.typeBitSize(spType))}} \
-            |  CONFIG.PortAType {Unsigned} \
-            |  CONFIG.PortAWidth {${anvil.typeBitSize(spType)}} \
-            |  CONFIG.PortBType {Unsigned} \
-            |  CONFIG.PortBWidth {${anvil.typeBitSize(spType)}} \
-            |  CONFIG.Use_Custom_Output_Width {true} \
+            |set_property -dict [list $backslash
+            |  CONFIG.ClockEnable {true} $backslash
+            |  CONFIG.OutputWidthHigh {${anvil.typeBitSize(spType) - 1}} $backslash
+            |  CONFIG.PipeStages {${cyclesXilinxMultiplier(anvil.typeBitSize(spType))}} $backslash
+            |  CONFIG.PortAType {Unsigned} $backslash
+            |  CONFIG.PortAWidth {${anvil.typeBitSize(spType)}} $backslash
+            |  CONFIG.PortBType {Unsigned} $backslash
+            |  CONFIG.PortBWidth {${anvil.typeBitSize(spType)}} $backslash
+            |  CONFIG.Use_Custom_Output_Width {true} $backslash
             |] [get_ips XilinxIndexMultiplier]
             |
             |# need to be customzied for different benchmarks
             |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxIndexAdder
-            |set_property -dict [list \
-            |  CONFIG.A_Type {Unsigned} \
-            |  CONFIG.A_Width {${anvil.typeBitSize(spType)}} \
-            |  CONFIG.B_Type {Unsigned} \
-            |  CONFIG.B_Value {00000000} \
-            |  CONFIG.B_Width {${anvil.typeBitSize(spType)}} \
-            |  CONFIG.Latency {${cyclesXilinxAdder(anvil.typeBitSize(spType))}} \
-            |  CONFIG.Latency_Configuration {Automatic} \
-            |  CONFIG.Out_Width {${anvil.typeBitSize(spType)}} \
+            |set_property -dict [list $backslash
+            |  CONFIG.A_Type {Unsigned} $backslash
+            |  CONFIG.A_Width {${anvil.typeBitSize(spType)}} $backslash
+            |  CONFIG.B_Type {Unsigned} $backslash
+            |  CONFIG.B_Value {00000000} $backslash
+            |  CONFIG.B_Width {${anvil.typeBitSize(spType)}} $backslash
+            |  CONFIG.Latency {${cyclesXilinxAdder(anvil.typeBitSize(spType))}} $backslash
+            |  CONFIG.Latency_Configuration {Automatic} $backslash
+            |  CONFIG.Out_Width {${anvil.typeBitSize(spType)}} $backslash
             |] [get_ips XilinxIndexAdder]
             |
             |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP/IP_dir
@@ -2069,10 +2085,56 @@ import HwSynthesizer._
             |./auto_script.sh . ./ AXIWrapperChiselGenerated${name} TestSystem 100
           """
 
+      val zynqCProgramST: ST =
+        st"""
+            |#include <stdio.h>
+            |#include <stdint.h>
+            |#include "platform.h"
+            |#include "xil_printf.h"
+            |#include "xil_io.h"
+            |#include "xparameters.h"
+            |
+            |#define VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + ${anvil.config.memory})
+            |#define READY_ADDR (XPAR_GENERATEDIP_BASEADDR + ${anvil.config.memory})
+            |#define ARRAY_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x0)
+            |
+            |int main()
+            |{
+            |    init_platform();
+            |
+            |    print("GeneralRegFileToBRAM Test\n\r");
+            |
+            |    Xil_Out32(ARRAY_ADDR, 0xFFFFFFFF);
+            |    Xil_Out32(ARRAY_ADDR+4, 0xFFFFFFFF);
+            |
+            |	   // write to port valid (generated IP)
+            |	   Xil_Out32(VALID_ADDR, 0x1);
+            |
+            |	   // read from port ready (generated IP)
+            |	   uint32_t ready = Xil_In32(READY_ADDR);
+            |	   while(ready != 0x1) {
+            |	   	ready = Xil_In32(READY_ADDR);
+            |	   }
+            |
+            |	   // read the elements form the array
+            |	   for(int i = 0; i < 3; i++) {
+            |	   	uint32_t c = Xil_In32(ARRAY_ADDR + 20 + i*4);
+            |	   	printf("%x\n", c);
+            |	   }
+            |
+            |	   printf("\n");
+            |    print("Successfully ran application");
+            |
+            |    cleanup_platform();
+            |    return 0;
+            |}
+          """
+
       output.addPerm(T, ISZ("chisel/../", "test_many.sh"), testManyShScriptST, "+x")
       output.addPerm(T, ISZ("chisel/../", "auto_script.sh"), autoShScriptST, "+x")
       output.add(T, ISZ("chisel/../", "synthesize_zcu102_zynq.tcl"), synthImplST)
       output.add(T, ISZ("chisel/../", "ip_generation.tcl"), ipGenerationTclST)
+      output.add(T, ISZ("chisel/src/main/resources/C", "zynq_program.c"), zynqCProgramST)
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxAdderSigned64Wrapper.v"), xilinxAddSub64ST(T ,T))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxAdderUnsigned64Wrapper.v"), xilinxAddSub64ST(T, F))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxSubtractorSigned64Wrapper.v"), xilinxAddSub64ST(F, T))
@@ -2141,38 +2203,45 @@ import HwSynthesizer._
           |      dut.io.S_AXI_AWVALID.poke(true.B)
           |      dut.io.S_AXI_AWADDR.poke(0.U)
           |      dut.clock.step()
+          |      dut.clock.step()
           |
           |      dut.io.S_AXI_AWVALID.poke(false.B)
           |      dut.io.S_AXI_WVALID.poke(true.B)
           |      dut.io.S_AXI_WDATA.poke("hFFFFFFFF".U)
           |      dut.io.S_AXI_WSTRB.poke("hF".U)
           |      dut.clock.step()
+          |      dut.clock.step()
           |
           |      dut.io.S_AXI_WVALID.poke(false.B)
           |      dut.io.S_AXI_BREADY.poke(true.B)
-          |      while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
-          |        dut.clock.step(1)
-          |      }
+          |      dut.clock.step(6)
+          |      //while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
+          |      //  dut.clock.step(1)
+          |      //}
           |
           |      dut.io.S_AXI_AWVALID.poke(true.B)
           |      dut.io.S_AXI_AWADDR.poke(4.U)
           |      dut.clock.step()
+          |      dut.clock.step()
           |
           |      dut.io.S_AXI_AWVALID.poke(false.B)
           |      dut.io.S_AXI_WVALID.poke(true.B)
           |      dut.io.S_AXI_WDATA.poke("hFFFFFFFF".U)
           |      dut.io.S_AXI_WSTRB.poke("hF".U)
           |      dut.clock.step()
+          |      dut.clock.step()
           |
           |      dut.io.S_AXI_WVALID.poke(false.B)
           |      dut.io.S_AXI_BREADY.poke(true.B)
-          |      while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
-          |        dut.clock.step(1)
-          |      }
+          |      dut.clock.step(6)
+          |      //while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
+          |      //  dut.clock.step(1)
+          |      //}
           |
           |      // write valid signal
           |      dut.io.S_AXI_AWVALID.poke(true.B)
           |      dut.io.S_AXI_AWADDR.poke(${anvil.config.memory}.U)
+          |      dut.clock.step()
           |      dut.clock.step()
           |
           |      dut.io.S_AXI_AWVALID.poke(false.B)
@@ -2180,12 +2249,14 @@ import HwSynthesizer._
           |      dut.io.S_AXI_WDATA.poke("h01".U)
           |      dut.io.S_AXI_WSTRB.poke("h1".U)
           |      dut.clock.step()
+          |      dut.clock.step()
           |
           |      dut.io.S_AXI_WVALID.poke(false.B)
           |      dut.io.S_AXI_BREADY.poke(true.B)
-          |      while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
-          |        dut.clock.step(1)
-          |      }
+          |      dut.clock.step(6)
+          |      //while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
+          |      //  dut.clock.step(1)
+          |      //}
           |
           |      dut.clock.step(${cycles})
           |
@@ -2193,12 +2264,14 @@ import HwSynthesizer._
           |        dut.io.S_AXI_ARVALID.poke(true.B)
           |        dut.io.S_AXI_ARADDR.poke((20 + i * 4).U)
           |        dut.clock.step(1)
+          |        dut.clock.step(1)
           |
           |        dut.io.S_AXI_ARVALID.poke(false.B)
           |        dut.io.S_AXI_RREADY.poke(true.B)
-          |        while (!dut.io.S_AXI_RVALID.peek().litToBoolean) {
-          |          dut.clock.step(1)
-          |        }
+          |        dut.clock.step(8)
+          |        //while (!dut.io.S_AXI_RVALID.peek().litToBoolean) {
+          |        //  dut.clock.step(1)
+          |        //}
           |      }
           |
           |      dut.clock.step(50)
@@ -2500,41 +2573,6 @@ import HwSynthesizer._
         st"""${(instanceST, "\n")}"""
       }
 
-      val memReadST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
-          st"""
-              |r_readState := Mux(io.S_AXI_ARADDR === ${anvil.config.memory}.U , sReadEnd, sReadTrans)
-              |r_readData  := Mux(io.S_AXI_ARADDR === ${anvil.config.memory}.U , r_ready, r_readData)
-              |r_readAddr  := io.S_AXI_ARADDR
-            """
-        else
-          st"""
-              |r_readState := sReadEnd
-              |val readBytes = Seq.tabulate(C_S_AXI_DATA_WIDTH/8) { i =>
-              |  ${sharedMemName}(io.S_AXI_ARADDR + i.U)
-              |}
-              |r_readData := Cat(readBytes.reverse)
-            """
-      }
-
-      val memWriteST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
-          st"""
-              |r_writeState := Mux(r_writeAddr < ${anvil.config.memory}.U, sWriteTrans, sWriteEnd)
-              |r_writeLen   := PopCount(io.S_AXI_WSTRB)
-              |r_writeData  := io.S_AXI_WDATA
-            """
-        else
-          st"""
-              |r_writeState := sWriteEnd
-              |for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
-              |  when(io.S_AXI_WSTRB(byteIndex.U) === 1.U) {
-              |    ${sharedMemName}(r_writeAddr + byteIndex.U) := io.S_AXI_WDATA((byteIndex * 8) + 7, byteIndex * 8)
-              |  }
-              |}
-            """
-      }
-
       val bramDefaultPortValueST: ST =
         st"""
             |// BRAM default
@@ -2553,35 +2591,72 @@ import HwSynthesizer._
             |${sharedMemName}.io.dmaDstLen    := 0.U
           """
 
-      val writeTransST: ST =
-        st"""
-            |is(sWriteTrans) {
-            |  ${sharedMemName}.io.mode        := 2.U
-            |  ${sharedMemName}.io.writeAddr   := r_writeAddr
-            |  ${sharedMemName}.io.writeOffset := 0.U
-            |  ${sharedMemName}.io.writeLen    := r_writeLen
-            |  ${sharedMemName}.io.writeData   := r_writeData
-            |  when(${sharedMemName}.io.writeValid) {
-            |    ${sharedMemName}.io.mode  := 0.U
-            |    r_writeState    := sWriteEnd
-            |  }
-            |}
-          """
+      val memWriteST: ST =
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
+          st"""
+              |when(r_writeAddr === ${anvil.config.memory}.U) {
+              |  writeState              := sBActive
+              |  r_valid                 := r_writeData(0).asBool
+              |} .otherwise {
+              |  ${sharedMemName}.io.mode          := 2.U
+              |  ${sharedMemName}.io.writeAddr     := r_writeAddr
+              |  ${sharedMemName}.io.writeOffset   := 0.U
+              |  ${sharedMemName}.io.writeLen      := r_writeLen
+              |  ${sharedMemName}.io.writeData     := r_writeData
+              |}
+              |
+              |when((r_writeAddr =/= ${anvil.config.memory}.U) & ${sharedMemName}.io.writeValid) {
+              |  ${sharedMemName}.io.mode          := 0.U
+              |  writeState              := sBActive
+              |}
+            """
+        else
+          st"""
+              |writeState := sBActive
+              |when(r_writeAddr === ${anvil.config.memory}.U){
+              |  r_valid := r_writeData(0)
+              |} .otherwise{
+              |  for(byteIndex <- 0 until (C_S_AXI_DATA_WIDTH/8)) {
+              |    when(io.S_AXI_WSTRB(byteIndex.U) === 1.U) {
+              |      ${sharedMemName}(r_writeAddr + byteIndex.U) := r_writeData((byteIndex * 8) + 7, byteIndex * 8)
+              |    }
+              |  }
+              |}
+            """
 
-      val readTransST: ST =
-        st"""
-            |is(sReadTrans) {
-            |  ${sharedMemName}.io.mode        := 1.U
-            |  ${sharedMemName}.io.readAddr    := r_readAddr
-            |  ${sharedMemName}.io.readOffset  := 0.U
-            |  ${sharedMemName}.io.readLen     := r_readLen
-            |  when(${sharedMemName}.io.readValid) {
-            |    r_readData     := ${sharedMemName}.io.readData
-            |    ${sharedMemName}.io.mode := 0.U
-            |    r_readState    := sReadEnd
-            |  }
-            |}
-          """
+      val memReadST: ST = {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
+          st"""
+              |when(r_readAddr === ${anvil.config.memory}.U) {
+              |  r_s_axi_rdata         := r_ready
+              |  readState             := sReadEnd
+              |} .otherwise {
+              |  ${sharedMemName}.io.mode        := 1.U
+              |  ${sharedMemName}.io.readAddr    := r_readAddr
+              |  ${sharedMemName}.io.readOffset  := 0.U
+              |  ${sharedMemName}.io.readLen     := (C_S_AXI_DATA_WIDTH/8).U
+              |}
+              |
+              |when((r_readAddr =/= ${anvil.config.memory}.U) & ${sharedMemName}.io.readValid) {
+              |  ${sharedMemName}.io.mode        := 0.U
+              |
+              |  r_s_axi_rdata         := ${sharedMemName}.io.readData
+              |  readState             := sReadEnd
+              |}
+            """
+        else
+          st"""
+              |readState := sReadEnd
+              |when(r_readAddr === ${anvil.config.memory}.U) {
+              |  r_s_axi_rdata := r_ready
+              |} .otherwise {
+              |  val readBytes = Seq.tabulate(C_S_AXI_DATA_WIDTH/8) { i =>
+              |    ${sharedMemName}(io.S_AXI_ARADDR + i.U)
+              |  }
+              |  r_s_axi_rdata := Cat(readBytes.reverse)
+              |}
+            """
+      }
 
       val topModuleST: ST =
         st"""
@@ -2737,9 +2812,18 @@ import HwSynthesizer._
           |  val r_s_axi_rdata   = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
           |  val r_s_axi_rvalid  = Reg(Bool())
           |
+          |  val r_writeAddr     = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |  val r_writeData     = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
+          |  val r_writeLen      = Reg(UInt((C_S_AXI_DATA_WIDTH / 8).W))
+          |
+          |  val r_readAddr      = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |  val r_readData      = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
+          |  val r_readLen       = Reg(UInt((C_S_AXI_DATA_WIDTH / 8).W))
+          |
           |  // registers for valid and ready
           |  val r_valid = RegInit(false.B)
           |  val r_ready = RegInit(0.U(2.W))
+          |  r_ready := Mux(CP === 0.U, 1.U, 0.U) | Mux(CP === 1.U, 2.U, 0.U)
           |
           |  ${if(anvil.config.useIP) instanceDeclST else st""}
           |  init(this)
@@ -2747,24 +2831,61 @@ import HwSynthesizer._
           |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) bramDefaultPortValueST.render else st""}
           |
           |  // write state machine
-          |  val sWriteIdle :: sWriteTrans :: sWriteEnd :: Nil = Enum(3)
-          |  val r_writeState = RegInit(sWriteIdle)
-          |  val r_writeLen   = Reg(UInt(4.W))
-          |  val r_writeData  = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
-          |  val r_writeAddr  = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |  val sWriteIdle :: sAWActive :: sWActive :: sBActive:: Nil = Enum(4)
+          |  val writeState = RegInit(sWriteIdle)
+          |
+          |  r_s_axi_awready := Mux(io.S_AXI_AWVALID, true.B ,false.B)
+          |  r_s_axi_wready  := Mux((writeState === sAWActive) & io.S_AXI_WVALID,  true.B, false.B)
+          |  r_s_axi_bvalid  := Mux((writeState === sWActive)${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) s"& ${sharedMemName}.io.writeValid" else ""}, true.B, false.B) |
+          |                     Mux(io.S_AXI_WVALID & io.S_AXI_WREADY & (r_writeAddr === ${anvil.config.memory}.U), true.B, false.B)
+          |  switch(writeState) {
+          |    is(sWriteIdle) {
+          |      writeState  := Mux(io.S_AXI_AWVALID & io.S_AXI_AWREADY, sAWActive, sWriteIdle)
+          |      r_writeAddr := Mux(io.S_AXI_AWVALID & io.S_AXI_AWREADY, io.S_AXI_AWADDR, r_writeAddr)
+          |    }
+          |    is(sAWActive) {
+          |      writeState  := Mux(io.S_AXI_WVALID & io.S_AXI_WREADY, sWActive, sAWActive)
+          |      r_writeLen  := Mux(io.S_AXI_WVALID & io.S_AXI_WREADY, PopCount(io.S_AXI_WSTRB), r_writeLen)
+          |      r_writeData := Mux(io.S_AXI_WVALID & io.S_AXI_WREADY, io.S_AXI_WDATA, r_writeData)
+          |    }
+          |    is(sWActive) {
+          |      ${memWriteST}
+          |    }
+          |    is(sBActive) {
+          |      writeState := Mux(io.S_AXI_BVALID & io.S_AXI_BREADY, sWriteIdle, sBActive)
+          |    }
+          |  }
           |
           |  // read state machine
-          |  val sReadIdle :: sReadTrans :: sReadEnd :: Nil = Enum(3)
-          |  val r_readState     = RegInit(sReadIdle)
-          |  val r_readLen       = (C_S_AXI_DATA_WIDTH / 8).U
-          |  val r_readAddr      = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
-          |  val r_readData      = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
+          |  val sReadIdle :: sARActive :: sRActive :: sReadEnd :: Nil = Enum(4)
+          |  val readState = RegInit(sReadIdle)
+          |
+          |  r_s_axi_arready := Mux(io.S_AXI_ARVALID, true.B, false.B)
+          |  r_s_axi_rvalid  := Mux((readState === sRActive) ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) s" & (${sharedMemName}.io.readValid | r_readAddr === ${anvil.config.memory}.U)" else ""}, true.B, false.B)
+          |  switch(readState) {
+          |    is(sReadIdle) {
+          |      readState := Mux(io.S_AXI_ARVALID, sARActive, sReadIdle)
+          |    }
+          |    is(sARActive) {
+          |      readState := Mux(io.S_AXI_ARVALID & io.S_AXI_ARREADY, sRActive, sARActive)
+          |
+          |      when(io.S_AXI_ARVALID & io.S_AXI_ARREADY) {
+          |        r_readAddr := io.S_AXI_ARADDR
+          |      }
+          |    }
+          |    is(sRActive) {
+          |      ${memReadST}
+          |    }
+          |    is(sReadEnd) {
+          |      readState := Mux(io.S_AXI_RVALID & io.S_AXI_RREADY, sReadIdle, sReadEnd)
+          |    }
+          |  }
           |
           |  // write address channel
           |  io.S_AXI_AWREADY := r_s_axi_awready
           |
           |  // write channel
-          |  io.S_AXI_WREADY  := true.B
+          |  io.S_AXI_WREADY  := r_s_axi_wready
           |
           |  // write response channel
           |  io.S_AXI_BRESP   := 0.U
@@ -2777,53 +2898,6 @@ import HwSynthesizer._
           |  io.S_AXI_RDATA   := r_s_axi_rdata
           |  io.S_AXI_RRESP   := 0.U
           |  io.S_AXI_RVALID  := r_s_axi_rvalid
-          |
-          |  r_s_axi_awready := Mux(reset.asBool | (io.S_AXI_WREADY& io.S_AXI_WVALID), true.B,
-          |                         Mux(io.S_AXI_AWVALID && io.S_AXI_AWREADY, false.B, r_s_axi_awready))
-          |
-          |  r_s_axi_bvalid  := Mux(reset.asBool, false.B,
-          |                         Mux(r_writeState === sWriteEnd, true.B, false.B))
-          |
-          |  r_s_axi_arready := Mux(reset.asBool, true.B,
-          |                         Mux(io.S_AXI_ARVALID & io.S_AXI_ARREADY, true.B, r_s_axi_arready))
-          |
-          |  r_s_axi_rvalid  := Mux(reset.asBool, false.B,
-          |                         Mux(r_readState === sReadEnd, true.B, false.B))
-          |
-          |  r_s_axi_rdata   := Mux(r_readState === sReadEnd, r_readData, r_s_axi_rdata)
-          |
-          |  // valid and ready registers for memoryIP
-          |  r_valid := Mux(io.S_AXI_WVALID & io.S_AXI_WREADY & (r_writeAddr === ${anvil.config.memory}.U), io.S_AXI_WDATA(0), r_valid)
-          |  r_ready := Mux(CP === 0.U, 1.U, 0.U) | Mux(CP === 1.U, 2.U, 0.U)
-          |
-          |  // write state machine
-          |  switch(r_writeState) {
-          |    is(sWriteIdle) {
-          |      when(io.S_AXI_AWVALID && io.S_AXI_AWREADY) {
-          |        r_writeAddr  := io.S_AXI_AWADDR
-          |      }
-          |      when(io.S_AXI_WVALID & io.S_AXI_WREADY) {
-          |        ${memWriteST.render}
-          |      }
-          |    }
-          |    ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) writeTransST.render else st""}
-          |    is(sWriteEnd) {
-          |      r_writeState    := sWriteIdle
-          |    }
-          |  }
-          |
-          |  // read state machine
-          |  switch(r_readState) {
-          |    is(sReadIdle) {
-          |      when(io.S_AXI_ARREADY & io.S_AXI_ARVALID) {
-          |        ${memReadST.render}
-          |      }
-          |    }
-          |    ${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) readTransST.render else st""}
-          |    is(sReadEnd) {
-          |      r_readState := sReadIdle
-          |    }
-          |  }
           |
           |  ${(stateMachineST, "")}
           |}
