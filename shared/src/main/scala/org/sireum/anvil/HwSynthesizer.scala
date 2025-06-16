@@ -1187,19 +1187,7 @@ object ChiselModule {
             |val bram = Module(new XilinxBRAMWrapper)
             |bram.io.clk := clock.asBool
           """
-    val dmaZeroOutST: ST =
-      if(erase)
-        st"""
-            |when((r_dmaDstCount >= io.dmaDstLen) & (r_dmaSrcCount >= io.dmaSrcLen)) {
-            |  r_dmaState := sDmaDone
-            |}
-          """
-      else
-        st"""
-            |when(r_dmaSrcCount >= io.dmaSrcLen) {
-            |  r_dmaState := sDmaDone
-            |}
-          """
+
     st"""
         |${if(nonXilinxIP) bramIpST else st""}
         |class ${moduleName}(val depth: Int = ${depthOfBRAM}, val width: Int = ${widthOfBRAM}) extends Module {
@@ -1246,20 +1234,26 @@ object ChiselModule {
         |  val w_dmaEnable   = io.mode === 3.U
         |
         |  // === READ Operation ===
-        |  val sReadIdle :: sReadFirst :: sReadTrans :: sReadEnd :: Nil = Enum(4)
+        |  val sReadIdle :: sReadRequest :: sReadDataSave :: sReadCondUpdate :: sReadCondCheck :: sReadEnd :: Nil = Enum(6)
         |
+        |  val r_readLen      = Reg(UInt(4.W))
+        |  val r_isReadLenEq1 = Reg(Bool())
+        |  val r_isReadFinish = Reg(Bool())
         |  val r_readCnt      = Reg(UInt(4.W))
         |  val r_lastReadCnt  = Reg(UInt(4.W))
         |  val r_readAddr     = Reg(UInt(log2Ceil(depth).W))
         |  val r_readState    = RegInit(sReadIdle)
+        |  val r_readData     = Reg(UInt(64.W))
         |  val r_readBytes    = Reg(Vec(8, UInt(8.W)))
         |
         |  switch(r_readState) {
         |    is(sReadIdle) {
         |      when(w_readEnable) {
-        |        r_readState   := sReadFirst
+        |        r_readState   := sReadRequest
+        |        r_readLen     := io.readLen
         |        r_readCnt     := 0.U
         |        r_lastReadCnt := 0.U
+        |        r_readData    := 0.U
         |        r_readAddr    := io.readAddr + io.readOffset
         |      }
         |      r_readBytes(0) := 0.U
@@ -1271,80 +1265,88 @@ object ChiselModule {
         |      r_readBytes(6) := 0.U
         |      r_readBytes(7) := 0.U
         |    }
-        |    is(sReadFirst) {
-        |      bram.io.addra := r_readAddr
-        |      bram.io.ena   := true.B
-        |      bram.io.wea   := false.B
+        |    is(sReadRequest) {
+        |      bram.io.addra  := r_readAddr
+        |      bram.io.ena    := true.B
+        |      bram.io.wea    := false.B
         |
-        |      r_lastReadCnt := r_readCnt
-        |      r_readCnt     := r_readCnt + 1.U
-        |      r_readAddr    := r_readAddr + 1.U
-        |      r_readState   := sReadTrans
+        |      r_lastReadCnt  := r_readCnt
+        |      r_readCnt      := r_readCnt + 1.U
+        |      r_readAddr     := r_readAddr + 1.U
+        |      r_readState    := sReadDataSave
+        |      r_isReadLenEq1 := r_readLen === 1.U
         |    }
-        |    is(sReadTrans) {
+        |    is(sReadDataSave) {
+        |      bram.io.ena                := true.B
         |      r_readBytes(r_lastReadCnt) := bram.io.douta
-        |
-        |      bram.io.addra          := r_readAddr
-        |      bram.io.ena            := true.B
-        |      bram.io.wea            := false.B
-        |
-        |      r_lastReadCnt          := r_readCnt
-        |      r_readCnt              := r_readCnt + 1.U
-        |      r_readAddr             := r_readAddr + 1.U
-        |
-        |      r_readState            := Mux(io.readLen === 1.U, sReadEnd, Mux(r_readCnt < io.readLen, sReadTrans, sReadEnd))
+        |      r_readState                := sReadCondUpdate
+        |    }
+        |    is(sReadCondUpdate) {
+        |      r_isReadFinish := r_readCnt >= r_readLen
+        |      r_readState    := Mux(r_isReadLenEq1, sReadEnd, sReadCondCheck)
+        |      r_readData     := Cat(r_readBytes(7.U),
+        |                            r_readBytes(6.U),
+        |                            r_readBytes(5.U),
+        |                            r_readBytes(4.U),
+        |                            r_readBytes(3.U),
+        |                            r_readBytes(2.U),
+        |                            r_readBytes(1.U),
+        |                            r_readBytes(0.U))
+        |    }
+        |    is(sReadCondCheck) {
+        |      r_readState    := Mux(r_isReadFinish, sReadEnd, sReadRequest)
         |    }
         |    is(sReadEnd) {
         |      r_readState   := sReadIdle
         |    }
         |  }
         |
-        |  io.readData  := Cat(r_readBytes(7.U),
-        |                      r_readBytes(6.U),
-        |                      r_readBytes(5.U),
-        |                      r_readBytes(4.U),
-        |                      r_readBytes(3.U),
-        |                      r_readBytes(2.U),
-        |                      r_readBytes(1.U),
-        |                      r_readBytes(0.U))
+        |  io.readData  := r_readData
         |  io.readValid := Mux(r_readState === sReadEnd, true.B, false.B)
         |
         |  // === WRITE Operation ===
-        |  val sWriteIdle :: sWriteTrans :: sWriteEnd :: Nil = Enum(3)
+        |  val sWriteIdle :: sWriteCondUpdate :: sWriteTrans :: sWriteEnd :: Nil = Enum(4)
         |
         |  val r_writeCnt      = Reg(UInt(4.W))
         |  val r_writeAddr     = Reg(UInt(log2Ceil(depth).W))
         |  val r_writeState    = RegInit(sWriteIdle)
         |  val r_writeBytes    = Reg(Vec(8, UInt(8.W)))
         |  val r_writeLen      = Reg(UInt(4.W))
+        |  val r_writeDataByte = Reg(UInt(8.W))
+        |  val r_isWriteFinish = Reg(Bool())
+        |
+        |  r_writeBytes(0.U) := io.writeData(7, 0)
+        |  r_writeBytes(1.U) := io.writeData(15, 8)
+        |  r_writeBytes(2.U) := io.writeData(23, 16)
+        |  r_writeBytes(3.U) := io.writeData(31, 24)
+        |  r_writeBytes(4.U) := io.writeData(39, 32)
+        |  r_writeBytes(5.U) := io.writeData(47, 40)
+        |  r_writeBytes(6.U) := io.writeData(55, 48)
+        |  r_writeBytes(7.U) := io.writeData(63, 56)
         |
         |  switch(r_writeState) {
         |    is(sWriteIdle) {
         |      when(w_writeEnable) {
-        |        r_writeState      := sWriteTrans
+        |        r_writeState      := sWriteCondUpdate
         |        r_writeCnt        := 0.U
         |        r_writeAddr       := io.writeAddr + io.writeOffset
         |        r_writeLen        := io.writeLen - 1.U
-        |
-        |        r_writeBytes(0.U) := io.writeData(7, 0)
-        |        r_writeBytes(1.U) := io.writeData(15, 8)
-        |        r_writeBytes(2.U) := io.writeData(23, 16)
-        |        r_writeBytes(3.U) := io.writeData(31, 24)
-        |        r_writeBytes(4.U) := io.writeData(39, 32)
-        |        r_writeBytes(5.U) := io.writeData(47, 40)
-        |        r_writeBytes(6.U) := io.writeData(55, 48)
-        |        r_writeBytes(7.U) := io.writeData(63, 56)
         |      }
+        |    }
+        |    is(sWriteCondUpdate) {
+        |      r_writeDataByte := r_writeBytes(r_writeCnt)
+        |      r_isWriteFinish := r_writeCnt >= r_writeLen
+        |      r_writeState    := sWriteTrans
         |    }
         |    is(sWriteTrans) {
         |      bram.io.addrb := r_writeAddr
         |      bram.io.enb   := true.B
         |      bram.io.web   := true.B
-        |      bram.io.dinb  := r_writeBytes(r_writeCnt)
+        |      bram.io.dinb  := r_writeDataByte
         |
         |      r_writeCnt    := r_writeCnt + 1.U
         |      r_writeAddr   := r_writeAddr + 1.U
-        |      r_writeState  := Mux(r_writeCnt < r_writeLen, sWriteTrans, sWriteEnd)
+        |      r_writeState  := Mux(r_isWriteFinish, sWriteEnd, sWriteCondUpdate)
         |    }
         |    is(sWriteEnd) {
         |      r_writeState  := sWriteIdle
@@ -1354,29 +1356,39 @@ object ChiselModule {
         |  io.writeValid := Mux(r_writeState === sWriteEnd, true.B, false.B)
         |
         |  // DMA logic
-        |  val sDmaIdle :: sDmaFirstRead :: sDmaTrans :: sDmaDone :: Nil = Enum(4)
+        |  val sDmaIdle :: sDmaCondUpdate :: sDmaReadRequest :: sDmaWriteRequest :: sDmaSrcCheck :: sDmaDstCheck :: sDmaWriteExtra :: sDmaDone :: Nil = Enum(8)
         |
-        |  val r_dmaSrcCount = Reg(UInt(log2Ceil(depth).W))
-        |  val r_dmaDstCount = Reg(UInt(log2Ceil(depth).W))
-        |  val r_dmaSrcAddr  = Reg(UInt(log2Ceil(depth).W))
-        |  val r_dmaDstAddr  = Reg(UInt(log2Ceil(depth).W))
-        |  val r_dmaState    = RegInit(sDmaIdle)
+        |  val r_dmaSrcCount  = Reg(UInt(log2Ceil(depth).W))
+        |  val r_dmaDstCount  = Reg(UInt(log2Ceil(depth).W))
+        |  val r_dmaSrcAddr   = Reg(UInt(log2Ceil(depth).W))
+        |  val r_dmaDstAddr   = Reg(UInt(log2Ceil(depth).W))
+        |  val r_dmaState     = RegInit(sDmaIdle)
+        |  val r_dmaSrcLen    = Reg(UInt(log2Ceil(depth).W))
+        |  val r_dmaDstLen    = Reg(UInt(log2Ceil(depth).W))
+        |  val r_dmaSrcFinish = Reg(Bool())
+        |  val r_dmaDstFinish = Reg(Bool())
         |
         |  switch(r_dmaState) {
         |    is(sDmaIdle) {
         |      when(w_dmaEnable) {
-        |        r_dmaState    := Mux(io.dmaSrcLen === 0.U, sDmaTrans, sDmaFirstRead)
-        |
         |        r_dmaSrcCount := 0.U
         |        r_dmaDstCount := 0.U
         |        r_dmaSrcAddr  := io.dmaSrcAddr
         |        r_dmaDstAddr  := io.dmaDstAddr + io.dmaDstOffset
+        |        r_dmaSrcLen   := io.dmaSrcLen
+        |        r_dmaDstLen   := io.dmaDstLen
+        |
+        |        r_dmaState    := sDmaCondUpdate
         |      }
         |    }
-        |    is(sDmaFirstRead) {
-        |      r_dmaState    := sDmaTrans
+        |    is(sDmaCondUpdate) {
+        |      r_dmaSrcFinish := r_dmaSrcCount >= r_dmaSrcLen
+        |      r_dmaState     := sDmaSrcCheck
+        |    }
+        |    is(sDmaReadRequest) {
+        |      r_dmaState    := sDmaWriteRequest
         |
-        |      // first read
+        |      // read request
         |      bram.io.addra := r_dmaSrcAddr
         |      bram.io.ena   := true.B
         |      bram.io.wea   := false.B
@@ -1384,29 +1396,36 @@ object ChiselModule {
         |      r_dmaSrcAddr  := r_dmaSrcAddr + 1.U
         |      r_dmaSrcCount := r_dmaSrcCount + 1.U
         |    }
-        |    is(sDmaTrans) {
+        |    is(sDmaWriteRequest) {
+        |      bram.io.ena    := true.B
+        |      r_dmaSrcFinish := r_dmaSrcCount >= r_dmaSrcLen
+        |
         |      // write the data from the read port
-        |      when(r_dmaDstCount < io.dmaDstLen) {
-        |        bram.io.addrb := r_dmaDstAddr
-        |        bram.io.enb   := true.B
-        |        bram.io.web   := true.B
-        |        bram.io.dinb  := Mux(r_dmaDstCount >= r_dmaSrcCount, 0.U, bram.io.douta)
+        |      bram.io.addrb := r_dmaDstAddr
+        |      bram.io.enb   := true.B
+        |      bram.io.web   := true.B
+        |      bram.io.dinb  := bram.io.douta
         |
-        |        r_dmaDstAddr  := r_dmaDstAddr + 1.U
-        |        r_dmaDstCount := r_dmaDstCount + 1.U
-        |      }
+        |      r_dmaDstAddr  := r_dmaDstAddr + 1.U
+        |      r_dmaDstCount := r_dmaDstCount + 1.U
+        |      r_dmaState    := sDmaSrcCheck
+        |    }
+        |    is(sDmaSrcCheck) {
+        |      r_dmaDstFinish := r_dmaDstCount >= r_dmaDstLen
+        |      r_dmaState     := Mux(r_dmaSrcFinish, sDmaDstCheck, sDmaReadRequest)
+        |    }
+        |    is(sDmaDstCheck) {
+        |      r_dmaState := Mux(r_dmaDstFinish, sDmaDone, sDmaWriteExtra)
+        |    }
+        |    is(sDmaWriteExtra) {
+        |      bram.io.addrb := r_dmaDstAddr
+        |      bram.io.enb   := true.B
+        |      bram.io.web   := true.B
+        |      bram.io.dinb  := 0.U
         |
-        |      // keep all the data from read port valid
-        |      bram.io.ena   := true.B
-        |      when(r_dmaSrcCount < io.dmaSrcLen) {
-        |        bram.io.addra := r_dmaSrcAddr
-        |        bram.io.wea   := false.B
-        |
-        |        r_dmaSrcAddr  := r_dmaSrcAddr + 1.U
-        |        r_dmaSrcCount := r_dmaSrcCount + 1.U
-        |      }
-        |
-        |      ${dmaZeroOutST.render}
+        |      r_dmaDstAddr  := r_dmaDstAddr + 1.U
+        |      r_dmaDstCount := r_dmaDstCount + 1.U
+        |      r_dmaState    := sDmaSrcCheck
         |    }
         |    is(sDmaDone) {
         |      r_dmaState := sDmaIdle
@@ -2265,7 +2284,7 @@ import HwSynthesizer._
           |
           |      dut.io.S_AXI_WVALID.poke(false.B)
           |      dut.io.S_AXI_BREADY.poke(true.B)
-          |      dut.clock.step(6)
+          |      dut.clock.step(10)
           |      //while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
           |      //  dut.clock.step(1)
           |      //}
@@ -2284,7 +2303,7 @@ import HwSynthesizer._
           |
           |      dut.io.S_AXI_WVALID.poke(false.B)
           |      dut.io.S_AXI_BREADY.poke(true.B)
-          |      dut.clock.step(6)
+          |      dut.clock.step(10)
           |      //while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
           |      //  dut.clock.step(1)
           |      //}
@@ -2304,7 +2323,7 @@ import HwSynthesizer._
           |
           |      dut.io.S_AXI_WVALID.poke(false.B)
           |      dut.io.S_AXI_BREADY.poke(true.B)
-          |      dut.clock.step(6)
+          |      dut.clock.step(10)
           |      //while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
           |      //  dut.clock.step(1)
           |      //}
@@ -2319,7 +2338,7 @@ import HwSynthesizer._
           |
           |        dut.io.S_AXI_ARVALID.poke(false.B)
           |        dut.io.S_AXI_RREADY.poke(true.B)
-          |        dut.clock.step(8)
+          |        dut.clock.step(20)
           |        //while (!dut.io.S_AXI_RVALID.peek().litToBoolean) {
           |        //  dut.clock.step(1)
           |        //}
