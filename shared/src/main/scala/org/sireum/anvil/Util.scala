@@ -1096,8 +1096,7 @@ object Util {
   val kind: String = "Anvil"
   val exitLabel: Z = 0
   val errorLabel: Z = 1
-  val deadLabel: Z = 2
-  val startingLabel: Z = 4
+  val startingLabel: Z = 3
   val returnLocalId: String = "$ret"
   val resultLocalId: String = "$res"
   val constructLocalId: String = "$new"
