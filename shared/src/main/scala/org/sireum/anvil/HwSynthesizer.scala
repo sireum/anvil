@@ -35,60 +35,6 @@ import org.sireum.lang.symbol.TypeInfo
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Position
 
-object TmpWireCount {
-  var count: Z = 0
-  def getCurrent: Z = {
-    return count
-  }
-  def incCount(): Unit = {
-    count = count + 1
-  }
-}
-
-object BlockLog {
-  var currentBlock: MOption[AST.IR.BasicBlock] = MNone()
-
-  def getBlock: AST.IR.BasicBlock = {
-    return currentBlock.get
-  }
-
-  def setBlock(b: AST.IR.BasicBlock):B = {
-    currentBlock = MSome(b)
-    return T
-  }
-}
-
-object MemCopyLog {
-  var flagMemCopyInBlock: B = F
-  def isMemCopyInBlock(): B = {
-    return flagMemCopyInBlock
-  }
-
-  def enableFlagMemCopyInBlock(): Unit = {
-    flagMemCopyInBlock = T
-  }
-
-  def disableFlagMemCopyInBlock(): Unit = {
-    flagMemCopyInBlock = F
-  }
-}
-
-object IndexingLog {
-  var flagIndexingInBlock: B = F
-  var activeIndex: Z = 0
-  def isIndexingInBlock(): B = {
-    return flagIndexingInBlock
-  }
-
-  def enableFlagIndexingInBlock(): Unit = {
-    flagIndexingInBlock = T
-  }
-
-  def disableFlagIndexingInBlock(): Unit = {
-    flagIndexingInBlock = F
-  }
-}
-
 @sig trait IpType {
 
 }
@@ -1466,6 +1412,8 @@ import HwSynthesizer._
     BlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory, BlockMemoryIP(), xilinxIPValid, anvil.config.erase)
   )
 
+  @strictpure def getCpIndex(label: Z): (Z, Z) = (label / (anvil.config.cpMax - 1), label % (anvil.config.cpMax - 1))
+
   @pure def findChiselModule(ip: IpType): Option[ChiselModule] = {
     for(i <- 0 until ipModules.size) {
       if(ipModules(i).expression == ip) {
@@ -2382,6 +2330,7 @@ import HwSynthesizer._
   }
 
   @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector): ST = {
+    val hwLog = HwSynthesizer.HwLog(0, MNone(), F, F, 0, 0)
 
     @pure def generalPurposeRegisterST: ST = {
       var generalRegMap: HashMap[String, (Z,Z,B)] = HashMap.empty[String, (Z,Z,B)]
@@ -2812,6 +2761,30 @@ import HwSynthesizer._
             |}
           """
 
+      @pure def cpST: ST = {
+        if(anvil.config.cpMax <= 0) {
+          return st"""
+                     |val CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
+                   """
+        } else {
+          val maxNumCps: Z = (hwLog.currentLabel / anvil.config.cpMax) + (if (hwLog.currentLabel % anvil.config.cpMax == 0) 0 else 1)
+
+          return st"""
+                     |val CP = RegInit(VecInit(Seq.fill(${maxNumCps})(${anvil.config.cpMax}.U(log2Up(${anvil.config.cpMax}).W))))
+                   """
+        }
+      }
+
+      val readyST: ST =
+        if(anvil.config.cpMax <= 0)
+          st"""
+              |Mux(CP === 0.U, 1.U, 0.U) | Mux(CP === 1.U, 2.U, 0.U)
+            """
+        else
+          st"""
+              |Mux(CP(0.U) === 0.U, 1.U, 0.U) | Mux(CP(0.U) === 1.U, 2.U, 0.U)
+            """
+
       return st"""
           |import chisel3._
           |import chisel3.util._
@@ -2864,7 +2837,7 @@ import HwSynthesizer._
           |  // reg for general purpose
           |  ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
           |  // reg for code pointer
-          |  val CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
+          |  ${cpST.render}
           |  // reg for stack pointer
           |  val SP = RegInit(0.U(STACK_POINTER_WIDTH.W))
           |  // reg for display pointer
@@ -2895,7 +2868,7 @@ import HwSynthesizer._
           |  // registers for valid and ready
           |  val r_valid = RegInit(false.B)
           |  val r_ready = RegInit(0.U(2.W))
-          |  r_ready := Mux(CP === 0.U, 1.U, 0.U) | Mux(CP === 1.U, 2.U, 0.U)
+          |  r_ready := ${readyST.render}
           |
           |  ${if(anvil.config.useIP) instanceDeclST else st""}
           |  init(this)
@@ -2987,12 +2960,12 @@ import HwSynthesizer._
           """
     }
 
-    val basicBlockST = processBasicBlock(name, o.body.asInstanceOf[AST.IR.Body.Basic].blocks)
+    val basicBlockST = processBasicBlock(name, o.body.asInstanceOf[AST.IR.Body.Basic].blocks, hwLog)
 
     return procedureST(basicBlockST._1, basicBlockST._2)
   }
 
-  @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock]): (ST, ST) = {
+  @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], hwLog: HwSynthesizer.HwLog): (ST, ST) = {
     val ipPortLogic = HwSynthesizer.IpPortAssign(anvil, ipAlloc, ISZ[ST](), ipModules, InputMap.empty, ISZ[ST](), ISZ[ST]())
     @pure def basicBlockST(grounds: ISZ[ST], functions: ISZ[ST]): (ST, ST) = {
       def chunk(start: Z, size: Z): ISZ[ST] = {
@@ -3027,7 +3000,7 @@ import HwSynthesizer._
             st"""
                 |def stateMachine_${i}(): Unit = {
                 |  switch(CP) {
-                |    is(2.U) {
+                |    is(${if(anvil.config.cpMax <= 0) "2.U" else s"${anvil.config.cpMax - 1}.U"}) {
                 |      CP := Mux(r_valid, 3.U, CP)
                 |    }
                 |    ${(chunks(i), "\n")}
@@ -3081,17 +3054,17 @@ import HwSynthesizer._
       commentST = commentST :+ b.jump.prettyST(anvil.printer)
 
       val jumpST: ST = {
-        if(IndexingLog.isIndexingInBlock() && !MemCopyLog.isMemCopyInBlock()) {
-          val jST = processJumpIntrinsic(BlockLog.getBlock, ipPortLogic)
+        if(hwLog.isIndexerInCurrentBlock() && !hwLog.isMemCpyInCurrentBlock()) {
+          val jST = processJumpIntrinsic(hwLog.stateBlock.get, ipPortLogic, hwLog)
           val indexerName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
           st"""
-              |when(${indexerName}_${IndexingLog.activeIndex}.io.valid) {
+              |when(${indexerName}_${hwLog.activeIndexerIndex}.io.valid) {
               |  ${jST.render}
-              |  ${indexerName}_${IndexingLog.activeIndex}.io.ready := false.B
+              |  ${indexerName}_${hwLog.activeIndexerIndex}.io.ready := false.B
               |}
             """
         }
-        else if(!MemCopyLog.isMemCopyInBlock()) {
+        else if(!hwLog.isMemCpyInCurrentBlock()) {
           jump
         } else {
           st""
@@ -3128,11 +3101,12 @@ import HwSynthesizer._
     var allFunctionsST = ISZ[ST]()
 
     for (b <- bs) {
-      BlockLog.setBlock(b)
+      hwLog.stateBlock = MSome(b)
+      hwLog.currentLabel = b.label
 
       if(b.label != 0) {
-        val processedGroundST = processGround(b.grounds, ipPortLogic)
-        var jump = processJumpIntrinsic(b, ipPortLogic)
+        val processedGroundST = processGround(b.grounds, ipPortLogic, hwLog)
+        var jump = processJumpIntrinsic(b, ipPortLogic, hwLog)
         if(ipPortLogic.whenCondST.nonEmpty) {
           jump =
             st"""
@@ -3150,24 +3124,24 @@ import HwSynthesizer._
         allFunctionsST = allFunctionsST :+ g._2
       }
 
-      IndexingLog.disableFlagIndexingInBlock()
-      MemCopyLog.disableFlagMemCopyInBlock()
+      hwLog.indexerInCurrentBlock = F
+      hwLog.memCpyInCurrentBlock = F
 
     }
 
     return basicBlockST(allGroundsST, allFunctionsST)
   }
 
-  @pure def processGround(gs: ISZ[AST.IR.Stmt.Ground], ipPortLogic: HwSynthesizer.IpPortAssign): ST = {
+  @pure def processGround(gs: ISZ[AST.IR.Stmt.Ground], ipPortLogic: HwSynthesizer.IpPortAssign, hwLog: HwSynthesizer.HwLog): ST = {
     var groundST = ISZ[ST]()
 
     for(g <- gs) {
       g match {
         case g: AST.IR.Stmt.Assign => {
-          groundST = groundST :+ processStmtAssign(g, ipPortLogic)
+          groundST = groundST :+ processStmtAssign(g, ipPortLogic, hwLog)
         }
         case g: AST.IR.Stmt.Intrinsic => {
-          groundST = groundST :+ processStmtIntrinsic(g, ipPortLogic)
+          groundST = groundST :+ processStmtIntrinsic(g, ipPortLogic, hwLog)
         }
         case _ => {
           halt(s"processGround unimplemented")
@@ -3185,16 +3159,30 @@ import HwSynthesizer._
                |${(groundST, "\n")}"""
   }
 
-  @pure def processJumpIntrinsic(b: AST.IR.BasicBlock, ipPortLogic: HwSynthesizer.IpPortAssign): ST = {
+  @pure def processJumpIntrinsic(b: AST.IR.BasicBlock, ipPortLogic: HwSynthesizer.IpPortAssign, hwLog: HwSynthesizer.HwLog): ST = {
     var intrinsicST: ISZ[ST] = ISZ[ST]()
     val j = b.jump
+
+    @pure def jumpSplitCpST(label: Z): ST = {
+      var sts: ISZ[ST] = ISZ[ST]()
+      val curCpIdx = getCpIndex(hwLog.currentLabel)._1
+      val (nextCpIdx, nextPosIdx) = getCpIndex(label)
+      if(curCpIdx == nextCpIdx) {
+        sts = sts :+ st"CP_${curCpIdx} := ${nextPosIdx}.U"
+      } else {
+        sts = sts :+ st"CP_${curCpIdx} := ${anvil.config.cpMax - 1}.U"
+        sts = sts :+ st"CP_${nextCpIdx} := ${nextPosIdx}.U"
+      }
+
+      return st"${(sts, "\n")}"
+    }
 
     j match {
       case AST.IR.Jump.Intrinsic(intrinsic: Intrinsic.GotoLocal) => {
         if (intrinsic.isTemp) {
           intrinsicST = intrinsicST :+
             st"""
-                |CP := ${processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F, ipPortLogic)}
+                |CP := ${processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F, ipPortLogic, hwLog)}
             """
         } else {
           var returnAddrST = ISZ[ST]()
@@ -3217,20 +3205,40 @@ import HwSynthesizer._
         }
       }
       case j: AST.IR.Jump.Goto => {
-        intrinsicST = intrinsicST :+ st"CP := ${j.label}.U"
+        if(anvil.config.cpMax <= 0) {
+          intrinsicST = intrinsicST :+ st"CP := ${j.label}.U"
+        } else {
+          intrinsicST = intrinsicST :+ jumpSplitCpST(j.label)
+        }
       }
       case j: AST.IR.Jump.If => {
-        val cond = processExpr(j.cond, F, ipPortLogic)
-        intrinsicST = intrinsicST :+ st"CP := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
+        val cond = processExpr(j.cond, F, ipPortLogic, hwLog)
+        if(anvil.config.cpMax <= 0) {
+          intrinsicST = intrinsicST :+ st"CP := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
+        } else {
+          val thenST: ST = jumpSplitCpST(j.thenLabel)
+          val elseST: ST = jumpSplitCpST(j.elseLabel)
+
+          val finalST: ST =
+            st"""
+                |when((${cond.render}.asUInt) === 1.U){
+                |  ${thenST}
+                |} .otherwise {
+                |  ${elseST}
+                |}
+              """
+
+          intrinsicST = intrinsicST :+ finalST
+        }
       }
       case j: AST.IR.Jump.Switch => {
-        val condExprST = processExpr(j.exp, F, ipPortLogic)
+        val condExprST = processExpr(j.exp, F, ipPortLogic, hwLog)
 
-        val tmpWire = st"__tmp_${TmpWireCount.getCurrent}"
-        TmpWireCount.incCount()
+        val tmpWire = st"__tmp_${hwLog.tmpWireCount}"
+        hwLog.tmpWireCount = hwLog.tmpWireCount + 1
 
         val defaultStatementST: ST = j.defaultLabelOpt match {
-          case Some(x) => st"CP := ${x}.U"
+          case Some(x) => if(anvil.config.cpMax <= 0) st"CP := ${x}.U" else jumpSplitCpST(x)
           case None() => st""
         }
 
@@ -3238,8 +3246,8 @@ import HwSynthesizer._
         for(i <- j.cases) {
           isStatementST = isStatementST :+
             st"""
-                |is(${processExpr(i.value, F, ipPortLogic).render}) {
-                |  CP := ${i.label}.U
+                |is(${processExpr(i.value, F, ipPortLogic, hwLog).render}) {
+                |  ${if(anvil.config.cpMax <=0) st"CP := ${i.label}.U" else jumpSplitCpST(i.label)}
                 |}
               """
         }
@@ -3300,13 +3308,13 @@ import HwSynthesizer._
     return result
   }
 
-  @pure def processStmtIntrinsic(i: AST.IR.Stmt.Intrinsic, ipPortLogic: HwSynthesizer.IpPortAssign): ST = {
+  @pure def processStmtIntrinsic(i: AST.IR.Stmt.Intrinsic, ipPortLogic: HwSynthesizer.IpPortAssign, hwLog: HwSynthesizer.HwLog): ST = {
     var intrinsicST = st""
 
     i match {
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.TempLoad) => {
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
-          val readAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic)
+          val readAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
           val tempST: ST = st"${if (!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"}"
           val byteST: ST = st"(${intrinsic.bytes * 8 - 1}, 0)"
@@ -3325,8 +3333,8 @@ import HwSynthesizer._
               """
         } else {
           var internalST = ISZ[ST]()
-          val rhsOffsetST = processExpr(intrinsic.rhsOffset, F, ipPortLogic)
-          val tmpWire = st"__tmp_${TmpWireCount.getCurrent}"
+          val rhsOffsetST = processExpr(intrinsic.rhsOffset, F, ipPortLogic, hwLog)
+          val tmpWire = st"__tmp_${hwLog.tmpWireCount}"
 
           for (i <- (intrinsic.bytes - 1) to 0 by -1) {
             if (i == 0) {
@@ -3337,28 +3345,28 @@ import HwSynthesizer._
           }
 
           val padST = st".asSInt.pad(${if (!anvil.config.splitTempSizes) "GENERAL_REG_WIDTH" else s"${anvil.typeBitSize(intrinsic.tipe)}"})"
-          val placeholder: String = if (IndexingLog.isIndexingInBlock()) "  " else ""
+          val placeholder: String = if (hwLog.isIndexerInCurrentBlock()) "  " else ""
           val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
 
           intrinsicST =
             st"""
                 |val ${tmpWire} = (${rhsOffsetST.render}).asUInt
-                |${if (IndexingLog.isIndexingInBlock()) s"when(${indexerInstanceName}_${IndexingLog.activeIndex}.io.valid){" else ""}
+                |${if (hwLog.isIndexerInCurrentBlock()) s"when(${indexerInstanceName}_${hwLog.activeIndexerIndex}.io.valid){" else ""}
                 |${placeholder}${if (!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"} := Cat(
                 |  ${placeholder}${(internalST, "\n")}
                 |)${placeholder}${if (intrinsic.isSigned) s"${padST.render}" else ""}${if (!anvil.config.splitTempSizes) ".asUInt" else ""}
-                |${if (IndexingLog.isIndexingInBlock()) "}" else ""}
+                |${if (hwLog.isIndexerInCurrentBlock()) "}" else ""}
             """
-          TmpWireCount.incCount()
+          hwLog.tmpWireCount = hwLog.tmpWireCount + 1
         }
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Copy) => {
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
           val offsetWidth: Z = log2Up(anvil.config.memory * 8)
-          val dmaDstAddrST: ST = processExpr(intrinsic.lbase, F, ipPortLogic)
+          val dmaDstAddrST: ST = processExpr(intrinsic.lbase, F, ipPortLogic, hwLog)
           val dmaDstOffsetST: ST = if(intrinsic.loffset < 0) st"(${intrinsic.loffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.loffset}.U"
-          val dmaSrcLenST: ST = processExpr(intrinsic.rhsBytes, F, ipPortLogic)
-          val dmaSrcAddrST: ST = processExpr(intrinsic.rhs, F, ipPortLogic)
+          val dmaSrcLenST: ST = processExpr(intrinsic.rhsBytes, F, ipPortLogic, hwLog)
+          val dmaSrcAddrST: ST = processExpr(intrinsic.rhs, F, ipPortLogic, hwLog)
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.dmaValid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
@@ -3372,34 +3380,34 @@ import HwSynthesizer._
                 |${indexerInstanceName}.io.dmaDstLen := ${intrinsic.lhsBytes}.U
               """
         } else {
-          MemCopyLog.enableFlagMemCopyInBlock()
+          hwLog.memCpyInCurrentBlock = T
 
           // acquire the source and destination address
-          val lhsAddrST = processExpr(intrinsic.lhsOffset, F, ipPortLogic)
-          val rhsAddrST = processExpr(intrinsic.rhs, F, ipPortLogic)
+          val lhsAddrST = processExpr(intrinsic.lhsOffset, F, ipPortLogic, hwLog)
+          val rhsAddrST = processExpr(intrinsic.rhs, F, ipPortLogic, hwLog)
 
-          val tmpWireLhsST = st"__tmp_${TmpWireCount.getCurrent}"
-          TmpWireCount.incCount()
-          val tmpWireRhsST = st"__tmp_${TmpWireCount.getCurrent}"
-          TmpWireCount.incCount()
-          val totalSizeWireST = st"__tmp_${TmpWireCount.getCurrent}"
-          TmpWireCount.incCount()
-          val leftByteStartST = st"__tmp_${TmpWireCount.getCurrent}"
-          TmpWireCount.incCount()
+          val tmpWireLhsST = st"__tmp_${hwLog.tmpWireCount}"
+          hwLog.tmpWireCount = hwLog.tmpWireCount + 1
+          val tmpWireRhsST = st"__tmp_${hwLog.tmpWireCount}"
+          hwLog.tmpWireCount = hwLog.tmpWireCount + 1
+          val totalSizeWireST = st"__tmp_${hwLog.tmpWireCount}"
+          hwLog.tmpWireCount = hwLog.tmpWireCount + 1
+          val leftByteStartST = st"__tmp_${hwLog.tmpWireCount}"
+          hwLog.tmpWireCount = hwLog.tmpWireCount + 1
 
           // compute how many bytes needed for memory copy transfer
-          val rhsBytesSt = processExpr(intrinsic.rhsBytes, F, ipPortLogic)
+          val rhsBytesSt = processExpr(intrinsic.rhsBytes, F, ipPortLogic, hwLog)
           var BytesTransferST = ISZ[ST]()
           for (i <- 0 to (anvil.config.copySize - 1)) {
             BytesTransferST = BytesTransferST :+ st"${sharedMemName}(${tmpWireLhsST.render} + Idx + ${i}.U) := ${sharedMemName}(${tmpWireRhsST.render} + Idx + ${i}.U)"
           }
 
           // get the jump statement ST
-          val jumpST = processJumpIntrinsic(BlockLog.getBlock, ipPortLogic)
+          val jumpST = processJumpIntrinsic(hwLog.stateBlock.get, ipPortLogic, hwLog)
           val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
-          val indexerReadyDisableStr: String = if (IndexingLog.isIndexingInBlock()) s"${indexerInstanceName}_${IndexingLog.activeIndex}.io.ready := false.B" else ""
-          val indexerValidStr: String = if (IndexingLog.isIndexingInBlock()) s"when(${indexerInstanceName}_${IndexingLog.activeIndex}.io.valid) {indexerValid := true.B; ${indexerReadyDisableStr}}" else ""
-          val indexerConditionStr: String = if (IndexingLog.isIndexingInBlock()) "indexerValid & " else ""
+          val indexerReadyDisableStr: String = if (hwLog.isIndexerInCurrentBlock()) s"${indexerInstanceName}_${hwLog.activeIndexerIndex}.io.ready := false.B" else ""
+          val indexerValidStr: String = if (hwLog.isIndexerInCurrentBlock()) s"when(${indexerInstanceName}_${hwLog.activeIndexerIndex}.io.valid) {indexerValid := true.B; ${indexerReadyDisableStr}}" else ""
+          val indexerConditionStr: String = if (hwLog.isIndexerInCurrentBlock()) "indexerValid & " else ""
 
           intrinsicST =
             st"""
@@ -3416,12 +3424,12 @@ import HwSynthesizer._
                 |  val ${leftByteStartST.render} = Idx - ${anvil.config.copySize}.U
                 |  ${sharedMemName}(${tmpWireLhsST.render} + ${leftByteStartST.render} + IdxLeftByteRounds) := ${sharedMemName}(${tmpWireRhsST.render} + ${leftByteStartST.render} + IdxLeftByteRounds)
                 |  IdxLeftByteRounds := IdxLeftByteRounds + 1.U
-                |} ${if (IndexingLog.isIndexingInBlock()) ".elsewhen(indexerValid) {" else ".otherwise {"}
+                |} ${if (hwLog.isIndexerInCurrentBlock()) ".elsewhen(indexerValid) {" else ".otherwise {"}
                 |  Idx := 0.U
                 |  IdxLeftByteRounds := 0.U
                 |  LeftByteRounds := 0.U
                 |  ${jumpST.render}
-                |  ${if (IndexingLog.isIndexingInBlock()) "indexerValid := false.B" else ""}
+                |  ${if (hwLog.isIndexerInCurrentBlock()) "indexerValid := false.B" else ""}
                 |}
             """
         }
@@ -3433,10 +3441,10 @@ import HwSynthesizer._
         }
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
           val offsetWidth: Z = log2Up(anvil.config.memory * 8)
-          val writeAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic)
+          val writeAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
           val writeOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
           val writeLenST: ST = st"${intrinsic.bytes}.U"
-          val writeDataST: ST = processExpr(intrinsic.rhs, F, ipPortLogic)
+          val writeDataST: ST = processExpr(intrinsic.rhs, F, ipPortLogic, hwLog)
           val signedST: ST = if(intrinsic.isSigned) st".asUInt" else st""
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.writeValid"
@@ -3450,11 +3458,13 @@ import HwSynthesizer._
                 |${indexerInstanceName}.io.writeData := ${writeDataST.render}${signedST.render}
               """
         } else {
-          val lhsOffsetST = processExpr(intrinsic.lhsOffset, F, ipPortLogic)
-          val rhsST = processExpr(intrinsic.rhs, intrinsic.isSigned, ipPortLogic)
+          val lhsOffsetST = processExpr(intrinsic.lhsOffset, F, ipPortLogic, hwLog)
+          val rhsST = processExpr(intrinsic.rhs, intrinsic.isSigned, ipPortLogic, hwLog)
           var shareMemAssign = ISZ[ST]()
-          val tmpWireLhsST = st"__tmp_${TmpWireCount.getCurrent}"
-          val tmpWireRhsST = st"__tmp_${TmpWireCount.getCurrent + 1}"
+          val tmpWireLhsST = st"__tmp_${hwLog.tmpWireCount}"
+          hwLog.tmpWireCount = hwLog.tmpWireCount + 1
+          val tmpWireRhsST = st"__tmp_${hwLog.tmpWireCount}"
+          hwLog.tmpWireCount = hwLog.tmpWireCount + 1
           val tmpWireRhsContent: ST = if (isIntExp(intrinsic.rhs)) {
             st"${rhsST}"
           } else {
@@ -3464,7 +3474,7 @@ import HwSynthesizer._
           if (isLhsOffsetIndexing(intrinsic.lhsOffset)) {
             val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
             shareMemAssign = shareMemAssign :+
-              st"when(${indexerInstanceName}_${IndexingLog.activeIndex}.io.valid){"
+              st"when(${indexerInstanceName}_${hwLog.activeIndexerIndex}.io.valid){"
           }
 
           for (i <- 0 to (intrinsic.bytes - 1) by 1) {
@@ -3485,8 +3495,6 @@ import HwSynthesizer._
                 |val ${tmpWireRhsST} = (${tmpWireRhsContent.render}${if (!anvil.config.splitTempSizes) "" else storeDataST.render}).asUInt
                 |${(shareMemAssign, "\n")}
             """
-          TmpWireCount.incCount()
-          TmpWireCount.incCount()
         }
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign) => {
@@ -3495,7 +3503,7 @@ import HwSynthesizer._
           var leftST: ST = st""
           var rightST: ST = st""
           var isPlus: B = F
-          val regValueST: ST = processExpr(intrinsic.value, F, ipPortLogic)
+          val regValueST: ST = processExpr(intrinsic.value, F, ipPortLogic, hwLog)
           intrinsic.value match {
             case AST.IR.Exp.Int(_, v, _) => {
               if (v < 0) {
@@ -3525,7 +3533,7 @@ import HwSynthesizer._
             val indexerInstanceName: String = getIpInstanceName(ipT).get
             hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt") +
               "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-            insertIPInput(ipT, populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+            insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
             ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
             intrinsicST =
               st"""
@@ -3538,8 +3546,8 @@ import HwSynthesizer._
         }
         else {
           val updateContentST: ST = intrinsic.value match {
-            case AST.IR.Exp.Int(_, v, _) => if (intrinsic.isInc) if (v < 0) st"${targetReg} - ${-v}.U" else st"${targetReg} + ${v}.U" else st"${processExpr(intrinsic.value, F, ipPortLogic)}"
-            case _ => if (intrinsic.isInc) st"${targetReg} + ${processExpr(intrinsic.value, F, ipPortLogic)}" else st"${processExpr(intrinsic.value, F, ipPortLogic)}"
+            case AST.IR.Exp.Int(_, v, _) => if (intrinsic.isInc) if (v < 0) st"${targetReg} - ${-v}.U" else st"${targetReg} + ${v}.U" else st"${processExpr(intrinsic.value, F, ipPortLogic, hwLog)}"
+            case _ => if (intrinsic.isInc) st"${targetReg} + ${processExpr(intrinsic.value, F, ipPortLogic, hwLog)}" else st"${processExpr(intrinsic.value, F, ipPortLogic, hwLog)}"
           }
 
           intrinsicST =
@@ -3563,7 +3571,7 @@ import HwSynthesizer._
       anvil.isSigned(anvil.spType)
     }
 
-  @pure def processStmtAssign(a: AST.IR.Stmt.Assign, ipPortLogic: HwSynthesizer.IpPortAssign): ST = {
+  @pure def processStmtAssign(a: AST.IR.Stmt.Assign, ipPortLogic: HwSynthesizer.IpPortAssign, hwLog: HwSynthesizer.HwLog): ST = {
     var assignST: ST = st""
 
     @strictpure def isIntrinsicLoad(e: AST.IR.Exp): B = e match {
@@ -3580,11 +3588,11 @@ import HwSynthesizer._
       case a: AST.IR.Stmt.Assign.Temp => {
         val regNo = a.lhs
         val lhsST: ST = if(!anvil.config.splitTempSizes)  st"${generalRegName}(${regNo}.U)" else st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
-        val rhsST = processExpr(a.rhs, F, ipPortLogic)
+        val rhsST = processExpr(a.rhs, F, ipPortLogic, hwLog)
         if(isIntrinsicLoad(a.rhs)) {
           if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
             val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
-            val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic)
+            val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, hwLog)
             val offsetWidth: Z = log2Up(anvil.config.memory * 8)
             val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
             val readOffsetST: ST = if(intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
@@ -3630,7 +3638,7 @@ import HwSynthesizer._
     return index
   }
 
-  @pure def processExpr(exp: AST.IR.Exp, isForcedSign: B, ipPortLogic: HwSynthesizer.IpPortAssign): ST = {
+  @pure def processExpr(exp: AST.IR.Exp, isForcedSign: B, ipPortLogic: HwSynthesizer.IpPortAssign, hwLog: HwSynthesizer.HwLog): ST = {
     var exprST = st""
 
     exp match {
@@ -3647,7 +3655,7 @@ import HwSynthesizer._
           exprST = st"${indexerInstanceName}.io.readData${byteST.render}${signedST.render}"
         } else {
           var rhsExprST = ISZ[ST]()
-          val rhsExpr = processExpr(intrinsic.rhsOffset, F, ipPortLogic)
+          val rhsExpr = processExpr(intrinsic.rhsOffset, F, ipPortLogic, hwLog)
           for (i <- intrinsic.bytes - 1 to 0 by -1) {
             if (i == 0) {
               rhsExprST = rhsExprST :+ st"${sharedMemName}(${rhsExpr.render} + ${i}.U)"
@@ -3663,13 +3671,13 @@ import HwSynthesizer._
         }
       }
       case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Indexing) => {
-        IndexingLog.enableFlagIndexingInBlock()
+        hwLog.indexerInCurrentBlock = T
         val allocIndex = getIpAllocIndex(exp)
-        IndexingLog.activeIndex = allocIndex
+        hwLog.activeIndexerIndex = allocIndex
 
-        val baseOffsetST: ST = processExpr(intrinsic.baseOffset, F, ipPortLogic)
+        val baseOffsetST: ST = processExpr(intrinsic.baseOffset, F, ipPortLogic, hwLog)
         val dataOffset: Z = intrinsic.dataOffset
-        val indexST: ST = processExpr(intrinsic.index, F, ipPortLogic)
+        val indexST: ST = processExpr(intrinsic.index, F, ipPortLogic, hwLog)
         val mask: Z = intrinsic.maskOpt match {
           case Some(z) => z
           case None() => 0xFFFF
@@ -3685,7 +3693,7 @@ import HwSynthesizer._
           "mask" ~> (st"${mask}.U", "UInt") +
           "ready" ~> (st"true.B", "Bool")
 
-        insertIPInput(IntrinsicIP(defaultIndexing), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+        insertIPInput(IntrinsicIP(defaultIndexing), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
         val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
 
         exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
@@ -3710,10 +3718,10 @@ import HwSynthesizer._
       }
       case exp: AST.IR.Exp.Type => {
         val splitStr: String = if(anvil.typeBitSize(exp.exp.tipe)== anvil.typeBitSize(exp.t)) "" else s".pad(${anvil.typeBitSize(exp.t)})"
-        exprST = st"${processExpr(exp.exp, F, ipPortLogic)}${if(anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}${if(!anvil.config.splitTempSizes) "" else splitStr}"
+        exprST = st"${processExpr(exp.exp, F, ipPortLogic, hwLog)}${if(anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}${if(!anvil.config.splitTempSizes) "" else splitStr}"
       }
       case exp: AST.IR.Exp.Unary => {
-        val variableST = processExpr(exp.exp, F, ipPortLogic)
+        val variableST = processExpr(exp.exp, F, ipPortLogic, hwLog)
         val isUnsigned = !anvil.isSigned(exp.tipe)
         val opString: String = exp.op match {
           case lang.ast.Exp.UnaryOp.Not => "!"
@@ -3729,8 +3737,8 @@ import HwSynthesizer._
       case exp: AST.IR.Exp.Binary => {
         val isSIntOperation = isSignedExp(exp.left) || isSignedExp(exp.right)
         val isBoolOperation = isBoolExp(exp.left) || isBoolExp(exp.right)
-        val leftST = st"${processExpr(exp.left, F, ipPortLogic).render}${if(isSIntOperation && (!isSignedExp(exp.left))) ".asSInt" else ""}"
-        val rightST = st"${processExpr(exp.right, F, ipPortLogic).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
+        val leftST = st"${processExpr(exp.left, F, ipPortLogic, hwLog).render}${if(isSIntOperation && (!isSignedExp(exp.left))) ".asSInt" else ""}"
+        val rightST = st"${processExpr(exp.right, F, ipPortLogic, hwLog).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
         exp.op match {
           case AST.IR.Exp.Binary.Op.Add => {
             if(anvil.config.useIP) {
@@ -3743,7 +3751,7 @@ import HwSynthesizer._
               }
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -3761,7 +3769,7 @@ import HwSynthesizer._
               }
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Sub, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Sub, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Sub, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -3778,7 +3786,7 @@ import HwSynthesizer._
             }
             val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Mul, isSIntOperation)).get
             hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-            insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Mul, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+            insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Mul, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
             ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
             //ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}_${allocIndex}.io.start := RegNext(false.B)"
             exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
@@ -3793,7 +3801,7 @@ import HwSynthesizer._
             }
             val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation)).get
             hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-            insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+            insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
             ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
             //ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}_${allocIndex}.io.start := RegNext(false.B)"
             exprST = st"${indexerInstanceName}_${allocIndex}.io.quotient"
@@ -3808,7 +3816,7 @@ import HwSynthesizer._
             }
             val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation)).get
             hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-            insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+            insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
             ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
             exprST = st"${indexerInstanceName}_${allocIndex}.io.remainder"
           }
@@ -3824,7 +3832,7 @@ import HwSynthesizer._
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.And, signed)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.And, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.And, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -3843,7 +3851,7 @@ import HwSynthesizer._
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -3862,7 +3870,7 @@ import HwSynthesizer._
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -3887,7 +3895,7 @@ import HwSynthesizer._
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -3906,7 +3914,7 @@ import HwSynthesizer._
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -3924,7 +3932,7 @@ import HwSynthesizer._
               }
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -3942,7 +3950,7 @@ import HwSynthesizer._
               }
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -3960,7 +3968,7 @@ import HwSynthesizer._
               }
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -3978,7 +3986,7 @@ import HwSynthesizer._
               }
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -3996,7 +4004,7 @@ import HwSynthesizer._
               }
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -4015,7 +4023,7 @@ import HwSynthesizer._
               }
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -4034,7 +4042,7 @@ import HwSynthesizer._
               }
               val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation), populateInputs(BlockLog.getBlock.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -4064,6 +4072,23 @@ object HwSynthesizer {
     elementSize = 0,
     tipe = AST.Typed.b,
     pos = Position.none)
+
+  @record @unclonable class HwLog(var tmpWireCount: Z,
+                                  var stateBlock: MOption[AST.IR.BasicBlock],
+                                  var memCpyInCurrentBlock: B,
+                                  var indexerInCurrentBlock: B,
+                                  var activeIndexerIndex: Z,
+                                  var currentLabel: Z) extends MAnvilIRTransformer{
+
+    @pure def isMemCpyInCurrentBlock(): B = {
+      return memCpyInCurrentBlock
+    }
+
+    @pure def isIndexerInCurrentBlock(): B = {
+      return indexerInCurrentBlock
+    }
+
+  }
 
   @record @unclonable class IpPortAssign(val anvil: Anvil,
                                          val ipAlloc: Util.IpAlloc,
