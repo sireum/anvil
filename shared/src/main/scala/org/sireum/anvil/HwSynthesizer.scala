@@ -3194,7 +3194,7 @@ import HwSynthesizer._
         for(pair <- grounds.entries) {
           val (label, blockST) = pair
           val (cpIdx, stateIdx) = getCpIndex(label)
-          if(stateIdx == 0) {
+          if(stateSTs.size <= cpIdx) {
             stateSTs = stateSTs :+ ISZ[ST]()
           }
           val updatedBlock = stateSTs(cpIdx) :+ st"${blockST}"
