@@ -28,27 +28,27 @@ import org.sireum._
 import org.sireum.test._
 
 object AnvilTest {
-  @memoize def memoryFileMap(printSize: Z, splitTempSizes: B, tempLocal: B, useIP: B): HashMap[String, Z] = {
+  @memoize def memoryFileMap(printSize: Z, splitTempSizes: B, tempLocal: B, useIP: B, useMemoryIP: B): HashMap[String, Z] = {
     return HashMap.empty[String, Z] +
       "add.sc" ~> (if (tempLocal) 64 + 8 * 6  else 128 + 8 * 4) +
-      "assert.sc" ~> (if (tempLocal) 256 + 8 * 3 else if (useIP) 256 + 8 * 17 else 256 + 8 * 14) +
+      "assert.sc" ~> (if (tempLocal) 256 + 8 * 3 else if (useIP) if (useMemoryIP) 256 + 8 * 15 else 256 + 8 * 17 else 256 + 8 * 14) +
       "bubble.sc" ~> (if (tempLocal) 128 + 8 * 6 else 128 + 8 * 12) +
-      "construct.sc" ~> (if (tempLocal) 128 + 8 * 15 else 256 + 8 * 3) +
-      "divrem.sc" ~> (if (tempLocal) 128 + 8 * 0 else if (useIP) 128 + 8 * 8 else 128 + 8 * 7) +
+      "construct.sc" ~> (if (tempLocal) if (useIP) 128 + 8 * 15 else 128 + 8 * 13 else if (useMemoryIP) 256 + 8 * 5 else 256 + 8 * 3) +
+      "divrem.sc" ~> (if (tempLocal) 128 + 8 * 0 else if (useIP && !useMemoryIP) 128 + 8 * 8 else 128 + 8 * 7) +
       "dll.sc" ~> (if (printSize > 0) if (tempLocal) 768 + 8 * 9 else 768 + 8 * 10 else 768 + 8 * 8) +
-      "factorial.sc" ~> (if (tempLocal) 128 + 8 * 0 else if (useIP) 128 + 8 * 7 else 128 + 8 * 6) +
+      "factorial.sc" ~> (if (tempLocal) 128 + 8 * 0 else if (useIP && !useMemoryIP) 128 + 8 * 7 else 128 + 8 * 6) +
       "global.sc" ~> (if (tempLocal) 64 + 8 * 5 else 128 + 8 * 3) +
-      "indexing.sc" ~> (if (tempLocal) 128 + 8 * 1 else if (useIP) 128 + 8 * 7 else 128 + 8 * 6) +
-      "indexing-obj.sc" ~> (if (tempLocal) 128 + 8 * 7 else 128 + 8 * 10) +
-      "instanceof.sc" ~> (if (tempLocal) 64 + 8 * 6 else if (splitTempSizes) 128 + 8 * 3 else 128 + 8 * 2) +
+      "indexing.sc" ~> (if (tempLocal) 128 + 8 * 1 else if (useIP && !useMemoryIP) 128 + 8 * 7 else 128 + 8 * 6) +
+      "indexing-obj.sc" ~> (if (tempLocal) if (useIP) 128 + 8 * 7 else 128 + 8 * 6 else 128 + 8 * 10) +
+      "instanceof.sc" ~> (if (tempLocal) if (useIP) 64 + 8 * 6 else 64 + 8 * 5 else if (splitTempSizes) 128 + 8 * 3 else 128 + 8 * 2) +
       "local-reuse.sc" ~> (if (tempLocal) 64 + 8 * 6 else 128 + 8 * 4) +
       "mult.sc" ~> (if (tempLocal) 128 + 8 * 4 else if (useIP) 128 + 8 * 11 else 128 + 8 * 10) +
       "print.sc" ~> (if (tempLocal) 768 + 8 * 20  else 768 + 8 * 23) +
-      "print-no-float.sc" ~> (if (tempLocal) 256 + 8 * 9 else 256 + 8 * 9) +
-      "printU64.sc" ~> (if (tempLocal) 128 + 8 * 4 else if (useIP) 128 + 8 * 12 else 128 + 8 * 11) +
+      "print-no-float.sc" ~> (if (tempLocal) if (useIP) 256 + 8 * 9 else 256 + 8 * 4 else if (useMemoryIP) 256 + 8 * 13 else 256 + 8 * 9) +
+      "printU64.sc" ~> (if (tempLocal) 128 + 8 * 4 else if (useIP && !useMemoryIP) 128 + 8 * 12 else 128 + 8 * 11) +
       "seq.sc" ~> (if (tempLocal) 128 + 8 * 14 else if (useIP) 256 + 8 * 3 else 256 + 8 * 2) +
       "shiftS64.sc" ~> (if (tempLocal) 128 + 8 * 6 else 256 + 8 * 1) +
-      "shiftU64.sc" ~> (if (tempLocal) 128 + 8 * 5 else if (useIP) 256 + 8 * 2 else 256 + 8 * 1) +
+      "shiftU64.sc" ~> (if (tempLocal) 128 + 8 * 5 else if (useIP && !useMemoryIP) 256 + 8 * 2 else 256 + 8 * 1) +
       "sum.sc" ~> (if (tempLocal) 128 + 8 * 3 else if (splitTempSizes) 256 + 8 * 7 else 256 + 8 * 6)
   }
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
@@ -113,14 +113,14 @@ object AnvilTest {
 
   val isInGitHubAction: B = Os.env("GITHUB_ACTIONS").nonEmpty
 
-  def getConfig(file: String, p: Vector[Predef.String], forceIP: B): Anvil.Config = {
+  def getConfig(file: String, p: Vector[Predef.String], forceIP: B, forceMemoryIP: B): Anvil.Config = {
     var config = Anvil.Config.empty
     val splitTempSizes = p.last.contains(splitTempId)
     val tempLocal = p.last.contains(tempLocalId)
     val ipMax: Z = if (p.last.contains(withIpId) || forceIP) 0 else -1
     val printSize: Z = printFileMap.get(file).getOrElse(defaultPrintSize)
     config = config(
-      memory = memoryFileMap(printSize, splitTempSizes, tempLocal, ipMax >= 0).get(file).getOrElse(defaultMemory),
+      memory = memoryFileMap(printSize, splitTempSizes, tempLocal, ipMax >= 0, forceMemoryIP).get(file).getOrElse(defaultMemory),
       printSize = printSize,
       stackTrace = stackTraceFileSet.contains(file),
       erase = eraseFileSet.contains(file),
@@ -132,7 +132,7 @@ object AnvilTest {
       axi4 = F,
       ipMax = ipMax,
       simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles)),
-      memoryAccess = Anvil.Config.MemoryAccess.Default
+      memoryAccess = if (forceMemoryIP) Anvil.Config.MemoryAccess.Ip else Anvil.Config.MemoryAccess.Default
     )
     return config
   }
@@ -198,7 +198,7 @@ class AnvilTest extends SireumRcSpec {
       case Some(program) if !reporter.hasError =>
         val (th2, _) = lang.FrontEnd.checkWorksheet(100, Some(th), program, reporter)
         (dir / path(0)).removeAll()
-        var config = getConfig(file, p, F)
+        var config = getConfig(file, p, F, F)
 
         if (isInGitHubAction) {
           config = config(simOpt = None())

@@ -691,12 +691,12 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "main"), p.prettyST(anvil.printer))
       pass = pass + 1
 
-      p = anvil.transformCP(p)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "cp"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
       p = anvil.transformEmptyBlock(p)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "empty-block"), p.prettyST(anvil.printer))
+      pass = pass + 1
+
+      p = anvil.transformCP(p)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "cp"), p.prettyST(anvil.printer))
       pass = pass + 1
 
       program(procedures = ISZ(p))
