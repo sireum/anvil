@@ -52,10 +52,21 @@ class IRSimulatorTest extends SireumRcSpec {
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withoutIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withoutIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withoutIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withoutIpId})", v)
+
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withIpId})", v)
+
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
+
       r
     }) yield pair
   }
@@ -135,9 +146,7 @@ class IRSimulatorTest extends SireumRcSpec {
             }
           }
           out.removeAll()
-          val config = AnvilTest.getConfig(file, p, F, F)
-          //val config = AnvilTest.getConfig(file, p, F, T)
-          //val config = AnvilTest.getConfig(file, p, T, T)
+          val config = AnvilTest.getConfig(file, p)
           Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, AnvilOutput(F, "", out), reporter) match {
             case Some(ir) =>
               val state = IRSimulator.State.create(ir.anvil.config.splitTempSizes, ir.anvil.config.memory,

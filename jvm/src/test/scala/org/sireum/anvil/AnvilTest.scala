@@ -110,17 +110,19 @@ object AnvilTest {
   val tempLocalId = "temp-local"
   val withIpId = "with-ip"
   val withoutIpId = "without-ip"
+  val withMemIpId = "with-mem-ip"
 
   val isInGitHubAction: B = Os.env("GITHUB_ACTIONS").nonEmpty
 
-  def getConfig(file: String, p: Vector[Predef.String], forceIP: B, forceMemoryIP: B): Anvil.Config = {
+  def getConfig(file: String, p: Vector[Predef.String]): Anvil.Config = {
     var config = Anvil.Config.empty
     val splitTempSizes = p.last.contains(splitTempId)
     val tempLocal = p.last.contains(tempLocalId)
-    val ipMax: Z = if (p.last.contains(withIpId) || forceIP) 0 else -1
+    val useMemoryIp = p.last.contains(withMemIpId)
+    val ipMax: Z = if (useMemoryIp || p.last.contains(withIpId)) 0 else -1
     val printSize: Z = printFileMap.get(file).getOrElse(defaultPrintSize)
     config = config(
-      memory = memoryFileMap(printSize, splitTempSizes, tempLocal, ipMax >= 0, forceMemoryIP).get(file).getOrElse(defaultMemory),
+      memory = memoryFileMap(printSize, splitTempSizes, tempLocal, ipMax >= 0, useMemoryIp).get(file).getOrElse(defaultMemory),
       printSize = printSize,
       stackTrace = stackTraceFileSet.contains(file),
       erase = eraseFileSet.contains(file),
@@ -132,7 +134,7 @@ object AnvilTest {
       axi4 = F,
       ipMax = ipMax,
       simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles)),
-      memoryAccess = if (forceMemoryIP) Anvil.Config.MemoryAccess.Ip else Anvil.Config.MemoryAccess.Default
+      memoryAccess = if (useMemoryIp) Anvil.Config.MemoryAccess.Ip else Anvil.Config.MemoryAccess.Default
     )
     return config
   }
@@ -175,11 +177,11 @@ class AnvilTest extends SireumRcSpec {
         combs(i - 1, r)
       }
 
-      val combSize = 3
+      val combSize = 4
       for (bs <- combs(combSize, (for (_ <- 0 until Util.pow(combSize, 2).toInt) yield Vector[Boolean]()).toVector)) {
         assert(bs.size == combSize)
         if (!isInGitHubAction || bs.forall(b => b)) {
-          val name = s"${k.last}_${if (bs(0)) AnvilTest.splitTempId else AnvilTest.singleTempId}_${if (bs(1)) AnvilTest.tempLocalId else AnvilTest.memLocalId}_${if (bs(2)) AnvilTest.withIpId else AnvilTest.withoutIpId}".
+          val name = s"${k.last}_${if (bs(0)) AnvilTest.splitTempId else AnvilTest.singleTempId}_${if (bs(1)) AnvilTest.tempLocalId else AnvilTest.memLocalId}_${if (bs(2)) if (bs(3)) AnvilTest.withMemIpId else AnvilTest.withIpId else AnvilTest.withoutIpId}".
             replace('.', '_')
           r = r :+ (k.dropRight(1) :+ name, v)
         }
@@ -198,7 +200,7 @@ class AnvilTest extends SireumRcSpec {
       case Some(program) if !reporter.hasError =>
         val (th2, _) = lang.FrontEnd.checkWorksheet(100, Some(th), program, reporter)
         (dir / path(0)).removeAll()
-        var config = getConfig(file, p, F, F)
+        var config = getConfig(file, p)
 
         if (isInGitHubAction) {
           config = config(simOpt = None())
