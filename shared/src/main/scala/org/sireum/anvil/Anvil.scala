@@ -1650,6 +1650,7 @@ import Anvil._
           blocks = blocks :+ AST.IR.BasicBlock(copyLabel, ISZ(
             AST.IR.Stmt.Intrinsic(in(
               lbase = AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
+              loffset = 0,
               rhs = AST.IR.Exp.Temp(rhsOffsetParam, spType, pos),
               rhsBytes =
                 if (config.erase) AST.IR.Exp.Temp(rhsElementSizeParam, spType, pos)

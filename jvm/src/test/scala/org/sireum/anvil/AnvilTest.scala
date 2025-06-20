@@ -31,24 +31,24 @@ object AnvilTest {
   @memoize def memoryFileMap(printSize: Z, splitTempSizes: B, tempLocal: B, useIP: B, useMemoryIP: B): HashMap[String, Z] = {
     return HashMap.empty[String, Z] +
       "add.sc" ~> (if (tempLocal) 64 + 8 * 6  else 128 + 8 * 4) +
-      "assert.sc" ~> (if (tempLocal) 256 + 8 * 3 else if (useIP) if (useMemoryIP) 256 + 8 * 15 else 256 + 8 * 17 else 256 + 8 * 14) +
-      "bubble.sc" ~> (if (tempLocal) 128 + 8 * 6 else 128 + 8 * 12) +
-      "construct.sc" ~> (if (tempLocal) if (useIP) 128 + 8 * 15 else 128 + 8 * 13 else if (useMemoryIP) 256 + 8 * 5 else 256 + 8 * 3) +
-      "divrem.sc" ~> (if (tempLocal) 128 + 8 * 0 else if (useIP && !useMemoryIP) 128 + 8 * 8 else 128 + 8 * 7) +
+      "assert.sc" ~> (if (tempLocal) 256 + 8 * 3 else if (useIP) if (useMemoryIP) 256 + 8 * 15 else 368 else 256 + 8 * 14) +
+      "bubble.sc" ~> (if (tempLocal) 128 + 8 * 6 else if (useIP) if (useMemoryIP) 232 else 224 else 128 + 8 * 12) +
+      "construct.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 248 else 232 else 128 + 8 * 13 else if (useMemoryIP) 256 + 8 * 5 else 256 + 8 * 3) +
+      "divrem.sc" ~> (if (tempLocal) 128 + 8 * 0 else if (useIP) 184 else 128 + 8 * 7) +
       "dll.sc" ~> (if (printSize > 0) if (tempLocal) 768 + 8 * 9 else 768 + 8 * 10 else 768 + 8 * 8) +
-      "factorial.sc" ~> (if (tempLocal) 128 + 8 * 0 else if (useIP && !useMemoryIP) 128 + 8 * 7 else 128 + 8 * 6) +
+      "factorial.sc" ~> (if (tempLocal) 128 + 8 * 0 else if (useIP) 176 else 128 + 8 * 6) +
       "global.sc" ~> (if (tempLocal) 64 + 8 * 5 else 128 + 8 * 3) +
-      "indexing.sc" ~> (if (tempLocal) 128 + 8 * 1 else if (useIP && !useMemoryIP) 128 + 8 * 7 else 128 + 8 * 6) +
-      "indexing-obj.sc" ~> (if (tempLocal) if (useIP) 128 + 8 * 7 else 128 + 8 * 6 else 128 + 8 * 10) +
-      "instanceof.sc" ~> (if (tempLocal) if (useIP) 64 + 8 * 6 else 64 + 8 * 5 else if (splitTempSizes) 128 + 8 * 3 else 128 + 8 * 2) +
+      "indexing-obj.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 184 else 176 else 128 + 8 * 6 else 128 + 8 * 10) +
+      "indexing.sc" ~> (if (tempLocal) 128 + 8 * 1 else if (useIP) 176 else 128 + 8 * 6) +
+      "instanceof.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 112 else 104 else 64 + 8 * 5 else if (splitTempSizes) 128 + 8 * 3 else 128 + 8 * 2) +
       "local-reuse.sc" ~> (if (tempLocal) 64 + 8 * 6 else 128 + 8 * 4) +
-      "mult.sc" ~> (if (tempLocal) 128 + 8 * 4 else if (useIP) 128 + 8 * 11 else 128 + 8 * 10) +
+      "mult.sc" ~> (if (tempLocal) 128 + 8 * 4 else if (useIP) if (useMemoryIP) 216 else 208 else 128 + 8 * 10) +
       "print.sc" ~> (if (tempLocal) 768 + 8 * 20  else 768 + 8 * 23) +
-      "print-no-float.sc" ~> (if (tempLocal) if (useIP) 256 + 8 * 9 else 256 + 8 * 4 else if (useMemoryIP) 256 + 8 * 13 else 256 + 8 * 9) +
-      "printU64.sc" ~> (if (tempLocal) 128 + 8 * 4 else if (useIP && !useMemoryIP) 128 + 8 * 12 else 128 + 8 * 11) +
-      "seq.sc" ~> (if (tempLocal) 128 + 8 * 14 else if (useIP) 256 + 8 * 3 else 256 + 8 * 2) +
+      "print-no-float.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 328 else 288 else 256 + 8 * 4 else if (useMemoryIP) 256 + 8 * 13 else 256 + 8 * 9) +
+      "printU64.sc" ~> (if (tempLocal) 128 + 8 * 4 else if (useIP) 216 else 128 + 8 * 11) +
+      "seq.sc" ~> (if (tempLocal) 128 + 8 * 14 else if (useIP) if (useMemoryIP) 280 else 272 else 256 + 8 * 2) +
       "shiftS64.sc" ~> (if (tempLocal) 128 + 8 * 6 else 256 + 8 * 1) +
-      "shiftU64.sc" ~> (if (tempLocal) 128 + 8 * 5 else if (useIP && !useMemoryIP) 256 + 8 * 2 else 256 + 8 * 1) +
+      "shiftU64.sc" ~> (if (tempLocal) 128 + 8 * 5 else if (useIP) 264 else 256 + 8 * 1) +
       "sum.sc" ~> (if (tempLocal) 128 + 8 * 3 else if (splitTempSizes) 256 + 8 * 7 else 256 + 8 * 6)
   }
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +

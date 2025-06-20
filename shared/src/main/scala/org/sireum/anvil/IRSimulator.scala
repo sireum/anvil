@@ -1409,7 +1409,9 @@ import IRSimulator._
       }
     }
 
-    assert(maxMemoryBox.value + 9 > state.memory.size, s"The configured memory size ${state.memory.size} is larger than needed (${maxMemoryBox.value + 1})")
+    @strictpure def ceil8(n: Z): Z = if (n % 8 == 0) n else ((n / 8) + 1) * 8
+
+    assert(maxMemoryBox.value + 9 > state.memory.size, s"The configured memory size ${state.memory.size} is larger than needed (${ceil8(maxMemoryBox.value + 1)})")
 
     if (DEBUG) {
       println(
