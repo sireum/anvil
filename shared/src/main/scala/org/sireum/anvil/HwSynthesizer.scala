@@ -167,11 +167,11 @@ object ChiselModule {
           |    })
           |  val adder = Module(new ${if (signedPort) "XilinxAdderSigned64Wrapper" else "XilinxAdderUnsigned64Wrapper"})
           |  adder.io.clk := clock.asBool
-          |  adder.io.A := io.a
-          |  adder.io.B := io.b
-          |  adder.io.ce := io.start
-          |  io.valid := adder.io.valid
-          |  io.out := adder.io.S
+          |  adder.io.A := RegNext(io.a)
+          |  adder.io.B := RegNext(io.b)
+          |  adder.io.ce := RegNext(io.start)
+          |  io.valid := RegNext(adder.io.valid)
+          |  io.out := RegNext(adder.io.S)
           |}
         """
   }
@@ -238,11 +238,11 @@ object ChiselModule {
           |    })
           |  val subtractor = Module(new ${if (signedPort) "XilinxSubtractorSigned64Wrapper" else "XilinxSubtractorUnsigned64Wrapper"})
           |  subtractor.io.clk := clock.asBool
-          |  subtractor.io.A := io.a
-          |  subtractor.io.B := io.b
-          |  subtractor.io.ce := io.start
-          |  io.valid := subtractor.io.valid
-          |  io.out := subtractor.io.S
+          |  subtractor.io.A   := RegNext(io.a)
+          |  subtractor.io.B   := RegNext(io.b)
+          |  subtractor.io.ce  := RegNext(io.start)
+          |  io.valid := RegNext(subtractor.io.valid)
+          |  io.out   := RegNext(subtractor.io.S)
           |}
         """
   }
