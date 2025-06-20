@@ -39,7 +39,7 @@ import IRSimulatorTest._
 
 class IRSimulatorTest extends SireumRcSpec {
   {
-    val debug = T & Os.env("GITHUB_ACTIONS").isEmpty
+    val debug = F & Os.env("GITHUB_ACTIONS").isEmpty
     IRSimulator.DEBUG = debug
     IRSimulator.DEBUG_TEMP = debug
     IRSimulator.DEBUG_EDIT = debug

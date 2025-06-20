@@ -30,26 +30,26 @@ import org.sireum.test._
 object AnvilTest {
   @memoize def memoryFileMap(printSize: Z, splitTempSizes: B, tempLocal: B, useIP: B, useMemoryIP: B): HashMap[String, Z] = {
     return HashMap.empty[String, Z] +
-      "add.sc" ~> (if (tempLocal) 64 + 8 * 6  else 128 + 8 * 4) +
-      "assert.sc" ~> (if (tempLocal) 256 + 8 * 3 else if (useIP) if (useMemoryIP) 256 + 8 * 15 else 368 else 256 + 8 * 14) +
-      "bubble.sc" ~> (if (tempLocal) 128 + 8 * 6 else if (useIP) if (useMemoryIP) 232 else 224 else 128 + 8 * 12) +
-      "construct.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 248 else 232 else 128 + 8 * 13 else if (useMemoryIP) 256 + 8 * 5 else 256 + 8 * 3) +
-      "divrem.sc" ~> (if (tempLocal) 128 + 8 * 0 else if (useIP) 184 else 128 + 8 * 7) +
-      "dll.sc" ~> (if (printSize > 0) if (tempLocal) 768 + 8 * 9 else 768 + 8 * 10 else 768 + 8 * 8) +
-      "factorial.sc" ~> (if (tempLocal) 128 + 8 * 0 else if (useIP) 176 else 128 + 8 * 6) +
-      "global.sc" ~> (if (tempLocal) 64 + 8 * 5 else 128 + 8 * 3) +
-      "indexing-obj.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 184 else 176 else 128 + 8 * 6 else 128 + 8 * 10) +
-      "indexing.sc" ~> (if (tempLocal) 128 + 8 * 1 else if (useIP) 176 else 128 + 8 * 6) +
-      "instanceof.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 112 else 104 else 64 + 8 * 5 else if (splitTempSizes) 128 + 8 * 3 else 128 + 8 * 2) +
-      "local-reuse.sc" ~> (if (tempLocal) 64 + 8 * 6 else 128 + 8 * 4) +
-      "mult.sc" ~> (if (tempLocal) 128 + 8 * 4 else if (useIP) if (useMemoryIP) 216 else 208 else 128 + 8 * 10) +
-      "print.sc" ~> (if (tempLocal) 768 + 8 * 20  else 768 + 8 * 23) +
-      "print-no-float.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 328 else 288 else 256 + 8 * 4 else if (useMemoryIP) 256 + 8 * 13 else 256 + 8 * 9) +
-      "printU64.sc" ~> (if (tempLocal) 128 + 8 * 4 else if (useIP) 216 else 128 + 8 * 11) +
-      "seq.sc" ~> (if (tempLocal) 128 + 8 * 14 else if (useIP) if (useMemoryIP) 280 else 272 else 256 + 8 * 2) +
-      "shiftS64.sc" ~> (if (tempLocal) 128 + 8 * 6 else 256 + 8 * 1) +
-      "shiftU64.sc" ~> (if (tempLocal) 128 + 8 * 5 else if (useIP) 264 else 256 + 8 * 1) +
-      "sum.sc" ~> (if (tempLocal) 128 + 8 * 3 else if (splitTempSizes) 256 + 8 * 7 else 256 + 8 * 6)
+      "add.sc" ~> (if (tempLocal) 112  else 160) +
+      "assert.sc" ~> (if (tempLocal) 280 else if (useIP) if (useMemoryIP) 376 else 368 else 368) +
+      "bubble.sc" ~> (if (tempLocal) 176 else if (useIP) if (useMemoryIP) 232 else 224 else 224) +
+      "construct.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 248 else 232 else 232 else if (useMemoryIP) 296 else 256 + 8 * 3) +
+      "divrem.sc" ~> (if (tempLocal) 128 else if (useIP) 184 else 184) +
+      "dll.sc" ~> (if (printSize > 0) if (tempLocal) 840 else 848 else 832) +
+      "factorial.sc" ~> (if (tempLocal) 128 else if (useIP) 176 else 176) +
+      "global.sc" ~> (if (tempLocal) 104 else 152) +
+      "indexing-obj.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 184 else 176 else 176 else 208) +
+      "indexing.sc" ~> (if (tempLocal) 136 else if (useIP) 176 else 176) +
+      "instanceof.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 112 else 104 else 104 else if (splitTempSizes) 152 else 144) +
+      "local-reuse.sc" ~> (if (tempLocal) 112 else 160) +
+      "mult.sc" ~> (if (tempLocal) 160 else if (useIP) if (useMemoryIP) 216 else 208 else 208) +
+      "print.sc" ~> (if (tempLocal) 928  else 952) +
+      "print-no-float.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 328 else 288 else 288 else if (useMemoryIP) 360 else 328) +
+      "printU64.sc" ~> (if (tempLocal) 160 else if (useIP) 216 else 216) +
+      "seq.sc" ~> (if (tempLocal) 240 else if (useIP) if (useMemoryIP) 280 else 272 else 272) +
+      "shiftS64.sc" ~> (if (tempLocal) 176 else 264) +
+      "shiftU64.sc" ~> (if (tempLocal) 168 else if (useIP) 264 else 264) +
+      "sum.sc" ~> (if (tempLocal) 152 else if (splitTempSizes) 312 else 304)
   }
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "dll" ~> 3 +
