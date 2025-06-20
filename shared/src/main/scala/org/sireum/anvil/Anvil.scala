@@ -635,6 +635,10 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "s-create"), p.prettyST(anvil.printer))
       pass = pass + 1
 
+      p = anvil.transformGotoLocal(fresh, p, programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p))))
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "goto-local"), p.prettyST(anvil.printer))
+      pass = pass + 1
+
       val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
 
       p = anvil.transformIfLoadStoreCopyIntrinsic(fresh, p, maxTemps)
@@ -833,18 +837,7 @@ import Anvil._
           map.get(l) match {
             case Some(j2) =>
               j2 match {
-                case _: AST.IR.Jump.Intrinsic =>
-                  var found = F
-                  for (g <- b.grounds if !found) {
-                    g match {
-                      case AST.IR.Stmt.Intrinsic(in: Intrinsic.Store) if in.lhsOffset.isInstanceOf[AST.IR.Exp.Intrinsic] =>
-                        found = T
-                      case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isSP =>
-                        found = T
-                      case _ =>
-                    }
-                  }
-                  if (found) j(label = l) else j2
+                case _: AST.IR.Jump.Intrinsic => j(label = l)
                 case _ => j2
               }
             case _ => j(label = l)
@@ -924,6 +917,34 @@ import Anvil._
       }
     }
     return transformEmptyBlock(p(body = body(blocks = blocks)))
+  }
+
+  def transformGotoLocal(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
+    val temp = maxTemps.typeCount(this, cpt)
+    for (b <- body.blocks) {
+      b.jump match {
+        case AST.IR.Jump.Intrinsic(in: Intrinsic.GotoLocal) if b.grounds.nonEmpty || !in.isTemp =>
+          var block = b
+          val label = fresh.label()
+          if (!in.isTemp) {
+            block = block(
+              grounds = block.grounds :+ AST.IR.Stmt.Assign.Temp(temp,
+                AST.IR.Exp.Intrinsic(Intrinsic.Load(
+                  AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, in.pos)), in.loc, isSigned(cpType),
+                  typeByteSize(cpType), st"", cpType, in.pos
+                )), in.pos),
+              jump = AST.IR.Jump.Intrinsic(in(isTemp = T, loc = temp))
+            )
+          }
+          blocks = blocks :+ block(jump = AST.IR.Jump.Goto(label, in.pos))
+          blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), block.jump)
+        case _ => blocks = blocks :+ b
+      }
+    }
+    return p(body = body(blocks = blocks))
   }
 
   def transformIndexing(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {

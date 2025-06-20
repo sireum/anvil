@@ -1197,7 +1197,7 @@ import IRSimulator._
             for (i <- 0 until size.value) {
               bs = bs :+ state.memory(rhsOffset.value + i)
             }
-            return State.Edit.Memory(lhsOffset.value, bs, acs)
+            return State.Edit.Memory(lhsOffset.value, bs, acs.addMemory(rhsOffset.value, bs))
           case in: Intrinsic.RegisterAssign =>
             val (v, acs) = evalExp(state, in.value)
             if (in.isSP) {
