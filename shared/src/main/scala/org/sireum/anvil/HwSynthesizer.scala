@@ -41,6 +41,7 @@ import org.sireum.message.Position
 @datatype class BinaryIP(t: AST.IR.Exp.Binary.Op.Type, signed: B) extends IpType
 @datatype class IntrinsicIP(t: AST.IR.Exp.Intrinsic.Type) extends IpType
 @datatype class BlockMemoryIP() extends IpType
+@datatype class LabelToFsmIP() extends IpType
 
 @record @unclonable class InputMap(var ipMap: HashSMap[IpType, HashSMap[Z, HashSMap[String, ChiselModule.Input]]]) {
 }
@@ -82,7 +83,8 @@ object InputMap {
     BinaryIP(AST.IR.Exp.Binary.Op.Rem, T) ~> HashSMap.empty,
     BinaryIP(AST.IR.Exp.Binary.Op.Rem, F) ~> HashSMap.empty,
     IntrinsicIP(HwSynthesizer.defaultIndexing) ~> HashSMap.empty,
-    BlockMemoryIP() ~> HashSMap.empty
+    BlockMemoryIP() ~> HashSMap.empty,
+    LabelToFsmIP() ~> HashSMap.empty
   ))
 }
 
@@ -1365,12 +1367,78 @@ object ChiselModule {
   }
 }
 
+@datatype class LabelToFsm(val signedPort: B,
+                           val moduleDeclarationName: String,
+                           val moduleInstanceName: String,
+                           val widthOfPort: Z,
+                           val exp: IpType) extends ChiselModule {
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  @strictpure override def portList: HashSMap[String, String] = {
+    HashSMap.empty[String, String] + "label" ~> "UInt" + "originalCpIndex" ~> "UInt" + "start" ~> "Bool"
+  }
+  @strictpure override def expression: IpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val numOfStates: Int, val cpMax: Int) extends Module {
+        |    val cpWidth: Int = (numOfStates / cpMax) + (if(numOfStates % cpMax == 0) 0 else 1)
+        |
+        |    val io = IO(new Bundle{
+        |        val start           = Input(Bool())
+        |        val label           = Input(UInt(log2Up(numOfStates).W))
+        |        val originalCpIndex = Input(UInt(log2Up(cpWidth).W))
+        |        val valid           = Output(Bool())
+        |        val isSameCpIndex   = Output(Bool())
+        |        val cpIndex         = Output(UInt(log2Up(cpWidth).W))
+        |        val stateIndex      = Output(UInt(log2Up(cpMax).W))
+        |    })
+        |
+        |    val sIdle :: sShift :: sCompare :: sEnd :: Nil = Enum(4)
+        |    val r_originalCpIndex = Reg(UInt(log2Up(cpWidth).W))
+        |    val r_state           = RegInit(sIdle)
+        |    val r_label           = Reg(UInt(log2Up(numOfStates).W))
+        |    val r_cpIndex         = Reg(UInt(log2Up(cpWidth).W))
+        |    val r_stateIndex      = Reg(UInt(log2Up(cpMax).W))
+        |    val r_isSameCpIndex   = Reg(Bool())
+        |
+        |    switch(r_state) {
+        |        is(sIdle) {
+        |            r_state           := Mux(io.start, sShift, r_state)
+        |            r_label           := io.label
+        |            r_originalCpIndex := io.originalCpIndex
+        |        }
+        |        is(sShift) {
+        |            r_cpIndex    := r_label >> log2Up(cpMax).U
+        |            r_stateIndex := r_label(log2Up(cpMax) - 1, 0)
+        |            r_state      := sCompare
+        |        }
+        |        is(sCompare) {
+        |            r_isSameCpIndex := r_cpIndex === r_originalCpIndex
+        |            r_state         := sEnd
+        |        }
+        |        is(sEnd) {
+        |            r_state := sIdle
+        |        }
+        |    }
+        |
+        |    io.cpIndex       := r_cpIndex
+        |    io.isSameCpIndex := r_isSameCpIndex
+        |    io.stateIndex    := r_stateIndex
+        |    io.valid         := r_state === sEnd
+        |}
+      """
+  }
+}
+
 import HwSynthesizer._
 @record class HwSynthesizer(val anvil: Anvil) {
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
 
   var ipAlloc: Util.IpAlloc = Util.IpAlloc(HashSMap.empty, HashSMap.empty, 0)
+  val hwLog: HwSynthesizer.HwLog = HwSynthesizer.HwLog(0, MNone(), F, F, 0, 0, 0)
 
   val xilinxIPValid: B = if(anvil.config.useIP) anvil.config.noXilinxIp else T
   var ipModules: ISZ[ChiselModule] = ISZ[ChiselModule](
@@ -1409,10 +1477,11 @@ import HwSynthesizer._
     Division(T, "DivisionSigned64", "divisionSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), xilinxIPValid),
     Remainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, F), xilinxIPValid),
     Remainder(T, "RemainerSigned64", "remainerSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), xilinxIPValid),
-    BlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory, BlockMemoryIP(), xilinxIPValid, anvil.config.erase)
+    BlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory, BlockMemoryIP(), xilinxIPValid, anvil.config.erase),
+    LabelToFsm(F, "LabelToFsmIP", "labelToFsmIp", 0, LabelToFsmIP())
   )
 
-  @strictpure def getCpIndex(label: Z): (Z, Z) = (label / (anvil.config.cpMax - 1), label % (anvil.config.cpMax - 1))
+  @strictpure def getCpIndex(label: Z): (Z, Z) = (label / anvil.config.cpMax, label % anvil.config.cpMax)
 
   @pure def findChiselModule(ip: IpType): Option[ChiselModule] = {
     for(i <- 0 until ipModules.size) {
@@ -1429,6 +1498,13 @@ import HwSynthesizer._
       val modDeclIns: ISZ[ST] = if(targetModule.expression == BlockMemoryIP()) {
         for (i <- 0 until numInstances) yield
           st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${targetModule.asInstanceOf[BlockMemory].depth}, ${targetModule.width}))"""
+      } else if(targetModule.expression == LabelToFsmIP()) {
+        if(anvil.config.cpMax > 0) {
+          for (i <- 0 until numInstances) yield
+            st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${hwLog.maxNumLabel}, ${anvil.config.cpMax}))"""
+        } else {
+          ISZ[ST]()
+        }
       } else {
         for (i <- 0 until numInstances) yield
           st"""val ${targetModule.instanceName}_${i} = Module(new ${targetModule.moduleName}(${targetModule.width}))"""
@@ -1467,6 +1543,8 @@ import HwSynthesizer._
 
       for(entry <- targetModule.portList.entries) {
         if(ip == BlockMemoryIP()) {
+          muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}.io.${entry._1} := ${defaultValue(entry._2)}"
+        } else if(ip == LabelToFsmIP()) {
           muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}.io.${entry._1} := ${defaultValue(entry._2)}"
         } else {
           muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}_${modIdx}.io.${entry._1} := ${defaultValue(entry._2)}"
@@ -1551,7 +1629,8 @@ import HwSynthesizer._
           |tempLocal = ${if(anvil.config.tempLocal) "true" else "false"},
           |memoryAccess = ${anvil.config.memoryAccess.string},
           |useIp = ${if(anvil.config.useIP) "true" else "false"},
-          |ipMax = ${anvil.config.ipMax}
+          |ipMax = ${anvil.config.ipMax},
+          |cpMax = ${anvil.config.cpMax}
         """
 
     output.add(T, ISZ("config.txt"), configST)
@@ -2330,7 +2409,6 @@ import HwSynthesizer._
   }
 
   @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector): ST = {
-    val hwLog = HwSynthesizer.HwLog(0, MNone(), F, F, 0, 0)
 
     @pure def generalPurposeRegisterST: ST = {
       var generalRegMap: HashMap[String, (Z,Z,B)] = HashMap.empty[String, (Z,Z,B)]
@@ -2559,6 +2637,9 @@ import HwSynthesizer._
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
           instanceST = instanceST :+ insDeclST(BlockMemoryIP(), 1)
         }
+        if(anvil.config.cpMax > 0) {
+          instanceST = instanceST :+ insDeclST(LabelToFsmIP(), 1)
+        }
         st"""${(instanceST, "\n")}"""
       }
 
@@ -2572,6 +2653,9 @@ import HwSynthesizer._
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
           instanceST = instanceST :+ insPortFuncST(BlockMemoryIP(), 1)
         }
+        if(anvil.config.cpMax > 0) {
+          instanceST = instanceST :+ insPortFuncST(LabelToFsmIP(), 1)
+        }
         st"""${(instanceST, "\n")}"""
       }
 
@@ -2584,6 +2668,9 @@ import HwSynthesizer._
         instanceST = instanceST :+ insPortCallST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
           instanceST = instanceST :+ insPortCallST(BlockMemoryIP(), 1)
+        }
+        if(anvil.config.cpMax > 0) {
+          instanceST = instanceST :+ insPortCallST(LabelToFsmIP(), 1)
         }
         st"""${(instanceST, "\n")}"""
       }
@@ -2767,23 +2854,65 @@ import HwSynthesizer._
                      |val CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
                    """
         } else {
-          val maxNumCps: Z = (hwLog.currentLabel / anvil.config.cpMax) + (if (hwLog.currentLabel % anvil.config.cpMax == 0) 0 else 1)
+          val maxNumCps: Z = (hwLog.maxNumLabel / anvil.config.cpMax) + (if (hwLog.maxNumLabel % anvil.config.cpMax == 0) 0 else 1)
+          var vecInitValue: ISZ[ST] = ISZ[ST]()
+          var wireInitValue: ISZ[ST] = ISZ[ST]()
+
+          for(i <- 0 until(maxNumCps)) {
+            vecInitValue = vecInitValue :+ (
+              if(maxNumCps == 1) st"val initVals = Seq(2.U(width.W))"
+              else if(i == 0) st"val initVals = Seq(2.U(width.W)"
+              else if(i == maxNumCps - 1) st", ${anvil.config.cpMax}.U(width.W))"
+              else st", ${anvil.config.cpMax}.U(width.W)"
+              )
+          }
+
+          for(i <- 0 until(maxNumCps)) {
+            wireInitValue = wireInitValue :+ (
+              if(maxNumCps == 1) st"val wireInitVals = Seq(${anvil.config.cpMax}.U(width.W))"
+              else if(i == 0) st"val wireInitVals = Seq(${anvil.config.cpMax}.U(width.W)"
+              else if(i == maxNumCps - 1) st", ${anvil.config.cpMax}.U(width.W))"
+              else st", ${anvil.config.cpMax}.U(width.W)"
+              )
+          }
 
           return st"""
-                     |val CP = RegInit(VecInit(Seq.fill(${maxNumCps})(${anvil.config.cpMax}.U(log2Up(${anvil.config.cpMax}).W))))
-                   """
+                     |val width: Int = log2Up(${anvil.config.cpMax + 1})
+                     |${(vecInitValue, "")}
+                     |val CP = VecInit(initVals.map(v => RegInit(v)))
+                     |${(wireInitValue, "")}
+                     |val nextCP = WireInit(VecInit(wireInitVals))
+                     |"""
         }
       }
 
       val readyST: ST =
         if(anvil.config.cpMax <= 0)
           st"""
-              |Mux(CP === 0.U, 1.U, 0.U) | Mux(CP === 1.U, 2.U, 0.U)
+              |r_ready := Mux(CP === 0.U, 1.U, 0.U) | Mux(CP === 1.U, 2.U, 0.U)
             """
         else
           st"""
-              |Mux(CP(0.U) === 0.U, 1.U, 0.U) | Mux(CP(0.U) === 1.U, 2.U, 0.U)
+              |when(CP(0.U) === 0.U) {
+              |  r_ready := 1.U
+              |} .elsewhen(CP(0.U) === 1.U) {
+              |  r_ready := 2.U
+              |}
             """
+
+      @pure def udpateCpsST: ST = {
+        val maxNumCps: Z = (hwLog.maxNumLabel / anvil.config.cpMax) + (if (hwLog.maxNumLabel % anvil.config.cpMax == 0) 0 else 1)
+        var iterateNextCPST: ISZ[ST] = ISZ[ST]()
+        for(i <- 0 until maxNumCps) {
+          iterateNextCPST = iterateNextCPST :+
+            st"""
+                |when(r_valid){
+                |  CP(${i}.U) := RegNext(nextCP(${i}.U))
+                |}"""
+        }
+
+        return st"""${(iterateNextCPST, "\n")}"""
+      }
 
       return st"""
           |import chisel3._
@@ -2868,7 +2997,7 @@ import HwSynthesizer._
           |  // registers for valid and ready
           |  val r_valid = RegInit(false.B)
           |  val r_ready = RegInit(0.U(2.W))
-          |  r_ready := ${readyST.render}
+          |  ${readyST.render}
           |
           |  ${if(anvil.config.useIP) instanceDeclST else st""}
           |  init(this)
@@ -2944,6 +3073,7 @@ import HwSynthesizer._
           |  io.S_AXI_RRESP   := 0.U
           |  io.S_AXI_RVALID  := r_s_axi_rvalid
           |
+          |  ${if(anvil.config.cpMax <= 0) st"" else udpateCpsST}
           |  ${(stateMachineST, "")}
           |}
           |
@@ -2966,83 +3096,129 @@ import HwSynthesizer._
   }
 
   @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], hwLog: HwSynthesizer.HwLog): (ST, ST) = {
+    for(b <- bs) {
+      if(b.label > hwLog.maxNumLabel) {
+        hwLog.maxNumLabel = b.label
+      }
+    }
+
     val ipPortLogic = HwSynthesizer.IpPortAssign(anvil, ipAlloc, ISZ[ST](), ipModules, InputMap.empty, ISZ[ST](), ISZ[ST]())
-    @pure def basicBlockST(grounds: ISZ[ST], functions: ISZ[ST]): (ST, ST) = {
+    @pure def basicBlockST(grounds: HashSMap[Z, ST], functions: ISZ[ST]): (ST, ST) = {
       def chunk(start: Z, size: Z): ISZ[ST] = {
         var res = ISZ[ST]()
         var i = start
         val end: Z = if (start + size < grounds.size) start + size else grounds.size
+        val entries = grounds.entries
         while (i < end) {
-          res = res :+ grounds(i)
+          val entry = entries(i)
+          res = res :+ entry._2
           i = i + 1
         }
         return res
       }
 
-      var chunks = ISZ[ISZ[ST]]()
-      var idx: Z = 0
+      if(anvil.config.cpMax <= 0) {
+        var chunks = ISZ[ISZ[ST]]()
+        var idx: Z = 0
 
-      if (grounds.size >= 999) {
-        chunks = chunks :+ chunk(idx, 999)
-        idx = idx + 999
-        while (idx < grounds.size) {
-          chunks = chunks :+ chunk(idx, 1000)
-          idx = idx + 1000
-        }
-      } else {
-        chunks = chunks :+ chunk(0, grounds.size)
-      }
-
-      var chunkST: ISZ[ST] = ISZ[ST]()
-      for(i <- 0 until (chunks.size)) {
-        if(i == 0) {
-          chunkST = chunkST :+
-            st"""
-                |def stateMachine_${i}(): Unit = {
-                |  switch(CP) {
-                |    is(${if(anvil.config.cpMax <= 0) "2.U" else s"${anvil.config.cpMax - 1}.U"}) {
-                |      CP := Mux(r_valid, 3.U, CP)
-                |    }
-                |    ${(chunks(i), "\n")}
-                |  }
-                |}
-              """
+        if (grounds.size >= 999) {
+          chunks = chunks :+ chunk(idx, 999)
+          idx = idx + 999
+          while (idx < grounds.size) {
+            chunks = chunks :+ chunk(idx, 1000)
+            idx = idx + 1000
+          }
         } else {
-          chunkST = chunkST :+
-            st"""
-                |def stateMachine_${i}(): Unit = {
-                |  switch(CP) {
-                |    ${(chunks(i), "\n")}
-                |  }
-                |}
-              """
+          chunks = chunks :+ chunk(0, grounds.size)
         }
-      }
 
-      var chunkFunST: ISZ[ST] = {
-        for(i <- 0 until (chunks.size)) yield
-          st"""
+        var chunkST: ISZ[ST] = ISZ[ST]()
+        for (i <- 0 until (chunks.size)) {
+          if (i == 0) {
+            chunkST = chunkST :+
+              st"""
+                  |def stateMachine_${i}(): Unit = {
+                  |  switch(CP) {
+                  |    is(2.U) {
+                  |      CP := Mux(r_valid, 3.U, CP)
+                  |    }
+                  |    ${(chunks(i), "\n")}
+                  |  }
+                  |}
+              """
+          } else {
+            chunkST = chunkST :+
+              st"""
+                  |def stateMachine_${i}(): Unit = {
+                  |  switch(CP) {
+                  |    ${(chunks(i), "\n")}
+                  |  }
+                  |}
+              """
+          }
+        }
+
+        var chunkFunST: ISZ[ST] = {
+          for (i <- 0 until (chunks.size)) yield
+            st"""
               |stateMachine_${i}()
             """
-      }
+        }
 
-      val stateMachineFunST: ST =
-        st"""
-            |def stateMachineAll(): Unit = {
-            |  ${(chunkFunST, "\n")}
-            |}
-            |stateMachineAll()
+        val stateMachineFunST: ST =
+          st"""
+              |def stateMachineAll(): Unit = {
+              |  ${(chunkFunST, "\n")}
+              |}
+              |stateMachineAll()
           """
 
-      chunkST = chunkST :+ stateMachineFunST
+        chunkST = chunkST :+ stateMachineFunST
 
-      return (
-        st"""
-            |${(chunkST, "")}
-          """,
-        st"""
-            |${(functions, "")}"""
-      )
+        return (
+          st"""${(chunkST, "")}""",
+          st"""${(functions, "")}"""
+        )
+      } else {
+        var stateSTs: ISZ[ISZ[ST]] = ISZ[ISZ[ST]]()
+        // for state machine 0
+        stateSTs = stateSTs :+ ISZ[ST]()
+        val initST = stateSTs(0) :+
+          st"""
+              |is(2.U) {
+              |  nextCP(0.U) := Mux(r_valid, 3.U, 2.U)
+              |}
+              """
+        stateSTs = stateSTs(0 ~> initST)
+
+        for(pair <- grounds.entries) {
+          val (label, blockST) = pair
+          val (cpIdx, stateIdx) = getCpIndex(label)
+          if(stateIdx == 0) {
+            stateSTs = stateSTs :+ ISZ[ST]()
+          }
+          val updatedBlock = stateSTs(cpIdx) :+ st"${blockST}"
+          stateSTs = stateSTs(cpIdx ~> updatedBlock)
+        }
+
+        var fmsSTs: ISZ[ST] = ISZ[ST]()
+        for(i <- 0 until stateSTs.size) {
+          fmsSTs = fmsSTs :+
+            st"""
+                |def stateMachine_${i}(): Unit = {
+                |  switch(CP(${i}.U)) {
+                |    ${(stateSTs(i), "\n")}
+                |  }
+                |}
+                |stateMachine_${i}()
+              """
+        }
+
+        return (
+          st"""${(fmsSTs, "\n")}""",
+          st"""${(functions, "")}"""
+        )
+      }
     }
 
     @pure def groundST(b: AST.IR.BasicBlock, ground: ST, jump: ST): (ST, ST) = {
@@ -3085,19 +3261,27 @@ import HwSynthesizer._
               |  }
               |}
               """
-        val functionCallST: ST =
-          st"""
-              |is(${b.label}.U) {
-              |  Block_${b.label}.block_${b.label}(this)
-              |}
+        val functionCallST: ST = {
+          if(anvil.config.cpMax <= 0)
+            st"""
+                |is(${b.label}.U) {
+                |  Block_${b.label}.block_${b.label}(this)
+                |}
+                """
+          else
+            st"""
+                |is(${b.label % (anvil.config.cpMax)}.U) {
+                |  Block_${b.label}.block_${b.label}(this)
+                |}
               """
+        }
         return (functionCallST, functionDefinitionST)
       } else {
         return (st"", st"")
       }
     }
 
-    var allGroundsST = ISZ[ST]()
+    var allGroundsST: HashSMap[Z, ST] = HashSMap.empty[Z, ST]
     var allFunctionsST = ISZ[ST]()
 
     for (b <- bs) {
@@ -3110,6 +3294,7 @@ import HwSynthesizer._
         if(ipPortLogic.whenCondST.nonEmpty) {
           jump =
             st"""
+                |${if(anvil.config.cpMax <= 0) "" else s"nextCP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${getCpIndex(hwLog.currentLabel)._2}.U"}
                 |when(${(ipPortLogic.whenCondST, " & ")}) {
                 |  ${(ipPortLogic.whenStmtST, "\n")}
                 |  ${jump}
@@ -3120,7 +3305,7 @@ import HwSynthesizer._
         ipPortLogic.whenCondST = ISZ[ST]()
         ipPortLogic.whenStmtST = ISZ[ST]()
 
-        allGroundsST = allGroundsST :+ g._1
+        allGroundsST = allGroundsST + b.label ~> g._1
         allFunctionsST = allFunctionsST :+ g._2
       }
 
@@ -3155,8 +3340,7 @@ import HwSynthesizer._
       ipPortLogic.inputMap = InputMap.empty
     }
 
-    return st"""
-               |${(groundST, "\n")}"""
+    return st"""${(groundST, "\n")}"""
   }
 
   @pure def processJumpIntrinsic(b: AST.IR.BasicBlock, ipPortLogic: HwSynthesizer.IpPortAssign, hwLog: HwSynthesizer.HwLog): ST = {
@@ -3168,10 +3352,10 @@ import HwSynthesizer._
       val curCpIdx = getCpIndex(hwLog.currentLabel)._1
       val (nextCpIdx, nextPosIdx) = getCpIndex(label)
       if(curCpIdx == nextCpIdx) {
-        sts = sts :+ st"CP_${curCpIdx} := ${nextPosIdx}.U"
+        sts = sts :+ st"nextCP(${curCpIdx}.U) := ${nextPosIdx}.U"
       } else {
-        sts = sts :+ st"CP_${curCpIdx} := ${anvil.config.cpMax - 1}.U"
-        sts = sts :+ st"CP_${nextCpIdx} := ${nextPosIdx}.U"
+        sts = sts :+ st"nextCP(${curCpIdx}.U) := ${anvil.config.cpMax}.U"
+        sts = sts :+ st"nextCP(${nextCpIdx}.U) := RegNext(${nextPosIdx}.U)"
       }
 
       return st"${(sts, "\n")}"
@@ -3179,11 +3363,30 @@ import HwSynthesizer._
 
     j match {
       case AST.IR.Jump.Intrinsic(intrinsic: Intrinsic.GotoLocal) => {
+        val targetAddrST: ST = processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F, ipPortLogic, hwLog)
         if (intrinsic.isTemp) {
-          intrinsicST = intrinsicST :+
-            st"""
-                |CP := ${processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F, ipPortLogic, hwLog)}
-            """
+          if(anvil.config.cpMax <= 0) {
+            intrinsicST = intrinsicST :+ st"CP := ${targetAddrST}"
+          } else {
+            var portSTs: ISZ[ST] = ISZ[ST]()
+            val instanceName: String = getIpInstanceName(LabelToFsmIP()).get
+            portSTs = portSTs :+ st"${instanceName}.io.label := ${targetAddrST}"
+            portSTs = portSTs :+ st"${instanceName}.io.start := Mux(${instanceName}.io.valid, false.B, true.B)"
+            portSTs = portSTs :+ st"${instanceName}.io.originalCpIndex := ${getCpIndex(hwLog.currentLabel)._1}.U"
+            portSTs = portSTs :+
+              st"""
+                  |nextCP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${getCpIndex(hwLog.currentLabel)._2}.U
+                  |when(${instanceName}.io.valid) {
+                  |  when(${instanceName}.io.isSameCpIndex) {
+                  |    nextCP(${instanceName}.io.cpIndex) := ${instanceName}.io.stateIndex
+                  |  } .otherwise {
+                  |    nextCP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${anvil.config.cpMax}.U
+                  |    nextCP(${instanceName}.io.cpIndex) := RegNext(${instanceName}.io.stateIndex)
+                  |  }
+                  |}
+                """
+            intrinsicST = intrinsicST :+ st"${(portSTs, "\n")}"
+          }
         } else {
           var returnAddrST = ISZ[ST]()
           val offsetST: ST = if (intrinsic.loc < 0) st"- ${-intrinsic.loc}" else st"+ ${intrinsic.loc}"
@@ -3693,6 +3896,10 @@ import HwSynthesizer._
           "mask" ~> (st"${mask}.U", "UInt") +
           "ready" ~> (st"true.B", "Bool")
 
+        if(anvil.config.cpMax > 0) {
+          ipPortLogic.sts = ipPortLogic.sts :+ st"nextCP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${getCpIndex(hwLog.currentLabel)._2}.U"
+        }
+
         insertIPInput(IntrinsicIP(defaultIndexing), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
         val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
 
@@ -4078,7 +4285,8 @@ object HwSynthesizer {
                                   var memCpyInCurrentBlock: B,
                                   var indexerInCurrentBlock: B,
                                   var activeIndexerIndex: Z,
-                                  var currentLabel: Z) extends MAnvilIRTransformer{
+                                  var currentLabel: Z,
+                                  var maxNumLabel: Z) extends MAnvilIRTransformer{
 
     @pure def isMemCpyInCurrentBlock(): B = {
       return memCpyInCurrentBlock
