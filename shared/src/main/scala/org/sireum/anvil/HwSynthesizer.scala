@@ -1903,19 +1903,6 @@ import HwSynthesizer._
             |endmodule
           """
       }
-      @strictpure def xilinxBUFGWrapperST: ST = {
-        st"""
-            |module XilinxBUFGWrapper (
-            |  input wire I,
-            |  output wire O
-            |);
-            |  BUFG bufg_inst(
-            |    .I(I),
-            |    .O(O)
-            |  );
-            |endmodule
-          """
-      }
 
       val backslash = "\\"
       val ipGenerationTclST: ST =
@@ -2212,7 +2199,6 @@ import HwSynthesizer._
       output.add(T, ISZ("chisel/../", "synthesize_zcu102_zynq.tcl"), synthImplST)
       output.add(T, ISZ("chisel/../", "ip_generation.tcl"), ipGenerationTclST)
       output.add(T, ISZ("chisel/src/main/resources/C", "zynq_program.c"), zynqCProgramST)
-      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxBUFGWrapper.v"), xilinxBUFGWrapperST)
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxAdderSigned64Wrapper.v"), xilinxAddSub64ST(T ,T))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxAdderUnsigned64Wrapper.v"), xilinxAddSub64ST(T, F))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxSubtractorSigned64Wrapper.v"), xilinxAddSub64ST(F, T))
@@ -2227,6 +2213,20 @@ import HwSynthesizer._
     }
 
     if (anvil.config.genVerilog) {
+      @strictpure def xilinxBUFGWrapperST: ST = {
+        st"""
+            |module XilinxBUFGWrapper (
+            |  input wire I,
+            |  output wire O
+            |);
+            |  BUFG bufg_inst(
+            |    .I(I),
+            |    .O(O)
+            |  );
+            |endmodule
+          """
+      }
+      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxBUFGWrapper.v"), xilinxBUFGWrapperST)
       output.add(T, ISZ("chisel/src/test/scala", s"${name}VerilogGeneration.scala"), verilogGenerationST(name))
     }
 
