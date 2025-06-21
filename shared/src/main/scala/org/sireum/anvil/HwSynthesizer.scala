@@ -3521,7 +3521,7 @@ import HwSynthesizer._
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
           val tempST: ST = st"${if (!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"}"
           val byteST: ST = st"(${intrinsic.bytes * 8 - 1}, 0)"
-          val signedST: ST = if(intrinsic.isSigned) st".asSInt" else st""
+          val signedST: ST = if(intrinsic.isSigned && anvil.config.splitTempSizes) st".asSInt" else st""
           val offsetWidth: Z = log2Up(anvil.config.memory * 8)
           val readOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.readValid"
