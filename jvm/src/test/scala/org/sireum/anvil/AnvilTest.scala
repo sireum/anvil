@@ -133,6 +133,7 @@ object AnvilTest {
       genVerilog = T,
       axi4 = F,
       ipMax = ipMax,
+      noXilinxIp = T,
       simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles)),
       memoryAccess = if (useMemoryIp) Anvil.Config.MemoryAccess.Ip else Anvil.Config.MemoryAccess.Default
     )
