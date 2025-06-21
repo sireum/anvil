@@ -2504,10 +2504,10 @@ import HwSynthesizer._
             |  val io = IO(new Bundle {
             |    val clk = Input(Bool())
             |    val ce = Input(Bool())
-            |    val a = Input(UInt(64.W))
-            |    val b = Input(UInt(64.W))
+            |    val a = Input(SInt(64.W))
+            |    val b = Input(SInt(64.W))
             |    val valid = Output(Bool())
-            |    val p = Output(UInt(64.W))
+            |    val p = Output(SInt(64.W))
             |  })
             |
             |  addResource("/verilog/XilinxMultiplierSigned64Wrapper.v")
