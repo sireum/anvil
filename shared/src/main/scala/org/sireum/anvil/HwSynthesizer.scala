@@ -2622,78 +2622,6 @@ import HwSynthesizer._
           }
         }
 
-        if(anvil.config.cpMax > 0) {
-          val broadcastBufferST: ST =
-            st"""
-                |class StateBundle extends Bundle {
-                |  val index = UInt(${log2Up(maxNumCps)}.W)
-                |  val state = UInt(${log2Up(anvil.config.cpMax + 1)}.W)
-                |}
-                |
-                |class BroadcastBufferIO[T <: Data](gen: T, n: Int) extends Bundle {
-                |  val in  = Flipped(Vec(n, Decoupled(gen)))
-                |  val out = Vec(n, Decoupled(gen))
-                |}
-                |
-                |class BroadcastBuffer[T <: Data](gen: T, n: Int) extends Module {
-                |  val io = IO(new BroadcastBufferIO(gen, n))
-                |
-                |  // input data related register
-                |  val inValidReg = RegInit(VecInit(Seq.fill(n)(false.B)))
-                |  val inBitsReg  = Reg(Vec(n, gen))
-                |
-                |  // valid and data related register
-                |  val validReg = RegInit(false.B)
-                |  val dataReg  = Reg(gen)
-                |
-                |  // find the valid input
-                |  val anyInputValid = inValidReg.reduce(_ || _)
-                |  val selectedIdx = Wire(UInt(log2Ceil(n).W))
-                |  val selectedData = Wire(gen)
-                |
-                |  // output related register
-                |  val outValidReg = RegNext(validReg, init = false.B)
-                |  val outDataReg  = RegEnable(dataReg, enable = validReg)
-                |
-                |  // register for every inputs
-                |  for (i <- 0 until n) {
-                |    inValidReg(i) := io.in(i).valid
-                |    inBitsReg(i) := io.in(i).bits
-                |    io.in(i).ready := !inValidReg(i) && !validReg
-                |  }
-                |
-                |  selectedIdx := 0.U
-                |  selectedData := inBitsReg(0)
-                |  for (i <- 0 until n) {
-                |    when (inValidReg(i)) {
-                |      selectedIdx := i.U
-                |      selectedData := inBitsReg(i)
-                |    }
-                |  }
-                |
-                |  // accept the input data
-                |  when (!validReg && anyInputValid) {
-                |    dataReg := selectedData
-                |    validReg := true.B
-                |  }
-                |
-                |  // broadcast output
-                |  for (i <- 0 until n) {
-                |    io.out(i).valid := outValidReg
-                |    io.out(i).bits := outDataReg
-                |  }
-                |
-                |  // wait all consumer ready
-                |  val allFired = io.out.map(_.ready).reduce(_ && _) && outValidReg
-                |  when (allFired) {
-                |    validReg := false.B
-                |  }
-                |}
-              """
-
-          moduleST = moduleST :+ broadcastBufferST
-        }
-
         st"""${(moduleST, "\n")}"""
       }
 
@@ -2706,20 +2634,6 @@ import HwSynthesizer._
         instanceST = instanceST :+ insDeclST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
           instanceST = instanceST :+ insDeclST(BlockMemoryIP(), 1)
-        }
-        if(anvil.config.cpMax > 0) {
-          instanceST = instanceST :+ insDeclST(LabelToFsmIP(), 1)
-          instanceST = instanceST :+
-            st"""
-                |val broadcastBuffer = Module(new BroadcastBuffer(new StateBundle, ${maxNumCps}))
-                |for(i <- 0 until ${maxNumCps}) {
-                |  broadcastBuffer.io.in(i).valid := false.B
-                |  broadcastBuffer.io.in(i).bits.index := 0.U
-                |  broadcastBuffer.io.in(i).bits.state := ${anvil.config.cpMax}.U
-                |
-                |  broadcastBuffer.io.out(i).ready := true.B
-                |}
-              """
         }
         st"""${(instanceST, "\n")}"""
       }
@@ -2734,9 +2648,6 @@ import HwSynthesizer._
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
           instanceST = instanceST :+ insPortFuncST(BlockMemoryIP(), 1)
         }
-        if(anvil.config.cpMax > 0) {
-          instanceST = instanceST :+ insPortFuncST(LabelToFsmIP(), 1)
-        }
         st"""${(instanceST, "\n")}"""
       }
 
@@ -2750,11 +2661,88 @@ import HwSynthesizer._
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
           instanceST = instanceST :+ insPortCallST(BlockMemoryIP(), 1)
         }
-        if(anvil.config.cpMax > 0) {
-          instanceST = instanceST :+ insPortCallST(LabelToFsmIP(), 1)
-        }
         st"""${(instanceST, "\n")}"""
       }
+
+      val broadcastBufferDeclST: ST =
+        st"""
+            |class StateBundle extends Bundle {
+            |  val index = UInt(${log2Up(maxNumCps)}.W)
+            |  val state = UInt(${log2Up(anvil.config.cpMax + 1)}.W)
+            |}
+            |
+            |class BroadcastBufferIO[T <: Data](gen: T, n: Int) extends Bundle {
+            |  val in  = Flipped(Vec(n, Decoupled(gen)))
+            |  val out = Vec(n, Decoupled(gen))
+            |}
+            |
+            |class BroadcastBuffer[T <: Data](gen: T, n: Int) extends Module {
+            |  val io = IO(new BroadcastBufferIO(gen, n))
+            |
+            |  // input data related register
+            |  val inValidReg = RegInit(VecInit(Seq.fill(n)(false.B)))
+            |  val inBitsReg  = Reg(Vec(n, gen))
+            |
+            |  // valid and data related register
+            |  val validReg = RegInit(false.B)
+            |  val dataReg  = Reg(gen)
+            |
+            |  // find the valid input
+            |  val anyInputValid = inValidReg.reduce(_ || _)
+            |  val selectedIdx = Wire(UInt(log2Ceil(n).W))
+            |  val selectedData = Wire(gen)
+            |
+            |  // output related register
+            |  val outValidReg = RegNext(validReg, init = false.B)
+            |  val outDataReg  = RegEnable(dataReg, enable = validReg)
+            |
+            |  // register for every inputs
+            |  for (i <- 0 until n) {
+            |    inValidReg(i) := io.in(i).valid
+            |    inBitsReg(i) := io.in(i).bits
+            |    io.in(i).ready := !inValidReg(i) && !validReg
+            |  }
+            |
+            |  selectedIdx := 0.U
+            |  selectedData := inBitsReg(0)
+            |  for (i <- 0 until n) {
+            |    when (inValidReg(i)) {
+            |      selectedIdx := i.U
+            |      selectedData := inBitsReg(i)
+            |    }
+            |  }
+            |
+            |  // accept the input data
+            |  when (!validReg && anyInputValid) {
+            |    dataReg := selectedData
+            |    validReg := true.B
+            |  }
+            |
+            |  // broadcast output
+            |  for (i <- 0 until n) {
+            |    io.out(i).valid := outValidReg
+            |    io.out(i).bits := outDataReg
+            |  }
+            |
+            |  // wait all consumer ready
+            |  val allFired = io.out.map(_.ready).reduce(_ && _) && outValidReg
+            |  when (allFired) {
+            |    validReg := false.B
+            |  }
+            |}
+            """
+
+      val broadcastBufferInsST =
+        st"""
+            |val broadcastBuffer = Module(new BroadcastBuffer(new StateBundle, ${maxNumCps}))
+            |for(i <- 0 until ${maxNumCps}) {
+            |  broadcastBuffer.io.in(i).valid := false.B
+            |  broadcastBuffer.io.in(i).bits.index := 0.U
+            |  broadcastBuffer.io.in(i).bits.state := ${anvil.config.cpMax}.U
+            |
+            |  broadcastBuffer.io.out(i).ready := true.B
+            |}
+          """
 
       val bramDefaultPortValueST: ST =
         st"""
@@ -2973,7 +2961,9 @@ import HwSynthesizer._
           |import chisel3.util._
           |import chisel3.experimental._
           |
-          |${if (anvil.config.useIP) moduleDeclST else st""}
+          |${if(anvil.config.useIP) moduleDeclST else st""}
+          |${if(!anvil.config.useIP && anvil.config.cpMax > 0) findChiselModule(LabelToFsmIP()).get.moduleST else st""}
+          |${if(anvil.config.cpMax > 0) broadcastBufferDeclST else st""}
           |${if(anvil.config.genVerilog) BUFGST else st""}
           |
           |import ${name}._
@@ -3055,6 +3045,8 @@ import HwSynthesizer._
           |  ${readyST.render}
           |
           |  ${if(anvil.config.useIP) instanceDeclST else st""}
+          |  ${if(anvil.config.cpMax > 0) insDeclST(LabelToFsmIP(), 1) else st""}
+          |  ${if(anvil.config.cpMax > 0) broadcastBufferInsST else st""}
           |  init(this)
           |
           |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) bramDefaultPortValueST.render else st""}
@@ -3135,7 +3127,9 @@ import HwSynthesizer._
           |  def init(o: ${name}): Unit = {
           |    import o._
           |    ${if(anvil.config.useIP) instancePortFuncST else st""}
+          |    ${if(anvil.config.cpMax > 0) insPortFuncST(LabelToFsmIP(), 1) else st""}
           |    ${if(anvil.config.useIP) instancePortCallST else st""}
+          |    ${if(anvil.config.cpMax > 0) insPortCallST(LabelToFsmIP(), 1) else st""}
           |  }
           |}
           |${(stateFunctionObjectST, "\n")}
