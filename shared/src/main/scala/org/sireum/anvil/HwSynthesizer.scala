@@ -2435,6 +2435,8 @@ import HwSynthesizer._
     }
 
     @pure def procedureST(stateMachineST: ST, stateFunctionObjectST: ST): ST = {
+      val maxNumCps: Z = (hwLog.maxNumLabel / anvil.config.cpMax) + (if (hwLog.maxNumLabel % anvil.config.cpMax == 0) 0 else 1)
+
       val adderSubtractorBlackBoxST =
         st"""
             |class XilinxAdderUnsigned64Wrapper extends BlackBox with HasBlackBoxResource {
@@ -2620,6 +2622,78 @@ import HwSynthesizer._
           }
         }
 
+        if(anvil.config.cpMax > 0) {
+          val broadcastBufferST: ST =
+            st"""
+                |class StateBundle extends Bundle {
+                |  val index = UInt(${log2Up(maxNumCps)}.W)
+                |  val state = UInt(${log2Up(anvil.config.cpMax + 1)}.W)
+                |}
+                |
+                |class BroadcastBufferIO[T <: Data](gen: T, n: Int) extends Bundle {
+                |  val in  = Flipped(Vec(n, Decoupled(gen)))
+                |  val out = Vec(n, Decoupled(gen))
+                |}
+                |
+                |class BroadcastBuffer[T <: Data](gen: T, n: Int) extends Module {
+                |  val io = IO(new BroadcastBufferIO(gen, n))
+                |
+                |  // input data related register
+                |  val inValidReg = RegInit(VecInit(Seq.fill(n)(false.B)))
+                |  val inBitsReg  = Reg(Vec(n, gen))
+                |
+                |  // valid and data related register
+                |  val validReg = RegInit(false.B)
+                |  val dataReg  = Reg(gen)
+                |
+                |  // find the valid input
+                |  val anyInputValid = inValidReg.reduce(_ || _)
+                |  val selectedIdx = Wire(UInt(log2Ceil(n).W))
+                |  val selectedData = Wire(gen)
+                |
+                |  // output related register
+                |  val outValidReg = RegNext(validReg, init = false.B)
+                |  val outDataReg  = RegEnable(dataReg, enable = validReg)
+                |
+                |  // register for every inputs
+                |  for (i <- 0 until n) {
+                |    inValidReg(i) := io.in(i).valid
+                |    inBitsReg(i) := io.in(i).bits
+                |    io.in(i).ready := !inValidReg(i) && !validReg
+                |  }
+                |
+                |  selectedIdx := 0.U
+                |  selectedData := inBitsReg(0)
+                |  for (i <- 0 until n) {
+                |    when (inValidReg(i)) {
+                |      selectedIdx := i.U
+                |      selectedData := inBitsReg(i)
+                |    }
+                |  }
+                |
+                |  // accept the input data
+                |  when (!validReg && anyInputValid) {
+                |    dataReg := selectedData
+                |    validReg := true.B
+                |  }
+                |
+                |  // broadcast output
+                |  for (i <- 0 until n) {
+                |    io.out(i).valid := outValidReg
+                |    io.out(i).bits := outDataReg
+                |  }
+                |
+                |  // wait all consumer ready
+                |  val allFired = io.out.map(_.ready).reduce(_ && _) && outValidReg
+                |  when (allFired) {
+                |    validReg := false.B
+                |  }
+                |}
+              """
+
+          moduleST = moduleST :+ broadcastBufferST
+        }
+
         st"""${(moduleST, "\n")}"""
       }
 
@@ -2635,6 +2709,17 @@ import HwSynthesizer._
         }
         if(anvil.config.cpMax > 0) {
           instanceST = instanceST :+ insDeclST(LabelToFsmIP(), 1)
+          instanceST = instanceST :+
+            st"""
+                |val broadcastBuffer = Module(new BroadcastBuffer(new StateBundle, ${maxNumCps}))
+                |for(i <- 0 until ${maxNumCps}) {
+                |  broadcastBuffer.io.in(i).valid := false.B
+                |  broadcastBuffer.io.in(i).bits.index := 0.U
+                |  broadcastBuffer.io.in(i).bits.state := ${anvil.config.cpMax}.U
+                |
+                |  broadcastBuffer.io.out(i).ready := true.B
+                |}
+              """
         }
         st"""${(instanceST, "\n")}"""
       }
@@ -2850,9 +2935,7 @@ import HwSynthesizer._
                      |val CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
                    """
         } else {
-          val maxNumCps: Z = (hwLog.maxNumLabel / anvil.config.cpMax) + (if (hwLog.maxNumLabel % anvil.config.cpMax == 0) 0 else 1)
           var vecInitValue: ISZ[ST] = ISZ[ST]()
-          var wireInitValue: ISZ[ST] = ISZ[ST]()
 
           for(i <- 0 until(maxNumCps)) {
             vecInitValue = vecInitValue :+ (
@@ -2863,21 +2946,10 @@ import HwSynthesizer._
               )
           }
 
-          for(i <- 0 until(maxNumCps)) {
-            wireInitValue = wireInitValue :+ (
-              if(maxNumCps == 1) st"val wireInitVals = Seq(${anvil.config.cpMax}.U(width.W))"
-              else if(i == 0) st"val wireInitVals = Seq(${anvil.config.cpMax}.U(width.W)"
-              else if(i == maxNumCps - 1) st", ${anvil.config.cpMax}.U(width.W))"
-              else st", ${anvil.config.cpMax}.U(width.W)"
-              )
-          }
-
           return st"""
                      |val width: Int = log2Up(${anvil.config.cpMax + 1})
                      |${(vecInitValue, "")}
-                     |val CP = VecInit(initVals.map(v => RegInit(v)))
-                     |${(wireInitValue, "")}
-                     |val nextCP = WireInit(VecInit(wireInitVals))
+                     |val CP = RegInit(VecInit(initVals))
                      |"""
         }
       }
@@ -2895,20 +2967,6 @@ import HwSynthesizer._
               |  r_ready := 2.U
               |}
             """
-
-      @pure def udpateCpsST: ST = {
-        val maxNumCps: Z = (hwLog.maxNumLabel / anvil.config.cpMax) + (if (hwLog.maxNumLabel % anvil.config.cpMax == 0) 0 else 1)
-        var iterateNextCPST: ISZ[ST] = ISZ[ST]()
-        for(i <- 0 until maxNumCps) {
-          iterateNextCPST = iterateNextCPST :+
-            st"""
-                |when(r_valid){
-                |  CP(${i}.U) := RegNext(nextCP(${i}.U))
-                |}"""
-        }
-
-        return st"""${(iterateNextCPST, "\n")}"""
-      }
 
       return st"""
           |import chisel3._
@@ -3070,7 +3128,6 @@ import HwSynthesizer._
           |  io.S_AXI_RRESP   := 0.U
           |  io.S_AXI_RVALID  := r_s_axi_rvalid
           |
-          |  ${if(anvil.config.cpMax <= 0) st"" else udpateCpsST}
           |  ${(stateMachineST, "")}
           |}
           |
@@ -3177,13 +3234,14 @@ import HwSynthesizer._
           st"""${(functions, "")}"""
         )
       } else {
+        // split state machine
         var stateSTs: ISZ[ISZ[ST]] = ISZ[ISZ[ST]]()
         // for state machine 0
         stateSTs = stateSTs :+ ISZ[ST]()
         val initST = stateSTs(0) :+
           st"""
               |is(2.U) {
-              |  nextCP(0.U) := Mux(r_valid, 3.U, 2.U)
+              |  CP(0.U) := Mux(r_valid, 3.U, 2.U)
               |}
               """
         stateSTs = stateSTs(0 ~> initST)
@@ -3196,6 +3254,18 @@ import HwSynthesizer._
           }
           val updatedBlock = stateSTs(cpIdx) :+ st"${blockST}"
           stateSTs = stateSTs(cpIdx ~> updatedBlock)
+        }
+
+        for(i <- 0 until stateSTs.size) {
+          val lastBlock = stateSTs(i) :+
+            st"""
+                |is(${anvil.config.cpMax}.U) {
+                |  when(broadcastBuffer.io.out(${i}.U).valid & broadcastBuffer.io.out(${i}.U).bits.index === ${i}.U) {
+                |    CP(${i}.U) := broadcastBuffer.io.out(${i}.U).bits.state
+                |  }
+                |}
+              """
+          stateSTs = stateSTs(i ~> lastBlock)
         }
 
         var fmsSTs: ISZ[ST] = ISZ[ST]()
@@ -3291,7 +3361,6 @@ import HwSynthesizer._
         if(ipPortLogic.whenCondST.nonEmpty) {
           jump =
             st"""
-                |${if(anvil.config.cpMax <= 0) "" else s"nextCP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${getCpIndex(hwLog.currentLabel)._2}.U"}
                 |when(${(ipPortLogic.whenCondST, " & ")}) {
                 |  ${(ipPortLogic.whenStmtST, "\n")}
                 |  ${jump}
@@ -3349,10 +3418,15 @@ import HwSynthesizer._
       val curCpIdx = getCpIndex(hwLog.currentLabel)._1
       val (nextCpIdx, nextPosIdx) = getCpIndex(label)
       if(curCpIdx == nextCpIdx) {
-        sts = sts :+ st"nextCP(${curCpIdx}.U) := ${nextPosIdx}.U"
+        sts = sts :+ st"CP(${curCpIdx}.U) := ${nextPosIdx}.U"
       } else {
-        sts = sts :+ st"nextCP(${curCpIdx}.U) := ${anvil.config.cpMax}.U"
-        sts = sts :+ st"nextCP(${nextCpIdx}.U) := RegNext(${nextPosIdx}.U)"
+        sts = sts :+
+          st"""
+              |broadcastBuffer.io.in(${curCpIdx}.U).valid      := true.B
+              |broadcastBuffer.io.in(${curCpIdx}.U).bits.index := ${nextCpIdx}.U
+              |broadcastBuffer.io.in(${curCpIdx}.U).bits.state := ${nextPosIdx}.U
+            """
+        sts = sts :+ st"CP(${curCpIdx}.U) := ${anvil.config.cpMax}.U"
       }
 
       return st"${(sts, "\n")}"
@@ -3372,13 +3446,14 @@ import HwSynthesizer._
             portSTs = portSTs :+ st"${instanceName}.io.originalCpIndex := ${getCpIndex(hwLog.currentLabel)._1}.U"
             portSTs = portSTs :+
               st"""
-                  |nextCP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${getCpIndex(hwLog.currentLabel)._2}.U
                   |when(${instanceName}.io.valid) {
                   |  when(${instanceName}.io.isSameCpIndex) {
-                  |    nextCP(${instanceName}.io.cpIndex) := ${instanceName}.io.stateIndex
+                  |    CP(${instanceName}.io.cpIndex) := ${instanceName}.io.stateIndex
                   |  } .otherwise {
-                  |    nextCP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${anvil.config.cpMax}.U
-                  |    nextCP(${instanceName}.io.cpIndex) := RegNext(${instanceName}.io.stateIndex)
+                  |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).valid      := true.B
+                  |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).bits.index := ${instanceName}.io.cpIndex
+                  |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).bits.state := ${instanceName}.io.stateIndex
+                  |    CP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${anvil.config.cpMax}.U
                   |  }
                   |}
                 """
@@ -3892,10 +3967,6 @@ import HwSynthesizer._
           "elementSize" ~> (st"${elementSize}.U", "UInt") +
           "mask" ~> (st"${mask}.U", "UInt") +
           "ready" ~> (st"true.B", "Bool")
-
-        if(anvil.config.cpMax > 0) {
-          ipPortLogic.sts = ipPortLogic.sts :+ st"nextCP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${getCpIndex(hwLog.currentLabel)._2}.U"
-        }
 
         insertIPInput(IntrinsicIP(defaultIndexing), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
         val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
