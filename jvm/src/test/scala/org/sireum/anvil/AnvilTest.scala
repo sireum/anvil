@@ -131,7 +131,6 @@ object AnvilTest {
       splitTempSizes = splitTempSizes,
       tempLocal = tempLocal,
       genVerilog = T,
-      axi4 = F,
       ipMax = ipMax,
       noXilinxIp = T,
       simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles)),
@@ -215,7 +214,7 @@ class AnvilTest extends SireumRcSpec {
         }
         val ir = irOpt.get
 
-        if (!(config.genVerilog || config.axi4 || config.simOpt.nonEmpty)) {
+        if (!(config.genVerilog || config.simOpt.nonEmpty)) {
           return T
         }
 
@@ -232,17 +231,17 @@ class AnvilTest extends SireumRcSpec {
           case _ =>
         }
         val chiselDir = out / "chisel"
-        val axiWrapperVerilogCommandStr: String = s"Test/runMain AXIWrapperChiselGenerated${ir.name}VerilogGeneration"
+        //val axiWrapperVerilogCommandStr: String = s"Test/runMain AXIWrapperChiselGenerated${ir.name}VerilogGeneration"
         val verilogCommandStr: String = s"Test/runMain ${ir.name}VerilogGeneration"
         val simCommandStr: String = s"Test/testOnly *${ir.name}Bench"
         val sbtOpts = ISZ[String]("-J-Xss32m")
         if (config.genVerilog) {
           Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$verilogCommandStr").
             at(chiselDir).env(envVars).echo.console.runCheck()
-        } else if (config.axi4) {
+        } /* else if (config.axi4) {
           Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$axiWrapperVerilogCommandStr").
             at(chiselDir).env(envVars).echo.console.runCheck()
-        } else {
+        }*/ else {
           config.simOpt match {
             case Some(_) if verilatorBin.exists =>
               Os.proc(ISZ[String]("bash", sbt.string) ++ sbtOpts :+ s"$simCommandStr").

@@ -201,69 +201,6 @@ object Util {
     }
   }
 
-  @record class AccessPathCollector(var accessPaths: HashSet[ISZ[String]]) extends MAnvilIRTransformer {
-    override def pre_langastIRExp(o: AST.IR.Exp): MAnvilIRTransformer.PreResult[AST.IR.Exp] = {
-      accessPaths = accessPaths ++ AccessPathCollector.computeAccessPathsExp(o).elements
-      return MAnvilIRTransformer.PreResult(continu = F, resultOpt = MNone())
-    }
-  }
-
-  object AccessPathCollector {
-    @strictpure def computeAccessPath(e: AST.IR.Exp, suffix: ISZ[String]): ISZ[String] = e match {
-      case e: AST.IR.Exp.FieldVarRef => computeAccessPath(e.receiver, e.id +: suffix)
-      case e: AST.IR.Exp.Indexing => computeAccessPath(e.exp, ISZ())
-      case e: AST.IR.Exp.LocalVarRef => st"${(e.context.owner :+ e.context.id :+ e.id, ".")}".render +: suffix
-      case e: AST.IR.Exp.GlobalVarRef => st"${(e.name, ".")}".render +: suffix
-      case e: AST.IR.Exp.Type => computeAccessPath(e.exp, suffix)
-      case _ => halt(s"Infeasible: $e")
-    }
-
-    def computeAccessPathsExp(exp: AST.IR.Exp): HashSet[ISZ[String]] = {
-      var r = HashSet.empty[ISZ[String]]
-
-      def rec(e: AST.IR.Exp): Unit = {
-        e match {
-          case _: AST.IR.Exp.Bool =>
-          case _: AST.IR.Exp.Int =>
-          case _: AST.IR.Exp.F32 =>
-          case _: AST.IR.Exp.F64 =>
-          case _: AST.IR.Exp.R =>
-          case _: AST.IR.Exp.String =>
-          case _: AST.IR.Exp.EnumElementRef =>
-          case _: AST.IR.Exp.Temp =>
-          case e: AST.IR.Exp.Unary => rec(e.exp)
-          case e: AST.IR.Exp.Type => rec(e.exp)
-          case e: AST.IR.Exp.Binary =>
-            rec(e.left)
-            rec(e.right)
-          case e: AST.IR.Exp.LocalVarRef =>
-            r = r + computeAccessPath(e, ISZ())
-          case e: AST.IR.Exp.FieldVarRef =>
-            r = r + computeAccessPath(e, ISZ())
-          case e: AST.IR.Exp.GlobalVarRef =>
-            r = r + computeAccessPath(e, ISZ())
-          case e: AST.IR.Exp.Indexing =>
-            rec(e.exp)
-            rec(e.index)
-          case e: AST.IR.Exp.Apply =>
-            for (arg <- e.args) {
-              rec(arg)
-            }
-          case e: AST.IR.Exp.Construct =>
-            for (arg <- e.args) {
-              rec(arg)
-            }
-          case e: AST.IR.Exp.Intrinsic =>
-            r = r + computeAccessPath(e, ISZ())
-          case _: AST.IR.Exp.If => halt("Infeasible")
-        }
-      }
-
-      rec(exp)
-      return r
-    }
-  }
-
   @record class CPSubstitutor(val anvil: Anvil, var cpSubstMap: HashMap[Z, Z]) extends MAnvilIRTransformer {
     override def transform_langastIRBasicBlock(o: AST.IR.BasicBlock): MOption[AST.IR.BasicBlock] = {
       val rOpt = extension.Debug.onError[MOption[AST.IR.BasicBlock]](
@@ -1085,9 +1022,8 @@ object Util {
     override def postIntrinsicCopy(o: Intrinsic.Copy): MOption[Intrinsic.Copy] = {
       anvil.config.memoryAccess match {
         case Anvil.Config.MemoryAccess.Default => updateCycles((copyBytes / anvil.config.copySize) + (copyBytes % anvil.config.copySize))
-        case Anvil.Config.MemoryAccess.Subroutine =>
-        case Anvil.Config.MemoryAccess.SubroutineFast => updateCycles((copyBytes / anvil.config.copySize) + (copyBytes % anvil.config.copySize))
         case Anvil.Config.MemoryAccess.Ip => updateCycles(copyBytes * 4)
+        case Anvil.Config.MemoryAccess.Ddr => updateCycles(copyBytes * 4)
       }
       return MNone()
     }
