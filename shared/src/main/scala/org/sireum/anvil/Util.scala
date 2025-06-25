@@ -1029,6 +1029,13 @@ object Util {
     }
   }
 
+  @record class WellFormedChecker extends MAnvilIRTransformer {
+    override def postIntrinsicLoad(o: Intrinsic.Load): MOption[Intrinsic.Load] = {
+      //halt("Intrinsic.Load should have been rewritten")
+      return MNone()
+    }
+  }
+
   val kind: String = "Anvil"
   val exitLabel: Z = 0
   val errorLabel: Z = 1

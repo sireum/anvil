@@ -651,6 +651,10 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "main"), p.prettyST(anvil.printer))
       pass = pass + 1
 
+      p = anvil.transformAssignTempLoad(p)
+      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "assign-temp-load"), p.prettyST(anvil.printer))
+      pass = pass + 1
+
       p = anvil.transformEmptyBlock(p)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "empty-block"), p.prettyST(anvil.printer))
       pass = pass + 1
@@ -732,7 +736,31 @@ import Anvil._
         id
     }
 
+    WellFormedChecker().transform_langastIRProcedure(program.procedures(0))
+
     return Some(IR(anvil, name, program.procedures(0), maxRegisters, globalSize, globalMap, procDescMap))
+  }
+
+  def transformAssignTempLoad(p: AST.IR.Procedure): AST.IR.Procedure = {
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      for (g <- b.grounds) {
+        g match {
+          case g: AST.IR.Stmt.Assign.Temp =>
+            g.rhs match {
+              case AST.IR.Exp.Intrinsic(in: Intrinsic.Load) =>
+                grounds = grounds :+ AST.IR.Stmt.Intrinsic(
+                  Intrinsic.TempLoad(g.lhs, in.base, in.offset, in.isSigned, in.bytes, in.comment, in.tipe, in.pos))
+              case _ => grounds = grounds :+ g
+            }
+          case _ => grounds = grounds :+ g
+        }
+      }
+      blocks = blocks :+ b(grounds = grounds)
+    }
+    return p(body = body(blocks = blocks))
   }
 
   @pure def transformBlock(stage: Z, output: Output, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -887,20 +915,18 @@ import Anvil._
     for (b <- body.blocks) {
       b.jump match {
         case AST.IR.Jump.Intrinsic(in: Intrinsic.GotoLocal) if b.grounds.nonEmpty || !in.isTemp =>
-          var block = b
           val label = fresh.label()
-          if (!in.isTemp) {
-            block = block(
-              grounds = block.grounds :+ AST.IR.Stmt.Assign.Temp(temp,
-                AST.IR.Exp.Intrinsic(Intrinsic.Load(
-                  AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, in.pos)), in.loc, isSigned(cpType),
-                  typeByteSize(cpType), st"", cpType, in.pos
-                )), in.pos),
-              jump = AST.IR.Jump.Intrinsic(in(isTemp = T, loc = temp))
-            )
+          blocks = blocks :+ b(jump = AST.IR.Jump.Goto(label, in.pos))
+          if (in.isTemp) {
+            blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), b.jump)
+          } else {
+            val label2 = fresh.label()
+            blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp,
+              AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, in.pos)), in.loc, isSigned(cpType),
+              typeByteSize(cpType), st"", cpType, in.pos
+            ))), AST.IR.Jump.Goto(label2, in.pos))
+            blocks = blocks :+ AST.IR.BasicBlock(label2, ISZ(), b.jump)
           }
-          blocks = blocks :+ block(jump = AST.IR.Jump.Goto(label, in.pos))
-          blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), block.jump)
         case _ => blocks = blocks :+ b
       }
     }
