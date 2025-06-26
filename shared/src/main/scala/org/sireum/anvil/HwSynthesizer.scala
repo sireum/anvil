@@ -1367,6 +1367,7 @@ object ChiselModule {
   }
 }
 
+
 @datatype class LabelToFsm(val signedPort: B,
                            val moduleDeclarationName: String,
                            val moduleInstanceName: String,
@@ -1382,8 +1383,9 @@ object ChiselModule {
   @strictpure override def expression: IpType = exp
   @strictpure override def moduleST: ST = {
     st"""
-        |class ${moduleName}(val numOfStates: Int, val cpMax: Int) extends Module {
-        |    val cpWidth: Int = (numOfStates / cpMax) + (if(numOfStates % cpMax == 0) 0 else 1)
+        |class ${moduleName}(val numOfStates: Int, val maxNumStatesInBlock: Int) extends Module {
+        |    val cpWidth: Int = (numOfStates / maxNumStatesInBlock) + (if(numOfStates % maxNumStatesInBlock == 0) 0 else 1)
+        |    val cpMax: Int = if(numOfStates < maxNumStatesInBlock) numOfStates else maxNumStatesInBlock
         |
         |    val io = IO(new Bundle{
         |        val start           = Input(Bool())
@@ -2890,29 +2892,29 @@ import HwSynthesizer._
             |      CODE_POINTER_WIDTH  = CODE_POINTER_WIDTH
             |    ))
             |
-            |    mod.io.S_AXI_AWADDR  := io.S_AXI_AWADDR
-            |    mod.io.S_AXI_AWPROT  := io.S_AXI_AWPROT
-            |    mod.io.S_AXI_AWVALID := io.S_AXI_AWVALID
-            |    io.S_AXI_AWREADY     := mod.io.S_AXI_AWREADY
+            |    mod.io.S_AXI_AWADDR  := RegNext(io.S_AXI_AWADDR)
+            |    mod.io.S_AXI_AWPROT  := RegNext(io.S_AXI_AWPROT)
+            |    mod.io.S_AXI_AWVALID := RegNext(io.S_AXI_AWVALID)
+            |    io.S_AXI_AWREADY     := RegNext(mod.io.S_AXI_AWREADY)
             |
-            |    mod.io.S_AXI_WDATA   := io.S_AXI_WDATA
-            |    mod.io.S_AXI_WSTRB   := io.S_AXI_WSTRB
-            |    mod.io.S_AXI_WVALID  := io.S_AXI_WVALID
-            |    io.S_AXI_WREADY      := mod.io.S_AXI_WREADY
+            |    mod.io.S_AXI_WDATA   := RegNext(io.S_AXI_WDATA)
+            |    mod.io.S_AXI_WSTRB   := RegNext(io.S_AXI_WSTRB)
+            |    mod.io.S_AXI_WVALID  := RegNext(io.S_AXI_WVALID)
+            |    io.S_AXI_WREADY      := RegNext(mod.io.S_AXI_WREADY)
             |
-            |    io.S_AXI_BRESP       := mod.io.S_AXI_BRESP
-            |    io.S_AXI_BVALID      := mod.io.S_AXI_BVALID
-            |    mod.io.S_AXI_BREADY  := io.S_AXI_BREADY
+            |    io.S_AXI_BRESP       := RegNext(mod.io.S_AXI_BRESP)
+            |    io.S_AXI_BVALID      := RegNext(mod.io.S_AXI_BVALID)
+            |    mod.io.S_AXI_BREADY  := RegNext(io.S_AXI_BREADY)
             |
-            |    mod.io.S_AXI_ARADDR  := io.S_AXI_ARADDR
-            |    mod.io.S_AXI_ARPROT  := io.S_AXI_ARPROT
-            |    mod.io.S_AXI_ARVALID := io.S_AXI_ARVALID
-            |    io.S_AXI_ARREADY     := mod.io.S_AXI_ARREADY
+            |    mod.io.S_AXI_ARADDR  := RegNext(io.S_AXI_ARADDR)
+            |    mod.io.S_AXI_ARPROT  := RegNext(io.S_AXI_ARPROT)
+            |    mod.io.S_AXI_ARVALID := RegNext(io.S_AXI_ARVALID)
+            |    io.S_AXI_ARREADY     := RegNext(mod.io.S_AXI_ARREADY)
             |
-            |    io.S_AXI_RDATA       := mod.io.S_AXI_RDATA
-            |    io.S_AXI_RRESP       := mod.io.S_AXI_RRESP
-            |    io.S_AXI_RVALID      := mod.io.S_AXI_RVALID
-            |    mod.io.S_AXI_RREADY  := io.S_AXI_RREADY
+            |    io.S_AXI_RDATA       := RegNext(mod.io.S_AXI_RDATA)
+            |    io.S_AXI_RRESP       := RegNext(mod.io.S_AXI_RRESP)
+            |    io.S_AXI_RVALID      := RegNext(mod.io.S_AXI_RVALID)
+            |    mod.io.S_AXI_RREADY  := RegNext(io.S_AXI_RREADY)
             |  }
             |}
           """
