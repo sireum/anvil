@@ -53,6 +53,7 @@ object Anvil {
                          val erase: B,
                          val noXilinxIp: B,
                          val splitTempSizes: B,
+                         val tempGlobal: B,
                          val tempLocal: B,
                          val memoryAccess: Config.MemoryAccess.Type,
                          val ipMax: Z,
@@ -90,7 +91,8 @@ object Anvil {
         erase = F,
         noXilinxIp = F,
         splitTempSizes = F,
-        tempLocal = T,
+        tempGlobal = T,
+        tempLocal = F,
         memoryAccess = Config.MemoryAccess.Default,
         ipMax = 0,
         cpMax = 0,
@@ -119,6 +121,7 @@ object Anvil {
                      val maxRegisters: TempVector,
                      val globalSize: Z,
                      val globalInfoMap: HashSMap[QName, VarInfo],
+                     val globalTemps: Z,
                      val procDescMap: HashSMap[U32, String])
 
   def synthesize(isTest: B, fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, name: QName, config: Config,
@@ -259,7 +262,7 @@ import Anvil._
     var testProcs = ISZ[AST.IR.Procedure]()
     var mainProcs = ISZ[AST.IR.Procedure]()
 
-    val mq: (AST.IR.MethodContext, AST.IR.Program, Z, HashSMap[ISZ[String], VarInfo]) = {
+    val mq: (AST.IR.MethodContext, AST.IR.Program, Z, HashSMap[ISZ[String], VarInfo], Z) = {
       var globals = ISZ[AST.IR.Global]()
       var procedures = ISZ[AST.IR.Procedure]()
       var globalSize: Z = 0
@@ -405,10 +408,17 @@ import Anvil._
         procedures = procedures :+ objInit(body = body)
       }
       var globalMap = HashSMap.empty[ISZ[String], VarInfo]
+      var globalTemps = 0
       for (g <- globals) {
         val size = typeByteSize(g.tipe)
-        globalMap = globalMap + g.name ~> VarInfo(isScalar(g.tipe), globalSize, size, 0, g.tipe, g.pos)
-        globalSize = globalSize + size
+        val scalar = isScalar(g.tipe)
+        if (isTempGlobal(this, g.tipe, g.name)) {
+          globalMap = globalMap + g.name ~> VarInfo(scalar, globalTemps, size, 0, g.tipe, g.pos)
+          globalTemps = globalTemps + 1
+        } else {
+          globalMap = globalMap + g.name ~> VarInfo(scalar, globalSize, size, 0, g.tipe, g.pos)
+          globalSize = globalSize + size
+        }
       }
 
       def genTraitMethod(method: TypeSpecializer.SMethod): Unit = {
@@ -502,13 +512,14 @@ import Anvil._
         genTraitMethod(method)
       }
 
-      (startOpt.get.context, AST.IR.Program(threeAddressCode, globals, procedures), globalSize, globalMap)
+      (startOpt.get.context, AST.IR.Program(threeAddressCode, globals, procedures), globalSize, globalMap, globalTemps)
     }
 
     val startContext = mq._1
     var program = mq._2
     val globalSize = mq._3
     val globalMap = mq._4
+    val globalTemps = mq._5
     val procDescMap = HashSMap.empty[U32, String] ++
       (for (p <- program.procedures) yield (sha3(procedureDesc(PBox(p))), procedureDesc(PBox(p))))
 
@@ -738,7 +749,7 @@ import Anvil._
 
     WellFormedChecker().transform_langastIRProcedure(program.procedures(0))
 
-    return Some(IR(anvil, name, program.procedures(0), maxRegisters, globalSize, globalMap, procDescMap))
+    return Some(IR(anvil, name, program.procedures(0), maxRegisters, globalSize, globalMap, globalTemps, procDescMap))
   }
 
   def transformAssignTempLoad(p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -2534,15 +2545,20 @@ import Anvil._
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(g.undecl, g.isAlloc, locals, g.pos))
             case _ =>
               g match {
-                case AST.IR.Stmt.Assign.Global(name, tipe, rhs, pos) =>
+                case g@AST.IR.Stmt.Assign.Global(name, tipe, rhs, pos) =>
+                  val globalInfo = globalMap.get(name).get
                   val newRhs = OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
-                  val globalOffset = AST.IR.Exp.Int(spType, globalMap.get(name).get.loc, pos)
-                  if (isScalar(tipe)) {
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(globalOffset, 0, isSigned(tipe),
-                      typeByteSize(tipe), newRhs, g.prettyST(printer), tipe, g.pos))
+                  if (isTempGlobal(this, globalInfo.tipe, name)) {
+                    grounds = grounds :+ g(rhs = newRhs)
                   } else {
-                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(globalOffset, 0, typeByteSize(tipe),
-                      copySize(newRhs), newRhs, g.prettyST(printer), tipe, newRhs.tipe, g.pos))
+                    val globalOffset = AST.IR.Exp.Int(spType, globalInfo.loc, pos)
+                    if (isScalar(tipe)) {
+                      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(globalOffset, 0, isSigned(tipe),
+                        typeByteSize(tipe), newRhs, g.prettyST(printer), tipe, g.pos))
+                    } else {
+                      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Copy(globalOffset, 0, typeByteSize(tipe),
+                        copySize(newRhs), newRhs, g.prettyST(printer), tipe, newRhs.tipe, g.pos))
+                    }
                   }
                 case AST.IR.Stmt.Assign.Local(_, lhs, t, rhs, pos) =>
                   val newRhs = OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRExp(rhs).getOrElse(rhs)
@@ -2602,14 +2618,19 @@ import Anvil._
                         grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, lhsOffset, pos)
                       }
                     case rhs: AST.IR.Exp.GlobalVarRef =>
-                      val temp = n
-                      val globalOffset = AST.IR.Exp.Int(spType, globalMap.get(rhs.name).get.loc, rhs.pos)
-                      val t: AST.Typed = if (isScalar(rhs.tipe)) rhs.tipe else spType
-                      if (isScalar(rhs.tipe)) {
-                        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp, globalOffset, 0,
-                          isSigned(t), typeByteSize(t), g.prettyST(printer), t, pos))
+                      val globalInfo = globalMap.get(rhs.name).get
+                      if (isTempGlobal(this, globalInfo.tipe, rhs.name)) {
+                        grounds = grounds :+ g
                       } else {
-                        grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, globalOffset, rhs.pos)
+                        val temp = n
+                        val globalOffset = AST.IR.Exp.Int(spType, globalInfo.loc, rhs.pos)
+                        val t: AST.Typed = if (isScalar(rhs.tipe)) rhs.tipe else spType
+                        if (isScalar(rhs.tipe)) {
+                          grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp, globalOffset, 0,
+                            isSigned(t), typeByteSize(t), g.prettyST(printer), t, pos))
+                        } else {
+                          grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, globalOffset, rhs.pos)
+                        }
                       }
                     case rhs: AST.IR.Exp.FieldVarRef =>
                       val receiver = OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRExp(rhs.receiver).

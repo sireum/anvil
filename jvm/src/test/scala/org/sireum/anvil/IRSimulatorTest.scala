@@ -52,20 +52,24 @@ class IRSimulatorTest extends SireumRcSpec {
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
+
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withoutIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withoutIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withoutIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withoutIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withoutIpId})", v)
 
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withIpId})", v)
 
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId})", v)
 
       r
     }) yield pair
@@ -149,8 +153,7 @@ class IRSimulatorTest extends SireumRcSpec {
           val config = AnvilTest.getConfig(file, p)
           Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, AnvilOutput(F, "", out), reporter) match {
             case Some(ir) =>
-              val state = IRSimulator.State.create(ir.anvil.config.splitTempSizes, ir.anvil.config.memory,
-                ir.maxRegisters, ir.globalInfoMap)
+              val state = IRSimulator.State.create(ir.anvil, ir.maxRegisters, ir.globalInfoMap, ir.globalTemps)
               val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.loc
               var locals = ISZ[Intrinsic.Decl.Local]()
               for (entry <- ir.anvil.procedureParamInfo(Util.PBox(ir.procedure))._2.entries) {
@@ -167,10 +170,16 @@ class IRSimulatorTest extends SireumRcSpec {
                   ir.anvil.isSigned(ir.anvil.spType)),
                 IRSimulator.State.Accesses.empty).update(state)
               IRSimulator.State.Edit.Decl(Intrinsic.Decl(F, F, locals, ir.procedure.pos)).update(state)
-              IRSimulator.State.Edit.Memory(testNumInfoOffset,
-                for (_ <- 0 until ir.anvil.typeByteSize(AST.Typed.z)) yield u8"0xFF",
-                //ISZ(u8"1", u8"0", u8"0", u8"0", u8"0", u8"0", u8"0", u8"0"),
-                IRSimulator.State.Accesses.empty).update(state)
+              if (ir.anvil.config.tempGlobal) {
+                IRSimulator.State.Edit.Temp(IRSimulator.State.Edit.Temp.Kind.Global,
+                  ir.anvil.isFP(AST.Typed.z), ir.anvil.isSigned(AST.Typed.z), ir.anvil.typeBitSize(AST.Typed.z),
+                  testNumInfoOffset, IRSimulator.Value(IRSimulator.Value.Kind.S64, -1),
+                  IRSimulator.State.Accesses.empty).update(state)
+              } else {
+                IRSimulator.State.Edit.Memory(testNumInfoOffset,
+                  for (_ <- 0 until ir.anvil.typeByteSize(AST.Typed.z)) yield u8"0xFF",
+                  IRSimulator.State.Accesses.empty).update(state)
+              }
               IRSimulator(ir.anvil).evalProcedure(state, ir.procedure)
               val displaySize = ir.anvil.config.printSize
               if (ir.anvil.config.shouldPrint) {

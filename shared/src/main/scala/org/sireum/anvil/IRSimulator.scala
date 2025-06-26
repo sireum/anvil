@@ -47,6 +47,8 @@ object IRSimulator {
   var DEBUG_LOCAL: B = T
 
   @record @unclonable class State(val globalMap: HashSMap[QName, Anvil.VarInfo],
+                                  val globalScalarNameMap: ISZ[QName],
+                                  var globalScalars: ISZ[Value],
                                   var CP: Value,
                                   var SP: Value,
                                   var DP: U64,
@@ -69,8 +71,8 @@ object IRSimulator {
         for (entry <- globalMap.entries) {
           val (name, info) = entry
           if (info.isScalar) {
-            val v = sim.load(memory, info.loc, info.size)._1
-            globalSTs = globalSTs :+ st"${(name, ".")}@[${shortenHexString(conversions.Z.toU64(info.loc))} (${info.loc}), ${info.size}] = ${shortenHexString(v)} (${v.toZ})"
+            val v: Value = if (globalScalarNameMap.nonEmpty) globalScalars(info.loc) else Value.fromRawU64(sim.anvil, sim.load(memory, info.loc, info.size)._1, info.tipe)
+            globalSTs = globalSTs :+ st"${(name, ".")}@[${shortenHexString(conversions.Z.toU64(info.loc))} (${info.loc}), ${info.size}] = ${shortenHexString(v.toRawU64)} (${v.value})"
           } else {
             globalSTs = globalSTs :+ st"${(name, ".")}@[${shortenHexString(conversions.Z.toU64(info.loc))} (${info.loc}), ${info.size}] = ..."
           }
@@ -135,8 +137,6 @@ object IRSimulator {
             val desc = conversions.String.fromU8ms(ops.MSZOps(memory).slice(descOffset, descOffset + size))
             val sz = sim.load(memory, offset + sim.anvil.typeShaSize, sim.anvil.typeByteSize(AST.Typed.z))._1
             val index = st"[${shortenHexString(conversions.Z.toU64(offset))} ($offset), ${info.size}; .size = ${shortenHexString(sz)} (${sz.toZ})]"
-            //val t = sim.load(memory, offset, sim.anvil.typeShaSize)._1
-            //localSTs = localSTs :+ st"$id@$index.type = ${shortenHexString(t)} (${t.toZ})"
             localSTs = localSTs :+ st"$id@$index = \"${ops.StringOps(desc).escapeST}\""
           } else {
             localSTs = localSTs :+ st"$id@[${shortenHexString(conversions.Z.toU64(offset))} ($offset), ${info.size}] = ..."
@@ -267,6 +267,10 @@ object IRSimulator {
         @strictpure def writes: Accesses = Accesses.empty.addTemp(kind, isFP, isSigned, bitSize, temp, value)
         def update(state: State): Undo = {
           val oldValue: Value = kind match {
+            case Temp.Kind.Global =>
+              val r = state.globalScalars(temp)
+              state.globalScalars = state.globalScalars(temp ~> value)
+              r
             case Temp.Kind.CP =>
               val r = state.CP
               state.CP = value
@@ -358,6 +362,7 @@ object IRSimulator {
               case Temp.Kind.SP => st"SP"
               case Temp.Kind.DP => st"DP"
               case Temp.Kind.Register => Util.tempST2(isFP, isSigned, bitSize, temp)
+              case Temp.Kind.Global => st"${(state.globalScalarNameMap(temp), ".")}"
             }
             println(st"* $tempST = ${value.debugST} [old: ${r.value.debugST}]".render)
           }
@@ -371,6 +376,7 @@ object IRSimulator {
           "SP"
           "DP"
           "Register"
+          "Global"
         }
       }
 
@@ -435,33 +441,43 @@ object IRSimulator {
           case State.Edit.Temp.Kind.SP => "SP"
           case State.Edit.Temp.Kind.DP => "DP"
           case State.Edit.Temp.Kind.Register => s"$$$bitSize${if (isFP) "F" else if (isSigned) "S" else "U"}.$n"
+          case State.Edit.Temp.Kind.Global => s"Global#$n"
         }
       }
       @strictpure def empty: Accesses = Accesses(HashSMap.empty, HashSMap.empty)
     }
 
-    @strictpure def create(splitTemps: B,
-                           memory: Z,
-                           temps: Util.TempVector,
-                           globalMap: HashSMap[QName, Anvil.VarInfo]): State =
-      State(
+    @pure def create(anvil: Anvil,
+                     temps: Util.TempVector,
+                     globalMap: HashSMap[QName, Anvil.VarInfo],
+                     globalTemps: Z): State = {
+      val globalScalarNameMap = MSZ.create(globalTemps, ISZ[String]())
+      if (globalTemps > 0) {
+        for (entry <- globalMap.entries if Util.isTempGlobal(anvil, entry._2.tipe, entry._1)) {
+          globalScalarNameMap(entry._2.loc) = entry._1
+        }
+      }
+      return State(
         globalMap,
+        globalScalarNameMap.toIS,
+        for (entry <- globalMap.entries if entry._2.isScalar) yield Value.fromRawU64(anvil, u64"0", entry._2.tipe),
         Value.fromU64(u64"0"),
         Value.fromU64(u64"0"),
         u64"0",
-        MSZ.create(memory, u8"0"),
-        MSZ.create(if (splitTemps) temps.unsignedCount(1) else 0, F),
-        MSZ.create(if (splitTemps) temps.unsignedCount(8) else 0, u8"0"),
-        MSZ.create(if (splitTemps) temps.unsignedCount(16) else 0, u16"0"),
-        MSZ.create(if (splitTemps) temps.unsignedCount(32) else 0, u32"0"),
-        MSZ.create(if (splitTemps) temps.unsignedCount(64) else temps.maxCount, u64"0"),
-        MSZ.create(if (splitTemps) temps.signedCount(8) else 0, s8"0"),
-        MSZ.create(if (splitTemps) temps.signedCount(16) else 0, s16"0"),
-        MSZ.create(if (splitTemps) temps.signedCount(32) else 0, s32"0"),
-        MSZ.create(if (splitTemps) temps.signedCount(64) else 0, s64"0"),
-        MSZ.create(if (splitTemps) temps.fp32Count else 0, 0f),
-        MSZ.create(if (splitTemps) temps.fp64Count else 0, 0d),
+        MSZ.create(anvil.config.memory, u8"0"),
+        MSZ.create(if (anvil.config.splitTempSizes) temps.unsignedCount(1) else 0, F),
+        MSZ.create(if (anvil.config.splitTempSizes) temps.unsignedCount(8) else 0, u8"0"),
+        MSZ.create(if (anvil.config.splitTempSizes) temps.unsignedCount(16) else 0, u16"0"),
+        MSZ.create(if (anvil.config.splitTempSizes) temps.unsignedCount(32) else 0, u32"0"),
+        MSZ.create(if (anvil.config.splitTempSizes) temps.unsignedCount(64) else temps.maxCount, u64"0"),
+        MSZ.create(if (anvil.config.splitTempSizes) temps.signedCount(8) else 0, s8"0"),
+        MSZ.create(if (anvil.config.splitTempSizes) temps.signedCount(16) else 0, s16"0"),
+        MSZ.create(if (anvil.config.splitTempSizes) temps.signedCount(32) else 0, s32"0"),
+        MSZ.create(if (anvil.config.splitTempSizes) temps.signedCount(64) else 0, s64"0"),
+        MSZ.create(if (anvil.config.splitTempSizes) temps.fp32Count else 0, 0f),
+        MSZ.create(if (anvil.config.splitTempSizes) temps.fp64Count else 0, 0d),
         Stack(ISZ(HashSMap.empty)))
+    }
 
   }
 
@@ -1026,6 +1042,12 @@ import IRSimulator._
         return (Value.fromZ(exp.value, anvil.typeBitSize(exp.tipe), anvil.isSigned(exp.tipe)), State.Accesses.empty)
       case exp: AST.IR.Exp.F32 => return (Value.fromF32(exp.value), State.Accesses.empty)
       case exp: AST.IR.Exp.F64 => return (Value.fromF64(exp.value), State.Accesses.empty)
+      case exp: AST.IR.Exp.GlobalVarRef =>
+        val loc = state.globalMap.get(exp.name).get.loc
+        val value = state.globalScalars(loc)
+        val tipe = exp.tipe
+        return (value, State.Accesses.empty.addTemp(State.Edit.Temp.Kind.Global, anvil.isFP(tipe), anvil.isSigned(tipe),
+          anvil.typeBitSize(tipe), loc, value))
       case exp: AST.IR.Exp.Temp =>
         val t: AST.Typed = if (anvil.isScalar(exp.tipe)) exp.tipe else anvil.spType
         val isSigned = anvil.isSigned(t)
@@ -1143,7 +1165,6 @@ import IRSimulator._
       case _: AST.IR.Exp.String => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
       case _: AST.IR.Exp.Indexing => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
       case _: AST.IR.Exp.LocalVarRef => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
-      case _: AST.IR.Exp.GlobalVarRef => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
       case _: AST.IR.Exp.FieldVarRef => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
       case _: AST.IR.Exp.EnumElementRef => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
       case _: AST.IR.Exp.If => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
@@ -1153,6 +1174,11 @@ import IRSimulator._
 
   @pure def evalStmt(state: State, stmt: AST.IR.Stmt.Ground): State.Edit = {
     stmt match {
+      case stmt: AST.IR.Stmt.Assign.Global =>
+        val (rhs, acs) = evalExp(state, stmt.rhs)
+        val tipe = stmt.tipe
+        return State.Edit.Temp(State.Edit.Temp.Kind.Global, anvil.isFP(tipe), anvil.isSigned(tipe),
+          anvil.typeBitSize(tipe), state.globalMap.get(stmt.name).get.loc, rhs, acs)
       case stmt: AST.IR.Stmt.Assign.Temp =>
         val (rhs, acs) = evalExp(state, stmt.rhs)
         if (anvil.config.splitTempSizes) {

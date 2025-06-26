@@ -134,7 +134,11 @@ object Util {
       }
     }
     override def post_langastIRExpGlobalVarRef(o: AST.IR.Exp.GlobalVarRef): MOption[AST.IR.Exp] = {
-      val globalOffset = AST.IR.Exp.Int(anvil.spType, globalMap.get(o.name).get.loc, o.pos)
+      val globalInfo = globalMap.get(o.name).get
+      if (isTempGlobal(anvil, globalInfo.tipe, o.name)) {
+        return MNone()
+      }
+      val globalOffset = AST.IR.Exp.Int(anvil.spType, globalInfo.loc, o.pos)
       if (anvil.isScalar(o.tipe)) {
         return MSome(AST.IR.Exp.Intrinsic(Intrinsic.Load(globalOffset, 0, anvil.isSigned(o.tipe),
           anvil.typeByteSize(o.tipe), st"", o.tipe, o.pos)))
@@ -1288,5 +1292,8 @@ object Util {
     }
     return IpAlloc(r, HashSMap ++ (for (e <- binopAllocMap.entries) yield (e._1, e._2.size)), indexingAlloc.size)
   }
+
+  @strictpure def isTempGlobal(anvil: Anvil, tipe: AST.Typed, name: ISZ[String]): B =
+    anvil.config.tempGlobal && anvil.isScalar(tipe) && name != memName && name != memTypeName && name != memSizeName
 
 }

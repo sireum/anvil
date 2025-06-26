@@ -28,28 +28,52 @@ import org.sireum._
 import org.sireum.test._
 
 object AnvilTest {
-  @memoize def memoryFileMap(printSize: Z, splitTempSizes: B, tempLocal: B, useIP: B, useMemoryIP: B): HashMap[String, Z] = {
-    return HashMap.empty[String, Z] +
-      "add.sc" ~> (if (tempLocal) 112  else 160) +
-      "assert.sc" ~> (if (tempLocal) 280 else if (useIP) if (useMemoryIP) 376 else 368 else 368) +
-      "bubble.sc" ~> (if (tempLocal) 176 else if (useIP) if (useMemoryIP) 232 else 224 else 224) +
-      "construct.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 248 else 232 else 232 else if (useMemoryIP) 296 else 256 + 8 * 3) +
-      "divrem.sc" ~> (if (tempLocal) 128 else if (useIP) 184 else 184) +
-      "dll.sc" ~> (if (printSize > 0) if (tempLocal) 840 else 848 else 832) +
-      "factorial.sc" ~> (if (tempLocal) 128 else if (useIP) 176 else 176) +
-      "global.sc" ~> (if (tempLocal) 104 else 152) +
-      "indexing-obj.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 184 else 176 else 176 else 208) +
-      "indexing.sc" ~> (if (tempLocal) 136 else if (useIP) 176 else 176) +
-      "instanceof.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 112 else 104 else 104 else if (splitTempSizes) 152 else 144) +
-      "local-reuse.sc" ~> (if (tempLocal) 112 else 160) +
-      "mult.sc" ~> (if (tempLocal) 160 else if (useIP) if (useMemoryIP) 216 else 208 else 208) +
-      "print.sc" ~> (if (tempLocal) 928  else 952) +
-      "print-no-float.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 328 else 288 else 288 else if (useMemoryIP) 360 else 328) +
-      "printU64.sc" ~> (if (tempLocal) 160 else if (useIP) 216 else 216) +
-      "seq.sc" ~> (if (tempLocal) 240 else if (useIP) if (useMemoryIP) 280 else 272 else 272) +
-      "shiftS64.sc" ~> (if (tempLocal) 176 else 264) +
-      "shiftU64.sc" ~> (if (tempLocal) 168 else if (useIP) 264 else 264) +
-      "sum.sc" ~> (if (tempLocal) 152 else if (splitTempSizes) 312 else 304)
+  @memoize def memoryFileMap(printSize: Z, splitTempSizes: B, tempGlobal: B, tempLocal: B, useIP: B, useMemoryIP: B): HashMap[String, Z] = {
+    if (tempGlobal) {
+      return HashMap.empty[String, Z] +
+        "add.sc" ~> 104 +
+        "assert.sc" ~> 272 +
+        "bubble.sc" ~> 168 +
+        "construct.sc" ~> (if (useIP) if (useMemoryIP) 240 else 224 else 224) +
+        "divrem.sc" ~> 120 +
+        "dll.sc" ~> (if (printSize > 0) 824 else 816) +
+        "factorial.sc" ~> 120 +
+        "global.sc" ~> 88 +
+        "indexing-obj.sc" ~> (if (useIP) if (useMemoryIP) 176 else 168 else 168) +
+        "indexing.sc" ~> 128 +
+        "instanceof.sc" ~> (if (useIP) if (useMemoryIP) 104 else 96 else 96) +
+        "local-reuse.sc" ~> 104 +
+        "mult.sc" ~> 152 +
+        "print.sc" ~> 920 +
+        "print-no-float.sc" ~> (if (useIP) if (useMemoryIP) 320 else 280 else 280) +
+        "printU64.sc" ~> 152 +
+        "seq.sc" ~> 232 +
+        "shiftS64.sc" ~> 168 +
+        "shiftU64.sc" ~> 160 +
+        "sum.sc" ~> 144
+    } else {
+      return HashMap.empty[String, Z] +
+        "add.sc" ~> (if (tempLocal) 112 else 160) +
+        "assert.sc" ~> (if (tempLocal) 280 else if (useIP) if (useMemoryIP) 376 else 368 else 368) +
+        "bubble.sc" ~> (if (tempLocal) 176 else if (useIP) if (useMemoryIP) 232 else 224 else 224) +
+        "construct.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 248 else 232 else 232 else if (useMemoryIP) 296 else 256 + 8 * 3) +
+        "divrem.sc" ~> (if (tempLocal) 128 else if (useIP) 184 else 184) +
+        "dll.sc" ~> (if (printSize > 0) if (tempLocal) 840 else 848 else 832) +
+        "factorial.sc" ~> (if (tempLocal) 128 else if (useIP) 176 else 176) +
+        "global.sc" ~> (if (tempLocal) 104 else 152) +
+        "indexing-obj.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 184 else 176 else 176 else 208) +
+        "indexing.sc" ~> (if (tempLocal) 136 else if (useIP) 176 else 176) +
+        "instanceof.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 112 else 104 else 104 else if (splitTempSizes) 152 else 144) +
+        "local-reuse.sc" ~> (if (tempLocal) 112 else 160) +
+        "mult.sc" ~> (if (tempLocal) 160 else if (useIP) if (useMemoryIP) 216 else 208 else 208) +
+        "print.sc" ~> (if (tempLocal) 928 else 952) +
+        "print-no-float.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 328 else 288 else 288 else if (useMemoryIP) 360 else 328) +
+        "printU64.sc" ~> (if (tempLocal) 160 else if (useIP) 216 else 216) +
+        "seq.sc" ~> (if (tempLocal) 240 else if (useIP) if (useMemoryIP) 280 else 272 else 272) +
+        "shiftS64.sc" ~> (if (tempLocal) 176 else 264) +
+        "shiftU64.sc" ~> (if (tempLocal) 168 else if (useIP) 264 else 264) +
+        "sum.sc" ~> (if (tempLocal) 152 else if (splitTempSizes) 312 else 304)
+    }
   }
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "dll" ~> 3 +
@@ -107,6 +131,7 @@ object AnvilTest {
   val singleTempId = "single-temp"
   val splitTempId = "split-temp"
   val memLocalId = "mem-local"
+  val tempGlobalId = "temp-global"
   val tempLocalId = "temp-local"
   val withIpId = "with-ip"
   val withoutIpId = "without-ip"
@@ -117,18 +142,21 @@ object AnvilTest {
   def getConfig(file: String, p: Vector[Predef.String]): Anvil.Config = {
     var config = Anvil.Config.empty
     val splitTempSizes = p.last.contains(splitTempId)
+    val tempGlobal = p.last.contains(tempGlobalId)
     val tempLocal = p.last.contains(tempLocalId)
     val useMemoryIp = p.last.contains(withMemIpId)
     val ipMax: Z = if (useMemoryIp || p.last.contains(withIpId)) 0 else -1
     val printSize: Z = printFileMap.get(file).getOrElse(defaultPrintSize)
     config = config(
-      memory = memoryFileMap(printSize, splitTempSizes, tempLocal, ipMax >= 0, useMemoryIp).get(file).getOrElse(defaultMemory),
+      memory = memoryFileMap(printSize, splitTempSizes, tempGlobal, tempLocal, ipMax >= 0, useMemoryIp).get(file).
+        getOrElse(defaultMemory),
       printSize = printSize,
       stackTrace = stackTraceFileSet.contains(file),
       erase = eraseFileSet.contains(file),
       maxArraySize = maxArrayFileMap.get(file).getOrElse(defaultMaxArraySize),
       runtimeCheck = !noRuntimeCheckFileSet.contains(file),
       splitTempSizes = splitTempSizes,
+      tempGlobal = tempGlobal,
       tempLocal = tempLocal,
       genVerilog = T,
       ipMax = ipMax,
