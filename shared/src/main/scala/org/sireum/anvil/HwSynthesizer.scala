@@ -2437,7 +2437,12 @@ import HwSynthesizer._
     }
 
     @pure def procedureST(stateMachineST: ST, stateFunctionObjectST: ST): ST = {
-      val maxNumCps: Z = (hwLog.maxNumLabel / anvil.config.cpMax) + (if (hwLog.maxNumLabel % anvil.config.cpMax == 0) 0 else 1)
+      val maxNumCps: Z = {
+        if(anvil.config.cpMax >0 )
+          (hwLog.maxNumLabel / anvil.config.cpMax) + (if (hwLog.maxNumLabel % anvil.config.cpMax == 0) 0 else 1)
+        else
+          0
+      }
 
       val adderSubtractorBlackBoxST =
         st"""
