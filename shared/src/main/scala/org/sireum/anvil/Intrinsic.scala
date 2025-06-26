@@ -151,6 +151,26 @@ object Intrinsic {
     @strictpure def prettyST(p: AST.IR.Printer): ST = st"${lhsOffset.prettyST(p)} [$tipe, $lhsBytes]  <-  ${rhs.prettyST(p)} [$rhsTipe, ${rhsBytes.prettyST(p)}]  // $comment"
   }
 
+  @datatype class Erase(val base: AST.IR.Exp,
+                        val offset: Z,
+                        val bytes: Z,
+                        val comment: ST,
+                        val tipe: AST.Typed,
+                        val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+
+    @memoize def lhsOffset: AST.IR.Exp = {
+      val (op, n): (AST.IR.Exp.Binary.Op.Type, Z) =
+        if (offset < 0) (AST.IR.Exp.Binary.Op.Sub, -offset) else (AST.IR.Exp.Binary.Op.Add, offset)
+      if (n == 0) {
+        return base
+      } else {
+        return AST.IR.Exp.Binary(Util.spType, base, op, AST.IR.Exp.Int(Util.spType, n, pos), pos)
+      }
+    }
+
+    @strictpure def prettyST(p: AST.IR.Printer): ST = st"${lhsOffset.prettyST(p)}  <-  [0, 0, ...($bytes)]  // $comment"
+  }
+
   // Replaces AST.IR.Stmt.Decl
   @datatype class Decl(val undecl: B, val isAlloc: B, val slots: ISZ[Decl.Local], val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
     @strictpure def prettyST(p: AST.IR.Printer): ST = st"${if (isAlloc) if (undecl) "unalloc" else "alloc" else if (undecl) "undecl" else "decl"} ${(for (slot <- slots) yield slot.prettyST, ", ")}"

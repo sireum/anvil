@@ -643,7 +643,7 @@ import Anvil._
         case Anvil.Config.MemoryAccess.Ddr =>
       }
 
-      p = anvil.transformErase(fresh, p, maxTemps)
+      p = anvil.transformErase(fresh, p)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "erase"), p.prettyST(anvil.printer))
       pass = pass + 1
 
@@ -1269,28 +1269,13 @@ import Anvil._
     return p(body = body(blocks = AST.IR.BasicBlock(first.label, grounds, AST.IR.Jump.Goto(label, p.pos)) +: body.blocks(0 ~> first(label = label))))
   }
 
-  def transformErase(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, maxTemps: TempVector): AST.IR.Procedure = {
-    if (!config.erase) {
+  def transformErase(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    if (!config.erase || config.memoryAccess == Anvil.Config.MemoryAccess.Default) {
       return p
     }
-    val eraseLoopLabel = fresh.label()
-    val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
-    fresh.setTemp(maxTemps.typeCount(this, cpt))
-    val retParam = fresh.temp()
-    val spt: AST.Typed = if (config.splitTempSizes) spType else AST.Typed.u64
-    if (isSigned(cpt) != isSigned(spt) || typeByteSize(cpt) != typeByteSize(spt)) {
-      fresh.setTemp(maxTemps.typeCount(this, spt))
-    }
-    val offsetParam = fresh.temp()
-    val untilParam = fresh.temp()
-    val bt: AST.Typed = if (config.splitTempSizes) AST.Typed.b else AST.Typed.u64
-    if (isSigned(spt) != isSigned(bt) || typeByteSize(spt) != typeByteSize(bt)) {
-      fresh.setTemp(maxTemps.typeCount(this, bt))
-    }
-    val cond = fresh.temp()
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
-    var insertErase = F
+    val sp = AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos))
     for (b <- body.blocks) {
       var block = b
       var grounds = ISZ[AST.IR.Stmt.Ground]()
@@ -1299,8 +1284,10 @@ import Anvil._
           case AST.IR.Stmt.Intrinsic(in: Intrinsic.Decl) if in.undecl =>
             var offset: Z = 0
             var size: Z = 0
+            var ids = ISZ[String]()
             for (i <- in.slots.size - 1 to 0 if in.slots(i).size > 0) {
               val slot = in.slots(i)
+              ids = ids :+ slot.id
               if (offset == 0) {
                 offset = slot.loc
               }
@@ -1308,52 +1295,22 @@ import Anvil._
               size = size + slot.size
             }
             if (offset != 0) {
-              insertErase = T
-              val label = fresh.label()
-              grounds = grounds :+ AST.IR.Stmt.Assign.Temp(retParam, AST.IR.Exp.Int(cpType, label, g.pos), g.pos)
-              grounds = grounds :+ AST.IR.Stmt.Assign.Temp(offsetParam, AST.IR.Exp.Binary(spType,
-                  AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)), AST.IR.Exp.Binary.Op.Add,
-                AST.IR.Exp.Int(spType, offset, g.pos), g.pos), g.pos)
-              grounds = grounds :+ AST.IR.Stmt.Assign.Temp(untilParam, AST.IR.Exp.Binary(spType,
-                AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)), AST.IR.Exp.Binary.Op.Add,
-                AST.IR.Exp.Int(spType, offset + size, g.pos), g.pos), g.pos)
-              blocks = blocks :+ block(grounds = grounds, jump = AST.IR.Jump.Goto(eraseLoopLabel, g.pos))
-              grounds = ISZ()
-              block = AST.IR.BasicBlock(label, grounds, block.jump)
+              if (grounds.nonEmpty) {
+                val label = fresh.label()
+                blocks = blocks :+ block(grounds = grounds, jump = AST.IR.Jump.Goto(label, in.pos))
+                block = AST.IR.BasicBlock(label, ISZ(), b.jump)
+              }
+              grounds = ISZ(
+                AST.IR.Stmt.Intrinsic(Intrinsic.Erase(sp, offset, size, st"Erase ${(ids, ", ")}", AST.Typed.u8, g.pos)),
+                g
+              )
+            } else {
+              grounds = grounds :+ g
             }
-            val eraseTempLabel = fresh.label()
-            blocks = blocks :+ block(grounds = grounds, jump = AST.IR.Jump.Goto(eraseTempLabel, g.pos))
-            grounds = ISZ()
-            block = AST.IR.BasicBlock(eraseTempLabel, grounds, block.jump)
-          case _ =>
+          case _ => grounds = grounds :+ g
         }
-        grounds = grounds :+ g
       }
       blocks = blocks :+ block(grounds = grounds)
-    }
-    if (insertErase) {
-      val ifLoopLabel = fresh.label()
-      val loopBodyLabel = fresh.label()
-      val incLabel = fresh.label()
-      val endLabel = fresh.label()
-      val pos = p.pos
-      blocks = blocks :+ AST.IR.BasicBlock(eraseLoopLabel, ISZ(
-        AST.IR.Stmt.Assign.Temp(cond, AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(offsetParam, spType, pos),
-          AST.IR.Exp.Binary.Op.Lt, AST.IR.Exp.Temp(untilParam, spType, pos), pos), pos)
-      ), AST.IR.Jump.Goto(ifLoopLabel, pos))
-      blocks = blocks :+ AST.IR.BasicBlock(ifLoopLabel, ISZ(), AST.IR.Jump.If(AST.IR.Exp.Temp(cond, AST.Typed.b, pos),
-        loopBodyLabel, endLabel, pos))
-      blocks = blocks :+ AST.IR.BasicBlock(loopBodyLabel, ISZ(
-        AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-          AST.IR.Exp.Temp(offsetParam, spType, pos), 0, isSigned(AST.Typed.u8), typeByteSize(AST.Typed.u8),
-          AST.IR.Exp.Int(AST.Typed.u8, 0, pos), st"erase", AST.Typed.u8, pos))
-      ), AST.IR.Jump.Goto(incLabel, pos))
-      blocks = blocks :+ AST.IR.BasicBlock(incLabel, ISZ(
-        AST.IR.Stmt.Assign.Temp(offsetParam, AST.IR.Exp.Binary(spType,
-          AST.IR.Exp.Temp(offsetParam, spType, pos), AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, 1, pos), pos), pos)
-      ), AST.IR.Jump.Goto(eraseLoopLabel, pos))
-      blocks = blocks :+ AST.IR.BasicBlock(endLabel, ISZ(), AST.IR.Jump.Intrinsic(
-        Intrinsic.GotoLocal(T, retParam, None(), "erase", pos)))
     }
     return p(body = body(blocks = blocks))
   }

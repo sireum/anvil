@@ -1188,6 +1188,9 @@ import IRSimulator._
             val (offset, oacs) = evalExp(state, in.lhsOffset)
             val acs = eacs + oacs
             return store(offset.value, anvil.typeByteSize(in.tipe), n, acs)
+          case in: Intrinsic.Erase =>
+            val (lhsOffset, lacs) = evalExp(state, in.lhsOffset)
+            return State.Edit.Memory(lhsOffset.value, for (_ <- 0 until in.bytes) yield u8"0", lacs)
           case in: Intrinsic.Copy =>
             val (lhsOffset, lacs) = evalExp(state, in.lhsOffset)
             val (rhsOffset, racs) = evalExp(state, in.rhs)
