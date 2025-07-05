@@ -3166,68 +3166,76 @@ import Anvil._
         }
       }
 
-    t match {
-      case AST.Typed.b => return 1
-      case AST.Typed.c => return 4
-      case AST.Typed.z => return numOfBytes(config.defaultBitWidth)
-      case AST.Typed.f32 => return 4
-      case AST.Typed.f64 => return 8
-      case AST.Typed.r => return 8
-      case AST.Typed.string =>
-        var r: Z = 4 // type sha
-        r = r + 4 // size
-        r = r + config.maxStringSize
-        return r
-      case AST.Typed.unit => return 0
-      case AST.Typed.nothing => return 0
-      case `dpType` => return dpTypeByteSize
-      case Util.spType => return spTypeByteSize
-      case `cpType` =>
-        assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
-        return cpTypeByteSize
-      case t: AST.Typed.Name =>
-        if (t.ids.size == 1 && t.args.isEmpty && Z(t.ids(0)).nonEmpty) {
-          return 8
-        }
-        if (t.ids == AST.Typed.isName || t.ids == AST.Typed.msName) {
+    def typeByteSizeH: Z = {
+      t match {
+        case AST.Typed.b => return 1
+        case AST.Typed.c => return 4
+        case AST.Typed.z => return numOfBytes(config.defaultBitWidth)
+        case AST.Typed.f32 => return 4
+        case AST.Typed.f64 => return 8
+        case AST.Typed.r => return 8
+        case AST.Typed.string =>
           var r: Z = 4 // type sha
-          r = r + typeByteSize(AST.Typed.z) // .size
-          val et = t.args(1)
-          if (et == AST.Typed.b) {
-            r = r + getMaxArraySize(t)
+          r = r + 4 // size
+          r = r + config.maxStringSize
+          return r
+        case AST.Typed.unit => return 0
+        case AST.Typed.nothing => return 0
+        case `dpType` => return dpTypeByteSize
+        case Util.spType => return spTypeByteSize
+        case `cpType` =>
+          assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
+          return cpTypeByteSize
+        case t: AST.Typed.Name =>
+          if (t.ids.size == 1 && t.args.isEmpty && Z(t.ids(0)).nonEmpty) {
+            return 8
+          }
+          if (t.ids == AST.Typed.isName || t.ids == AST.Typed.msName) {
+            var r: Z = 4 // type sha
+            r = r + typeByteSize(AST.Typed.z) // .size
+            val et = t.args(1)
+            if (et == AST.Typed.b) {
+              r = r + getMaxArraySize(t)
+            } else {
+              r = r + getMaxArraySize(t) * typeByteSize(t.args(1)) // elements
+            }
+            return r
           } else {
-            r = r + getMaxArraySize(t) * typeByteSize(t.args(1)) // elements
+            th.typeMap.get(t.ids).get match {
+              case info: TypeInfo.Adt =>
+                if (info.ast.isRoot) {
+                  return typeImplMaxSize(t)
+                } else {
+                  return classSizeFieldOffsets(t)._1
+                }
+              case _: TypeInfo.Sig => return typeImplMaxSize(t)
+              case info: TypeInfo.Enum => return rangeNumOfBytes(F, 0, info.elements.size - 1)
+              case info: TypeInfo.SubZ =>
+                if (info.ast.isBitVector) {
+                  return numOfBytes(info.ast.bitWidth)
+                } else if (info.ast.hasMax && info.ast.hasMin) {
+                  return rangeNumOfBytes(info.ast.isSigned, info.ast.min, info.ast.max)
+                } else {
+                  return numOfBytes(config.defaultBitWidth)
+                }
+              case _ => halt(s"Infeasible: $t")
+            }
+          }
+        case t: AST.Typed.Tuple =>
+          var r: Z = 4 // type sha
+          for (arg <- t.args) {
+            r = r + typeByteSize(arg)
           }
           return r
-        } else {
-          th.typeMap.get(t.ids).get match {
-            case info: TypeInfo.Adt =>
-              if (info.ast.isRoot) {
-                return typeImplMaxSize(t)
-              } else {
-                return classSizeFieldOffsets(t)._1
-              }
-            case _: TypeInfo.Sig => return typeImplMaxSize(t)
-            case info: TypeInfo.Enum => return rangeNumOfBytes(F, 0, info.elements.size - 1)
-            case info: TypeInfo.SubZ =>
-              if (info.ast.isBitVector) {
-                return numOfBytes(info.ast.bitWidth)
-              } else if (info.ast.hasMax && info.ast.hasMin) {
-                return rangeNumOfBytes(info.ast.isSigned, info.ast.min, info.ast.max)
-              } else {
-                return numOfBytes(config.defaultBitWidth)
-              }
-            case _ => halt(s"Infeasible: $t")
-          }
-        }
-      case t: AST.Typed.Tuple =>
-        var r: Z = 4 // type sha
-        for (arg <- t.args) {
-          r = r + typeByteSize(arg)
-        }
-        return r
-      case t => halt(s"Infeasible: $t")
+        case t => halt(s"Infeasible: $t")
+      }
     }
+
+    var r = typeByteSizeH
+    if (config.memoryAccess == Config.MemoryAccess.Ddr && !isScalar(t)) {
+      r = 8 * (r / 8 + (if (r % 8 != 0) 1 else 0))
+    }
+    return r
   }
 
   @memoize def isSubZ(t: AST.Typed): B = {
