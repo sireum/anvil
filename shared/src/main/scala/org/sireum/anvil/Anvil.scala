@@ -56,6 +56,7 @@ object Anvil {
                          val tempGlobal: B,
                          val tempLocal: B,
                          val memoryAccess: Config.MemoryAccess.Type,
+                         val baseAddress: Z,
                          val ipMax: Z,
                          val cpMax: Z,
                          val genVerilog: B,
@@ -94,6 +95,7 @@ object Anvil {
         tempGlobal = T,
         tempLocal = F,
         memoryAccess = Config.MemoryAccess.Default,
+        baseAddress = 0,
         ipMax = 0,
         cpMax = 0,
         genVerilog = F,
@@ -229,6 +231,7 @@ import Anvil._
   }
 
   def generateIR(isTest: B, fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): Option[IR] = {
+    assert(config.baseAddress < config.memory)
     val threeAddressCode = T
     @strictpure def isLit(e: AST.IR.Exp): B = e match {
       case _: AST.IR.Exp.Bool => T
@@ -265,7 +268,6 @@ import Anvil._
     val mq: (AST.IR.MethodContext, AST.IR.Program, Z, HashSMap[ISZ[String], VarInfo], Z) = {
       var globals = ISZ[AST.IR.Global]()
       var procedures = ISZ[AST.IR.Procedure]()
-      var globalSize: Z = 0
 
       var startOpt = Option.none[AST.IR.Procedure]()
       for (ms <- tsr.methods.values; m <- ms.elements) {
@@ -409,6 +411,7 @@ import Anvil._
       }
       var globalMap = HashSMap.empty[ISZ[String], VarInfo]
       var globalTemps = 0
+      var globalSize: Z = config.baseAddress
       for (g <- globals) {
         val size = typeByteSize(g.tipe)
         val scalar = isScalar(g.tipe)
