@@ -26,7 +26,8 @@
 package org.sireum.anvil
 
 import org.sireum._
-import org.sireum.anvil.Util.{AnvilIRPrinter, constructLocalId, indexing, spType}
+import org.sireum.anvil.Anvil.VarInfo
+import org.sireum.anvil.Util.{AnvilIRPrinter, constructLocalId, indexing, isTempGlobal, spType}
 import org.sireum.lang.ast.{IR, Typed}
 import org.sireum.lang.ast.IR.{Exp, Jump}
 import org.sireum.lang.{ast => AST}
@@ -2029,12 +2030,12 @@ import HwSynthesizer._
     * Slang IR: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/IR.scala
     * Anvil IR Intrinsic: https://github.com/sireum/anvil/blob/master/shared/src/main/scala/org/sireum/anvil/Intrinsic.scala
    */
-  def printProcedure(name: String, o: AST.IR.Procedure, output: Anvil.Output, maxRegisters: Util.TempVector): Unit = {
+  def printProcedure(name: String, o: AST.IR.Procedure, output: Anvil.Output, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): Unit = {
     if(anvil.config.useIP) {
       ipAlloc = Util.ipAlloc(anvil, o, anvil.config.ipMax)
     }
     var r = HashSMap.empty[ISZ[String], ST]
-    val processedProcedureST = processProcedure(name, o, maxRegisters)
+    val processedProcedureST = processProcedure(name, o, maxRegisters, globalInfoMap)
     r = r + ISZ(name) ~> o.prettyST(anvil.printer)
 
     val configST: ST =
@@ -2520,14 +2521,14 @@ import HwSynthesizer._
               |
               |# clocking wizard
               |create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0
-              |set_property -dict [list \
-              |  CONFIG.PRIM_SOURCE {No_buffer} \
-              |  CONFIG.PRIM_IN_FREQ {99.990005} \
-              |  CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $$FREQ_HZ \
-              |  CONFIG.USE_LOCKED {true} \
-              |  CONFIG.USE_RESET {true} \
-              |  CONFIG.RESET_PORT {resetn} \
-              |  CONFIG.RESET_TYPE {ACTIVE_LOW} \
+              |set_property -dict [list $backslash
+              |  CONFIG.PRIM_SOURCE {No_buffer} $backslash
+              |  CONFIG.PRIM_IN_FREQ {99.990005} $backslash
+              |  CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $$FREQ_HZ $backslash
+              |  CONFIG.USE_LOCKED {true} $backslash
+              |  CONFIG.USE_RESET {true} $backslash
+              |  CONFIG.RESET_PORT {resetn} $backslash
+              |  CONFIG.RESET_TYPE {ACTIVE_LOW} $backslash
               |] [get_bd_cells clk_wiz_0]
               |connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins clk_wiz_0/clk_in1]
               |connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_resetn0] [get_bd_pins clk_wiz_0/resetn]
@@ -2977,7 +2978,7 @@ import HwSynthesizer._
     return sbtST
   }
 
-  @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector): ST = {
+  @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): ST = {
 
     @pure def generalPurposeRegisterST: ST = {
       var generalRegMap: HashMap[String, (Z,Z,B)] = HashMap.empty[String, (Z,Z,B)]
@@ -3759,6 +3760,18 @@ import HwSynthesizer._
             |io.M_AXI_RREADY := ${sharedMemName}.io.M_AXI_RREADY
           """
 
+      @pure def globalTempST: ST = {
+        var globalTempSTs: ISZ[ST] = ISZ[ST]()
+        for(entry <- globalInfoMap.entries) {
+          if(isTempGlobal(anvil, entry._2.tipe, entry._1)) {
+            val singnedST: ST = if(anvil.isSigned(entry._2.tipe)) st"SInt" else st"UInt"
+            val bitWidthST: ST = st"${anvil.typeBitSize(entry._2.tipe)}"
+            globalTempSTs = globalTempSTs :+ st"val ${globalName(entry._1)} = Reg(${singnedST.render}(${bitWidthST}.W))"
+          }
+        }
+        return st"${(globalTempSTs, "\n")}"
+      }
+
       return st"""
           |import chisel3._
           |import chisel3.util._
@@ -3819,6 +3832,7 @@ import HwSynthesizer._
           |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Default) s"val ${sharedMemName} = RegInit(VecInit(Seq.fill(ARRAY_REG_DEPTH)(0.U(ARRAY_REG_WIDTH.W))))" else ""}
           |  // reg for general purpose
           |  ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
+          |  ${if(anvil.config.tempGlobal) globalTempST else st""}
           |  // reg for code pointer
           |  ${cpST.render}
           |  // reg for stack pointer
@@ -4344,6 +4358,26 @@ import HwSynthesizer._
           hwLog.tmpWireCount = hwLog.tmpWireCount + 1
         }
       }
+      case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Erase) => {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+          val offsetWidth: Z = log2Up(anvil.config.memory * 8)
+          val eraseBaseST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
+          val eraseOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
+          val eraseBytesST: ST = st"${intrinsic.bytes}.U"
+          val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.dmaValid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
+          intrinsicST =
+            st"""
+                |${indexerInstanceName}.io.mode := 3.U
+                |${indexerInstanceName}.io.dmaSrcAddr := 0.U
+                |${indexerInstanceName}.io.dmaDstAddr := ${eraseBaseST.render}
+                |${indexerInstanceName}.io.dmaDstOffset := ${eraseOffsetST.render}
+                |${indexerInstanceName}.io.dmaSrcLen := 0.U
+                |${indexerInstanceName}.io.dmaDstLen := ${eraseBytesST.render}
+              """
+        }
+      }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Copy) => {
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
           val offsetWidth: Z = log2Up(anvil.config.memory * 8)
@@ -4569,6 +4603,42 @@ import HwSynthesizer._
     }
 
     a match {
+      case a: AST.IR.Stmt.Assign.Global => {
+        val lhsST: ST = globalName(a.name)
+        val rhsST = processExpr(a.rhs, F, ipPortLogic, hwLog)
+        if(isIntrinsicLoad(a.rhs)) {
+          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+            val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+            val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, hwLog)
+            val offsetWidth: Z = log2Up(anvil.config.memory * 8)
+            val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
+            val readOffsetST: ST = if(intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
+            assignST =
+              st"""
+                  |${indexerInstanceName}.io.mode := 1.U
+                  |${indexerInstanceName}.io.readAddr := ${readAddrST.render}
+                  |${indexerInstanceName}.io.readOffset := ${readOffsetST.render}
+                  |${indexerInstanceName}.io.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U
+                """
+          } else {
+            assignST =
+              st"""
+                  |${lhsST} := Cat{
+                  |  ${rhsST.render}
+                  |}
+                """
+          }
+        } else {
+          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
+          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
+
+          assignST =
+            st"""
+                |${finalST.render}
+              """
+        }
+      }
       case a: AST.IR.Stmt.Assign.Temp => {
         val regNo = a.lhs
         val lhsST: ST = if(!anvil.config.splitTempSizes)  st"${generalRegName}(${regNo}.U)" else st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
@@ -4603,7 +4673,7 @@ import HwSynthesizer._
           assignST =
             st"""
                 |${finalST.render}
-                """
+              """
         }
       }
       case _ => {
@@ -4621,6 +4691,8 @@ import HwSynthesizer._
     }
     return index
   }
+
+  @strictpure def globalName(name: ISZ[String]): ST = st"global_${(name, "_")}"
 
   @pure def processExpr(exp: AST.IR.Exp, isForcedSign: B, ipPortLogic: HwSynthesizer.IpPortAssign, hwLog: HwSynthesizer.HwLog): ST = {
     var exprST = st""
@@ -4699,6 +4771,9 @@ import HwSynthesizer._
           case _ => if(anvil.isSigned(exp.tipe)) "S" else "U"
         }
         exprST = st"${if(exp.value > 2147483647 || exp.value < -2147483648) s"BigInt(\"${exp.value}\")" else s"${exp.value}"}.${valuePostfix}(${anvil.typeByteSize(exp.tipe)*8}.W)"
+      }
+      case exp: AST.IR.Exp.GlobalVarRef => {
+        exprST = globalName(exp.name)
       }
       case exp: AST.IR.Exp.Type => {
         val splitStr: String = if(anvil.typeBitSize(exp.exp.tipe)== anvil.typeBitSize(exp.t)) "" else s".pad(${anvil.typeBitSize(exp.t)})"

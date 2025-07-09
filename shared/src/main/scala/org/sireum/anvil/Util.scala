@@ -1294,6 +1294,6 @@ object Util {
   }
 
   @strictpure def isTempGlobal(anvil: Anvil, tipe: AST.Typed, name: ISZ[String]): B =
-    anvil.config.tempGlobal && anvil.isScalar(tipe) && name != memName && name != memTypeName && name != memSizeName
+    anvil.config.tempGlobal && anvil.isScalar(tipe) && name != memName && name != memTypeName && name != memSizeName && name != testNumName
 
 }
