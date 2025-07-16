@@ -1026,8 +1026,7 @@ object Util {
     override def postIntrinsicCopy(o: Intrinsic.Copy): MOption[Intrinsic.Copy] = {
       anvil.config.memoryAccess match {
         case Anvil.Config.MemoryAccess.Default => updateCycles((copyBytes / anvil.config.copySize) + (copyBytes % anvil.config.copySize))
-        case Anvil.Config.MemoryAccess.Ip => updateCycles(copyBytes * 4)
-        case Anvil.Config.MemoryAccess.Ddr => updateCycles(copyBytes * 4)
+        case _ => updateCycles(copyBytes * 4)
       }
       return MNone()
     }

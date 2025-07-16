@@ -57,7 +57,9 @@ object Anvil {
                          val tempLocal: B,
                          val memoryAccess: Config.MemoryAccess.Type,
                          val baseAddress: Z,
+                         val alignAxi4: B,
                          val ipMax: Z,
+                         val ipSubroutine: B,
                          val cpMax: Z,
                          val genVerilog: B,
                          val simOpt: Option[Config.Sim]) {
@@ -70,7 +72,8 @@ object Anvil {
 
     @enum object MemoryAccess {
       "Default"
-      "Ip"
+      "BramNative"
+      "BramAxi4"
       "Ddr"
     }
 
@@ -95,8 +98,10 @@ object Anvil {
         tempGlobal = T,
         tempLocal = F,
         memoryAccess = Config.MemoryAccess.Default,
+        alignAxi4 = F,
         baseAddress = 0,
         ipMax = 0,
+        ipSubroutine = F,
         cpMax = 0,
         genVerilog = F,
         simOpt = None())
@@ -653,7 +658,8 @@ import Anvil._
             pass = pass + 1
           }
 
-        case Anvil.Config.MemoryAccess.Ip =>
+        case Anvil.Config.MemoryAccess.BramNative =>
+        case Anvil.Config.MemoryAccess.BramAxi4 =>
         case Anvil.Config.MemoryAccess.Ddr =>
       }
 
