@@ -2050,7 +2050,9 @@ import HwSynthesizer._
           |memoryAccess = ${anvil.config.memoryAccess.string},
           |useIp = ${if(anvil.config.useIP) "true" else "false"},
           |ipMax = ${anvil.config.ipMax},
-          |cpMax = ${anvil.config.cpMax}
+          |cpMax = ${anvil.config.cpMax},
+          |CPsize = ${anvil.typeBitSize(spType)},
+          |SPsize = ${anvil.typeBitSize(anvil.cpType)}
         """
 
     output.add(T, ISZ("config.txt"), configST)
@@ -2519,22 +2521,9 @@ import HwSynthesizer._
               |set_property CONFIG.C_SIZE {1} [get_bd_cells util_vector_logic_0]
               |connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins GeneratedIP/reset]
               |
-              |# clocking wizard
-              |create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0
-              |set_property -dict [list $backslash
-              |  CONFIG.PRIM_SOURCE {No_buffer} $backslash
-              |  CONFIG.PRIM_IN_FREQ {99.990005} $backslash
-              |  CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $$FREQ_HZ $backslash
-              |  CONFIG.USE_LOCKED {true} $backslash
-              |  CONFIG.USE_RESET {true} $backslash
-              |  CONFIG.RESET_PORT {resetn} $backslash
-              |  CONFIG.RESET_TYPE {ACTIVE_LOW} $backslash
-              |] [get_bd_cells clk_wiz_0]
-              |connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins clk_wiz_0/clk_in1]
-              |connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_resetn0] [get_bd_pins clk_wiz_0/resetn]
-              |connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins GeneratedIP/clock]
-              |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {/clk_wiz_0/clk_out1} Clk_xbar {/zynq_ultra_ps_e_0/pl_clk0} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
-              |connect_bd_net [get_bd_pins util_vector_logic_0/Op1] [get_bd_pins rst_ps8_0_99M/peripheral_aresetn]
+              |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
+              |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
+              |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ] [get_bd_cells zynq_ultra_ps_e_0]
             """
         else
           st"""
@@ -2549,22 +2538,10 @@ import HwSynthesizer._
               |] [get_bd_cells util_vector_logic_0]
               |connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins GeneratedIP/reset]
               |
-              |create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0
-              |set_property -dict [list $backslash
-              |  CONFIG.PRIM_SOURCE {No_buffer} $backslash
-              |  CONFIG.PRIM_IN_FREQ {99.990005} $backslash
-              |  CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $$FREQ_HZ $backslash
-              |  CONFIG.USE_LOCKED {true} $backslash
-              |  CONFIG.USE_RESET {true} $backslash
-              |  CONFIG.RESET_PORT {resetn} $backslash
-              |  CONFIG.RESET_TYPE {ACTIVE_LOW} $backslash
-              |] [get_bd_cells clk_wiz_0]
-              |connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins clk_wiz_0/clk_in1]
-              |connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_resetn0] [get_bd_pins clk_wiz_0/resetn]
-              |connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins GeneratedIP/clock]
-              |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {/clk_wiz_0/clk_out1} Clk_xbar {/zynq_ultra_ps_e_0/pl_clk0} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
-              |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/clk_wiz_0/clk_out1} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins zynq_ultra_ps_e_0/saxihp0_fpd_aclk]
+              |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
+              |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins zynq_ultra_ps_e_0/saxihp0_fpd_aclk]
               |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
+              |set_property CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ [get_bd_cells zynq_ultra_ps_e_0]
               |
               |# set the address map for HP port
               |assign_bd_address -target_address_space /GeneratedIP/io_M_AXI [get_bd_addr_segs zynq_ultra_ps_e_0/SAXIGP2/HP0_DDR_LOW] -force
@@ -2644,7 +2621,26 @@ import HwSynthesizer._
         st"""
             |#!/bin/sh
             |
-            |./auto_script.sh . ./ ${name} TestSystem 100
+            |log_file="time_log.txt"
+            |
+            |start_bound=100
+            |end_bound=150
+            |step=25
+            |
+            |bound=$$start_bound
+            |while [ "$$bound" -le "$$end_bound" ]; do
+            |    echo "Running with bound=$$bound" >> "$$log_file"
+            |
+            |    start=$$(date +%s.%N)
+            |    ./auto_script.sh . ./ ${name} TestSystem "$$bound"
+            |    end=$$(date +%s.%N)
+            |
+            |    duration=$$(echo "$$end - $$start" | bc)
+            |    echo "Execution time for bound=$$bound: $$duration seconds" >> "$$log_file"
+            |    echo "" >> "$$log_file"
+            |
+            |    bound=$$((bound + step))
+            |done
           """
 
       val zynqCProgramST: ST = {
