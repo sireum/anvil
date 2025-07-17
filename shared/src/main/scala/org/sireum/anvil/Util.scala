@@ -252,6 +252,14 @@ object Util {
         case _ => return MNone()
       }
     }
+
+    override def post_langastIRStmtAssignGlobal(o: AST.IR.Stmt.Assign.Global): MOption[AST.IR.Stmt.Assign] = {
+      o.rhs match {
+        case rhs: AST.IR.Exp.Int if rhs.tipe == anvil.cpType =>
+          return MSome(o(rhs = rhs(value = cpSubstMap.get(rhs.value).get)))
+        case _ => return MNone()
+      }
+    }
   }
 
   @record class RegisterDetector(var hasSP: B, var hasDP: B) extends MAnvilIRTransformer {
@@ -1039,6 +1047,24 @@ object Util {
     }
   }
 
+  @datatype class IpAlloc(val allocMap: HashSMap[IpAlloc.Exp, Z],
+                          val binopAllocSizeMap: HashSMap[(B, AST.IR.Exp.Binary.Op.Type), Z],
+                          val indexingAllocSize: Z)
+  object IpAlloc {
+    @sig trait Exp {
+      @pure def ast: AST.IR.Exp
+    }
+    @ext("IpAlloc_Ext") object Ext {
+      @pure def exp(e: AST.IR.Exp): IpAlloc.Exp = $
+    }
+  }
+
+  @record class BinopDetector(var hasBinop: B) extends MAnvilIRTransformer {
+    override def post_langastIRExpBinary(o: AST.IR.Exp.Binary): MOption[AST.IR.Exp] = {
+      hasBinop = T
+      return MNone()
+    }
+  }
   val kind: String = "Anvil"
   val exitLabel: Z = 0
   val errorLabel: Z = 1
@@ -1058,6 +1084,8 @@ object Util {
   val sfLocType: AST.Typed.Name = AST.Typed.u32
   val objInitId: String = "<objinit>"
   val newInitId: String = "<init>"
+  val binopLeftId: String = "l"
+  val binopRightId: String = "r"
   val memName: ISZ[String] = ISZ("$memory")
   val memTypeName: ISZ[String] = ISZ(typeFieldId)
   val memSizeName: ISZ[String] = ISZ(sizeFieldId)
@@ -1188,18 +1216,6 @@ object Util {
     return r
   }
 
-  @datatype class IpAlloc(val allocMap: HashSMap[IpAlloc.Exp, Z],
-                          val binopAllocSizeMap: HashSMap[(B, AST.IR.Exp.Binary.Op.Type), Z],
-                          val indexingAllocSize: Z)
-  object IpAlloc {
-    @sig trait Exp {
-      @pure def ast: AST.IR.Exp
-    }
-    @ext("IpAlloc_Ext") object Ext {
-      @pure def exp(e: AST.IR.Exp): IpAlloc.Exp = $
-    }
-  }
-
   @pure def maxIPs(anvil: Anvil, p: AST.IR.Procedure): IpAlloc = {
     var binopMap = HashSMap.empty[(B, AST.IR.Exp.Binary.Op.Type), Z]
     var indexing: Z = 0
@@ -1295,4 +1311,6 @@ object Util {
   @strictpure def isTempGlobal(anvil: Anvil, tipe: AST.Typed, name: ISZ[String]): B =
     anvil.config.tempGlobal && anvil.isScalar(tipe) && name != memName && name != memTypeName && name != memSizeName
 
+  @strictpure def binopSignGlobalName(op: AST.IR.Exp.Binary.Op.Type, isSigned: B): ISZ[String] =
+    ISZ("org", "sireum", "anvil", s"${'$'}$op${if (isSigned) "S" else "U" }")
 }

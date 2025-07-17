@@ -43,7 +43,7 @@ object IRSimulator {
   var DEBUG: B = T
   var DEBUG_TEMP: B = T
   var DEBUG_EDIT: B = T
-  var DEBUG_GLOBAL: B = T
+  var DEBUG_GLOBAL: B = F
   var DEBUG_LOCAL: B = T
 
   @record @unclonable class State(val globalMap: HashSMap[QName, Anvil.VarInfo],
@@ -1297,6 +1297,10 @@ import IRSimulator._
               return State.Edit.Temp(State.Edit.Temp.Kind.CP, isFP, isSigned, bitSize, 0,
                 Value.fromRawU64(anvil, cp, anvil.cpType), acs)
             }
+          case in: Intrinsic.GotoGlobal =>
+            val (cp, acs) = evalExp(state, AST.IR.Exp.GlobalVarRef(in.name, anvil.cpType, in.pos))
+            return State.Edit.Temp(State.Edit.Temp.Kind.CP, isFP, isSigned, bitSize, 0, cp, acs)
+
         }
       case _: AST.IR.Jump.Return => halt(s"Infeasible: ${jump.prettyST(anvil.printer)}")
       case _: AST.IR.Jump.Halt => halt(s"Infeasible: ${jump.prettyST(anvil.printer)}")
