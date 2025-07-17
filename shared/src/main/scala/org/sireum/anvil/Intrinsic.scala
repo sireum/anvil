@@ -214,4 +214,9 @@ object Intrinsic {
 
     @strictpure def targets: ISZ[Z] = ISZ()
   }
+  @datatype class GotoGlobal(val name: ISZ[String], val pos: Position) extends AST.IR.Jump.Intrinsic.Type {
+    @strictpure def prettyST(p: AST.IR.Printer): ST = st"goto @${(name, ".")}"
+
+    @strictpure def targets: ISZ[Z] = ISZ()
+  }
 }

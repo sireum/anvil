@@ -181,6 +181,10 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
+    @pure def preIntrinsicGotoGlobal(ctx: Context, o: Intrinsic.GotoGlobal): PreResult[Context, Intrinsic.GotoGlobal] = {
+      return PreResult(ctx, T, None())
+    }
+
     @pure def pre_langastIRExpIndexing(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Indexing): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
@@ -533,6 +537,13 @@ object AnvilIRTransformer {
            case PreResult(preCtx, continu, _) => PreResult(preCtx, continu, None[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]())
           }
           return r
+        case o: Intrinsic.GotoGlobal =>
+          val r: PreResult[Context, org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = preIntrinsicGotoGlobal(ctx, o) match {
+           case PreResult(preCtx, continu, Some(r: org.sireum.lang.ast.IR.Jump.Intrinsic.Type)) => PreResult(preCtx, continu, Some[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](r))
+           case PreResult(_, _, Some(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+           case PreResult(preCtx, continu, _) => PreResult(preCtx, continu, None[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]())
+          }
+          return r
       }
     }
 
@@ -720,6 +731,10 @@ object AnvilIRTransformer {
     }
 
     @pure def postIntrinsicGotoLocal(ctx: Context, o: Intrinsic.GotoLocal): TPostResult[Context, Intrinsic.GotoLocal] = {
+      return TPostResult(ctx, None())
+    }
+
+    @pure def postIntrinsicGotoGlobal(ctx: Context, o: Intrinsic.GotoGlobal): TPostResult[Context, Intrinsic.GotoGlobal] = {
       return TPostResult(ctx, None())
     }
 
@@ -1070,6 +1085,13 @@ object AnvilIRTransformer {
       o match {
         case o: Intrinsic.GotoLocal =>
           val r: TPostResult[Context, org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = postIntrinsicGotoLocal(ctx, o) match {
+           case TPostResult(postCtx, Some(result: org.sireum.lang.ast.IR.Jump.Intrinsic.Type)) => TPostResult(postCtx, Some[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](result))
+           case TPostResult(_, Some(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+           case TPostResult(postCtx, _) => TPostResult(postCtx, None[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]())
+          }
+          return r
+        case o: Intrinsic.GotoGlobal =>
+          val r: TPostResult[Context, org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = postIntrinsicGotoGlobal(ctx, o) match {
            case TPostResult(postCtx, Some(result: org.sireum.lang.ast.IR.Jump.Intrinsic.Type)) => TPostResult(postCtx, Some[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](result))
            case TPostResult(_, Some(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
            case TPostResult(postCtx, _) => TPostResult(postCtx, None[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]())
@@ -1617,6 +1639,32 @@ import AnvilIRTransformer._
     val hasChanged: B = r.resultOpt.nonEmpty
     val o2: Intrinsic.GotoLocal = r.resultOpt.getOrElse(o)
     val postR: TPostResult[Context, Intrinsic.GotoLocal] = pp.postIntrinsicGotoLocal(r.ctx, o2)
+    if (postR.resultOpt.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return TPostResult(postR.ctx, Some(o2))
+    } else {
+      return TPostResult(postR.ctx, None())
+    }
+  }
+
+  @pure def transformIntrinsicGotoGlobal(ctx: Context, o: Intrinsic.GotoGlobal): TPostResult[Context, Intrinsic.GotoGlobal] = {
+    val preR: PreResult[Context, Intrinsic.GotoGlobal] = pp.preIntrinsicGotoGlobal(ctx, o)
+    val r: TPostResult[Context, Intrinsic.GotoGlobal] = if (preR.continu) {
+      val o2: Intrinsic.GotoGlobal = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      if (hasChanged)
+        TPostResult(preR.ctx, Some(o2))
+      else
+        TPostResult(preR.ctx, None())
+    } else if (preR.resultOpt.nonEmpty) {
+      TPostResult(preR.ctx, Some(preR.resultOpt.getOrElse(o)))
+    } else {
+      TPostResult(preR.ctx, None())
+    }
+    val hasChanged: B = r.resultOpt.nonEmpty
+    val o2: Intrinsic.GotoGlobal = r.resultOpt.getOrElse(o)
+    val postR: TPostResult[Context, Intrinsic.GotoGlobal] = pp.postIntrinsicGotoGlobal(r.ctx, o2)
     if (postR.resultOpt.nonEmpty) {
       return postR
     } else if (hasChanged) {
@@ -2210,6 +2258,11 @@ import AnvilIRTransformer._
             TPostResult(r0.ctx, Some(o2(contextOpt = r0.resultOpt.getOrElse(o2.contextOpt))))
           else
             TPostResult(r0.ctx, None())
+        case o2: Intrinsic.GotoGlobal =>
+          if (hasChanged)
+            TPostResult(preR.ctx, Some(o2))
+          else
+            TPostResult(preR.ctx, None())
       }
       rOpt
     } else if (preR.resultOpt.nonEmpty) {

@@ -367,16 +367,17 @@ import Anvil._
           procedures = procedures :+ p
         }
       }
+      val startPos = startOpt.get.pos
       if (config.stackTrace) {
-        globals = globals :+ AST.IR.Global(spType, memName, startOpt.get.pos)
-        globals = globals :+ AST.IR.Global(typeShaType, memTypeName, startOpt.get.pos)
-        globals = globals :+ AST.IR.Global(AST.Typed.z, memSizeName, startOpt.get.pos)
+        globals = globals :+ AST.IR.Global(spType, memName, startPos)
+        globals = globals :+ AST.IR.Global(typeShaType, memTypeName, startPos)
+        globals = globals :+ AST.IR.Global(AST.Typed.z, memSizeName, startPos)
       }
       if (isTest) {
-        globals = globals :+ AST.IR.Global(AST.Typed.z, testNumName, startOpt.get.pos)
+        globals = globals :+ AST.IR.Global(AST.Typed.z, testNumName, startPos)
       }
       if (config.shouldPrint) {
-        globals = globals :+ AST.IR.Global(displayType, displayName, startOpt.get.pos)
+        globals = globals :+ AST.IR.Global(displayType, displayName, startPos)
         for (id <- runtimePrintMethodTypeMap.keys) {
           val info = th.nameMap.get(runtimeName :+ id).get.asInstanceOf[Info.Method]
           procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
@@ -526,8 +527,8 @@ import Anvil._
     val startContext = mq._1
     var program = mq._2
     val globalSize = mq._3
-    val globalMap = mq._4
-    val globalTemps = mq._5
+    var globalMap = mq._4
+    var globalTemps = mq._5
     val procDescMap = HashSMap.empty[U32, String] ++
       (for (p <- program.procedures) yield (sha3(procedureDesc(PBox(p))), procedureDesc(PBox(p))))
 
@@ -674,6 +675,25 @@ import Anvil._
       p = anvil.transformAssignTempLoad(p)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "assign-temp-load"), p.prettyST(anvil.printer))
       pass = pass + 1
+
+      if (config.tempGlobal && config.ipSubroutine) {
+        @pure def hasBinop(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
+          val bd = BinopDetector(F)
+          bd.transform_langastIRStmtGround(g)
+          return bd.hasBinop
+        }
+
+        p = anvil.transformSplitTest(T, fresh, p, hasBinop _)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-ips"), p.prettyST(anvil.printer))
+        pass = pass + 1
+
+        val pair = anvil.transformIpSubroutines(fresh, p, globalMap)
+        globalTemps = globalTemps + pair._2.size - globalMap.size
+        globalMap = pair._2
+        p = pair._1
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "ip-subroutines"), p.prettyST(anvil.printer))
+        pass = pass + 1
+      }
 
       p = anvil.transformEmptyBlock(p)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "empty-block"), p.prettyST(anvil.printer))
@@ -1798,6 +1818,8 @@ import Anvil._
           AST.IR.Exp.Intrinsic(Intrinsic.Register(T, _, _)), 0, _, _, n: AST.IR.Exp.Int, _, _, _)) if n.tipe == cpType =>
             r = r + n.value ~> (r.get(n.value).get + 1)
           case AST.IR.Stmt.Assign.Temp(_, n: AST.IR.Exp.Int, _) if n.tipe == cpType =>
+            r = r + n.value ~> (r.get(n.value).get + 1)
+          case AST.IR.Stmt.Assign.Global(_, _, n: AST.IR.Exp.Int, _) if n.tipe == cpType =>
             r = r + n.value ~> (r.get(n.value).get + 1)
           case _ =>
         }
@@ -2975,6 +2997,96 @@ import Anvil._
       blocks = blocks :+ block(grounds = grounds)
     }
     return p(body = body(blocks = blocks))
+  }
+
+  def transformIpSubroutines(fresh: lang.IRTranslator.Fresh,
+                             p: AST.IR.Procedure,
+                             gm: HashSMap[QName, VarInfo]): (AST.IR.Procedure, HashSMap[QName, VarInfo]) = {
+    val pos = p.pos
+    var ipBlocks = ISZ[AST.IR.BasicBlock]()
+    var binopLocMap = HashMap.empty[(AST.IR.Exp.Binary.Op.Type, B), Z]
+    var globalMap = gm
+    @pure def initLoc: Z = {
+      var r: Z = 0
+      for (p <- globalMap.entries) {
+        val (name, info) = p
+        if (isTempGlobal(this, info.tipe, name) && r < info.loc) {
+          r = info.loc
+        }
+      }
+      return r
+    }
+    var loc = initLoc + 1
+
+    def addBinop(op: AST.IR.Exp.Binary.Op.Type, isSigned: B, returnType: AST.Typed): Unit = {
+      if (binopLocMap.get((op, isSigned)).nonEmpty) {
+        return
+      }
+      val t: AST.Typed = if (isSigned) AST.Typed.s64 else AST.Typed.u64
+      val opGlobalName = binopSignGlobalName(op, isSigned)
+      val ret = opGlobalName :+ returnLocalId
+      val l = opGlobalName :+ binopLeftId
+      val r = opGlobalName :+ binopRightId
+      val v = opGlobalName :+ resultLocalId
+      val retInfo = VarInfo(T, loc, typeByteSize(cpType), 0, cpType, pos)
+      globalMap = globalMap + ret ~> retInfo
+      loc = loc + 1
+      val lInfo = VarInfo(T, loc, typeByteSize(t), 0, t, pos)
+      globalMap = globalMap + l ~> lInfo
+      loc = loc + 1
+      val rInfo = VarInfo(T, loc, typeByteSize(t), 0, t, pos)
+      globalMap = globalMap + r ~> rInfo
+      loc = loc + 1
+      val vInfo = VarInfo(T, loc, typeByteSize(returnType), 0, returnType, pos)
+      globalMap = globalMap + v ~> vInfo
+      loc = loc + 1
+
+      val label = fresh.label()
+      val end = fresh.label()
+      ipBlocks = ipBlocks :+ AST.IR.BasicBlock(label, ISZ(
+        AST.IR.Stmt.Assign.Global(v, vInfo.tipe,
+          AST.IR.Exp.Binary(lInfo.tipe, AST.IR.Exp.GlobalVarRef(l, lInfo.tipe, pos), op,
+            AST.IR.Exp.GlobalVarRef(r, rInfo.tipe, pos), pos), pos)),
+        AST.IR.Jump.Goto(end, pos))
+      ipBlocks = ipBlocks :+ AST.IR.BasicBlock(end, ISZ(), AST.IR.Jump.Intrinsic(Intrinsic.GotoGlobal(ret, pos)))
+      binopLocMap = binopLocMap + (op, isSigned) ~> label
+    }
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      var labelOpt = Option.none[Z]()
+      for (g <- b.grounds) {
+        g match {
+          case g@AST.IR.Stmt.Assign.Temp(_, e@AST.IR.Exp.Binary(t: AST.Typed.Name, l, op, r, epos), _) =>
+            assert(labelOpt.isEmpty, s"There are multiple IPs in the same block: ${b.prettyST(printer)}")
+            val label = fresh.label()
+            val sign = isSigned(l.tipe)
+            addBinop(op, sign, t)
+            val ipLoc = binopLocMap.get((op, sign)).get
+            val gname = binopSignGlobalName(op, sign)
+            blocks = blocks :+ b(grounds = ISZ[AST.IR.Stmt.Ground](
+              AST.IR.Stmt.Assign.Global(gname :+ returnLocalId, cpType, AST.IR.Exp.Int(cpType, label, epos), epos),
+              AST.IR.Stmt.Assign.Global(gname :+ binopLeftId, l.tipe, l, epos),
+              AST.IR.Stmt.Assign.Global(gname :+ binopRightId, r.tipe, r, epos)
+            ), jump = AST.IR.Jump.Goto(ipLoc, epos))
+            val res = gname :+ resultLocalId
+            val resType = globalMap.get(res).get.tipe
+            var rhs: AST.IR.Exp = AST.IR.Exp.GlobalVarRef(gname :+ resultLocalId, e.tipe, epos)
+            if (resType != res) {
+              rhs = AST.IR.Exp.Type(F, rhs, t, epos)
+            }
+            grounds = grounds :+ g(rhs = rhs)
+            labelOpt = Some(label)
+          case _ => grounds = grounds :+ g
+        }
+      }
+      labelOpt match {
+        case Some(label) => blocks = blocks :+ AST.IR.BasicBlock(label, grounds, b.jump)
+        case _ => blocks = blocks :+ b
+      }
+    }
+    return (p(body = body(blocks = blocks ++ ipBlocks)), globalMap)
   }
 
   def transformMain(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, globalSize: Z, globalMap: HashSMap[QName, VarInfo]): AST.IR.Procedure = {

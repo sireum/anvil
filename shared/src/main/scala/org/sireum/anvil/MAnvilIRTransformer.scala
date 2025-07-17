@@ -177,6 +177,10 @@ object MAnvilIRTransformer {
     }
   }
 
+  val PreResultIntrinsicGotoGlobal: PreResult[Intrinsic.GotoGlobal] = PreResult(T, MNone())
+
+  val PostResultIntrinsicGotoGlobal: MOption[Intrinsic.GotoGlobal] = MNone()
+
   val PreResult_langastIRExpIndexing: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
   val PostResult_langastIRExpIndexing: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
@@ -477,6 +481,10 @@ import MAnvilIRTransformer._
 
   def preIntrinsicGotoLocal(o: Intrinsic.GotoLocal): PreResult[Intrinsic.GotoLocal] = {
     return PreResultIntrinsicGotoLocal
+  }
+
+  def preIntrinsicGotoGlobal(o: Intrinsic.GotoGlobal): PreResult[Intrinsic.GotoGlobal] = {
+    return PreResultIntrinsicGotoGlobal
   }
 
   def pre_langastIRExpIndexing(o: org.sireum.lang.ast.IR.Exp.Indexing): PreResult[org.sireum.lang.ast.IR.Exp] = {
@@ -831,6 +839,13 @@ import MAnvilIRTransformer._
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]())
         }
         return r
+      case o: Intrinsic.GotoGlobal =>
+        val r: PreResult[org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = preIntrinsicGotoGlobal(o) match {
+         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Jump.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](r))
+         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+         case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]())
+        }
+        return r
     }
   }
 
@@ -1019,6 +1034,10 @@ import MAnvilIRTransformer._
 
   def postIntrinsicGotoLocal(o: Intrinsic.GotoLocal): MOption[Intrinsic.GotoLocal] = {
     return PostResultIntrinsicGotoLocal
+  }
+
+  def postIntrinsicGotoGlobal(o: Intrinsic.GotoGlobal): MOption[Intrinsic.GotoGlobal] = {
+    return PostResultIntrinsicGotoGlobal
   }
 
   def post_langastIRExpIndexing(o: org.sireum.lang.ast.IR.Exp.Indexing): MOption[org.sireum.lang.ast.IR.Exp] = {
@@ -1368,6 +1387,13 @@ import MAnvilIRTransformer._
     o match {
       case o: Intrinsic.GotoLocal =>
         val r: MOption[org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = postIntrinsicGotoLocal(o) match {
+         case MSome(result: org.sireum.lang.ast.IR.Jump.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](result)
+         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+         case _ => MNone[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]()
+        }
+        return r
+      case o: Intrinsic.GotoGlobal =>
+        val r: MOption[org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = postIntrinsicGotoGlobal(o) match {
          case MSome(result: org.sireum.lang.ast.IR.Jump.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](result)
          case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
          case _ => MNone[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]()
@@ -1877,6 +1903,32 @@ import MAnvilIRTransformer._
     val hasChanged: B = r.nonEmpty
     val o2: Intrinsic.GotoLocal = r.getOrElse(o)
     val postR: MOption[Intrinsic.GotoLocal] = postIntrinsicGotoLocal(o2)
+    if (postR.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return MSome(o2)
+    } else {
+      return MNone()
+    }
+  }
+
+  def transformIntrinsicGotoGlobal(o: Intrinsic.GotoGlobal): MOption[Intrinsic.GotoGlobal] = {
+    val preR: PreResult[Intrinsic.GotoGlobal] = preIntrinsicGotoGlobal(o)
+    val r: MOption[Intrinsic.GotoGlobal] = if (preR.continu) {
+      val o2: Intrinsic.GotoGlobal = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      if (hasChanged)
+        MSome(o2)
+      else
+        MNone()
+    } else if (preR.resultOpt.nonEmpty) {
+      MSome(preR.resultOpt.getOrElse(o))
+    } else {
+      MNone()
+    }
+    val hasChanged: B = r.nonEmpty
+    val o2: Intrinsic.GotoGlobal = r.getOrElse(o)
+    val postR: MOption[Intrinsic.GotoGlobal] = postIntrinsicGotoGlobal(o2)
     if (postR.nonEmpty) {
       return postR
     } else if (hasChanged) {
@@ -2468,6 +2520,11 @@ import MAnvilIRTransformer._
           val r0: MOption[Option[org.sireum.lang.ast.IR.MethodContext]] = transformOption(o2.contextOpt, transform_langastIRMethodContext _)
           if (hasChanged || r0.nonEmpty)
             MSome(o2(contextOpt = r0.getOrElse(o2.contextOpt)))
+          else
+            MNone()
+        case o2: Intrinsic.GotoGlobal =>
+          if (hasChanged)
+            MSome(o2)
           else
             MNone()
       }
