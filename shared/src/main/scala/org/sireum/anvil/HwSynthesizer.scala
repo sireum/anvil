@@ -2615,7 +2615,7 @@ import HwSynthesizer._
           moduleST = moduleST :+ multiplierBlackBoxST
           moduleST = moduleST :+ adderSubtractorBlackBoxST
           moduleST = moduleST :+ indexIpST
-          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
             moduleST = moduleST :+ memoryIpST
           }
         }
@@ -2634,7 +2634,7 @@ import HwSynthesizer._
           instanceST = instanceST :+ insDeclST(b, entry._2)
         }
         instanceST = instanceST :+ insDeclST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
           instanceST = instanceST :+ insDeclST(BlockMemoryIP(), 1)
         }
         if(anvil.config.cpMax > 0) {
@@ -2650,7 +2650,7 @@ import HwSynthesizer._
           instanceST = instanceST :+ insPortFuncST(b, entry._2)
         }
         instanceST = instanceST :+ insPortFuncST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
           instanceST = instanceST :+ insPortFuncST(BlockMemoryIP(), 1)
         }
         if(anvil.config.cpMax > 0) {
@@ -2666,7 +2666,7 @@ import HwSynthesizer._
           instanceST = instanceST :+ insPortCallST(b, entry._2)
         }
         instanceST = instanceST :+ insPortCallST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
           instanceST = instanceST :+ insPortCallST(BlockMemoryIP(), 1)
         }
         if(anvil.config.cpMax > 0) {
@@ -2694,7 +2694,7 @@ import HwSynthesizer._
           """
 
       val memWriteST: ST =
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
           st"""
               |when(r_writeAddr === ${anvil.config.memory}.U) {
               |  writeState              := sBActive
@@ -2727,7 +2727,7 @@ import HwSynthesizer._
             """
 
       val memReadST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
           st"""
               |when(r_readAddr === ${anvil.config.memory}.U) {
               |  r_s_axi_rdata         := r_ready
@@ -2962,7 +2962,7 @@ import HwSynthesizer._
           |    val S_AXI_RREADY = Input(Bool())
           |  })
           |
-          |  ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip) s"val ${sharedMemName} = RegInit(VecInit(Seq.fill(ARRAY_REG_DEPTH)(0.U(ARRAY_REG_WIDTH.W))))" else ""}
+          |  ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) s"val ${sharedMemName} = RegInit(VecInit(Seq.fill(ARRAY_REG_DEPTH)(0.U(ARRAY_REG_WIDTH.W))))" else ""}
           |  // reg for general purpose
           |  ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
           |  // reg for code pointer
@@ -3002,7 +3002,7 @@ import HwSynthesizer._
           |  ${if(anvil.config.useIP) instanceDeclST else st""}
           |  init(this)
           |
-          |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) bramDefaultPortValueST.render else st""}
+          |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) bramDefaultPortValueST.render else st""}
           |
           |  // write state machine
           |  val sWriteIdle :: sAWActive :: sWActive :: sBActive:: Nil = Enum(4)
@@ -3010,7 +3010,7 @@ import HwSynthesizer._
           |
           |  r_s_axi_awready := Mux(io.S_AXI_AWVALID, true.B ,false.B)
           |  r_s_axi_wready  := Mux((writeState === sAWActive) & io.S_AXI_WVALID,  true.B, false.B)
-          |  r_s_axi_bvalid  := Mux((writeState === sWActive)${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) s"& ${sharedMemName}.io.writeValid" else ""}, true.B, false.B) |
+          |  r_s_axi_bvalid  := Mux((writeState === sWActive)${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) s"& ${sharedMemName}.io.writeValid" else ""}, true.B, false.B) |
           |                     Mux(io.S_AXI_WVALID & io.S_AXI_WREADY & (r_writeAddr === ${anvil.config.memory}.U), true.B, false.B)
           |  switch(writeState) {
           |    is(sWriteIdle) {
@@ -3035,7 +3035,7 @@ import HwSynthesizer._
           |  val readState = RegInit(sReadIdle)
           |
           |  r_s_axi_arready := Mux(io.S_AXI_ARVALID, true.B, false.B)
-          |  r_s_axi_rvalid  := Mux((readState === sRActive) ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) s" & (${sharedMemName}.io.readValid | r_readAddr === ${anvil.config.memory}.U)" else ""}, true.B, false.B)
+          |  r_s_axi_rvalid  := Mux((readState === sRActive) ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) s" & (${sharedMemName}.io.readValid | r_readAddr === ${anvil.config.memory}.U)" else ""}, true.B, false.B)
           |  switch(readState) {
           |    is(sReadIdle) {
           |      readState := Mux(io.S_AXI_ARVALID, sARActive, sReadIdle)
@@ -3516,7 +3516,7 @@ import HwSynthesizer._
 
     i match {
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.TempLoad) => {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
           val readAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
           val tempST: ST = st"${if (!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"}"
@@ -3564,7 +3564,7 @@ import HwSynthesizer._
         }
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Copy) => {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
           val offsetWidth: Z = log2Up(anvil.config.memory * 8)
           val dmaDstAddrST: ST = processExpr(intrinsic.lbase, F, ipPortLogic, hwLog)
           val dmaDstOffsetST: ST = if(intrinsic.loffset < 0) st"(${intrinsic.loffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.loffset}.U"
@@ -3642,7 +3642,7 @@ import HwSynthesizer._
           case AST.IR.Exp.Intrinsic(in: Intrinsic.Indexing) => T
           case _ => F
         }
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
           val offsetWidth: Z = log2Up(anvil.config.memory * 8)
           val writeAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
           val writeOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
@@ -3793,7 +3793,7 @@ import HwSynthesizer._
         val lhsST: ST = if(!anvil.config.splitTempSizes)  st"${generalRegName}(${regNo}.U)" else st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
         val rhsST = processExpr(a.rhs, F, ipPortLogic, hwLog)
         if(isIntrinsicLoad(a.rhs)) {
-          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
             val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
             val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, hwLog)
             val offsetWidth: Z = log2Up(anvil.config.memory * 8)
@@ -3849,7 +3849,7 @@ import HwSynthesizer._
         exprST = if(intrinsic.isSP) st"SP" else st"DP"
       }
       case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
           val byteST: ST = st"(${intrinsic.bytes * 8 - 1}, 0)"
           val signedST: ST = if(intrinsic.isSigned) st".asSInt" else st""
@@ -4352,28 +4352,28 @@ object HwSynthesizer {
     }
 
     override def preIntrinsicCopy(o: Intrinsic.Copy): MAnvilIRTransformer.PreResult[Intrinsic.Copy] = {
-      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip){
+      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative){
         binExp(o.lhsOffset)
       }
       return MAnvilIRTransformer.PreResultIntrinsicCopy
     }
 
     override def preIntrinsicTempLoad(o: Intrinsic.TempLoad): MAnvilIRTransformer.PreResult[Intrinsic.TempLoad] = {
-      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip) {
+      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) {
         binExp(o.rhsOffset)
       }
       return MAnvilIRTransformer.PreResultIntrinsicTempLoad
     }
 
     override def preIntrinsicLoad(o: Intrinsic.Load): MAnvilIRTransformer.PreResult[Intrinsic.Load] = {
-      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip) {
+      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) {
         binExp(o.rhsOffset)
       }
       return MAnvilIRTransformer.PreResultIntrinsicLoad
     }
 
     override def preIntrinsicStore(o: Intrinsic.Store): MAnvilIRTransformer.PreResult[Intrinsic.Store] = {
-      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip) {
+      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) {
         binExp(o.lhsOffset)
       }
       return MAnvilIRTransformer.PreResultIntrinsicStore
