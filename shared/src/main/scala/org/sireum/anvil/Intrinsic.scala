@@ -219,4 +219,8 @@ object Intrinsic {
 
     @strictpure def targets: ISZ[Z] = ISZ()
   }
+
+  @datatype class AlignRw(val isRead: B, val pos: Position) extends AST.IR.Stmt.Intrinsic.Type {
+    @strictpure def prettyST(p: AST.IR.Printer): ST = if (isRead) st"Intrinsic.readAlign()" else st"Intrinsic.writeAlign()"
+  }
 }

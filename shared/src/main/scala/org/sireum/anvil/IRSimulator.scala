@@ -36,7 +36,6 @@ import org.sireum.S8._
 import org.sireum.S16._
 import org.sireum.S32._
 import org.sireum.S64._
-import org.sireum.anvil.Util.CyclesApprox
 import org.sireum.lang.symbol.Resolver.QName
 
 object IRSimulator {
@@ -53,6 +52,7 @@ object IRSimulator {
                                   var SP: Value,
                                   var DP: U64,
                                   val memory: MSZ[U8],
+                                  val memory64: MSZ[U64],
                                   val temps1: MSZ[B],
                                   val tempsU8: MSZ[U8],
                                   val tempsU16: MSZ[U16],
@@ -218,6 +218,15 @@ object IRSimulator {
         }
         return r
       }
+      @pure def maxMemory64Offset: Z = {
+        var r: Z = 0
+        for (offset <- reads.memory64.keys ++ writes.memory64.keys) {
+          if (r < offset) {
+            r = offset
+          }
+        }
+        return r
+      }
     }
 
     object Edit {
@@ -354,8 +363,8 @@ object IRSimulator {
                 }
               }
           }
-          val r = Temp(kind, isFP, isSigned, bitSize, temp, oldValue, Accesses(reads.temps -- ISZ(id), reads.memory).
-            addTemp(kind, isFP, isSigned, bitSize, temp, value))
+          val r = Temp(kind, isFP, isSigned, bitSize, temp, oldValue, Accesses(reads.temps -- ISZ(id), reads.memory,
+            reads.memory64).addTemp(kind, isFP, isSigned, bitSize, temp, value))
           if (DEBUG_EDIT) {
             val tempST: ST = kind match {
               case Temp.Kind.CP => st"CP"
@@ -384,7 +393,7 @@ object IRSimulator {
         @strictpure def writes: Accesses = Accesses.empty.addMemory(offset, values)
         def update(state: State): Undo = {
           val r = Memory(offset, for (i <- values.indices) yield state.memory(offset + i),
-            Accesses(reads.temps, reads.memory -- (for (i <- values.indices) yield offset + i)).
+            Accesses(reads.temps, reads.memory -- (for (i <- values.indices) yield offset + i), reads.memory64).
               addMemory(offset, values))
           if (DEBUG_EDIT) {
             if (values.size == 1) {
@@ -399,9 +408,29 @@ object IRSimulator {
           return r
         }
       }
+
+      @datatype class Memory64(val offset: Z, val values: ISZ[U64], val reads: Accesses) extends Edit {
+        @strictpure def writes: Accesses = Accesses.empty.addMemory64(offset, values)
+        def update(state: State): Undo = {
+          val r = Memory64(offset, for (i <- values.indices) yield state.memory64(offset + i),
+            Accesses(reads.temps, reads.memory, reads.memory64 -- (for (i <- values.indices) yield offset + i)).
+              addMemory64(offset, values))
+          if (DEBUG_EDIT) {
+            if (values.size == 1) {
+              println(s"* memory(${shortenHexString(conversions.Z.toU64(offset))} ($offset)) = ${values(0)}  (old ${r.values(0)})")
+            } else {
+              println(s"* memory(${shortenHexString(conversions.Z.toU64(offset))} ($offset), ...) <- $values  (old ${r.values})")
+            }
+          }
+          for (i <- values.indices) {
+            state.memory64(offset + i) = values(i)
+          }
+          return r
+        }
+      }
     }
 
-    @datatype class Accesses(val temps: HashSMap[Accesses.TempId, Value], val memory: HashSMap[Z, U8]) {
+    @datatype class Accesses(val temps: HashSMap[Accesses.TempId, Value], val memory: HashSMap[Z, U8], val memory64: HashSMap[Z, U64]) {
 
       @pure def addTemp(kind: State.Edit.Temp.Kind.Type, isFP: B, isSigned: B, bitSize: Z, temp: Z, value: Value): Accesses = {
         val id = Accesses.TempId(kind, isFP, isSigned, bitSize, temp)
@@ -410,14 +439,21 @@ object IRSimulator {
 
       @pure def addTempId(id: Accesses.TempId, value: Value): Accesses = {
         assert(temps.get(id).getOrElse(value) == value)
-        return Accesses(temps + id ~> value, memory)
+        return Accesses(temps + id ~> value, memory, memory64)
       }
 
       @pure def addMemory(offset: Z, readValues: ISZ[U8]): Accesses = {
         for (i <- readValues.indices) {
           assert(memory.get(offset + i).getOrElse(readValues(i)) == readValues(i))
         }
-        return Accesses(temps, memory ++ (for (i <- 0 until readValues.size) yield (offset + i, readValues(i))))
+        return Accesses(temps, memory ++ (for (i <- 0 until readValues.size) yield (offset + i, readValues(i))), memory64)
+      }
+
+      @pure def addMemory64(offset: Z, readValues: ISZ[U64]): Accesses = {
+        for (i <- readValues.indices) {
+          assert(memory64.get(offset + i).getOrElse(readValues(i)) == readValues(i))
+        }
+        return Accesses(temps, memory, memory64 ++ (for (i <- 0 until readValues.size) yield (offset + i, readValues(i))))
       }
 
       @pure def +(other: Accesses): Accesses = {
@@ -427,6 +463,9 @@ object IRSimulator {
         }
         for (entry <- other.memory.entries) {
           r = r.addMemory(entry._1, IS(entry._2))
+        }
+        for (entry <- other.memory64.entries) {
+          r = r.addMemory64(entry._1, IS(entry._2))
         }
         return r
       }
@@ -444,7 +483,7 @@ object IRSimulator {
           case State.Edit.Temp.Kind.Global => s"Global#$n"
         }
       }
-      @strictpure def empty: Accesses = Accesses(HashSMap.empty, HashSMap.empty)
+      @strictpure def empty: Accesses = Accesses(HashSMap.empty, HashSMap.empty, HashSMap.empty)
     }
 
     @pure def create(anvil: Anvil,
@@ -457,6 +496,8 @@ object IRSimulator {
           globalScalarNameMap(entry._2.loc) = entry._1
         }
       }
+      assert(anvil.config.memory % 8 == 0, s".memory should always be a multiple of 8")
+      val memory64 = anvil.config.memory / 8
       return State(
         globalMap,
         globalScalarNameMap.toIS,
@@ -464,7 +505,8 @@ object IRSimulator {
         Value.fromU64(u64"0"),
         Value.fromU64(u64"0"),
         u64"0",
-        MSZ.create(anvil.config.memory, u8"0"),
+        if (anvil.config.alignAxi4) MSZ[U8]() else MSZ.create(anvil.config.memory, u8"0"),
+        if (anvil.config.alignAxi4) MSZ.create(memory64, u64"0") else MSZ[U64](),
         MSZ.create(if (anvil.config.splitTempSizes) temps.unsignedCount(1) else 0, F),
         MSZ.create(if (anvil.config.splitTempSizes) temps.unsignedCount(8) else 0, u8"0"),
         MSZ.create(if (anvil.config.splitTempSizes) temps.unsignedCount(16) else 0, u16"0"),
@@ -1193,6 +1235,7 @@ import IRSimulator._
       case stmt: AST.IR.Stmt.Intrinsic =>
         stmt.intrinsic match {
           case in: Intrinsic.TempLoad =>
+            assert(!anvil.config.alignAxi4)
             val (offset, eacs) = evalExp(state, in.rhsOffset)
             val (m, lacs) = load(state.memory, offset.value, in.bytes)
             val acs = eacs + lacs
@@ -1208,6 +1251,7 @@ import IRSimulator._
                 anvil.typeBitSize(t), in.temp, v, acs)
             }
           case in: Intrinsic.Store =>
+            assert(!anvil.config.alignAxi4)
             val (v, eacs) = evalExp(state, in.rhs)
             val n: U64 =
               if (anvil.isSigned(in.rhs.tipe)) conversions.S64.toRawU64(conversions.Z.toS64(v.value)) else v.toU64
@@ -1216,17 +1260,37 @@ import IRSimulator._
             return store(offset.value, anvil.typeByteSize(in.tipe), n, acs)
           case in: Intrinsic.Erase =>
             val (lhsOffset, lacs) = evalExp(state, in.lhsOffset)
-            return State.Edit.Memory(lhsOffset.value, for (_ <- 0 until in.bytes) yield u8"0", lacs)
+            if (anvil.config.alignAxi4) {
+              assert(lhsOffset.value % 8 == 0)
+              assert(in.bytes % 8 == 0)
+              val lhsAddr = lhsOffset.value / 8
+              return State.Edit.Memory64(lhsAddr, for (_ <- 0 until in.bytes / 8) yield u64"0", lacs)
+            } else {
+              return State.Edit.Memory(lhsOffset.value, for (_ <- 0 until in.bytes) yield u8"0", lacs)
+            }
           case in: Intrinsic.Copy =>
             val (lhsOffset, lacs) = evalExp(state, in.lhsOffset)
             val (rhsOffset, racs) = evalExp(state, in.rhs)
             val (size, sacs) = evalExp(state, in.rhsBytes)
             val acs = lacs + racs + sacs
-            var bs = ISZ[U8]()
-            for (i <- 0 until size.value) {
-              bs = bs :+ state.memory(rhsOffset.value + i)
+            if (anvil.config.alignAxi4) {
+              assert(lhsOffset.value % 8 == 0, s"lhsOffset: ${lhsOffset.value} (not multiple of 8)")
+              assert(rhsOffset.value % 8 == 0, s"rhsOffset: ${rhsOffset.value} (not multiple of 8)")
+              assert(size.value % 8 == 0, s"size: ${size.value} (not multiple of 8)")
+              var u64s = ISZ[U64]()
+              val lhsAddr = lhsOffset.value / 8
+              val rhsAddr = rhsOffset.value / 8
+              for (i <- 0 until size.value / 8) {
+                u64s = u64s :+ state.memory64(rhsAddr + i)
+              }
+              return State.Edit.Memory64(lhsAddr, u64s, acs.addMemory64(rhsAddr, u64s))
+            } else {
+              var bs = ISZ[U8]()
+              for (i <- 0 until size.value) {
+                bs = bs :+ state.memory(rhsOffset.value + i)
+              }
+              return State.Edit.Memory(lhsOffset.value, bs, acs.addMemory(rhsOffset.value, bs))
             }
-            return State.Edit.Memory(lhsOffset.value, bs, acs.addMemory(rhsOffset.value, bs))
           case in: Intrinsic.RegisterAssign =>
             val (v, acs) = evalExp(state, in.value)
             if (in.isSP) {
@@ -1239,6 +1303,29 @@ import IRSimulator._
               val dp: Value = if (in.isInc) Value.fromU64(state.DP) + v else v
               return State.Edit.Temp(State.Edit.Temp.Kind.DP, anvil.isFP(anvil.spType), anvil.isSigned(anvil.dpType),
                 anvil.typeBitSize(anvil.dpType), 0, dp, acs)
+            }
+          case in: Intrinsic.AlignRw =>
+            assert(anvil.config.alignAxi4)
+            if (in.isRead) {
+              val (addr8, racs) = evalExp(state, AST.IR.Exp.GlobalVarRef(Util.readAlignAddr, AST.Typed.u64, in.pos))
+              assert(addr8.value % 8 == 0)
+              val addr64 = addr8.value / 8
+              val (r , lacs) = loadAlign(state.memory64, addr64)
+              val acs = racs + lacs
+              val tipe = AST.Typed.u64
+              val edit = State.Edit.Temp(State.Edit.Temp.Kind.Global, anvil.isFP(tipe), anvil.isSigned(tipe),
+                anvil.typeBitSize(tipe), state.globalMap.get(Util.readAlignRes).get.loc, Value.fromU64(r), acs)
+              //println(s"Load $r from @$addr64")
+              return edit
+            } else {
+              val (addr8, racs) = evalExp(state, AST.IR.Exp.GlobalVarRef(Util.writeAlignAddr, AST.Typed.u64, in.pos))
+              assert(addr8.value % 8 == 0)
+              val addr64 = addr8.value / 8
+              val (value, vacs)  = evalExp(state, AST.IR.Exp.GlobalVarRef(Util.writeAlignValue, AST.Typed.u64, in.pos))
+              val acs = racs + vacs
+              val edit = storeAlign(addr64, value.toU64, acs)
+              //println(s"Store ${value.toU64} to @$addr64")
+              return edit
             }
           case stmt: Intrinsic.Decl => return State.Edit.Decl(stmt)
         }
@@ -1384,9 +1471,18 @@ import IRSimulator._
           }
         case _ =>
       }
-      val offset = edits(i).maxMemoryOffset
-      if (offset > maxMemory.value) {
-        maxMemory.value = offset
+      if (anvil.config.alignAxi4) {
+        assert(edits(i).maxMemoryOffset == 0)
+        val offset = edits(i).maxMemory64Offset
+        if (offset > maxMemory.value) {
+          maxMemory.value = offset
+        }
+      } else {
+        assert(edits(i).maxMemory64Offset == 0)
+        val offset = edits(i).maxMemoryOffset
+        if (offset > maxMemory.value) {
+          maxMemory.value = offset
+        }
       }
       r = r :+ edits(i).update(state)
       i = i + 1
@@ -1397,7 +1493,7 @@ import IRSimulator._
   }
 
   def computeCycles(b: AST.IR.BasicBlock, copyBytes: Z): Z = {
-    val ca = CyclesApprox(anvil, copyBytes, 1)
+    val ca = Util.CyclesApprox(anvil, copyBytes, 1)
     ca.transform_langastIRBasicBlock(b)
     return ca.cycles
   }
@@ -1443,8 +1539,9 @@ import IRSimulator._
     }
 
     @strictpure def ceil8(n: Z): Z = if (n % 8 == 0) n else ((n / 8) + 1) * 8
-
-    assert(maxMemoryBox.value + 9 > state.memory.size, s"The configured memory size ${state.memory.size} is larger than needed (${ceil8(maxMemoryBox.value + 1)})")
+    @strictpure def mult64(n: Z): Z = if (anvil.config.alignAxi4) n * 8 else n
+    assert(mult64(maxMemoryBox.value) + 9 > anvil.config.memory,
+      s"The configured memory size ${anvil.config.memory} is larger than needed (${ceil8(mult64(maxMemoryBox.value + 1))})")
 
     if (DEBUG) {
       println(
@@ -1454,6 +1551,7 @@ import IRSimulator._
   }
 
   @pure def load(memory: MSZ[U8], offset: Z, size: Z): (U64, State.Accesses) = {
+    assert(!anvil.config.alignAxi4)
     var r = u64"0"
     var i: Z = 0
     var bs = ISZ[U8]()
@@ -1469,11 +1567,24 @@ import IRSimulator._
   }
 
   @pure def store(offset: Z, size: Z, value: U64, acs: State.Accesses): State.Edit.Memory = {
+    assert(!anvil.config.alignAxi4)
     var bs = ISZ[U8]()
     for (i <- 0 until size) {
       val b = conversions.U64.toU8((value >> conversions.Z.toU64(i * 8)) & u64"0xFF")
       bs = bs :+ b
     }
     return State.Edit.Memory(offset, bs, acs)
+  }
+
+  @pure def loadAlign(memory: MSZ[U64], offset: Z): (U64, State.Accesses) = {
+    val r = memory(offset)
+    val acs = State.Accesses.empty.addMemory64(offset, ISZ(r))
+    //println(s"loadAlign @$offset: $r")
+    return (r, acs)
+  }
+
+  @pure def storeAlign(offset: Z, value: U64, acs: State.Accesses): State.Edit.Memory64 = {
+    //println(s"storeAlign @$offset: $value")
+    return State.Edit.Memory64(offset, ISZ(value), acs)
   }
 }

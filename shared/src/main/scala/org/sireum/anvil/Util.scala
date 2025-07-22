@@ -236,6 +236,8 @@ object Util {
       o.intrinsic match {
         case in@Intrinsic.Store(AST.IR.Exp.Intrinsic(_: Intrinsic.Register), _, _, _, i@AST.IR.Exp.Int(t, cp, _), _, _, _) if t == anvil.cpType =>
           return MSome(o(intrinsic = in(rhs = i(value = cpSubstMap.get(cp).get))))
+        case in@Intrinsic.Store(AST.IR.Exp.Intrinsic(_: Intrinsic.Register), _, _, _, rhs@AST.IR.Exp.Type(_, i@AST.IR.Exp.Int(t, cp, _), _, _), _, _, _) if t == anvil.cpType =>
+          return MSome(o(intrinsic = in(rhs = rhs(exp = i(value = cpSubstMap.get(cp).get)))))
         case _ =>
       }
       return MNone()
@@ -249,6 +251,8 @@ object Util {
       o.rhs match {
         case rhs: AST.IR.Exp.Int if rhs.tipe == anvil.cpType =>
           return MSome(o(rhs = rhs(value = cpSubstMap.get(rhs.value).get)))
+        case rhs@AST.IR.Exp.Type(_, n: AST.IR.Exp.Int, _, _) if n.tipe == anvil.cpType =>
+          return MSome(o(rhs = rhs(exp = n(value = cpSubstMap.get(n.value).get))))
         case _ => return MNone()
       }
     }
@@ -257,6 +261,8 @@ object Util {
       o.rhs match {
         case rhs: AST.IR.Exp.Int if rhs.tipe == anvil.cpType =>
           return MSome(o(rhs = rhs(value = cpSubstMap.get(rhs.value).get)))
+        case rhs@AST.IR.Exp.Type(_, n: AST.IR.Exp.Int, _, _) if n.tipe == anvil.cpType =>
+          return MSome(o(rhs = rhs(exp = n(value = cpSubstMap.get(n.value).get))))
         case _ => return MNone()
       }
     }
@@ -1080,6 +1086,7 @@ object Util {
   val sfDescId: String = "$sfDesc"
   val dataId: String = "$data"
   val testId: String = "$test"
+  val testNumNamePad: ISZ[String] = ISZ("$testNumPad")
   val testNumName: ISZ[String] = ISZ("$testNum")
   val sfLocType: AST.Typed.Name = AST.Typed.u32
   val objInitId: String = "<objinit>"
@@ -1098,8 +1105,34 @@ object Util {
   val f32DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(f32DigitIndexType, AST.Typed.u8))
   val f64DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(f64DigitIndexType, AST.Typed.u8))
   val runtimeName: QName = AST.Typed.sireumName :+ "anvil" :+ "Runtime"
+  val intrinsicName: QName = runtimeName :+ "Intrinsic"
   val mainAnnName: QName = AST.Typed.sireumName :+ "anvil" :+ "hls"
   val testAnnName: QName = AST.Typed.sireumName :+ "anvil" :+ "test"
+  val readId: String = "read"
+  val writeId: String = "write"
+  val readAlignId: String = "readAlign"
+  val writeAlignId: String = "writeAlign"
+  val leftShiftId: String = "leftShift"
+  val rightShiftId: String = "rightShift"
+  val readName: QName = intrinsicName :+ readId
+  val writeName: QName = intrinsicName :+ writeId
+  val leftShiftName: QName = intrinsicName :+ leftShiftId
+  val rightShiftName: QName = intrinsicName :+ rightShiftId
+  val readBaseAddr: QName = intrinsicName :+ "readBaseAddr"
+  val readOffset: QName = intrinsicName :+ "readOffset"
+  val readLen: QName = intrinsicName :+ "readLen"
+  val readRes: QName = intrinsicName :+ "readRes"
+  val readRet: QName = intrinsicName :+ "readRet"
+  val writeBaseAddr: QName = intrinsicName :+ "writeBaseAddr"
+  val writeOffset: QName = intrinsicName :+ "writeOffset"
+  val writeLen: QName = intrinsicName :+ "writeLen"
+  val writeValue: QName = intrinsicName :+ "writeValue"
+  val writeRet: QName = intrinsicName :+ "writeRet"
+  val readAlignAddr: QName = intrinsicName :+ "readAlignAddr"
+  val readAlignRes: QName = intrinsicName :+ "readAlignRes"
+  val writeAlignAddr: QName = intrinsicName :+ "writeAlignAddr"
+  val writeAlignValue: QName = intrinsicName :+ "writeAlignValue"
+
   val runtimePrintMethodTypeMap: HashSMap[String, AST.Typed.Fun] = HashSMap.empty[String, AST.Typed.Fun] +
     "printB" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.b), AST.Typed.u64) +
     "printC" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.c), AST.Typed.u64) +
@@ -1117,7 +1150,6 @@ object Util {
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
   val syntheticMethodIds: HashSet[String] = HashSet.empty[String] + objInitId + newInitId + testId
   val ignoredTempLocal: HashSet[String] = HashSet.empty[String] + sfLocId + sfDescId + sfCallerId + sfCurrentId + s"$resultLocalId$dataId"
-
   val spType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "SP"), ISZ())
 
   @strictpure def tempST(anvil: Anvil, tipe: AST.Typed, n: Z): ST = {
@@ -1155,7 +1187,10 @@ object Util {
     val indexOffset: AST.IR.Exp = if (min == 0) idx else AST.IR.Exp.Binary(
       anvil.spType, idx, AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(anvil.spType, min, idx.pos), idx.pos)
     val elementSize = anvil.typeByteSize(elementType)
-    val dataOffset = anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
+    var dataOffset = anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
+    if (anvil.config.alignAxi4 && !anvil.isScalar(elementType)) {
+      dataOffset = anvil.pad64(dataOffset)
+    }
     if (anvil.config.useIP) {
       return AST.IR.Exp.Intrinsic(Intrinsic.Indexing(rcv, dataOffset, indexOffset, maskOpt, elementSize, anvil.spType, pos))
     } else {
@@ -1308,9 +1343,22 @@ object Util {
     return IpAlloc(r, HashSMap ++ (for (e <- binopAllocMap.entries) yield (e._1, e._2.size)), indexingAlloc.size)
   }
 
+  val nonTempGlobals: HashSet[QName] = HashSet.empty[QName] + memName + memTypeName + memSizeName + testNumName +
+    testNumNamePad
+
   @strictpure def isTempGlobal(anvil: Anvil, tipe: AST.Typed, name: ISZ[String]): B =
-    anvil.config.tempGlobal && anvil.isScalar(tipe) && name != memName && name != memTypeName && name != memSizeName
+    anvil.config.tempGlobal && anvil.isScalar(tipe) && !nonTempGlobals.contains(name)
 
   @strictpure def binopSignGlobalName(op: AST.IR.Exp.Binary.Op.Type, isSigned: B): ISZ[String] =
     ISZ("org", "sireum", "anvil", s"${'$'}$op${if (isSigned) "S" else "U" }")
+
+  @pure def isIntrinsicGlobalVar(name: QName): B = {
+    if (name.size <= intrinsicName.size) {
+      return false
+    }
+    for (i <- 0 until intrinsicName.size if name(i) != intrinsicName(i)) {
+      return false
+    }
+    return true
+  }
 }

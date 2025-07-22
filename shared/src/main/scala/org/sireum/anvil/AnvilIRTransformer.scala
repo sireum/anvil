@@ -189,6 +189,10 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
+    @pure def preIntrinsicAlignRw(ctx: Context, o: Intrinsic.AlignRw): PreResult[Context, Intrinsic.AlignRw] = {
+      return PreResult(ctx, T, None())
+    }
+
     @pure def pre_langastIRExpType(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Type): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
@@ -422,6 +426,13 @@ object AnvilIRTransformer {
           return r
         case o: Intrinsic.RegisterAssign =>
           val r: PreResult[Context, org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = preIntrinsicRegisterAssign(ctx, o) match {
+           case PreResult(preCtx, continu, Some(r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => PreResult(preCtx, continu, Some[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
+           case PreResult(_, _, Some(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           case PreResult(preCtx, continu, _) => PreResult(preCtx, continu, None[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
+          }
+          return r
+        case o: Intrinsic.AlignRw =>
+          val r: PreResult[Context, org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = preIntrinsicAlignRw(ctx, o) match {
            case PreResult(preCtx, continu, Some(r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => PreResult(preCtx, continu, Some[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
            case PreResult(_, _, Some(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
            case PreResult(preCtx, continu, _) => PreResult(preCtx, continu, None[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
@@ -742,6 +753,10 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
+    @pure def postIntrinsicAlignRw(ctx: Context, o: Intrinsic.AlignRw): TPostResult[Context, Intrinsic.AlignRw] = {
+      return TPostResult(ctx, None())
+    }
+
     @pure def post_langastIRExpType(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Type): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
@@ -975,6 +990,13 @@ object AnvilIRTransformer {
           return r
         case o: Intrinsic.RegisterAssign =>
           val r: TPostResult[Context, org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = postIntrinsicRegisterAssign(ctx, o) match {
+           case TPostResult(postCtx, Some(result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => TPostResult(postCtx, Some[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result))
+           case TPostResult(_, Some(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           case TPostResult(postCtx, _) => TPostResult(postCtx, None[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
+          }
+          return r
+        case o: Intrinsic.AlignRw =>
+          val r: TPostResult[Context, org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = postIntrinsicAlignRw(ctx, o) match {
            case TPostResult(postCtx, Some(result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => TPostResult(postCtx, Some[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result))
            case TPostResult(_, Some(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
            case TPostResult(postCtx, _) => TPostResult(postCtx, None[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
@@ -1674,6 +1696,32 @@ import AnvilIRTransformer._
     }
   }
 
+  @pure def transformIntrinsicAlignRw(ctx: Context, o: Intrinsic.AlignRw): TPostResult[Context, Intrinsic.AlignRw] = {
+    val preR: PreResult[Context, Intrinsic.AlignRw] = pp.preIntrinsicAlignRw(ctx, o)
+    val r: TPostResult[Context, Intrinsic.AlignRw] = if (preR.continu) {
+      val o2: Intrinsic.AlignRw = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      if (hasChanged)
+        TPostResult(preR.ctx, Some(o2))
+      else
+        TPostResult(preR.ctx, None())
+    } else if (preR.resultOpt.nonEmpty) {
+      TPostResult(preR.ctx, Some(preR.resultOpt.getOrElse(o)))
+    } else {
+      TPostResult(preR.ctx, None())
+    }
+    val hasChanged: B = r.resultOpt.nonEmpty
+    val o2: Intrinsic.AlignRw = r.resultOpt.getOrElse(o)
+    val postR: TPostResult[Context, Intrinsic.AlignRw] = pp.postIntrinsicAlignRw(r.ctx, o2)
+    if (postR.resultOpt.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return TPostResult(postR.ctx, Some(o2))
+    } else {
+      return TPostResult(postR.ctx, None())
+    }
+  }
+
   @pure def transform_langastIRExpIntrinsicType(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Intrinsic.Type): TPostResult[Context, org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = {
     val preR: PreResult[Context, org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = pp.pre_langastIRExpIntrinsicType(ctx, o)
     val r: TPostResult[Context, org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = if (preR.continu) {
@@ -2072,6 +2120,11 @@ import AnvilIRTransformer._
             TPostResult(r0.ctx, Some(o2(value = r0.resultOpt.getOrElse(o2.value))))
           else
             TPostResult(r0.ctx, None())
+        case o2: Intrinsic.AlignRw =>
+          if (hasChanged)
+            TPostResult(preR.ctx, Some(o2))
+          else
+            TPostResult(preR.ctx, None())
       }
       rOpt
     } else if (preR.resultOpt.nonEmpty) {

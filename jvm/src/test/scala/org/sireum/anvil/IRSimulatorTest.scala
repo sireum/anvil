@@ -28,6 +28,7 @@ import org.sireum._
 import org.sireum.lang.{ast => AST}
 import org.sireum.test._
 import org.sireum.U8._
+import org.sireum.U64._
 
 object IRSimulatorTest {
   val th = lang.FrontEnd.checkedLibraryReporter._1.typeHierarchy
@@ -40,11 +41,11 @@ import IRSimulatorTest._
 class IRSimulatorTest extends SireumRcSpec {
   {
     val debug = T & Os.env("GITHUB_ACTIONS").isEmpty
-    IRSimulator.DEBUG = debug
-    IRSimulator.DEBUG_TEMP = debug
-    IRSimulator.DEBUG_EDIT = debug
-    IRSimulator.DEBUG_GLOBAL = debug
-    IRSimulator.DEBUG_LOCAL = debug
+    IRSimulator.DEBUG = T & debug
+    IRSimulator.DEBUG_TEMP = T & debug
+    IRSimulator.DEBUG_EDIT = T & debug
+    IRSimulator.DEBUG_GLOBAL = T & debug
+    IRSimulator.DEBUG_LOCAL = T & debug
   }
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
@@ -70,6 +71,7 @@ class IRSimulatorTest extends SireumRcSpec {
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId}, ${AnvilTest.alignId})", v)
 
       r
     }) yield pair
@@ -150,10 +152,7 @@ class IRSimulatorTest extends SireumRcSpec {
             }
           }
           out.removeAll()
-          var config = AnvilTest.getConfig(file, p)
-          if (config.tempGlobal) {
-            config = config(ipSubroutine = T)
-          }
+          val config = AnvilTest.getConfig(file, p)
           Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, AnvilOutput(F, "", out), reporter) match {
             case Some(ir) =>
               val state = IRSimulator.State.create(ir.anvil, ir.maxRegisters, ir.globalInfoMap, ir.globalTemps)
@@ -173,10 +172,9 @@ class IRSimulatorTest extends SireumRcSpec {
                   ir.anvil.isSigned(ir.anvil.spType)),
                 IRSimulator.State.Accesses.empty).update(state)
               IRSimulator.State.Edit.Decl(Intrinsic.Decl(F, F, locals, ir.procedure.pos)).update(state)
-              if (ir.anvil.config.tempGlobal) {
-                IRSimulator.State.Edit.Temp(IRSimulator.State.Edit.Temp.Kind.Global,
-                  ir.anvil.isFP(AST.Typed.z), ir.anvil.isSigned(AST.Typed.z), ir.anvil.typeBitSize(AST.Typed.z),
-                  testNumInfoOffset, IRSimulator.Value(IRSimulator.Value.Kind.S64, -1),
+              if (config.alignAxi4) {
+                assert(testNumInfoOffset % 8 == 0)
+                IRSimulator.State.Edit.Memory64(testNumInfoOffset / 8, ISZ(u64"0xFFFFFFFFFFFFFFFF"),
                   IRSimulator.State.Accesses.empty).update(state)
               } else {
                 IRSimulator.State.Edit.Memory(testNumInfoOffset,
@@ -192,9 +190,33 @@ class IRSimulatorTest extends SireumRcSpec {
                 val (lo, hi): (Z, Z) = if (dp < displaySize) (0, dp) else (dp, displaySize + dp - 1)
                 val u8ms = MSZ.create(hi - lo, u8"0")
                 var j: Z = 0
-                for (i <- lo until hi) {
-                  u8ms(j) = state.memory(offset + (i % displaySize))
-                  j = j + 1
+                if (ir.anvil.config.alignAxi4) {
+                  def getU8(addr8: Z): U8 = {
+                    val addr64 = addr8 / 8
+                    val v = state.memory64(addr64)
+                    val rem = addr8 % 8
+                    val shift = conversions.Z.toU64(rem) << u64"3"
+                    val mask = u64"0xFF" << shift
+                    val r = (v & mask) >>> shift
+                    //println(s"display: $offset, add8: $addr8, addr64: $addr64, v: $v, shift: ${shift.toZ}, rem: $rem, mask: $mask, r: $r")
+                    return conversions.U64.toU8(r)
+                  }
+                  for (i <- lo until hi) {
+                    val addr = offset + (i % displaySize)
+                    u8ms(j) = getU8(addr)
+                    j = j + 1
+                  }
+                } else {
+                  def getU8(addr8: Z): U8 = {
+                    val r = state.memory(addr8)
+                    //println(s"display: $offset, add8: $addr8, r: $r")
+                    return r
+                  }
+                  for (i <- lo until hi) {
+                    val addr8 = offset + (i % displaySize)
+                    u8ms(j) = getU8(addr8)
+                    j = j + 1
+                  }
                 }
                 val display = conversions.String.fromU8ms(u8ms)
                 print(display)

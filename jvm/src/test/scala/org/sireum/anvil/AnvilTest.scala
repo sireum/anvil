@@ -28,29 +28,29 @@ import org.sireum._
 import org.sireum.test._
 
 object AnvilTest {
-  @memoize def memoryFileMap(printSize: Z, splitTempSizes: B, tempGlobal: B, tempLocal: B, useIP: B, useMemoryIP: B): HashMap[String, Z] = {
+  @memoize def memoryFileMap(printSize: Z, splitTempSizes: B, tempGlobal: B, tempLocal: B, useIP: B, useMemoryIP: B, alignAxi4: B): HashMap[String, Z] = {
     if (tempGlobal) {
       return HashMap.empty[String, Z] +
-        "add.sc" ~> 104 +
-        "assert.sc" ~> 272 +
-        "bubble.sc" ~> 168 +
-        "construct.sc" ~> (if (useIP) if (useMemoryIP) 240 else 224 else 224) +
-        "divrem.sc" ~> 120 +
-        "dll.sc" ~> (if (printSize > 0) 824 else 816) +
-        "factorial.sc" ~> 120 +
-        "global.sc" ~> 88 +
-        "indexing-obj.sc" ~> (if (useIP) if (useMemoryIP) 176 else 168 else 168) +
-        "indexing.sc" ~> 128 +
-        "instanceof.sc" ~> (if (useIP) if (useMemoryIP) 104 else 96 else 96) +
-        "local-reuse.sc" ~> 104 +
-        "mult.sc" ~> 152 +
-        "print.sc" ~> 920 +
-        "print-no-float.sc" ~> (if (useIP) if (useMemoryIP) 320 else 280 else 280) +
-        "printU64.sc" ~> 152 +
-        "seq.sc" ~> 232 +
-        "shiftS64.sc" ~> 168 +
-        "shiftU64.sc" ~> 160 +
-        "sum.sc" ~> 144
+        "add.sc" ~> (if (alignAxi4) 136 else 112) +
+        "assert.sc" ~> (if (alignAxi4) 336 else 280) +
+        "bubble.sc" ~> (if (alignAxi4) 208 else 176) +
+        "construct.sc" ~> (if (alignAxi4) 280 else if (useIP) if (useMemoryIP) 248 else 232 else 232) +
+        "divrem.sc" ~> (if (alignAxi4) 152 else 128) +
+        "dll.sc" ~> (if (alignAxi4) 944 else if (printSize > 0) if (tempLocal) 832 else 844 else 832) +
+        "factorial.sc" ~> (if (alignAxi4) 152 else 128) +
+        "global.sc" ~> (if (alignAxi4) 120 else 96) +
+        "indexing-obj.sc" ~> (if (alignAxi4) 232 else if (useIP) if (useMemoryIP) 184 else 176 else 176) +
+        "indexing.sc" ~> (if (alignAxi4) 168 else 136) +
+        "instanceof.sc" ~> (if (alignAxi4) 136 else if (useIP) if (useMemoryIP) 112 else 104 else 104) +
+        "local-reuse.sc" ~> (if (alignAxi4) 144 else 112) +
+        "mult.sc" ~> (if (alignAxi4) 184 else 160) +
+        "print.sc" ~> (if (alignAxi4) 952 else 928) +
+        "print-no-float.sc" ~> (if (alignAxi4) 352 else if (useIP) if (useMemoryIP) 336 else 296 else 296) +
+        "printU64.sc" ~> (if (alignAxi4) 192 else 160) +
+        "seq.sc" ~> (if (alignAxi4) 272 else 240) +
+        "shiftS64.sc" ~> (if (alignAxi4) 208 else 176) +
+        "shiftU64.sc" ~> (if (alignAxi4) 200 else 168) +
+        "sum.sc" ~> (if (alignAxi4) 200 else 152)
     } else {
       return HashMap.empty[String, Z] +
         "add.sc" ~> (if (tempLocal) 112 else 160) +
@@ -66,8 +66,8 @@ object AnvilTest {
         "instanceof.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 112 else 104 else 104 else if (splitTempSizes) 152 else 144) +
         "local-reuse.sc" ~> (if (tempLocal) 112 else 160) +
         "mult.sc" ~> (if (tempLocal) 160 else if (useIP) if (useMemoryIP) 216 else 208 else 208) +
-        "print.sc" ~> (if (tempLocal) 928 else 952) +
-        "print-no-float.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 328 else 288 else 288 else if (useMemoryIP) 360 else 328) +
+        "print.sc" ~> (if (tempLocal) 928 else 960) +
+        "print-no-float.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 336 else 296 else 296 else if (useMemoryIP) 368 else 336) +
         "printU64.sc" ~> (if (tempLocal) 160 else if (useIP) 216 else 216) +
         "seq.sc" ~> (if (tempLocal) 240 else if (useIP) if (useMemoryIP) 280 else 272 else 272) +
         "shiftS64.sc" ~> (if (tempLocal) 176 else 264) +
@@ -136,6 +136,7 @@ object AnvilTest {
   val withIpId = "with-ip"
   val withoutIpId = "without-ip"
   val withMemIpId = "with-mem-ip"
+  val alignId = "align"
 
   val isInGitHubAction: B = Os.env("GITHUB_ACTIONS").nonEmpty
 
@@ -145,10 +146,11 @@ object AnvilTest {
     val tempGlobal = p.last.contains(tempGlobalId)
     val tempLocal = p.last.contains(tempLocalId)
     val useMemoryIp = p.last.contains(withMemIpId)
+    val alignAxi4 = p.last.contains(alignId)
     val ipMax: Z = if (useMemoryIp || p.last.contains(withIpId)) 0 else -1
     val printSize: Z = printFileMap.get(file).getOrElse(defaultPrintSize)
     config = config(
-      memory = memoryFileMap(printSize, splitTempSizes, tempGlobal, tempLocal, ipMax >= 0, useMemoryIp).get(file).
+      memory = memoryFileMap(printSize, splitTempSizes, tempGlobal, tempLocal, ipMax >= 0, useMemoryIp, alignAxi4).get(file).
         getOrElse(defaultMemory),
       printSize = printSize,
       stackTrace = stackTraceFileSet.contains(file),
@@ -161,6 +163,7 @@ object AnvilTest {
       genVerilog = T,
       ipMax = ipMax,
       noXilinxIp = T,
+      alignAxi4 = alignAxi4,
       simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles)),
       memoryAccess = if (useMemoryIp) Anvil.Config.MemoryAccess.BramNative else Anvil.Config.MemoryAccess.Default
     )

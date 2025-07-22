@@ -66,6 +66,7 @@ object Anvil {
     val shouldPrint: B = printSize > 0
     val useIP: B = ipMax >= 0
     val separateCP: B = cpMax > 0
+    val padObject64: B = alignAxi4 || memoryAccess == Config.MemoryAccess.BramAxi4 || memoryAccess == Config.MemoryAccess.Ddr
   }
 
   object Config {
@@ -158,6 +159,10 @@ object Anvil {
         case _ =>
       }
     }
+    if (config.alignAxi4) {
+      entryPoints = entryPoints :+ TypeSpecializer.EntryPoint.Method(intrinsicName :+ "read")
+      entryPoints = entryPoints :+ TypeSpecializer.EntryPoint.Method(intrinsicName :+ "write")
+    }
     val tsr = TypeSpecializer.specialize(th, entryPoints, HashMap.empty, reporter)
     if (reporter.hasError) {
       return None()
@@ -238,15 +243,6 @@ import Anvil._
   def generateIR(isTest: B, fresh: lang.IRTranslator.Fresh, output: Output, reporter: Reporter): Option[IR] = {
     assert(config.baseAddress < config.memory)
     val threeAddressCode = T
-    @strictpure def isLit(e: AST.IR.Exp): B = e match {
-      case _: AST.IR.Exp.Bool => T
-      case _: AST.IR.Exp.Int => T
-      case _: AST.IR.Exp.F32 => T
-      case _: AST.IR.Exp.F64 => T
-      case _: AST.IR.Exp.R => T
-      case _: AST.IR.Exp.String => T
-      case _ => F
-    }
     @strictpure def should3AC(e: AST.IR.Exp): B = e match {
       case _: AST.IR.Exp.Bool => F
       case _: AST.IR.Exp.Int => F
@@ -262,6 +258,12 @@ import Anvil._
       spec = F,
       threeAddressCode = threeAddressCode,
       threeAddressExpF = should3AC _,
+      th = tsr.typeHierarchy,
+      fresh = fresh)
+    val irtIntrinsic = lang.IRTranslator(
+      spec = F,
+      threeAddressCode = threeAddressCode,
+      threeAddressExpF = (_: AST.IR.Exp) => F,
       th = tsr.typeHierarchy,
       fresh = fresh)
 
@@ -280,7 +282,8 @@ import Anvil._
           case Some(t) => Some(t)
           case _ => None()
         }
-        val p = irt.translateMethod(F, receiverOpt, m.info.owner, m.info.ast)
+        val p = (if (m.info.owner == intrinsicName) irtIntrinsic else irt).
+          translateMethod(F, receiverOpt, m.info.owner, m.info.ast)
         procedures = procedures :+ p
         procedureMod(p.context) match {
           case PMod.Main =>
@@ -374,6 +377,20 @@ import Anvil._
         globals = globals :+ AST.IR.Global(AST.Typed.z, memSizeName, startPos)
       }
       if (isTest) {
+        val rem = typeByteSize(spType) + typeShaSize % 8
+        if (config.alignAxi4 && config.stackTrace && rem != 0) {
+          val fillerType: AST.Typed = rem match {
+            case z"1" => AST.Typed.Name(AST.Typed.sireumName :+ "U56", ISZ())
+            case z"2" => AST.Typed.Name(AST.Typed.sireumName :+ "U48", ISZ())
+            case z"3" => AST.Typed.Name(AST.Typed.sireumName :+ "U40", ISZ())
+            case z"4" => AST.Typed.u32
+            case z"5" => AST.Typed.Name(AST.Typed.sireumName :+ "U24", ISZ())
+            case z"6" => AST.Typed.u16
+            case z"7" => AST.Typed.u8
+            case _ => halt("Infeasible")
+          }
+          globals = globals :+ AST.IR.Global(fillerType, testNumNamePad, startPos)
+        }
         globals = globals :+ AST.IR.Global(AST.Typed.z, testNumName, startPos)
       }
       if (config.shouldPrint) {
@@ -520,6 +537,8 @@ import Anvil._
       for (method <- tsr.traitMethods.elements) {
         genTraitMethod(method)
       }
+
+      globalSize = pad64(globalSize)
 
       (startOpt.get.context, AST.IR.Program(threeAddressCode, globals, procedures), globalSize, globalMap, globalTemps)
     }
@@ -672,7 +691,7 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "main"), p.prettyST(anvil.printer))
       pass = pass + 1
 
-      p = anvil.transformAssignTempLoad(p)
+      p = anvil.transformAssignTempLoad(fresh, p)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "assign-temp-load"), p.prettyST(anvil.printer))
       pass = pass + 1
 
@@ -692,6 +711,24 @@ import Anvil._
         globalMap = pair._2
         p = pair._1
         output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "ip-subroutines"), p.prettyST(anvil.printer))
+        pass = pass + 1
+      }
+
+      if (config.tempGlobal && config.alignAxi4) {
+        @pure def isStoreLoadAlign(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
+          g match {
+            case AST.IR.Stmt.Intrinsic(_: Intrinsic.Store) => return T
+            case AST.IR.Stmt.Intrinsic(_: Intrinsic.TempLoad) => return T
+            case _ => return F
+          }
+        }
+
+        p = anvil.transformSplitTest(F, fresh, p, isStoreLoadAlign _)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "align-copy-store-load"), p.prettyST(anvil.printer))
+        pass = pass + 1
+
+        p = anvil.transformReadWriteAlign(fresh, p, procedureMap)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "rw-align"), p.prettyST(anvil.printer))
         pass = pass + 1
       }
 
@@ -781,10 +818,120 @@ import Anvil._
     return Some(IR(anvil, name, program.procedures(0), maxRegisters, globalSize, globalMap, globalTemps, procDescMap))
   }
 
-  def transformAssignTempLoad(p: AST.IR.Procedure): AST.IR.Procedure = {
+  def transformReadWriteAlign(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure,
+                              procedureMap: HashSMap[AST.IR.MethodContext, AST.IR.Procedure]): AST.IR.Procedure = {
+    val ifType = AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.u64)
+    @pure def intrinsicBlocks(name: QName): ISZ[AST.IR.BasicBlock] = {
+      return procedureMap.get(AST.IR.MethodContext(T, intrinsicName, name(name.size - 1), ifType))
+        .get.body.asInstanceOf[AST.IR.Body.Basic].blocks
+    }
+    val leftShiftBlocks = intrinsicBlocks(leftShiftName)
+    val rightShiftBlocks = intrinsicBlocks(rightShiftName)
+    val readBlocks = intrinsicBlocks(readName)
+    val writeBlocks = intrinsicBlocks(writeName)
+
+    @strictpure def toU64(e: AST.IR.Exp): AST.IR.Exp = if (e.tipe == AST.Typed.u64) e else AST.IR.Exp.Type(F, e,
+      AST.Typed.u64, e.pos)
+
+    @pure def updateIntrinsic(b: AST.IR.BasicBlock): ISZ[AST.IR.BasicBlock] = {
+      b.jump match {
+        case AST.IR.Jump.Return(Some(e: AST.IR.Exp.GlobalVarRef), _) =>
+          return ISZ(b(jump = AST.IR.Jump.Intrinsic(Intrinsic.GotoGlobal(e.name, b.jump.pos))))
+        case _ =>
+          b.grounds match {
+            case ISZ(AST.IR.Stmt.Expr(e)) if e.isInObject && e.owner == intrinsicName =>
+              val pos = e.pos
+              val intrinsicLabel: Z = e.id match {
+                case `leftShiftId` => leftShiftBlocks(0).label
+                case `rightShiftId` => rightShiftBlocks(0).label
+                case `readAlignId` => return ISZ(b(grounds = ISZ(AST.IR.Stmt.Intrinsic(Intrinsic.AlignRw(T, pos)))))
+                case `writeAlignId` => return ISZ(b(grounds = ISZ(AST.IR.Stmt.Intrinsic(Intrinsic.AlignRw(F, pos)))))
+              }
+              val label = fresh.label()
+              val label2 = fresh.label()
+              val retId = s"${e.id}Ret"
+              return ISZ(
+                AST.IR.BasicBlock(b.label, ISZ(AST.IR.Stmt.Assign.Global(intrinsicName :+ retId, AST.Typed.u64,
+                    toU64(AST.IR.Exp.Int(cpType, label2, b.jump.pos)), pos)), AST.IR.Jump.Goto(label, pos)),
+                AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(intrinsicLabel, pos)),
+                AST.IR.BasicBlock(label2, ISZ(), b.jump)
+              )
+            case _ =>
+          }
+      }
+      return ISZ(b)
+    }
+
+    @pure def updateRwIntrinsic(b: AST.IR.BasicBlock): ISZ[AST.IR.BasicBlock] = {
+      @strictpure def wrapU64(n: Z): Z = if (n < 0) n + U64.Max.toZ else n
+      b.grounds match {
+        case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad)) =>
+          val pos = in.pos
+          val label = fresh.label()
+          val label2 = fresh.label()
+          val grounds = ISZ[AST.IR.Stmt.Ground](
+            AST.IR.Stmt.Assign.Global(readBaseAddr, AST.Typed.u64, toU64(in.base), pos),
+            AST.IR.Stmt.Assign.Global(readOffset, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, wrapU64(in.offset), pos), pos),
+            AST.IR.Stmt.Assign.Global(readLen, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, in.bytes, pos), pos),
+            AST.IR.Stmt.Assign.Global(readRet, AST.Typed.u64, toU64(AST.IR.Exp.Int(cpType, label2, pos)), pos)
+          )
+          var rhs: AST.IR.Exp = AST.IR.Exp.GlobalVarRef(readRes, AST.Typed.u64, pos)
+          if (in.tipe != AST.Typed.u64) {
+            rhs = AST.IR.Exp.Type(F, rhs, in.tipe.asInstanceOf[AST.Typed.Name], pos)
+          }
+          return ISZ(
+            b(grounds = grounds, jump = AST.IR.Jump.Goto(label, pos)),
+            AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(readBlocks(0).label, pos)),
+            AST.IR.BasicBlock(label2, ISZ(AST.IR.Stmt.Assign.Temp(in.temp, rhs, pos)), b.jump)
+          )
+        case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.Store)) =>
+          val pos = in.pos
+          val label = fresh.label()
+          val label2 = fresh.label()
+          val grounds = ISZ[AST.IR.Stmt.Ground](
+            AST.IR.Stmt.Assign.Global(writeBaseAddr, AST.Typed.u64, toU64(in.base), pos),
+            AST.IR.Stmt.Assign.Global(writeOffset, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, wrapU64(in.offset), pos), pos),
+            AST.IR.Stmt.Assign.Global(writeLen, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, in.bytes, pos), pos),
+            AST.IR.Stmt.Assign.Global(writeValue, AST.Typed.u64, toU64(in.rhs), pos),
+            AST.IR.Stmt.Assign.Global(writeRet, AST.Typed.u64, toU64(AST.IR.Exp.Int(cpType, label2, pos)), pos)
+          )
+          return ISZ(
+            b(grounds = grounds, jump = AST.IR.Jump.Goto(label, pos)),
+            AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(writeBlocks(0).label, pos)),
+            AST.IR.BasicBlock(label2, ISZ(), b.jump)
+          )
+        case _ =>
+      }
+      return ISZ(b)
+    }
+
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+
+    var blocks = ISZ[AST.IR.BasicBlock]()
+
+    for (b <- body.blocks; b2 <- updateRwIntrinsic(b)) {
+      blocks = blocks :+ b2
+    }
+    for (b <- leftShiftBlocks; b2 <- updateIntrinsic(b)) {
+      blocks = blocks :+ b2
+    }
+    for (b <- rightShiftBlocks; b2 <- updateIntrinsic(b)) {
+      blocks = blocks :+ b2
+    }
+    for (b <- readBlocks; b2 <- updateIntrinsic(b)) {
+      blocks = blocks :+ b2
+    }
+    for (b <- writeBlocks; b2 <- updateIntrinsic(b)) {
+      blocks = blocks :+ b2
+    }
+    return p(body = body(blocks = blocks))
+  }
+
+  def transformAssignTempLoad(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
+      var block = b
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       for (g <- b.grounds) {
         g match {
@@ -793,12 +940,19 @@ import Anvil._
               case AST.IR.Exp.Intrinsic(in: Intrinsic.Load) =>
                 grounds = grounds :+ AST.IR.Stmt.Intrinsic(
                   Intrinsic.TempLoad(g.lhs, in.base, in.offset, in.isSigned, in.bytes, in.comment, in.tipe, in.pos))
+              case rhs@AST.IR.Exp.Type(_, AST.IR.Exp.Intrinsic(in: Intrinsic.Load), _, _) =>
+                grounds = grounds :+ AST.IR.Stmt.Intrinsic(
+                  Intrinsic.TempLoad(g.lhs, in.base, in.offset, in.isSigned, in.bytes, in.comment, in.tipe, in.pos))
+                val label = fresh.label()
+                blocks = blocks :+ b(grounds = grounds, jump = AST.IR.Jump.Goto(label, rhs.pos))
+                grounds = ISZ(AST.IR.Stmt.Assign.Temp(g.lhs, rhs(exp = AST.IR.Exp.Temp(g.lhs, in.tipe, in.pos)), rhs.pos))
+                block = AST.IR.BasicBlock(label, grounds, block.jump)
               case _ => grounds = grounds :+ g
             }
           case _ => grounds = grounds :+ g
         }
       }
-      blocks = blocks :+ b(grounds = grounds)
+      blocks = blocks :+ block(grounds = grounds)
     }
     return p(body = body(blocks = blocks))
   }
@@ -1265,7 +1419,7 @@ import Anvil._
       var block = b
       for (g <- b.grounds) {
         g match {
-          case g@AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.GlobalVarRef, pos) if !ignoreGlobalInits.contains(rhs.name) =>
+          case g@AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.GlobalVarRef, pos) if !ignoreGlobalInits.contains(rhs.name) && !isIntrinsicGlobalVar(rhs.name) =>
             val owner = ops.ISZOps(rhs.name).dropRight(1)
             if (p.owner :+ p.id != owner) {
               val label1 = fresh.label()
@@ -1289,16 +1443,13 @@ import Anvil._
   }
 
   def transformStackTraceDesc(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
-    if (!config.stackTrace) {
+    if (!config.stackTrace || p.owner == intrinsicName) {
       return p
     }
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     val descOffset = procedureParamInfo(PBox(p))._2.get(sfDescId).get.loc
     val desc = procedureDesc(PBox(p))
     var grounds = ISZ[AST.IR.Stmt.Ground]()
-
-    val descTypeOffset = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)),
-      AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, descOffset, p.pos), p.pos)
     val sfDescType = sha3(desc)
     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
       AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)), descOffset, isSigned(typeShaType),
@@ -1442,9 +1593,13 @@ import Anvil._
       val end = fresh.label()
       val elementType = t.args(1)
       val elementSize = typeByteSize(elementType)
+      var dataOffset = typeShaSize + typeByteSize(AST.Typed.z)
+      if (config.alignAxi4 && !isScalar(elementType)) {
+        dataOffset = pad64(dataOffset)
+      }
       blocks = blocks :+ AST.IR.BasicBlock(createLabel, ISZ(
         AST.IR.Stmt.Assign.Temp(lhsOffsetParam, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
-          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, typeShaSize + typeByteSize(AST.Typed.z), pos), pos), pos),
+          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, dataOffset, pos), pos), pos),
         AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Int(spType, 0, pos), pos),
         AST.IR.Stmt.Assign.Temp(cond1, AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(sizeParam, spType, pos),
           AST.IR.Exp.Binary.Op.Le, AST.IR.Exp.Int(spType, maxSize, pos), pos), pos)
@@ -1649,7 +1804,7 @@ import Anvil._
   }
 
   def transformStackTraceLoc(p: AST.IR.Procedure): AST.IR.Procedure = {
-    if (!config.stackTrace) {
+    if (!config.stackTrace || p.owner == intrinsicName) {
       return p
     }
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
@@ -1817,7 +1972,14 @@ import Anvil._
           case AST.IR.Stmt.Intrinsic(Intrinsic.Store(
           AST.IR.Exp.Intrinsic(Intrinsic.Register(T, _, _)), 0, _, _, n: AST.IR.Exp.Int, _, _, _)) if n.tipe == cpType =>
             r = r + n.value ~> (r.get(n.value).get + 1)
+          case AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+          AST.IR.Exp.Intrinsic(Intrinsic.Register(T, _, _)), 0, _, _, AST.IR.Exp.Type(_, n: AST.IR.Exp.Int, _, _), _, _, _)) if n.tipe == cpType =>
+            r = r + n.value ~> (r.get(n.value).get + 1)
+          case AST.IR.Stmt.Assign.Temp(_, AST.IR.Exp.Type(_, n: AST.IR.Exp.Int, _, _), _) if n.tipe == cpType =>
+            r = r + n.value ~> (r.get(n.value).get + 1)
           case AST.IR.Stmt.Assign.Temp(_, n: AST.IR.Exp.Int, _) if n.tipe == cpType =>
+            r = r + n.value ~> (r.get(n.value).get + 1)
+          case AST.IR.Stmt.Assign.Global(_, _, AST.IR.Exp.Type(_, n: AST.IR.Exp.Int, _, _), _) if n.tipe == cpType =>
             r = r + n.value ~> (r.get(n.value).get + 1)
           case AST.IR.Stmt.Assign.Global(_, _, n: AST.IR.Exp.Int, _) if n.tipe == cpType =>
             r = r + n.value ~> (r.get(n.value).get + 1)
@@ -1886,7 +2048,7 @@ import Anvil._
             var spGrounds = ISZ[AST.IR.Stmt.Ground]()
             var grounds = ISZ[AST.IR.Stmt.Ground]()
             spGrounds = spGrounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, T,
-              AST.IR.Exp.Int(spType, spAdd + registerSpace, e.pos), e.pos))
+              AST.IR.Exp.Int(spType, pad64(spAdd + registerSpace), e.pos), e.pos))
 
             val returnInfo = paramInfo.get(returnLocalId).get
             var locals = ISZ[Intrinsic.Decl.Local](
@@ -1935,7 +2097,7 @@ import Anvil._
             }
             if (config.stackTrace) {
               val n = procedureParamInfo(PBox(p))._2.get(sfCallerId).get.loc -
-                (spAdd + registerSpace)
+                pad64(spAdd + registerSpace)
               val sfCallerInfo = paramInfo.get(sfCallerId).get
               val sfCurrentInfo = paramInfo.get(sfCurrentId).get
               val callerRhsOffset = AST.IR.Exp.Binary(spType,
@@ -1963,7 +2125,7 @@ import Anvil._
 
               var paramTypeArgs = ISZ[((String, AST.Typed), AST.IR.Exp)]()
               if (called.tipe.ret != AST.Typed.unit && !isScalar(called.tipe.ret)) {
-                val n = callResultOffsetMap.get(callResultId(e.id, e.pos)).get - (spAdd + registerSpace)
+                val n = callResultOffsetMap.get(callResultId(e.id, e.pos)).get - pad64(spAdd + registerSpace)
                 val rhs = AST.IR.Exp.Binary(spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos)),
                   AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(spType, -n, e.pos), e.pos)
                 paramTypeArgs = paramTypeArgs :+ ((resultLocalId, spType), rhs)
@@ -1989,7 +2151,7 @@ import Anvil._
 
               if (called.tipe.ret != AST.Typed.unit) {
                 val resultInfo = paramInfo.get(resultLocalId).get
-                val n = callResultOffsetMap.get(callResultId(e.id, e.pos)).get - (spAdd + registerSpace)
+                val n = callResultOffsetMap.get(callResultId(e.id, e.pos)).get - pad64(spAdd + registerSpace)
                 val rhsTemp = maxTemps.typeCount(this, spt)
                 maxTemps = maxTemps.incType(this, spt)
                 spGrounds = spGrounds :+ AST.IR.Stmt.Assign.Temp(rhsTemp, AST.IR.Exp.Binary(spType,
@@ -2058,7 +2220,7 @@ import Anvil._
               case _ =>
             }
             rgrounds = rgrounds :+ AST.IR.Stmt.Intrinsic(
-              Intrinsic.RegisterAssign(T, T, AST.IR.Exp.Int(spType, -(spAdd + registerSpace), e.pos), e.pos))
+              Intrinsic.RegisterAssign(T, T, AST.IR.Exp.Int(spType, -pad64(spAdd + registerSpace), e.pos), e.pos))
             addBeginningMap = addBeginningMap + label ~> (rgrounds, spBgrounds, bgrounds)
             val calledLabel = called.body.asInstanceOf[AST.IR.Body.Basic].blocks(0).label
             val tempLabel = fresh.label()
@@ -2390,6 +2552,8 @@ import Anvil._
         maxOffset = maxOffset + size + dataSize
       }
     }
+
+    maxOffset = pad64(maxOffset)
 
     return (maxOffset, m)
   }
@@ -2966,11 +3130,14 @@ import Anvil._
         g match {
           case g@AST.IR.Stmt.Assign.Temp(lhs, rhs: AST.IR.Exp.Type, pos) if !isScalar(rhs.t) =>
             val sha3Types = sha3TypeImplOf(rhs.t)
+            val label = fresh.label()
             val tLabel = fresh.label()
             val fLabel = fresh.label()
             val eLabel = fresh.label()
-            blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds, AST.IR.Jump.Switch(
-              AST.IR.Exp.FieldVarRef(rhs.exp, typeFieldId, typeShaType, pos),
+            blocks = blocks :+ AST.IR.BasicBlock(b.label, grounds :+ AST.IR.Stmt.Assign.Temp(lhs,
+              AST.IR.Exp.FieldVarRef(rhs.exp, typeFieldId, typeShaType, pos), pos), AST.IR.Jump.Goto(label, pos))
+            blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Switch(
+              AST.IR.Exp.Temp(lhs, typeShaType, pos),
               for (sha3t <- sha3Types) yield AST.IR.Jump.Switch.Case(AST.IR.Exp.Int(typeShaType, sha3t, pos), tLabel),
               Some(fLabel), pos
             ))
@@ -3091,6 +3258,7 @@ import Anvil._
 
   def transformMain(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, globalSize: Z, globalMap: HashSMap[QName, VarInfo]): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    assert(config.alignAxi4 ->: (globalSize % 8 == 0))
     var grounds = ISZ[AST.IR.Stmt.Ground](
       AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, F, AST.IR.Exp.Int(spType, globalSize, p.pos), p.pos))
     )
@@ -3177,15 +3345,41 @@ import Anvil._
     var offset: Z = typeShaSize
     if (t == AST.Typed.string || isSeq(t)) {
       r = r + "size" ~> (AST.Typed.z, offset)
-      return (offset + typeByteSize(AST.Typed.z), r)
+      if (t == AST.Typed.string) {
+        offset = offset + config.maxStringSize
+      } else if (t.args(1) == AST.Typed.b) {
+        offset = offset + getMaxArraySize(t)
+      } else {
+        offset = offset + getMaxArraySize(t) * typeByteSize(t.args(1))
+      }
+      offset = pad64(offset + typeByteSize(AST.Typed.z))
+      //println(s"$t (max: $offset) = $r")
+      return (offset, r)
     }
     val info = th.typeMap.get(t.ids).get.asInstanceOf[TypeInfo.Adt]
     val sm = TypeChecker.buildTypeSubstMap(t.ids, None(), info.ast.typeParams, t.args, message.Reporter.create).get
-    for (v <- info.vars.values) {
-      val ft = v.typedOpt.get.subst(sm)
-      r = r + v.ast.id.value ~> (ft, offset)
+    val vars = info.vars.values
+    var fieldTypes = HashMap.empty[String, AST.Typed]
+    for (v <- vars) {
+      fieldTypes = fieldTypes + v.ast.id.value ~> v.typedOpt.get.subst(sm)
+    }
+    @strictpure def fLt(f1: String, f2: String): B = {
+      val f1Size = typeByteSize(fieldTypes.get(f1).get)
+      val f2Size = typeByteSize(fieldTypes.get(f2).get)
+      if (f1Size < f2Size) F
+      else if (f1Size > f2Size) T
+      else f1 <= f2
+    }
+    if (config.alignAxi4 && ops.ISZOps(fieldTypes.values).exists((t: AST.Typed) => !isScalar(t))) {
+      offset = pad64(offset)
+    }
+    for (f <- ops.ISZOps(fieldTypes.keys).sortWith(fLt _)) {
+      val ft = fieldTypes.get(f).get
+      r = r + f ~> (ft, offset)
       offset = offset + typeByteSize(ft)
     }
+    offset = pad64(offset)
+    //println(s"$t (max: $offset) = $r")
     return (offset, r)
   }
 
@@ -3246,6 +3440,8 @@ import Anvil._
     return typeByteSize(t) * 8
   }
 
+  @strictpure def pad64(r: Z): Z = if (config.padObject64) 8 * (r / 8 + (if (r % 8 != 0) 1 else 0)) else r
+
   @memoize def typeByteSize(t: AST.Typed): Z = {
     def typeImplMaxSize(c: AST.Typed.Name): Z = {
       var r: Z = 0
@@ -3295,11 +3491,7 @@ import Anvil._
         case AST.Typed.f32 => return 4
         case AST.Typed.f64 => return 8
         case AST.Typed.r => return 8
-        case AST.Typed.string =>
-          var r: Z = 4 // type sha
-          r = r + 4 // size
-          r = r + config.maxStringSize
-          return r
+        case AST.Typed.string => return classSizeFieldOffsets(AST.Typed.string)._1
         case AST.Typed.unit => return 0
         case AST.Typed.nothing => return 0
         case `dpType` => return dpTypeByteSize
@@ -3312,15 +3504,7 @@ import Anvil._
             return 8
           }
           if (t.ids == AST.Typed.isName || t.ids == AST.Typed.msName) {
-            var r: Z = 4 // type sha
-            r = r + typeByteSize(AST.Typed.z) // .size
-            val et = t.args(1)
-            if (et == AST.Typed.b) {
-              r = r + getMaxArraySize(t)
-            } else {
-              r = r + getMaxArraySize(t) * typeByteSize(t.args(1)) // elements
-            }
-            return r
+            return classSizeFieldOffsets(t)._1
           } else {
             th.typeMap.get(t.ids).get match {
               case info: TypeInfo.Adt =>
@@ -3343,7 +3527,7 @@ import Anvil._
             }
           }
         case t: AST.Typed.Tuple =>
-          var r: Z = 4 // type sha
+          var r: Z = typeShaSize // type sha
           for (arg <- t.args) {
             r = r + typeByteSize(arg)
           }
@@ -3353,8 +3537,8 @@ import Anvil._
     }
 
     var r = typeByteSizeH
-    if (config.memoryAccess == Config.MemoryAccess.Ddr && !isScalar(t)) {
-      r = 8 * (r / 8 + (if (r % 8 != 0) 1 else 0))
+    if (!isScalar(t)) {
+      r = pad64(r)
     }
     return r
   }
