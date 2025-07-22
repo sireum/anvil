@@ -1772,8 +1772,9 @@ object ChiselModule {
           |}
         """
 
-    if (memoryType == Anvil.Config.MemoryAccess.Ip) bramModuleST
-    else ddrModuleST
+    if (memoryType == Anvil.Config.MemoryAccess.BramNative) bramModuleST
+    else if(memoryType == Anvil.Config.MemoryAccess.BramAxi4 || memoryType == Anvil.Config.MemoryAccess.Ddr) ddrModuleST
+    else st""
   }
 }
 
@@ -1914,10 +1915,12 @@ import HwSynthesizer._
     val moduleInstances: ST = {
       val modDeclIns: ISZ[ST] = if(targetModule.expression == BlockMemoryIP()) {
         for (i <- 0 until numInstances) yield
-          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
+          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
             st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${targetModule.asInstanceOf[BlockMemory].depth}, ${targetModule.width}))"""
-          else
+          else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
             st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(C_M_AXI_DATA_WIDTH = C_M_AXI_DATA_WIDTH, C_M_AXI_ADDR_WIDTH = C_M_AXI_ADDR_WIDTH, C_M_TARGET_SLAVE_BASE_ADDR = C_M_TARGET_SLAVE_BASE_ADDR, MEMORY_DEPTH = MEMORY_DEPTH))"""
+          else
+            st""
       } else if(targetModule.expression == LabelToFsmIP()) {
         if(anvil.config.cpMax > 0) {
           for (i <- 0 until numInstances) yield
@@ -2327,7 +2330,7 @@ import HwSynthesizer._
       }
 
       val backslash = "\\"
-      val bramGenerationST: ST =
+      val bramNativeGenerationST: ST =
         st"""
             |# need to be customzied for different benchmarks
             |create_ip -name blk_mem_gen -vendor xilinx.com -library ip -version 8.4 -module_name XilinxBRAM
@@ -2451,7 +2454,7 @@ import HwSynthesizer._
             |  CONFIG.Out_Width {64} $backslash
             |] [get_ips XilinxSubtractorUnsigned64]
             |
-            |${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) bramGenerationST else st""}
+            |${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) bramNativeGenerationST else st""}
             |
             |# need to be customzied for different benchmarks
             |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxIndexMultiplier
@@ -2497,12 +2500,19 @@ import HwSynthesizer._
           """
 
       val gpOrHpST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
           st"""
               |set_property CONFIG.PSU__USE__M_AXI_GP1 {0} [get_bd_cells zynq_ultra_ps_e_0]
               |set_property CONFIG.PSU__MAXIGP0__DATA_WIDTH {32} [get_bd_cells zynq_ultra_ps_e_0]
               """
-        else
+        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)
+          st"""
+              |set_property -dict [list $backslash
+              |  CONFIG.PSU__MAXIGP0__DATA_WIDTH {64} $backslash
+              |  CONFIG.PSU__USE__M_AXI_GP1 {0} $backslash
+              |] [get_bd_cells zynq_ultra_ps_e_0]
+            """
+        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
           st"""
               |set_property -dict [list $backslash
               |  CONFIG.PSU__USE__M_AXI_GP1 {0} $backslash
@@ -2511,9 +2521,11 @@ import HwSynthesizer._
               |set_property CONFIG.PSU__SAXIGP2__DATA_WIDTH {64} [get_bd_cells zynq_ultra_ps_e_0]
               |set_property CONFIG.PSU__MAXIGP0__DATA_WIDTH {64} [get_bd_cells zynq_ultra_ps_e_0]
             """
+        else
+          st""
       }
       val blockDesignST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
           st"""
               |# reverse reset
               |create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 util_vector_logic_0
@@ -2523,9 +2535,69 @@ import HwSynthesizer._
               |
               |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
               |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
-              |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ] [get_bd_cells zynq_ultra_ps_e_0]
+              |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
+              | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
+              |] [get_bd_cells zynq_ultra_ps_e_0]
             """
-        else
+        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)
+          st"""
+              |# inverse reset_n
+              |create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 util_vector_logic_0
+              |set_property -dict [list $backslash
+              |  CONFIG.C_OPERATION {not} $backslash
+              |  CONFIG.C_SIZE {1} $backslash
+              |] [get_bd_cells util_vector_logic_0]
+              |connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins GeneratedIP/reset]
+              |
+              |# connect PS to slave of generated IP
+              |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
+              |
+              |# create AXI4 based BRAM
+              |create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 blk_mem_gen_0
+              |set_property -dict [list $backslash
+              |  CONFIG.Memory_Type {True_Dual_Port_RAM} $backslash
+              |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
+              |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
+              |  CONFIG.Write_Depth_A ${anvil.config.memory / 8 + 1} $backslash
+              |  CONFIG.Write_Width_A {64} $backslash
+              |  CONFIG.use_bram_block {BRAM_Controller} $backslash
+              |] [get_bd_cells blk_mem_gen_0]
+              |
+              |# create axi bram controller
+              |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_0
+              |set_property -dict [list $backslash
+              |  CONFIG.DATA_WIDTH {64} $backslash
+              |  CONFIG.SINGLE_PORT_BRAM {1} $backslash
+              |] [get_bd_cells axi_bram_ctrl_0]
+              |connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
+              |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_1
+              |set_property -dict [list $backslash
+              |  CONFIG.DATA_WIDTH {64} $backslash
+              |  CONFIG.SINGLE_PORT_BRAM {1} $backslash
+              |] [get_bd_cells axi_bram_ctrl_1]
+              |connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_1/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTB]
+              |
+              |# connect to two axi bram controller
+              |set_property CONFIG.NUM_MI {2} [get_bd_cells axi_smc]
+              |connect_bd_intf_net [get_bd_intf_pins axi_smc/M01_AXI] [get_bd_intf_pins axi_bram_ctrl_1/S_AXI]
+              |connect_bd_intf_net [get_bd_intf_pins GeneratedIP/io_M_AXI] [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
+              |
+              |# connect to axi clock
+              |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_bram_ctrl_0/s_axi_aclk]
+              |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_bram_ctrl_1/s_axi_aclk]
+              |
+              |# connect to utility vector
+              |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
+              |
+              |# set the clock freq
+              |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
+              | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
+              |] [get_bd_cells zynq_ultra_ps_e_0]
+              |
+              |# assign memory address for PS access
+              |assign_bd_address -target_address_space /zynq_ultra_ps_e_0/Data [get_bd_addr_segs axi_bram_ctrl_1/S_AXI/Mem0] -force
+            """
+        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
           st"""
               |# connect to HP port
               |connect_bd_intf_net [get_bd_intf_pins zynq_ultra_ps_e_0/S_AXI_HP0_FPD] [get_bd_intf_pins GeneratedIP/io_M_AXI]
@@ -2541,11 +2613,15 @@ import HwSynthesizer._
               |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
               |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins zynq_ultra_ps_e_0/saxihp0_fpd_aclk]
               |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
-              |set_property CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ [get_bd_cells zynq_ultra_ps_e_0]
+              |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
+              | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
+              |] [get_bd_cells zynq_ultra_ps_e_0]
               |
               |# set the address map for HP port
               |assign_bd_address -target_address_space /GeneratedIP/io_M_AXI [get_bd_addr_segs zynq_ultra_ps_e_0/SAXIGP2/HP0_DDR_LOW] -force
             """
+        else
+          st""
       }
       val synthImplST: ST =
         st"""
@@ -2644,7 +2720,7 @@ import HwSynthesizer._
           """
 
       val zynqCProgramST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
           st"""
               |#include <stdio.h>
               |#include <stdint.h>
@@ -2688,7 +2764,7 @@ import HwSynthesizer._
               |    return 0;
               |}
             """
-        else
+        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
           st"""
               |#include <stdio.h>
               |#include <stdint.h>
@@ -2701,7 +2777,7 @@ import HwSynthesizer._
               |#define VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x0)
               |#define READY_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x8)
               |#define DP_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x10)
-              |#define ARRAY_ADDR XPAR_PSU_DDR_0_S_AXI_BASEADDR
+              |#define ARRAY_ADDR ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"}
               |
               |uint8_t load_u8(uint32_t offset) {
               |  uint32_t buffer_addr = ARRAY_ADDR + 20;
@@ -2722,12 +2798,12 @@ import HwSynthesizer._
               |  print("GeneralRegFileToBRAM Test\n\r");
               |
               |  // write FFFFFFFFFFFFFFFF to testNum
-              |  Xil_Out64(XPAR_PSU_DDR_0_S_AXI_BASEADDR, 0xFFFFFFFFFFFFFFFF);
+              |  Xil_Out64(${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"}, 0xFFFFFFFFFFFFFFFF);
               |  // using memory barrier when disable DCache
               |  //__asm__ volatile("dsb sy");
               |
               |  // using flush when enable DCache
-              |  Xil_DCacheFlushRange(XPAR_PSU_DDR_0_S_AXI_BASEADDR, sizeof(uint64_t));
+              |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "Xil_DCacheFlushRange(XPAR_PSU_DDR_0_S_AXI_BASEADDR, sizeof(uint64_t));" else ""}
               |
               |  // write to port valid (generated IP)
               |  Xil_Out64(VALID_ADDR, 0x1);
@@ -2758,6 +2834,8 @@ import HwSynthesizer._
               |  return 0;
               |}
             """
+        else
+          st""
       }
 
       output.addPerm(T, ISZ("chisel/..", "test_many.sh"), testManyShScriptST, "+x")
@@ -3188,7 +3266,7 @@ import HwSynthesizer._
           moduleST = moduleST :+ multiplierBlackBoxST
           moduleST = moduleST :+ adderSubtractorBlackBoxST
           moduleST = moduleST :+ indexIpST
-          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) {
+          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
             moduleST = moduleST :+ memoryIpST
           }
         }
@@ -3203,7 +3281,7 @@ import HwSynthesizer._
           instanceST = instanceST :+ insDeclST(b, entry._2)
         }
         instanceST = instanceST :+ insDeclST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           instanceST = instanceST :+ insDeclST(BlockMemoryIP(), 1)
         }
         st"""${(instanceST, "\n")}"""
@@ -3216,7 +3294,7 @@ import HwSynthesizer._
           instanceST = instanceST :+ insPortFuncST(b, entry._2)
         }
         instanceST = instanceST :+ insPortFuncST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           instanceST = instanceST :+ insPortFuncST(BlockMemoryIP(), 1)
         }
         st"""${(instanceST, "\n")}"""
@@ -3229,7 +3307,7 @@ import HwSynthesizer._
           instanceST = instanceST :+ insPortCallST(b, entry._2)
         }
         instanceST = instanceST :+ insPortCallST(IntrinsicIP(HwSynthesizer.defaultIndexing), ipAlloc.indexingAllocSize)
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           instanceST = instanceST :+ insPortCallST(BlockMemoryIP(), 1)
         }
         st"""${(instanceST, "\n")}"""
@@ -3334,7 +3412,7 @@ import HwSynthesizer._
           """
 
       val memWriteST: ST =
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
           st"""
               |when(r_writeAddr === ${anvil.config.memory}.U) {
               |  writeState              := sBActive
@@ -3367,7 +3445,7 @@ import HwSynthesizer._
             """
 
       val memReadST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip)
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
           st"""
               |when(r_readAddr === ${anvil.config.memory}.U) {
               |  r_s_axi_rdata         := r_ready
@@ -3469,7 +3547,7 @@ import HwSynthesizer._
               |val r_readData      = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
               |val r_readLen       = Reg(UInt((C_S_AXI_DATA_WIDTH / 8).W))
               |
-              |${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) bramDefaultPortValueST.render else st""}
+              |${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) bramDefaultPortValueST.render else st""}
               |
               |// write state machine
               |val sWriteIdle :: sAWActive :: sWActive :: sBActive:: Nil = Enum(4)
@@ -3477,7 +3555,7 @@ import HwSynthesizer._
               |
               |r_s_axi_awready := Mux(io.S_AXI_AWVALID, true.B ,false.B)
               |r_s_axi_wready  := Mux((writeState === sAWActive) & io.S_AXI_WVALID,  true.B, false.B)
-              |r_s_axi_bvalid  := Mux((writeState === sWActive)${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) s"& ${sharedMemName}.io.writeValid" else ""}, true.B, false.B) |
+              |r_s_axi_bvalid  := Mux((writeState === sWActive)${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) s"& ${sharedMemName}.io.writeValid" else ""}, true.B, false.B) |
               |                   Mux(io.S_AXI_WVALID & io.S_AXI_WREADY & (r_writeAddr === ${anvil.config.memory}.U), true.B, false.B)
               |switch(writeState) {
               |  is(sWriteIdle) {
@@ -3502,7 +3580,7 @@ import HwSynthesizer._
               |val readState = RegInit(sReadIdle)
               |
               |r_s_axi_arready := Mux(io.S_AXI_ARVALID, true.B, false.B)
-              |r_s_axi_rvalid  := Mux((readState === sRActive) ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip) s" & (${sharedMemName}.io.readValid | r_readAddr === ${anvil.config.memory}.U)" else ""}, true.B, false.B)
+              |r_s_axi_rvalid  := Mux((readState === sRActive) ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) s" & (${sharedMemName}.io.readValid | r_readAddr === ${anvil.config.memory}.U)" else ""}, true.B, false.B)
               |switch(readState) {
               |  is(sReadIdle) {
               |    readState := Mux(io.S_AXI_ARVALID, sARActive, sReadIdle)
@@ -3643,7 +3721,7 @@ import HwSynthesizer._
               |io.S_AXI_RVALID  := r_s_axi_rvalid
             """
 
-        if(anvil.config.genVerilog && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+        if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) {
           return genVerilgoAxi4LiteST
         } else {
           return simAxi4LiteST
@@ -3779,7 +3857,7 @@ import HwSynthesizer._
           |${if(anvil.config.genVerilog) BUFGST else st""}
           |
           |import ${name}._
-          |class ${name} (val C_S_AXI_DATA_WIDTH: Int = ${if(anvil.config.genVerilog && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) 64 else 32},
+          |class ${name} (val C_S_AXI_DATA_WIDTH: Int = ${if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) 64 else 32},
           |               val C_S_AXI_ADDR_WIDTH: Int = ${if(anvil.config.genVerilog) 8 else log2Up(anvil.config.memory)},
           |               val C_M_AXI_ADDR_WIDTH: Int = 32,
           |               val C_M_AXI_DATA_WIDTH: Int = 64,
@@ -3822,7 +3900,7 @@ import HwSynthesizer._
           |    val S_AXI_RVALID = Output(Bool())
           |    val S_AXI_RREADY = Input(Bool())
           |
-          |    ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) axi4FullMasterST else st""}
+          |    ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4) axi4FullMasterST else st""}
           |  })
           |
           |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Default) s"val ${sharedMemName} = RegInit(VecInit(Seq.fill(ARRAY_REG_DEPTH)(0.U(ARRAY_REG_WIDTH.W))))" else ""}
@@ -3850,7 +3928,7 @@ import HwSynthesizer._
           |  ${if(anvil.config.useIP) instanceDeclST else st""}
           |  ${if(anvil.config.cpMax > 0) insDeclST(LabelToFsmIP(), 1) else st""}
           |  ${if(anvil.config.cpMax > 0) broadcastBufferInsST else st""}
-          |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) axi4FullMasterConnectionST else st""}
+          |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4) axi4FullMasterConnectionST else st""}
           |
           |  init(this)
           |
@@ -4307,7 +4385,7 @@ import HwSynthesizer._
 
     i match {
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.TempLoad) => {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           val readAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
           val tempST: ST = st"${if (!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"}"
@@ -4355,7 +4433,7 @@ import HwSynthesizer._
         }
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Erase) => {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           val offsetWidth: Z = log2Up(anvil.config.memory * 8)
           val eraseBaseST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
           val eraseOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
@@ -4375,7 +4453,7 @@ import HwSynthesizer._
         }
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Copy) => {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           val offsetWidth: Z = log2Up(anvil.config.memory * 8)
           val dmaDstAddrST: ST = processExpr(intrinsic.lbase, F, ipPortLogic, hwLog)
           val dmaDstOffsetST: ST = if(intrinsic.loffset < 0) st"(${intrinsic.loffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.loffset}.U"
@@ -4453,7 +4531,7 @@ import HwSynthesizer._
           case AST.IR.Exp.Intrinsic(in: Intrinsic.Indexing) => T
           case _ => F
         }
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           val offsetWidth: Z = log2Up(anvil.config.memory * 8)
           val writeAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
           val writeOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
@@ -4603,7 +4681,7 @@ import HwSynthesizer._
         val lhsST: ST = globalName(a.name)
         val rhsST = processExpr(a.rhs, F, ipPortLogic, hwLog)
         if(isIntrinsicLoad(a.rhs)) {
-          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+          if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
             val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
             val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, hwLog)
             val offsetWidth: Z = log2Up(anvil.config.memory * 8)
@@ -4640,7 +4718,7 @@ import HwSynthesizer._
         val lhsST: ST = if(!anvil.config.splitTempSizes)  st"${generalRegName}(${regNo}.U)" else st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
         val rhsST = processExpr(a.rhs, F, ipPortLogic, hwLog)
         if(isIntrinsicLoad(a.rhs)) {
-          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+          if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
             val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
             val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, hwLog)
             val offsetWidth: Z = log2Up(anvil.config.memory * 8)
@@ -4698,7 +4776,7 @@ import HwSynthesizer._
         exprST = if(intrinsic.isSP) st"SP" else st"DP"
       }
       case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ip || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) {
+        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
           val byteST: ST = st"(${intrinsic.bytes * 8 - 1}, 0)"
           val signedST: ST = if(intrinsic.isSigned) st".asSInt" else st""
@@ -5212,28 +5290,28 @@ object HwSynthesizer {
     }
 
     override def preIntrinsicCopy(o: Intrinsic.Copy): MAnvilIRTransformer.PreResult[Intrinsic.Copy] = {
-      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ddr){
+      if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Default){
         binExp(o.lhsOffset)
       }
       return MAnvilIRTransformer.PreResultIntrinsicCopy
     }
 
     override def preIntrinsicTempLoad(o: Intrinsic.TempLoad): MAnvilIRTransformer.PreResult[Intrinsic.TempLoad] = {
-      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ddr) {
+      if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Default) {
         binExp(o.rhsOffset)
       }
       return MAnvilIRTransformer.PreResultIntrinsicTempLoad
     }
 
     override def preIntrinsicLoad(o: Intrinsic.Load): MAnvilIRTransformer.PreResult[Intrinsic.Load] = {
-      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ddr) {
+      if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Default) {
         binExp(o.rhsOffset)
       }
       return MAnvilIRTransformer.PreResultIntrinsicLoad
     }
 
     override def preIntrinsicStore(o: Intrinsic.Store): MAnvilIRTransformer.PreResult[Intrinsic.Store] = {
-      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ip && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Ddr) {
+      if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Default) {
         binExp(o.lhsOffset)
       }
       return MAnvilIRTransformer.PreResultIntrinsicStore
