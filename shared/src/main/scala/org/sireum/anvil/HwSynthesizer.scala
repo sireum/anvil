@@ -2087,7 +2087,7 @@ import HwSynthesizer._
             |  );
             |
             |  always @(posedge clk) begin
-            |    if (ce)
+            |    if(ce & ~valid_shift[5])
             |      valid_shift <= {valid_shift[4:0], 1'b1};
             |    else
             |      valid_shift <= 0;
@@ -2120,7 +2120,7 @@ import HwSynthesizer._
             |  );
             |
             |  always @(posedge clk) begin
-            |    if (ce)
+            |    if(ce & ~valid_shift[LATENCY-1])
             |      valid_shift <= {valid_shift[LATENCY-2:0], 1'b1};
             |    else
             |      valid_shift <= 0;
@@ -2280,7 +2280,7 @@ import HwSynthesizer._
             |  );
             |
             |  always @(posedge clk) begin
-            |    if (ce)
+            |    if(ce & ~valid_shift[LATENCY-1])
             |      valid_shift <= ${latencyST.render};
             |    else
             |      valid_shift <= 0;
@@ -2318,7 +2318,7 @@ import HwSynthesizer._
             |  );
             |
             |  always @(posedge clk) begin
-            |    if (ce)
+            |    if(ce & ~valid_shift[LATENCY-1])
             |      valid_shift <= ${latencyST.render};
             |    else
             |      valid_shift <= 0;
@@ -2737,7 +2737,7 @@ import HwSynthesizer._
               |{
               |    init_platform();
               |
-              |    print("GeneralRegFileToBRAM Test\n\r");
+              |    printf("benchmark ${name}\n");
               |
               |    Xil_Out32(ARRAY_ADDR, 0xFFFFFFFF);
               |    Xil_Out32(ARRAY_ADDR+4, 0xFFFFFFFF);
@@ -2795,7 +2795,7 @@ import HwSynthesizer._
               |  init_platform();
               |
               |  //Xil_DCacheDisable();
-              |  print("GeneralRegFileToBRAM Test\n\r");
+              |  printf("benchmark ${name}\n");
               |
               |  // write FFFFFFFFFFFFFFFF to testNum
               |  Xil_Out64(${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"}, 0xFFFFFFFFFFFFFFFF);
@@ -3412,7 +3412,7 @@ import HwSynthesizer._
           """
 
       val memWriteST: ST =
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
+        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default)
           st"""
               |when(r_writeAddr === ${anvil.config.memory}.U) {
               |  writeState              := sBActive
@@ -3445,7 +3445,7 @@ import HwSynthesizer._
             """
 
       val memReadST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
+        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default)
           st"""
               |when(r_readAddr === ${anvil.config.memory}.U) {
               |  r_s_axi_rdata         := r_ready
@@ -3858,7 +3858,7 @@ import HwSynthesizer._
           |
           |import ${name}._
           |class ${name} (val C_S_AXI_DATA_WIDTH: Int = ${if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) 64 else 32},
-          |               val C_S_AXI_ADDR_WIDTH: Int = ${if(anvil.config.genVerilog) 8 else log2Up(anvil.config.memory)},
+          |               val C_S_AXI_ADDR_WIDTH: Int = ${if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) 8 else log2Up(anvil.config.memory)},
           |               val C_M_AXI_ADDR_WIDTH: Int = 32,
           |               val C_M_AXI_DATA_WIDTH: Int = 64,
           |               val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = BigInt("00000000", 16),
