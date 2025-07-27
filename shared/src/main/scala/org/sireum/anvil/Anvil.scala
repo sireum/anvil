@@ -136,7 +136,7 @@ object Anvil {
                  output: Output, reporter: Reporter): Option[IR] = {
     val rOpt = generateIR(isTest, fresh, th, name, config, output, reporter)
     rOpt match {
-      case Some(ir) => HwSynthesizer(ir.anvil).printProcedure(ir.name, ir.procedure, output, ir.maxRegisters)
+      case Some(ir) => HwSynthesizer(ir.anvil).printProcedure(ir.name, ir.procedure, output, ir.maxRegisters, ir.globalInfoMap)
       case _ =>
     }
     return rOpt
