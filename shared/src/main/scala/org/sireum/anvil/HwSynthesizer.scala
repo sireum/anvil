@@ -4122,9 +4122,10 @@ import HwSynthesizer._
         var globalTempSTs: ISZ[ST] = ISZ[ST]()
         for(entry <- globalInfoMap.entries) {
           if(isTempGlobal(anvil, entry._2.tipe, entry._1)) {
-            val singnedST: ST = if(anvil.isSigned(entry._2.tipe)) st"SInt" else st"UInt"
+            val signed: B = anvil.isSigned(entry._2.tipe)
+            val initValueST: ST = if(signed) st"0.S" else st"0.U"
             val bitWidthST: ST = st"${anvil.typeBitSize(entry._2.tipe)}"
-            globalTempSTs = globalTempSTs :+ st"val ${globalName(entry._1)} = Reg(${singnedST.render}(${bitWidthST}.W))"
+            globalTempSTs = globalTempSTs :+ st"val ${globalName(entry._1)} = RegInit(${initValueST}(${bitWidthST}.W))"
           }
         }
         return st"${(globalTempSTs, "\n")}"
@@ -4561,10 +4562,32 @@ import HwSynthesizer._
         }
       }
       case AST.IR.Jump.Intrinsic(intrinsic: Intrinsic.GotoGlobal) => {
-        intrinsicST = intrinsicST :+
-          st"""
-              |CP := ${globalName(intrinsic.name)}
-            """
+        if(anvil.config.cpMax <= 0) {
+          intrinsicST = intrinsicST :+
+            st"""
+                |CP := ${globalName(intrinsic.name)}
+              """
+        } else {
+          var portSTs: ISZ[ST] = ISZ[ST]()
+          val instanceName: String = getIpInstanceName(LabelToFsmIP()).get
+          portSTs = portSTs :+ st"${instanceName}.io.label := ${globalName(intrinsic.name)}"
+          portSTs = portSTs :+ st"${instanceName}.io.start := Mux(${instanceName}.io.valid, false.B, true.B)"
+          portSTs = portSTs :+ st"${instanceName}.io.originalCpIndex := ${getCpIndex(hwLog.currentLabel)._1}.U"
+          portSTs = portSTs :+
+            st"""
+                |when(${instanceName}.io.valid) {
+                |  when(${instanceName}.io.isSameCpIndex) {
+                |    CP(${instanceName}.io.cpIndex) := ${instanceName}.io.stateIndex
+                |  } .otherwise {
+                |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).valid      := true.B
+                |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).bits.index := ${instanceName}.io.cpIndex
+                |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).bits.state := ${instanceName}.io.stateIndex
+                |    CP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${anvil.config.cpMax}.U
+                |  }
+                |}
+                """
+          intrinsicST = intrinsicST :+ st"${(portSTs, "\n")}"
+        }
       }
       case j: AST.IR.Jump.Goto => {
         if(anvil.config.cpMax <= 0) {
