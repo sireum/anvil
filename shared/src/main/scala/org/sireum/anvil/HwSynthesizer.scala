@@ -2339,7 +2339,9 @@ import HwSynthesizer._
           |ipMax = ${anvil.config.ipMax},
           |cpMax = ${anvil.config.cpMax},
           |CPsize = ${anvil.typeBitSize(spType)},
-          |SPsize = ${anvil.typeBitSize(anvil.cpType)}
+          |SPsize = ${anvil.typeBitSize(anvil.cpType)},
+          |tempGlobal = ${anvil.config.tempGlobal},
+          |alignAxi4 = ${anvil.config.alignAxi4}
         """
 
     output.add(T, ISZ("config.txt"), configST)
