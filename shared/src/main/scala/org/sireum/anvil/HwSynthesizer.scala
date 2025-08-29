@@ -2325,6 +2325,30 @@ import HwSynthesizer._
     val processedProcedureST = processProcedure(name, o, maxRegisters, globalInfoMap)
     r = r + ISZ(name) ~> o.prettyST(anvil.printer)
 
+    @strictpure def cyclesXilinxAdder(width: Z): Z = {
+      width match {
+        case w if w <= 12 => 1
+        case w if w <= 24 => 2
+        case w if w <= 36 => 3
+        case w if w <= 48 => 4
+        case w if w <= 60 => 5
+        case w if w <= 64 => 6
+        case _ => halt("not support this width")
+      }
+    }
+
+    @strictpure def cyclesXilinxMultiplier(width: Z): Z = {
+      width match {
+        case w if w <= 2 => 1
+        case w if w <= 4 => 2
+        case w if w <= 8 => 3
+        case w if w <= 16 => 4
+        case w if w <= 32 => 5
+        case w if w <= 64 => 6
+        case _ => halt("not support this width")
+      }
+    }
+
     val configST: ST =
       st"""
           |runtimeCheck = ${if(anvil.config.runtimeCheck) "true" else "false"},
@@ -2344,786 +2368,777 @@ import HwSynthesizer._
           |alignAxi4 = ${anvil.config.alignAxi4}
         """
 
+    val backslash = "\\"
+
+    val bramNativeGenerationST: ST =
+      st"""
+          |# need to be customzied for different benchmarks
+          |create_ip -name blk_mem_gen -vendor xilinx.com -library ip -version 8.4 -module_name XilinxBRAM
+          |set_property -dict [list $backslash
+          |  CONFIG.Memory_Type {True_Dual_Port_RAM} $backslash
+          |  CONFIG.Operating_Mode_A {NO_CHANGE} $backslash
+          |  CONFIG.Operating_Mode_B {NO_CHANGE} $backslash
+          |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
+          |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
+          |  CONFIG.Write_Depth_A {${anvil.config.memory}} $backslash
+          |  CONFIG.Write_Width_A {8} $backslash
+          |] [get_ips XilinxBRAM]
+          """
+    val ipGenerationTclST: ST =
+      st"""
+          |set PROJECT_PATH [lindex $$argv 0]
+          |set PROJECT_NAME [lindex $$argv 1]
+          |set FREQ_HZ [lindex $$argv 2]
+          |set FILE_PATH $${PROJECT_PATH}/chisel/generated_verilog
+          |
+          |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP
+          |create_project $$PROJECT_NAME $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME -part xczu9eg-ffvb1156-2-e
+          |
+          |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
+          |
+          |set_property target_language Verilog [current_project]
+          |
+          |# /home/kejun/Desktop/ip.v
+          |add_files -norecurse [glob $$FILE_PATH/*.v]
+          |update_compile_order -fileset sources_1
+          |
+          |# add xilinx IPs
+          |create_ip -name div_gen -vendor xilinx.com -library ip -version 5.1 -module_name XilinxDividerSigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.ARESETN {true} $backslash
+          |  CONFIG.FlowControl {Blocking} $backslash
+          |  CONFIG.dividend_and_quotient_width {64} $backslash
+          |  CONFIG.divisor_width {64} $backslash
+          |  CONFIG.fractional_width {64} $backslash
+          |  CONFIG.latency {69} $backslash
+          |] [get_ips XilinxDividerSigned64]
+          |
+          |create_ip -name div_gen -vendor xilinx.com -library ip -version 5.1 -module_name XilinxDividerUnsigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.ARESETN {true} $backslash
+          |  CONFIG.FlowControl {Blocking} $backslash
+          |  CONFIG.dividend_and_quotient_width {64} $backslash
+          |  CONFIG.divisor_width {64} $backslash
+          |  CONFIG.fractional_width {64} $backslash
+          |  CONFIG.latency {67} $backslash
+          |  CONFIG.operand_sign {Unsigned} $backslash
+          |] [get_ips XilinxDividerUnsigned64]
+          |
+          |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxMultiplierUnsigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.ClockEnable {true} $backslash
+          |  CONFIG.Multiplier_Construction {Use_Mults} $backslash
+          |  CONFIG.OutputWidthHigh {63} $backslash
+          |  CONFIG.PipeStages {18} $backslash
+          |  CONFIG.PortAType {Unsigned} $backslash
+          |  CONFIG.PortAWidth {64} $backslash
+          |  CONFIG.PortBType {Unsigned} $backslash
+          |  CONFIG.PortBWidth {64} $backslash
+          |  CONFIG.Use_Custom_Output_Width {true} $backslash
+          |] [get_ips XilinxMultiplierUnsigned64]
+          |
+          |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxMultiplierSigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.ClockEnable {true} $backslash
+          |  CONFIG.Multiplier_Construction {Use_Mults} $backslash
+          |  CONFIG.OutputWidthHigh {63} $backslash
+          |  CONFIG.PipeStages {18} $backslash
+          |  CONFIG.PortAWidth {64} $backslash
+          |  CONFIG.PortBWidth {64} $backslash
+          |  CONFIG.Use_Custom_Output_Width {true} $backslash
+          |] [get_ips XilinxMultiplierSigned64]
+          |
+          |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxAdderSigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.A_Width {64} $backslash
+          |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+          |  CONFIG.B_Width {64} $backslash
+          |  CONFIG.Latency {6} $backslash
+          |  CONFIG.Latency_Configuration {Automatic} $backslash
+          |  CONFIG.Out_Width {64} $backslash
+          |] [get_ips XilinxAdderSigned64]
+          |
+          |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxAdderUnsigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.A_Type {Unsigned} $backslash
+          |  CONFIG.A_Width {64} $backslash
+          |  CONFIG.B_Type {Unsigned} $backslash
+          |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+          |  CONFIG.B_Width {64} $backslash
+          |  CONFIG.Latency {6} $backslash
+          |  CONFIG.Latency_Configuration {Automatic} $backslash
+          |  CONFIG.Out_Width {64} $backslash
+          |] [get_ips XilinxAdderUnsigned64]
+          |
+          |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxSubtractorSigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.A_Width {64} $backslash
+          |  CONFIG.Add_Mode {Subtract} $backslash
+          |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+          |  CONFIG.B_Width {64} $backslash
+          |  CONFIG.Latency {6} $backslash
+          |  CONFIG.Latency_Configuration {Automatic} $backslash
+          |  CONFIG.Out_Width {64} $backslash
+          |] [get_ips XilinxSubtractorSigned64]
+          |
+          |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxSubtractorUnsigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.A_Type {Unsigned} $backslash
+          |  CONFIG.A_Width {64} $backslash
+          |  CONFIG.Add_Mode {Subtract} $backslash
+          |  CONFIG.B_Type {Unsigned} $backslash
+          |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+          |  CONFIG.B_Width {64} $backslash
+          |  CONFIG.Latency {6} $backslash
+          |  CONFIG.Latency_Configuration {Automatic} $backslash
+          |  CONFIG.Out_Width {64} $backslash
+          |] [get_ips XilinxSubtractorUnsigned64]
+          |
+          |${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) bramNativeGenerationST else st""}
+          |
+          |# need to be customzied for different benchmarks
+          |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxIndexMultiplier
+          |set_property -dict [list $backslash
+          |  CONFIG.ClockEnable {true} $backslash
+          |  CONFIG.OutputWidthHigh {${anvil.typeBitSize(spType) - 1}} $backslash
+          |  CONFIG.PipeStages {${cyclesXilinxMultiplier(anvil.typeBitSize(spType))}} $backslash
+          |  CONFIG.PortAType {Unsigned} $backslash
+          |  CONFIG.PortAWidth {${anvil.typeBitSize(spType)}} $backslash
+          |  CONFIG.PortBType {Unsigned} $backslash
+          |  CONFIG.PortBWidth {${anvil.typeBitSize(spType)}} $backslash
+          |  CONFIG.Use_Custom_Output_Width {true} $backslash
+          |] [get_ips XilinxIndexMultiplier]
+          |
+          |# need to be customzied for different benchmarks
+          |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxIndexAdder
+          |set_property -dict [list $backslash
+          |  CONFIG.A_Type {Unsigned} $backslash
+          |  CONFIG.A_Width {${anvil.typeBitSize(spType)}} $backslash
+          |  CONFIG.B_Type {Unsigned} $backslash
+          |  CONFIG.B_Value {00000000} $backslash
+          |  CONFIG.B_Width {${anvil.typeBitSize(spType)}} $backslash
+          |  CONFIG.Latency {${cyclesXilinxAdder(anvil.typeBitSize(spType))}} $backslash
+          |  CONFIG.Latency_Configuration {Automatic} $backslash
+          |  CONFIG.Out_Width {${anvil.typeBitSize(spType)}} $backslash
+          |] [get_ips XilinxIndexAdder]
+          |
+          |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP/IP_dir
+          |ipx::package_project -root_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME//IP_dir -vendor user.org -library user -taxonomy /UserIP -import_files -set_current false
+          |ipx::unload_core $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME//IP_dir/component.xml
+          |ipx::edit_ip_in_project -upgrade true -name tmp_edit_project -directory $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir/component.xml
+          |
+          |update_compile_order -fileset sources_1
+          |set_property core_revision 2 [ipx::current_core]
+          |ipx::update_source_project_archive -component [ipx::current_core]
+          |ipx::create_xgui_files [ipx::current_core]
+          |ipx::update_checksums [ipx::current_core]
+          |ipx::save_core [ipx::current_core]
+          |ipx::move_temp_component_back -component [ipx::current_core]
+          |close_project -delete
+          |set_property  ip_repo_paths  $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir [current_project]
+          |update_ip_catalog
+          """
+
+    val gpOrHpST: ST = {
+      if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
+        st"""
+            |set_property CONFIG.PSU__USE__M_AXI_GP1 {0} [get_bd_cells zynq_ultra_ps_e_0]
+            |set_property CONFIG.PSU__MAXIGP0__DATA_WIDTH {32} [get_bd_cells zynq_ultra_ps_e_0]
+              """
+      else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)
+        st"""
+            |set_property -dict [list $backslash
+            |  CONFIG.PSU__MAXIGP0__DATA_WIDTH {64} $backslash
+            |  CONFIG.PSU__USE__M_AXI_GP1 {0} $backslash
+            |] [get_bd_cells zynq_ultra_ps_e_0]
+            """
+      else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
+        st"""
+            |set_property -dict [list $backslash
+            |  CONFIG.PSU__USE__M_AXI_GP1 {0} $backslash
+            |  CONFIG.PSU__USE__S_AXI_GP2 {1} $backslash
+            |] [get_bd_cells zynq_ultra_ps_e_0]
+            |set_property CONFIG.PSU__SAXIGP2__DATA_WIDTH {64} [get_bd_cells zynq_ultra_ps_e_0]
+            |set_property CONFIG.PSU__MAXIGP0__DATA_WIDTH {64} [get_bd_cells zynq_ultra_ps_e_0]
+            """
+      else
+        st""
+    }
+
+    val blockDesignST: ST = {
+      if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
+        st"""
+            |# reverse reset
+            |create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 util_vector_logic_0
+            |set_property CONFIG.C_OPERATION {not} [get_bd_cells util_vector_logic_0]
+            |set_property CONFIG.C_SIZE {1} [get_bd_cells util_vector_logic_0]
+            |connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins GeneratedIP/reset]
+            |
+            |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
+            |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
+            |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
+            | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
+            |] [get_bd_cells zynq_ultra_ps_e_0]
+            """
+      else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)
+        st"""
+            |# inverse reset_n
+            |create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 util_vector_logic_0
+            |set_property -dict [list $backslash
+            |  CONFIG.C_OPERATION {not} $backslash
+            |  CONFIG.C_SIZE {1} $backslash
+            |] [get_bd_cells util_vector_logic_0]
+            |connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins GeneratedIP/reset]
+            |
+            |# connect PS to slave of generated IP
+            |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
+            |
+            |# create AXI4 based BRAM
+            |create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 blk_mem_gen_0
+            |set_property -dict [list $backslash
+            |  CONFIG.Memory_Type {True_Dual_Port_RAM} $backslash
+            |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
+            |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
+            |  CONFIG.Write_Depth_A ${anvil.config.memory / 8 + 1} $backslash
+            |  CONFIG.Write_Width_A {64} $backslash
+            |  CONFIG.use_bram_block {BRAM_Controller} $backslash
+            |] [get_bd_cells blk_mem_gen_0]
+            |
+            |# create axi bram controller
+            |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_0
+            |set_property -dict [list $backslash
+            |  CONFIG.DATA_WIDTH {64} $backslash
+            |  CONFIG.SINGLE_PORT_BRAM {1} $backslash
+            |] [get_bd_cells axi_bram_ctrl_0]
+            |connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
+            |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_1
+            |set_property -dict [list $backslash
+            |  CONFIG.DATA_WIDTH {64} $backslash
+            |  CONFIG.SINGLE_PORT_BRAM {1} $backslash
+            |] [get_bd_cells axi_bram_ctrl_1]
+            |connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_1/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTB]
+            |
+            |# connect to two axi bram controller
+            |set_property CONFIG.NUM_MI {2} [get_bd_cells axi_smc]
+            |connect_bd_intf_net [get_bd_intf_pins axi_smc/M01_AXI] [get_bd_intf_pins axi_bram_ctrl_1/S_AXI]
+            |connect_bd_intf_net [get_bd_intf_pins GeneratedIP/io_M_AXI] [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
+            |
+            |# connect to axi clock
+            |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_bram_ctrl_0/s_axi_aclk]
+            |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_bram_ctrl_1/s_axi_aclk]
+            |
+            |# connect to utility vector
+            |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
+            |
+            |# set the clock freq
+            |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
+            | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
+            |] [get_bd_cells zynq_ultra_ps_e_0]
+            |
+            |# assign memory address for PS access
+            |assign_bd_address -target_address_space /zynq_ultra_ps_e_0/Data [get_bd_addr_segs axi_bram_ctrl_1/S_AXI/Mem0] -force
+            """
+      else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
+        st"""
+            |# connect to HP port
+            |connect_bd_intf_net [get_bd_intf_pins zynq_ultra_ps_e_0/S_AXI_HP0_FPD] [get_bd_intf_pins GeneratedIP/io_M_AXI]
+            |
+            |# inverse reset_n
+            |create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 util_vector_logic_0
+            |set_property -dict [list $backslash
+            |  CONFIG.C_OPERATION {not} $backslash
+            |  CONFIG.C_SIZE {1} $backslash
+            |] [get_bd_cells util_vector_logic_0]
+            |connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins GeneratedIP/reset]
+            |
+            |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
+            |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins zynq_ultra_ps_e_0/saxihp0_fpd_aclk]
+            |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
+            |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
+            | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
+            |] [get_bd_cells zynq_ultra_ps_e_0]
+            |
+            |# set the address map for HP port
+            |assign_bd_address -target_address_space /GeneratedIP/io_M_AXI [get_bd_addr_segs zynq_ultra_ps_e_0/SAXIGP2/HP0_DDR_LOW] -force
+            """
+      else
+        st""
+    }
+
+    val synthImplST: ST =
+      st"""
+          |set PROJECT_PATH [lindex $$argv 0]
+          |set PROJECT_NAME [lindex $$argv 1]
+          |set IP_DIR [lindex $$argv 2]
+          |set IP_NAME [lindex $$argv 3]
+          |set FREQ_HZ [lindex $$argv 4]
+          |puts $$FREQ_HZ
+          |# /home/kejun/development/HLS_slang/zcu102/TestSystem
+          |create_project $$PROJECT_NAME $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME -part xczu9eg-ffvb1156-2-e
+          |
+          |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
+          |
+          |set_property target_language Verilog [current_project]
+          |
+          |create_bd_design "design_1"
+          |update_compile_order -fileset sources_1
+          |
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e:3.5 zynq_ultra_ps_e_0
+          |
+          |apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_board_preset "1" }  [get_bd_cells zynq_ultra_ps_e_0]
+          |
+          |${gpOrHpST}
+          |
+          |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP/IP_dir
+          |set_property  ip_repo_paths  $$IP_DIR [current_project]
+          |update_ip_catalog
+          |
+          |# instantiate the generated IP
+          |create_bd_cell -type ip -vlnv user.org:user:$$IP_NAME:1.0 GeneratedIP
+          |${blockDesignST}
+          |
+          |save_bd_design
+          |
+          |# /home/kejun/development/HLS_slang/zcu102/TestSystem/TestSystem.srcs/sources_1/bd/design_1/design_1.bd
+          |make_wrapper -files [get_files $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/$$PROJECT_NAME.srcs/sources_1/bd/design_1/design_1.bd] -top
+          |
+          |# /home/kejun/development/HLS_slang/zcu102/TestSystem/TestSystem.srcs/sources_1/bd/design_1/hdl/design_1_wrapper.v
+          |add_files -norecurse $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/$$PROJECT_NAME.srcs/sources_1/bd/design_1/hdl/design_1_wrapper.v
+          |
+          |launch_runs impl_1 -to_step write_bitstream -jobs 30
+          |wait_on_run impl_1
+          |
+          |# /home/kejun/development/HLS_slang/zcu102/TestSystem/TestSystem.srcs/sources_1/bd/design_1/design_1.bd
+          |set_property pfm_name {} [get_files -all $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/$$PROJECT_NAME.srcs/sources_1/bd/design_1/design_1.bd]
+          |
+          |# /home/kejun/development/HLS_slang/zcu102/TestSystem/design_1_wrapper.xsa
+          |write_hw_platform -fixed -include_bit -force -file $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/design_1_wrapper.xsa
+          |
+          |open_run impl_1
+          |
+          |report_utilization -file $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/utilization_report.txt -name utilization_1
+          |report_timing_summary -delay_type max -report_unconstrained -check_timing_verbose -max_paths 20 -input_pins -routable_nets -name timing_1 -file $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/timing_report.txt
+          """
+
+    val autoShScriptST: ST =
+      st"""
+          |#!/bin/bash
+          |
+          |TCL_PATH=$$1
+          |PROJECT_PATH=$$2
+          |IP_NAME=$$3
+          |SoC_NAME=$$4
+          |FREQ_HZ=$$5
+          |
+          |vivado -mode batch -source $${TCL_PATH}/ip_generation.tcl -tclargs $${PROJECT_PATH} $${IP_NAME} $${FREQ_HZ}
+          |
+          |vivado -mode batch -source $${TCL_PATH}/synthesize_zcu102_zynq.tcl -tclargs $${PROJECT_PATH} $${SoC_NAME} $${PROJECT_PATH}/$$FREQ_HZ/$${IP_NAME}/IP_dir $${IP_NAME} $${FREQ_HZ}
+          """
+
+    val testManyShScriptST: ST =
+      st"""
+          |#!/bin/sh
+          |
+          |log_file="time_log.txt"
+          |
+          |start_bound=100
+          |end_bound=150
+          |step=25
+          |
+          |bound=$$start_bound
+          |while [ "$$bound" -le "$$end_bound" ]; do
+          |    echo "Running with bound=$$bound" >> "$$log_file"
+          |
+          |    start=$$(date +%s.%N)
+          |    ./auto_script.sh . ./ ${name} TestSystem "$$bound"
+          |    end=$$(date +%s.%N)
+          |
+          |    duration=$$(echo "$$end - $$start" | bc)
+          |    echo "Execution time for bound=$$bound: $$duration seconds" >> "$$log_file"
+          |    echo "" >> "$$log_file"
+          |
+          |    bound=$$((bound + step))
+          |done
+          """
+
+    val zynqCProgramST: ST = {
+      if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
+        st"""
+            |#include <stdio.h>
+            |#include <stdint.h>
+            |#include "platform.h"
+            |#include "xil_printf.h"
+            |#include "xil_io.h"
+            |#include "xparameters.h"
+            |
+            |#define VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + ${anvil.config.memory})
+            |#define READY_ADDR (XPAR_GENERATEDIP_BASEADDR + ${anvil.config.memory})
+            |#define ARRAY_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x0)
+            |
+            |int main()
+            |{
+            |    init_platform();
+            |
+            |    printf("benchmark ${name}\n");
+            |
+            |    Xil_Out32(ARRAY_ADDR, 0xFFFFFFFF);
+            |    Xil_Out32(ARRAY_ADDR+4, 0xFFFFFFFF);
+            |
+            |	   // write to port valid (generated IP)
+            |	   Xil_Out32(VALID_ADDR, 0x1);
+            |
+            |	   // read from port ready (generated IP)
+            |	   uint32_t ready = Xil_In32(READY_ADDR);
+            |	   while(ready != 0x1) {
+            |	   	ready = Xil_In32(READY_ADDR);
+            |	   }
+            |
+            |	   // read the elements form the array
+            |	   for(int i = 0; i < 3; i++) {
+            |	   	uint32_t c = Xil_In32(ARRAY_ADDR + 20 + i*4);
+            |	   	printf("%x\n", c);
+            |	   }
+            |
+            |	   printf("\n");
+            |    print("Successfully ran application");
+            |
+            |    cleanup_platform();
+            |    return 0;
+            |}
+            """
+      else if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
+        st"""
+            |#include <stdio.h>
+            |#include <stdint.h>
+            |#include "platform.h"
+            |#include "xil_printf.h"
+            |#include "xil_io.h"
+            |#include "xil_cache.h"
+            |#include "xparameters.h"
+            |
+            |#define VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x0)
+            |#define READY_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x8)
+            |#define DP_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x10)
+            |#define ARRAY_ADDR ${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"}
+            |
+            |uint8_t load_u8(uint32_t offset) {
+            |  uint32_t buffer_addr = ARRAY_ADDR + 20;
+            |  uint32_t char_addr = buffer_addr + offset;
+            |  uint32_t abs_addr = char_addr & 0xFFFFFFF8;
+            |  uint32_t abs_offset = char_addr & 0x00000007;
+            |
+            |  uint64_t c = Xil_In64(abs_addr);
+            |
+            |  return (c >> (abs_offset * 8)) & 0xFF;
+            |}
+            |
+            |int main()
+            |{
+            |  init_platform();
+            |
+            |  //Xil_DCacheDisable();
+            |  printf("benchmark ${name}\n");
+            |
+            |  // write FFFFFFFFFFFFFFFF to testNum
+            |  Xil_Out64(${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"}, 0xFFFFFFFFFFFFFFFF);
+            |  // using memory barrier when disable DCache
+            |  //__asm__ volatile("dsb sy");
+            |
+            |  // using flush when enable DCache
+            |  ${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "Xil_DCacheFlushRange(XPAR_PSU_DDR_0_S_AXI_BASEADDR, sizeof(uint64_t));" else ""}
+            |
+            |  // write to port valid (generated IP)
+            |  Xil_Out64(VALID_ADDR, 0x1);
+            |
+            |  // read from port ready (generated IP)
+            |  uint64_t ready = Xil_In64(READY_ADDR);
+            |  while(ready != 0x1) {
+            |    ready = Xil_In64(READY_ADDR);
+            |  }
+            |
+            |  uint64_t displaySize = ${anvil.config.printSize};
+            |  uint64_t DP = Xil_In64(DP_ADDR);
+            |  int lo = (DP < displaySize) ? 0 : DP;
+            |  int hi = (DP < displaySize) ? DP : displaySize + DP - 1;
+            |  char output[displaySize + 1];
+            |  // fetch the elements form the array
+            |  int j = 0;
+            |  for(int i = lo; i < hi; i++) {
+            |	   uint32_t offset = i % displaySize;
+            |	   output[j++] = load_u8(offset);
+            |  }
+            |  output[j] = '\0'; // null-terminate
+            |  printf("result: %s\n", output);
+            |
+            |  print("Successfully ran application");
+            |
+            |  cleanup_platform();
+            |  return 0;
+            |}
+            """
+      else
+        st""
+    }
+
+    @strictpure def xilinxAddSub64ST(isAdder: B, sign: B): ST = {
+      val opStr: String = if(isAdder) "Adder" else "Subtractor"
+      val signStr: String = if(sign) "Signed" else "Unsigned"
+      st"""
+          |module Xilinx${opStr}${signStr}64Wrapper(
+          |    input wire clk,
+          |    input wire ce,
+          |    input wire [63:0] A,
+          |    input wire [63:0] B,
+          |    output wire valid,
+          |    output wire [63:0] S);
+          |
+          |  reg [5:0] valid_shift = 6'b0;
+          |
+          |  Xilinx${opStr}${signStr}64 u_Xilinx${opStr}${signStr}64 (
+          |    .CLK(clk),
+          |    .CE(ce),
+          |    .A(A),
+          |    .B(B),
+          |    .S(S)
+          |  );
+          |
+          |  always @(posedge clk) begin
+          |    if(ce & ~valid_shift[5])
+          |      valid_shift <= {valid_shift[4:0], 1'b1};
+          |    else
+          |      valid_shift <= 0;
+          |  end
+          |
+          |  assign valid = valid_shift[5];
+          |endmodule
+          """
+    }
+
+    @strictpure def xilinxMul64ST(sign: B): ST = {
+      val signStr: String = if(sign) "Signed" else "Unsigned"
+      st"""
+          |module XilinxMultiplier${signStr}64Wrapper(
+          |    input wire clk,
+          |    input wire ce,
+          |    input wire [63:0] a,
+          |    input wire [63:0] b,
+          |    output wire valid,
+          |    output wire [63:0] p);
+          |
+          |  localparam LATENCY = 18;
+          |
+          |  reg [LATENCY-1:0] valid_shift;
+          |  XilinxMultiplier${signStr}64 u_XilinxMultiplier${signStr}64 (
+          |    .CLK(clk),
+          |    .CE(ce),
+          |    .A(a),
+          |    .B(b),
+          |    .P(p)
+          |  );
+          |
+          |  always @(posedge clk) begin
+          |    if(ce & ~valid_shift[LATENCY-1])
+          |      valid_shift <= {valid_shift[LATENCY-2:0], 1'b1};
+          |    else
+          |      valid_shift <= 0;
+          |  end
+          |
+          |  assign valid = valid_shift[LATENCY-1];
+          |endmodule
+          """
+    }
+
+    @strictpure def xilinxDiv64ST(sign: B): ST = {
+      val signStr: String = if(sign) "Signed" else "Unsigned"
+      st"""
+          |module XilinxDivider${signStr}64Wrapper(
+          |    input wire clock,
+          |    input wire resetn,
+          |    input wire [63:0] a,
+          |    input wire [63:0] b,
+          |    input wire start,
+          |    output wire valid,
+          |    output wire [63:0] quotient,
+          |    output wire [63:0] remainder);
+          |
+          |  localparam IDLE  = 2'b00;
+          |  localparam START = 2'b01;
+          |  localparam WAIT  = 2'b10;
+          |
+          |  reg start_reg;
+          |  reg [1:0] state;
+          |  wire [127:0] dout_tdata;
+          |  wire divisor_tready, dividend_tready;
+          |  XilinxDivider${signStr}64 u_XilinxDivider${signStr}64 (
+          |    .aclk(clock),                                      // input wire aclk
+          |    .aresetn(resetn),                                // input wire aresetn
+          |    .s_axis_divisor_tvalid(start_reg),    // input wire s_axis_divisor_tvalid
+          |    .s_axis_divisor_tready(divisor_tready),
+          |    .s_axis_divisor_tdata(b),      // input wire [63 : 0] s_axis_divisor_tdata
+          |    .s_axis_dividend_tvalid(start_reg),  // input wire s_axis_dividend_tvalid
+          |    .s_axis_dividend_tready(dividend_tready),
+          |    .s_axis_dividend_tdata(a),    // input wire [63 : 0] s_axis_dividend_tdata
+          |    .m_axis_dout_tvalid(valid),          // output wire m_axis_dout_tvalid
+          |    .m_axis_dout_tdata(dout_tdata)            // output wire [127 : 0] m_axis_dout_tdata
+          |  );
+          |
+          |  always @(posedge clock) begin
+          |    if (~resetn) begin
+          |        start_reg <= 0;
+          |        state <= IDLE;
+          |    end else begin
+          |        case(state)
+          |            IDLE: begin
+          |                if(start) begin
+          |                    start_reg <= 1'b1;
+          |                    state <= START;
+          |                end
+          |            end
+          |            START: begin
+          |                if(~valid) begin
+          |                    start_reg <= 1'b0;
+          |                    state <= WAIT;
+          |                end
+          |            end
+          |            WAIT: begin
+          |                if(~start) begin
+          |                    state <= IDLE;
+          |                end
+          |            end
+          |        endcase
+          |    end
+          |  end
+          |
+          |  assign quotient = dout_tdata[127:64];
+          |  assign remainder = dout_tdata[63:0];
+          |endmodule
+          """
+    }
+
+    @strictpure def xilinxBRAMWrapperST: ST = {
+      st"""
+          |module XilinxBRAMWrapper(
+          |    input wire clk,
+          |    input wire ena,
+          |    input wire wea,
+          |    input wire [9:0] addra,
+          |    input wire [7:0] dina,
+          |    output wire [7:0] douta,
+          |    input wire enb,
+          |    input wire web,
+          |    input wire [9:0] addrb,
+          |    input wire [7:0] dinb,
+          |    output wire [7:0] doutb
+          |);
+          |
+          |  XilinxBRAM u_XilinxBRAM (
+          |    .clka(clk),    // input wire clka
+          |    .ena(ena),      // input wire ena
+          |    .wea(wea),      // input wire [0 : 0] wea
+          |    .addra(addra),  // input wire [9 : 0] addra
+          |    .dina(dina),    // input wire [7: 0] dina
+          |    .douta(douta),  // output wire [7: 0] douta
+          |    .clkb(clk),    // input wire clkb
+          |    .enb(enb),      // input wire enb
+          |    .web(web),      // input wire [0 : 0] web
+          |    .addrb(addrb),  // input wire [9 : 0] addrb
+          |    .dinb(dinb),    // input wire [7: 0] dinb
+          |    .doutb(doutb)  // output wire [7: 0] doutb
+          |  );
+          |
+          |endmodule
+          """
+    }
+
+    @strictpure def xilinxIndexAdderWrapperST(width: Z): ST = {
+      val latencyST: ST =
+        if(cyclesXilinxAdder(width) == 1)
+          st"""1'b1"""
+        else
+          st"""{valid_shift[LATENCY-2:0], 1'b1}"""
+
+      st"""
+          |module XilinxIndexAdderWrapper (
+          |    input wire clk,
+          |    input wire ce,
+          |    input wire [${width-1}:0] A,
+          |    input wire [${width-1}:0] B,
+          |    output wire valid,
+          |    output wire [${width-1}:0] S);
+          |
+          |  localparam LATENCY = ${cyclesXilinxAdder(anvil.typeBitSize(spType))};
+          |  reg [LATENCY-1:0] valid_shift = 'd0;
+          |
+          |  XilinxIndexAdder u_XilinxIndexAdder (
+          |    .CLK(clk),
+          |    .CE(ce),
+          |    .A(A),
+          |    .B(B),
+          |    .S(S)
+          |  );
+          |
+          |  always @(posedge clk) begin
+          |    if(ce & ~valid_shift[LATENCY-1])
+          |      valid_shift <= ${latencyST.render};
+          |    else
+          |      valid_shift <= 0;
+          |  end
+          |
+          |  assign valid = valid_shift[LATENCY-1];
+          |endmodule
+          """
+    }
+
+    @strictpure def xilinxIndexMultiplierWrapperST(width: Z): ST = {
+      val latencyST: ST =
+        if(cyclesXilinxMultiplier(width) == 1)
+          st"""1'b1"""
+        else
+          st"""{valid_shift[LATENCY-2:0], 1'b1}"""
+
+      st"""
+          |module XilinxIndexMultiplierWrapper (
+          |    input wire clk,
+          |    input wire ce,
+          |    input wire [${width-1}:0] A,
+          |    input wire [${width-1}:0] B,
+          |    output wire valid,
+          |    output wire [${width-1}:0] P);
+          |
+          |  localparam LATENCY = ${cyclesXilinxMultiplier(anvil.typeBitSize(spType))};
+          |  reg [LATENCY-1:0] valid_shift = 'd0;
+          |
+          |  XilinxIndexMultiplier u_XilinxIndexMultiplier (
+          |    .CLK(clk),
+          |    .CE(ce),
+          |    .A(A),
+          |    .B(B),
+          |    .P(P)
+          |  );
+          |
+          |  always @(posedge clk) begin
+          |    if(ce & ~valid_shift[LATENCY-1])
+          |      valid_shift <= ${latencyST.render};
+          |    else
+          |      valid_shift <= 0;
+          |  end
+          |
+          |  assign valid = valid_shift[LATENCY-1];
+          |endmodule
+          """
+    }
+
     output.add(T, ISZ("config.txt"), configST)
     output.add(T, ISZ("chisel/src/main/scala", s"chisel-${name}.scala"), processedProcedureST)
     output.add(T, ISZ("chisel", "build.sbt"), buildSbtST())
     output.add(T, ISZ("chisel", "project", "build.properties"), st"sbt.version=${output.sbtVersion}")
 
+    if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
+      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxBRAMWrapper.v"), xilinxBRAMWrapperST)
+    }
+    output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxIndexAdderWrapper.v"), xilinxIndexAdderWrapperST(anvil.typeBitSize(spType)))
+    output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxIndexMultiplierWrapper.v"), xilinxIndexMultiplierWrapperST(anvil.typeBitSize(spType)))
     if(!anvil.config.noXilinxIp) {
-      @strictpure def xilinxAddSub64ST(isAdder: B, sign: B): ST = {
-        val opStr: String = if(isAdder) "Adder" else "Subtractor"
-        val signStr: String = if(sign) "Signed" else "Unsigned"
-        st"""
-            |module Xilinx${opStr}${signStr}64Wrapper(
-            |    input wire clk,
-            |    input wire ce,
-            |    input wire [63:0] A,
-            |    input wire [63:0] B,
-            |    output wire valid,
-            |    output wire [63:0] S);
-            |
-            |  reg [5:0] valid_shift = 6'b0;
-            |
-            |  Xilinx${opStr}${signStr}64 u_Xilinx${opStr}${signStr}64 (
-            |    .CLK(clk),
-            |    .CE(ce),
-            |    .A(A),
-            |    .B(B),
-            |    .S(S)
-            |  );
-            |
-            |  always @(posedge clk) begin
-            |    if(ce & ~valid_shift[5])
-            |      valid_shift <= {valid_shift[4:0], 1'b1};
-            |    else
-            |      valid_shift <= 0;
-            |  end
-            |
-            |  assign valid = valid_shift[5];
-            |endmodule
-          """
-      }
-      @strictpure def xilinxMul64ST(sign: B): ST = {
-        val signStr: String = if(sign) "Signed" else "Unsigned"
-        st"""
-            |module XilinxMultiplier${signStr}64Wrapper(
-            |    input wire clk,
-            |    input wire ce,
-            |    input wire [63:0] a,
-            |    input wire [63:0] b,
-            |    output wire valid,
-            |    output wire [63:0] p);
-            |
-            |  localparam LATENCY = 18;
-            |
-            |  reg [LATENCY-1:0] valid_shift;
-            |  XilinxMultiplier${signStr}64 u_XilinxMultiplier${signStr}64 (
-            |    .CLK(clk),
-            |    .CE(ce),
-            |    .A(a),
-            |    .B(b),
-            |    .P(p)
-            |  );
-            |
-            |  always @(posedge clk) begin
-            |    if(ce & ~valid_shift[LATENCY-1])
-            |      valid_shift <= {valid_shift[LATENCY-2:0], 1'b1};
-            |    else
-            |      valid_shift <= 0;
-            |  end
-            |
-            |  assign valid = valid_shift[LATENCY-1];
-            |endmodule
-          """
-      }
-      @strictpure def xilinxDiv64ST(sign: B): ST = {
-        val signStr: String = if(sign) "Signed" else "Unsigned"
-        st"""
-            |module XilinxDivider${signStr}64Wrapper(
-            |    input wire clock,
-            |    input wire resetn,
-            |    input wire [63:0] a,
-            |    input wire [63:0] b,
-            |    input wire start,
-            |    output wire valid,
-            |    output wire [63:0] quotient,
-            |    output wire [63:0] remainder);
-            |
-            |  localparam IDLE  = 2'b00;
-            |  localparam START = 2'b01;
-            |  localparam WAIT  = 2'b10;
-            |
-            |  reg start_reg;
-            |  reg [1:0] state;
-            |  wire [127:0] dout_tdata;
-            |  wire divisor_tready, dividend_tready;
-            |  XilinxDivider${signStr}64 u_XilinxDivider${signStr}64 (
-            |    .aclk(clock),                                      // input wire aclk
-            |    .aresetn(resetn),                                // input wire aresetn
-            |    .s_axis_divisor_tvalid(start_reg),    // input wire s_axis_divisor_tvalid
-            |    .s_axis_divisor_tready(divisor_tready),
-            |    .s_axis_divisor_tdata(b),      // input wire [63 : 0] s_axis_divisor_tdata
-            |    .s_axis_dividend_tvalid(start_reg),  // input wire s_axis_dividend_tvalid
-            |    .s_axis_dividend_tready(dividend_tready),
-            |    .s_axis_dividend_tdata(a),    // input wire [63 : 0] s_axis_dividend_tdata
-            |    .m_axis_dout_tvalid(valid),          // output wire m_axis_dout_tvalid
-            |    .m_axis_dout_tdata(dout_tdata)            // output wire [127 : 0] m_axis_dout_tdata
-            |  );
-            |
-            |  always @(posedge clock) begin
-            |    if (~resetn) begin
-            |        start_reg <= 0;
-            |        state <= IDLE;
-            |    end else begin
-            |        case(state)
-            |            IDLE: begin
-            |                if(start) begin
-            |                    start_reg <= 1'b1;
-            |                    state <= START;
-            |                end
-            |            end
-            |            START: begin
-            |                if(~valid) begin
-            |                    start_reg <= 1'b0;
-            |                    state <= WAIT;
-            |                end
-            |            end
-            |            WAIT: begin
-            |                if(~start) begin
-            |                    state <= IDLE;
-            |                end
-            |            end
-            |        endcase
-            |    end
-            |  end
-            |
-            |  assign quotient = dout_tdata[127:64];
-            |  assign remainder = dout_tdata[63:0];
-            |endmodule
-          """
-      }
-      @strictpure def xilinxBRAMWrapperST: ST = {
-        st"""
-            |module XilinxBRAMWrapper(
-            |    input wire clk,
-            |    input wire ena,
-            |    input wire wea,
-            |    input wire [9:0] addra,
-            |    input wire [7:0] dina,
-            |    output wire [7:0] douta,
-            |    input wire enb,
-            |    input wire web,
-            |    input wire [9:0] addrb,
-            |    input wire [7:0] dinb,
-            |    output wire [7:0] doutb
-            |);
-            |
-            |  XilinxBRAM u_XilinxBRAM (
-            |    .clka(clk),    // input wire clka
-            |    .ena(ena),      // input wire ena
-            |    .wea(wea),      // input wire [0 : 0] wea
-            |    .addra(addra),  // input wire [9 : 0] addra
-            |    .dina(dina),    // input wire [7: 0] dina
-            |    .douta(douta),  // output wire [7: 0] douta
-            |    .clkb(clk),    // input wire clkb
-            |    .enb(enb),      // input wire enb
-            |    .web(web),      // input wire [0 : 0] web
-            |    .addrb(addrb),  // input wire [9 : 0] addrb
-            |    .dinb(dinb),    // input wire [7: 0] dinb
-            |    .doutb(doutb)  // output wire [7: 0] doutb
-            |  );
-            |
-            |endmodule
-          """
-      }
-      @strictpure def cyclesXilinxAdder(width: Z): Z = {
-        width match {
-          case w if w <= 12 => 1
-          case w if w <= 24 => 2
-          case w if w <= 36 => 3
-          case w if w <= 48 => 4
-          case w if w <= 60 => 5
-          case w if w <= 64 => 6
-          case _ => halt("not support this width")
-        }
-      }
-      @strictpure def cyclesXilinxMultiplier(width: Z): Z = {
-        width match {
-          case w if w <= 2 => 1
-          case w if w <= 4 => 2
-          case w if w <= 8 => 3
-          case w if w <= 16 => 4
-          case w if w <= 32 => 5
-          case w if w <= 64 => 6
-          case _ => halt("not support this width")
-        }
-      }
-      @strictpure def xilinxIndexAdderWrapperST(width: Z): ST = {
-        val latencyST: ST =
-          if(cyclesXilinxAdder(width) == 1)
-            st"""1'b1"""
-          else
-            st"""{valid_shift[LATENCY-2:0], 1'b1}"""
-
-        st"""
-            |module XilinxIndexAdderWrapper (
-            |    input wire clk,
-            |    input wire ce,
-            |    input wire [${width-1}:0] A,
-            |    input wire [${width-1}:0] B,
-            |    output wire valid,
-            |    output wire [${width-1}:0] S);
-            |
-            |  localparam LATENCY = ${cyclesXilinxAdder(anvil.typeBitSize(spType))};
-            |  reg [LATENCY-1:0] valid_shift = 'd0;
-            |
-            |  XilinxIndexAdder u_XilinxIndexAdder (
-            |    .CLK(clk),
-            |    .CE(ce),
-            |    .A(A),
-            |    .B(B),
-            |    .S(S)
-            |  );
-            |
-            |  always @(posedge clk) begin
-            |    if(ce & ~valid_shift[LATENCY-1])
-            |      valid_shift <= ${latencyST.render};
-            |    else
-            |      valid_shift <= 0;
-            |  end
-            |
-            |  assign valid = valid_shift[LATENCY-1];
-            |endmodule
-          """
-      }
-      @strictpure def xilinxIndexMultiplierWrapperST(width: Z): ST = {
-        val latencyST: ST =
-          if(cyclesXilinxMultiplier(width) == 1)
-            st"""1'b1"""
-          else
-            st"""{valid_shift[LATENCY-2:0], 1'b1}"""
-
-        st"""
-            |module XilinxIndexMultiplierWrapper (
-            |    input wire clk,
-            |    input wire ce,
-            |    input wire [${width-1}:0] A,
-            |    input wire [${width-1}:0] B,
-            |    output wire valid,
-            |    output wire [${width-1}:0] P);
-            |
-            |  localparam LATENCY = ${cyclesXilinxMultiplier(anvil.typeBitSize(spType))};
-            |  reg [LATENCY-1:0] valid_shift = 'd0;
-            |
-            |  XilinxIndexMultiplier u_XilinxIndexMultiplier (
-            |    .CLK(clk),
-            |    .CE(ce),
-            |    .A(A),
-            |    .B(B),
-            |    .P(P)
-            |  );
-            |
-            |  always @(posedge clk) begin
-            |    if(ce & ~valid_shift[LATENCY-1])
-            |      valid_shift <= ${latencyST.render};
-            |    else
-            |      valid_shift <= 0;
-            |  end
-            |
-            |  assign valid = valid_shift[LATENCY-1];
-            |endmodule
-          """
-      }
-
-      val backslash = "\\"
-      val bramNativeGenerationST: ST =
-        st"""
-            |# need to be customzied for different benchmarks
-            |create_ip -name blk_mem_gen -vendor xilinx.com -library ip -version 8.4 -module_name XilinxBRAM
-            |set_property -dict [list $backslash
-            |  CONFIG.Memory_Type {True_Dual_Port_RAM} $backslash
-            |  CONFIG.Operating_Mode_A {NO_CHANGE} $backslash
-            |  CONFIG.Operating_Mode_B {NO_CHANGE} $backslash
-            |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
-            |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
-            |  CONFIG.Write_Depth_A {${anvil.config.memory}} $backslash
-            |  CONFIG.Write_Width_A {8} $backslash
-            |] [get_ips XilinxBRAM]
-          """
-      val ipGenerationTclST: ST =
-        st"""
-            |set PROJECT_PATH [lindex $$argv 0]
-            |set PROJECT_NAME [lindex $$argv 1]
-            |set FREQ_HZ [lindex $$argv 2]
-            |set FILE_PATH $${PROJECT_PATH}/chisel/generated_verilog
-            |
-            |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP
-            |create_project $$PROJECT_NAME $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME -part xczu9eg-ffvb1156-2-e
-            |
-            |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
-            |
-            |set_property target_language Verilog [current_project]
-            |
-            |# /home/kejun/Desktop/ip.v
-            |add_files -norecurse [glob $$FILE_PATH/*.v]
-            |update_compile_order -fileset sources_1
-            |
-            |# add xilinx IPs
-            |create_ip -name div_gen -vendor xilinx.com -library ip -version 5.1 -module_name XilinxDividerSigned64
-            |set_property -dict [list $backslash
-            |  CONFIG.ARESETN {true} $backslash
-            |  CONFIG.FlowControl {Blocking} $backslash
-            |  CONFIG.dividend_and_quotient_width {64} $backslash
-            |  CONFIG.divisor_width {64} $backslash
-            |  CONFIG.fractional_width {64} $backslash
-            |  CONFIG.latency {69} $backslash
-            |] [get_ips XilinxDividerSigned64]
-            |
-            |create_ip -name div_gen -vendor xilinx.com -library ip -version 5.1 -module_name XilinxDividerUnsigned64
-            |set_property -dict [list $backslash
-            |  CONFIG.ARESETN {true} $backslash
-            |  CONFIG.FlowControl {Blocking} $backslash
-            |  CONFIG.dividend_and_quotient_width {64} $backslash
-            |  CONFIG.divisor_width {64} $backslash
-            |  CONFIG.fractional_width {64} $backslash
-            |  CONFIG.latency {67} $backslash
-            |  CONFIG.operand_sign {Unsigned} $backslash
-            |] [get_ips XilinxDividerUnsigned64]
-            |
-            |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxMultiplierUnsigned64
-            |set_property -dict [list $backslash
-            |  CONFIG.ClockEnable {true} $backslash
-            |  CONFIG.Multiplier_Construction {Use_Mults} $backslash
-            |  CONFIG.OutputWidthHigh {63} $backslash
-            |  CONFIG.PipeStages {18} $backslash
-            |  CONFIG.PortAType {Unsigned} $backslash
-            |  CONFIG.PortAWidth {64} $backslash
-            |  CONFIG.PortBType {Unsigned} $backslash
-            |  CONFIG.PortBWidth {64} $backslash
-            |  CONFIG.Use_Custom_Output_Width {true} $backslash
-            |] [get_ips XilinxMultiplierUnsigned64]
-            |
-            |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxMultiplierSigned64
-            |set_property -dict [list $backslash
-            |  CONFIG.ClockEnable {true} $backslash
-            |  CONFIG.Multiplier_Construction {Use_Mults} $backslash
-            |  CONFIG.OutputWidthHigh {63} $backslash
-            |  CONFIG.PipeStages {18} $backslash
-            |  CONFIG.PortAWidth {64} $backslash
-            |  CONFIG.PortBWidth {64} $backslash
-            |  CONFIG.Use_Custom_Output_Width {true} $backslash
-            |] [get_ips XilinxMultiplierSigned64]
-            |
-            |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxAdderSigned64
-            |set_property -dict [list $backslash
-            |  CONFIG.A_Width {64} $backslash
-            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
-            |  CONFIG.B_Width {64} $backslash
-            |  CONFIG.Latency {6} $backslash
-            |  CONFIG.Latency_Configuration {Automatic} $backslash
-            |  CONFIG.Out_Width {64} $backslash
-            |] [get_ips XilinxAdderSigned64]
-            |
-            |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxAdderUnsigned64
-            |set_property -dict [list $backslash
-            |  CONFIG.A_Type {Unsigned} $backslash
-            |  CONFIG.A_Width {64} $backslash
-            |  CONFIG.B_Type {Unsigned} $backslash
-            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
-            |  CONFIG.B_Width {64} $backslash
-            |  CONFIG.Latency {6} $backslash
-            |  CONFIG.Latency_Configuration {Automatic} $backslash
-            |  CONFIG.Out_Width {64} $backslash
-            |] [get_ips XilinxAdderUnsigned64]
-            |
-            |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxSubtractorSigned64
-            |set_property -dict [list $backslash
-            |  CONFIG.A_Width {64} $backslash
-            |  CONFIG.Add_Mode {Subtract} $backslash
-            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
-            |  CONFIG.B_Width {64} $backslash
-            |  CONFIG.Latency {6} $backslash
-            |  CONFIG.Latency_Configuration {Automatic} $backslash
-            |  CONFIG.Out_Width {64} $backslash
-            |] [get_ips XilinxSubtractorSigned64]
-            |
-            |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxSubtractorUnsigned64
-            |set_property -dict [list $backslash
-            |  CONFIG.A_Type {Unsigned} $backslash
-            |  CONFIG.A_Width {64} $backslash
-            |  CONFIG.Add_Mode {Subtract} $backslash
-            |  CONFIG.B_Type {Unsigned} $backslash
-            |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
-            |  CONFIG.B_Width {64} $backslash
-            |  CONFIG.Latency {6} $backslash
-            |  CONFIG.Latency_Configuration {Automatic} $backslash
-            |  CONFIG.Out_Width {64} $backslash
-            |] [get_ips XilinxSubtractorUnsigned64]
-            |
-            |${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) bramNativeGenerationST else st""}
-            |
-            |# need to be customzied for different benchmarks
-            |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxIndexMultiplier
-            |set_property -dict [list $backslash
-            |  CONFIG.ClockEnable {true} $backslash
-            |  CONFIG.OutputWidthHigh {${anvil.typeBitSize(spType) - 1}} $backslash
-            |  CONFIG.PipeStages {${cyclesXilinxMultiplier(anvil.typeBitSize(spType))}} $backslash
-            |  CONFIG.PortAType {Unsigned} $backslash
-            |  CONFIG.PortAWidth {${anvil.typeBitSize(spType)}} $backslash
-            |  CONFIG.PortBType {Unsigned} $backslash
-            |  CONFIG.PortBWidth {${anvil.typeBitSize(spType)}} $backslash
-            |  CONFIG.Use_Custom_Output_Width {true} $backslash
-            |] [get_ips XilinxIndexMultiplier]
-            |
-            |# need to be customzied for different benchmarks
-            |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxIndexAdder
-            |set_property -dict [list $backslash
-            |  CONFIG.A_Type {Unsigned} $backslash
-            |  CONFIG.A_Width {${anvil.typeBitSize(spType)}} $backslash
-            |  CONFIG.B_Type {Unsigned} $backslash
-            |  CONFIG.B_Value {00000000} $backslash
-            |  CONFIG.B_Width {${anvil.typeBitSize(spType)}} $backslash
-            |  CONFIG.Latency {${cyclesXilinxAdder(anvil.typeBitSize(spType))}} $backslash
-            |  CONFIG.Latency_Configuration {Automatic} $backslash
-            |  CONFIG.Out_Width {${anvil.typeBitSize(spType)}} $backslash
-            |] [get_ips XilinxIndexAdder]
-            |
-            |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP/IP_dir
-            |ipx::package_project -root_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME//IP_dir -vendor user.org -library user -taxonomy /UserIP -import_files -set_current false
-            |ipx::unload_core $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME//IP_dir/component.xml
-            |ipx::edit_ip_in_project -upgrade true -name tmp_edit_project -directory $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir/component.xml
-            |
-            |update_compile_order -fileset sources_1
-            |set_property core_revision 2 [ipx::current_core]
-            |ipx::update_source_project_archive -component [ipx::current_core]
-            |ipx::create_xgui_files [ipx::current_core]
-            |ipx::update_checksums [ipx::current_core]
-            |ipx::save_core [ipx::current_core]
-            |ipx::move_temp_component_back -component [ipx::current_core]
-            |close_project -delete
-            |set_property  ip_repo_paths  $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir [current_project]
-            |update_ip_catalog
-          """
-
-      val gpOrHpST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
-          st"""
-              |set_property CONFIG.PSU__USE__M_AXI_GP1 {0} [get_bd_cells zynq_ultra_ps_e_0]
-              |set_property CONFIG.PSU__MAXIGP0__DATA_WIDTH {32} [get_bd_cells zynq_ultra_ps_e_0]
-              """
-        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)
-          st"""
-              |set_property -dict [list $backslash
-              |  CONFIG.PSU__MAXIGP0__DATA_WIDTH {64} $backslash
-              |  CONFIG.PSU__USE__M_AXI_GP1 {0} $backslash
-              |] [get_bd_cells zynq_ultra_ps_e_0]
-            """
-        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
-          st"""
-              |set_property -dict [list $backslash
-              |  CONFIG.PSU__USE__M_AXI_GP1 {0} $backslash
-              |  CONFIG.PSU__USE__S_AXI_GP2 {1} $backslash
-              |] [get_bd_cells zynq_ultra_ps_e_0]
-              |set_property CONFIG.PSU__SAXIGP2__DATA_WIDTH {64} [get_bd_cells zynq_ultra_ps_e_0]
-              |set_property CONFIG.PSU__MAXIGP0__DATA_WIDTH {64} [get_bd_cells zynq_ultra_ps_e_0]
-            """
-        else
-          st""
-      }
-      val blockDesignST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
-          st"""
-              |# reverse reset
-              |create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 util_vector_logic_0
-              |set_property CONFIG.C_OPERATION {not} [get_bd_cells util_vector_logic_0]
-              |set_property CONFIG.C_SIZE {1} [get_bd_cells util_vector_logic_0]
-              |connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins GeneratedIP/reset]
-              |
-              |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
-              |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
-              |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
-              | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
-              |] [get_bd_cells zynq_ultra_ps_e_0]
-            """
-        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)
-          st"""
-              |# inverse reset_n
-              |create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 util_vector_logic_0
-              |set_property -dict [list $backslash
-              |  CONFIG.C_OPERATION {not} $backslash
-              |  CONFIG.C_SIZE {1} $backslash
-              |] [get_bd_cells util_vector_logic_0]
-              |connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins GeneratedIP/reset]
-              |
-              |# connect PS to slave of generated IP
-              |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
-              |
-              |# create AXI4 based BRAM
-              |create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 blk_mem_gen_0
-              |set_property -dict [list $backslash
-              |  CONFIG.Memory_Type {True_Dual_Port_RAM} $backslash
-              |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
-              |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
-              |  CONFIG.Write_Depth_A ${anvil.config.memory / 8 + 1} $backslash
-              |  CONFIG.Write_Width_A {64} $backslash
-              |  CONFIG.use_bram_block {BRAM_Controller} $backslash
-              |] [get_bd_cells blk_mem_gen_0]
-              |
-              |# create axi bram controller
-              |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_0
-              |set_property -dict [list $backslash
-              |  CONFIG.DATA_WIDTH {64} $backslash
-              |  CONFIG.SINGLE_PORT_BRAM {1} $backslash
-              |] [get_bd_cells axi_bram_ctrl_0]
-              |connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
-              |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_1
-              |set_property -dict [list $backslash
-              |  CONFIG.DATA_WIDTH {64} $backslash
-              |  CONFIG.SINGLE_PORT_BRAM {1} $backslash
-              |] [get_bd_cells axi_bram_ctrl_1]
-              |connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_1/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTB]
-              |
-              |# connect to two axi bram controller
-              |set_property CONFIG.NUM_MI {2} [get_bd_cells axi_smc]
-              |connect_bd_intf_net [get_bd_intf_pins axi_smc/M01_AXI] [get_bd_intf_pins axi_bram_ctrl_1/S_AXI]
-              |connect_bd_intf_net [get_bd_intf_pins GeneratedIP/io_M_AXI] [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
-              |
-              |# connect to axi clock
-              |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_bram_ctrl_0/s_axi_aclk]
-              |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_bram_ctrl_1/s_axi_aclk]
-              |
-              |# connect to utility vector
-              |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
-              |
-              |# set the clock freq
-              |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
-              | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
-              |] [get_bd_cells zynq_ultra_ps_e_0]
-              |
-              |# assign memory address for PS access
-              |assign_bd_address -target_address_space /zynq_ultra_ps_e_0/Data [get_bd_addr_segs axi_bram_ctrl_1/S_AXI/Mem0] -force
-            """
-        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
-          st"""
-              |# connect to HP port
-              |connect_bd_intf_net [get_bd_intf_pins zynq_ultra_ps_e_0/S_AXI_HP0_FPD] [get_bd_intf_pins GeneratedIP/io_M_AXI]
-              |
-              |# inverse reset_n
-              |create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 util_vector_logic_0
-              |set_property -dict [list $backslash
-              |  CONFIG.C_OPERATION {not} $backslash
-              |  CONFIG.C_SIZE {1} $backslash
-              |] [get_bd_cells util_vector_logic_0]
-              |connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins GeneratedIP/reset]
-              |
-              |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
-              |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins zynq_ultra_ps_e_0/saxihp0_fpd_aclk]
-              |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
-              |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
-              | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
-              |] [get_bd_cells zynq_ultra_ps_e_0]
-              |
-              |# set the address map for HP port
-              |assign_bd_address -target_address_space /GeneratedIP/io_M_AXI [get_bd_addr_segs zynq_ultra_ps_e_0/SAXIGP2/HP0_DDR_LOW] -force
-            """
-        else
-          st""
-      }
-      val synthImplST: ST =
-        st"""
-            |set PROJECT_PATH [lindex $$argv 0]
-            |set PROJECT_NAME [lindex $$argv 1]
-            |set IP_DIR [lindex $$argv 2]
-            |set IP_NAME [lindex $$argv 3]
-            |set FREQ_HZ [lindex $$argv 4]
-            |puts $$FREQ_HZ
-            |# /home/kejun/development/HLS_slang/zcu102/TestSystem
-            |create_project $$PROJECT_NAME $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME -part xczu9eg-ffvb1156-2-e
-            |
-            |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
-            |
-            |set_property target_language Verilog [current_project]
-            |
-            |create_bd_design "design_1"
-            |update_compile_order -fileset sources_1
-            |
-            |create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e:3.5 zynq_ultra_ps_e_0
-            |
-            |apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_board_preset "1" }  [get_bd_cells zynq_ultra_ps_e_0]
-            |
-            |${gpOrHpST}
-            |
-            |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP/IP_dir
-            |set_property  ip_repo_paths  $$IP_DIR [current_project]
-            |update_ip_catalog
-            |
-            |# instantiate the generated IP
-            |create_bd_cell -type ip -vlnv user.org:user:$$IP_NAME:1.0 GeneratedIP
-            |${blockDesignST}
-            |
-            |save_bd_design
-            |
-            |# /home/kejun/development/HLS_slang/zcu102/TestSystem/TestSystem.srcs/sources_1/bd/design_1/design_1.bd
-            |make_wrapper -files [get_files $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/$$PROJECT_NAME.srcs/sources_1/bd/design_1/design_1.bd] -top
-            |
-            |# /home/kejun/development/HLS_slang/zcu102/TestSystem/TestSystem.srcs/sources_1/bd/design_1/hdl/design_1_wrapper.v
-            |add_files -norecurse $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/$$PROJECT_NAME.srcs/sources_1/bd/design_1/hdl/design_1_wrapper.v
-            |
-            |launch_runs impl_1 -to_step write_bitstream -jobs 30
-            |wait_on_run impl_1
-            |
-            |# /home/kejun/development/HLS_slang/zcu102/TestSystem/TestSystem.srcs/sources_1/bd/design_1/design_1.bd
-            |set_property pfm_name {} [get_files -all $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/$$PROJECT_NAME.srcs/sources_1/bd/design_1/design_1.bd]
-            |
-            |# /home/kejun/development/HLS_slang/zcu102/TestSystem/design_1_wrapper.xsa
-            |write_hw_platform -fixed -include_bit -force -file $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/design_1_wrapper.xsa
-            |
-            |open_run impl_1
-            |
-            |report_utilization -file $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/utilization_report.txt -name utilization_1
-            |report_timing_summary -delay_type max -report_unconstrained -check_timing_verbose -max_paths 20 -input_pins -routable_nets -name timing_1 -file $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/timing_report.txt
-          """
-
-      val autoShScriptST: ST =
-        st"""
-            |#!/bin/bash
-            |
-            |TCL_PATH=$$1
-            |PROJECT_PATH=$$2
-            |IP_NAME=$$3
-            |SoC_NAME=$$4
-            |FREQ_HZ=$$5
-            |
-            |vivado -mode batch -source $${TCL_PATH}/ip_generation.tcl -tclargs $${PROJECT_PATH} $${IP_NAME} $${FREQ_HZ}
-            |
-            |vivado -mode batch -source $${TCL_PATH}/synthesize_zcu102_zynq.tcl -tclargs $${PROJECT_PATH} $${SoC_NAME} $${PROJECT_PATH}/$$FREQ_HZ/$${IP_NAME}/IP_dir $${IP_NAME} $${FREQ_HZ}
-          """
-
-      val testManyShScriptST: ST =
-        st"""
-            |#!/bin/sh
-            |
-            |log_file="time_log.txt"
-            |
-            |start_bound=100
-            |end_bound=150
-            |step=25
-            |
-            |bound=$$start_bound
-            |while [ "$$bound" -le "$$end_bound" ]; do
-            |    echo "Running with bound=$$bound" >> "$$log_file"
-            |
-            |    start=$$(date +%s.%N)
-            |    ./auto_script.sh . ./ ${name} TestSystem "$$bound"
-            |    end=$$(date +%s.%N)
-            |
-            |    duration=$$(echo "$$end - $$start" | bc)
-            |    echo "Execution time for bound=$$bound: $$duration seconds" >> "$$log_file"
-            |    echo "" >> "$$log_file"
-            |
-            |    bound=$$((bound + step))
-            |done
-          """
-
-      val zynqCProgramST: ST = {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
-          st"""
-              |#include <stdio.h>
-              |#include <stdint.h>
-              |#include "platform.h"
-              |#include "xil_printf.h"
-              |#include "xil_io.h"
-              |#include "xparameters.h"
-              |
-              |#define VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + ${anvil.config.memory})
-              |#define READY_ADDR (XPAR_GENERATEDIP_BASEADDR + ${anvil.config.memory})
-              |#define ARRAY_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x0)
-              |
-              |int main()
-              |{
-              |    init_platform();
-              |
-              |    printf("benchmark ${name}\n");
-              |
-              |    Xil_Out32(ARRAY_ADDR, 0xFFFFFFFF);
-              |    Xil_Out32(ARRAY_ADDR+4, 0xFFFFFFFF);
-              |
-              |	   // write to port valid (generated IP)
-              |	   Xil_Out32(VALID_ADDR, 0x1);
-              |
-              |	   // read from port ready (generated IP)
-              |	   uint32_t ready = Xil_In32(READY_ADDR);
-              |	   while(ready != 0x1) {
-              |	   	ready = Xil_In32(READY_ADDR);
-              |	   }
-              |
-              |	   // read the elements form the array
-              |	   for(int i = 0; i < 3; i++) {
-              |	   	uint32_t c = Xil_In32(ARRAY_ADDR + 20 + i*4);
-              |	   	printf("%x\n", c);
-              |	   }
-              |
-              |	   printf("\n");
-              |    print("Successfully ran application");
-              |
-              |    cleanup_platform();
-              |    return 0;
-              |}
-            """
-        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
-          st"""
-              |#include <stdio.h>
-              |#include <stdint.h>
-              |#include "platform.h"
-              |#include "xil_printf.h"
-              |#include "xil_io.h"
-              |#include "xil_cache.h"
-              |#include "xparameters.h"
-              |
-              |#define VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x0)
-              |#define READY_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x8)
-              |#define DP_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x10)
-              |#define ARRAY_ADDR ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"}
-              |
-              |uint8_t load_u8(uint32_t offset) {
-              |  uint32_t buffer_addr = ARRAY_ADDR + 20;
-              |  uint32_t char_addr = buffer_addr + offset;
-              |  uint32_t abs_addr = char_addr & 0xFFFFFFF8;
-              |  uint32_t abs_offset = char_addr & 0x00000007;
-              |
-              |  uint64_t c = Xil_In64(abs_addr);
-              |
-              |  return (c >> (abs_offset * 8)) & 0xFF;
-              |}
-              |
-              |int main()
-              |{
-              |  init_platform();
-              |
-              |  //Xil_DCacheDisable();
-              |  printf("benchmark ${name}\n");
-              |
-              |  // write FFFFFFFFFFFFFFFF to testNum
-              |  Xil_Out64(${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"}, 0xFFFFFFFFFFFFFFFF);
-              |  // using memory barrier when disable DCache
-              |  //__asm__ volatile("dsb sy");
-              |
-              |  // using flush when enable DCache
-              |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "Xil_DCacheFlushRange(XPAR_PSU_DDR_0_S_AXI_BASEADDR, sizeof(uint64_t));" else ""}
-              |
-              |  // write to port valid (generated IP)
-              |  Xil_Out64(VALID_ADDR, 0x1);
-              |
-              |  // read from port ready (generated IP)
-              |  uint64_t ready = Xil_In64(READY_ADDR);
-              |  while(ready != 0x1) {
-              |    ready = Xil_In64(READY_ADDR);
-              |  }
-              |
-              |  uint64_t displaySize = ${anvil.config.printSize};
-              |  uint64_t DP = Xil_In64(DP_ADDR);
-              |  int lo = (DP < displaySize) ? 0 : DP;
-              |  int hi = (DP < displaySize) ? DP : displaySize + DP - 1;
-              |  char output[displaySize + 1];
-              |  // fetch the elements form the array
-              |  int j = 0;
-              |  for(int i = lo; i < hi; i++) {
-              |	   uint32_t offset = i % displaySize;
-              |	   output[j++] = load_u8(offset);
-              |  }
-              |  output[j] = '\0'; // null-terminate
-              |  printf("result: %s\n", output);
-              |
-              |  print("Successfully ran application");
-              |
-              |  cleanup_platform();
-              |  return 0;
-              |}
-            """
-        else
-          st""
-      }
-
       output.addPerm(T, ISZ("chisel/..", "test_many.sh"), testManyShScriptST, "+x")
       output.addPerm(T, ISZ("chisel/..", "auto_script.sh"), autoShScriptST, "+x")
       output.add(T, ISZ("chisel/..", "synthesize_zcu102_zynq.tcl"), synthImplST)
@@ -3137,9 +3152,6 @@ import HwSynthesizer._
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxDividerUnsigned64Wrapper.v"), xilinxDiv64ST(F))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxMultiplierSigned64Wrapper.v"), xilinxMul64ST(T))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxMultiplierUnsigned64Wrapper.v"), xilinxMul64ST(F))
-      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxBRAMWrapper.v"), xilinxBRAMWrapperST)
-      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxIndexAdderWrapper.v"), xilinxIndexAdderWrapperST(anvil.typeBitSize(spType)))
-      output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxIndexMultiplierWrapper.v"), xilinxIndexMultiplierWrapperST(anvil.typeBitSize(spType)))
     }
 
     if (anvil.config.genVerilog) {
@@ -3481,6 +3493,7 @@ import HwSynthesizer._
             |  addResource("/verilog/XilinxDividerSigned64Wrapper.v")
             |}
           """
+
       val memoryIpST =
         st"""
             |class XilinxBRAMWrapper extends BlackBox with HasBlackBoxResource {
@@ -3552,9 +3565,10 @@ import HwSynthesizer._
           moduleST = moduleST :+ multiplierBlackBoxST
           moduleST = moduleST :+ adderSubtractorBlackBoxST
           moduleST = moduleST :+ indexIpST
-          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
-            moduleST = moduleST :+ memoryIpST
-          }
+        }
+
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
+          moduleST = moduleST :+ memoryIpST
         }
 
         st"""${(moduleST, "\n")}"""
