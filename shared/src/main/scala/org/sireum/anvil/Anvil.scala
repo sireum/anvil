@@ -125,7 +125,7 @@ object Anvil {
 
   @datatype class IR(val anvil: Anvil,
                      val name: String,
-                     val procedure: AST.IR.Procedure,
+                     val program: AST.IR.Program,
                      val maxRegisters: TempVector,
                      val globalSize: Z,
                      val globalInfoMap: HashSMap[QName, VarInfo],
@@ -136,7 +136,7 @@ object Anvil {
                  output: Output, reporter: Reporter): Option[IR] = {
     val rOpt = generateIR(isTest, fresh, th, name, config, output, reporter)
     rOpt match {
-      case Some(ir) => HwSynthesizer(ir.anvil).printProcedure(ir.name, ir.procedure, output, ir.maxRegisters, ir.globalInfoMap)
+      case Some(ir) => HwSynthesizer2(ir.anvil).printProcedure(ir.name, ir.program, output, ir.maxRegisters, ir.globalInfoMap)
       case _ =>
     }
     return rOpt
@@ -815,7 +815,7 @@ import Anvil._
 
     WellFormedChecker().transform_langastIRProcedure(program.procedures(0))
 
-    return Some(IR(anvil, name, program.procedures(0), maxRegisters, globalSize, globalMap, globalTemps, procDescMap))
+    return Some(IR(anvil, name, program, maxRegisters, globalSize, globalMap, globalTemps, procDescMap))
   }
 
   def transformReadWriteAlign(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure,

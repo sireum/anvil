@@ -158,7 +158,7 @@ class IRSimulatorTest extends SireumRcSpec {
               val state = IRSimulator.State.create(ir.anvil, ir.maxRegisters, ir.globalInfoMap, ir.globalTemps)
               val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.loc
               var locals = ISZ[Intrinsic.Decl.Local]()
-              for (entry <- ir.anvil.procedureParamInfo(Util.PBox(ir.procedure))._2.entries) {
+              for (entry <- ir.anvil.procedureParamInfo(Util.PBox(ir.program.procedures(0)))._2.entries) {
                 val (id, info) = entry
                 locals = locals :+ Intrinsic.Decl.Local(info.loc, info.totalSize, id, info.tipe)
               }
@@ -171,7 +171,7 @@ class IRSimulatorTest extends SireumRcSpec {
                 IRSimulator.Value.fromZ(ir.globalSize, ir.anvil.typeBitSize(ir.anvil.spType),
                   ir.anvil.isSigned(ir.anvil.spType)),
                 IRSimulator.State.Accesses.empty).update(state)
-              IRSimulator.State.Edit.Decl(Intrinsic.Decl(F, F, locals, ir.procedure.pos)).update(state)
+              IRSimulator.State.Edit.Decl(Intrinsic.Decl(F, F, locals, ir.program.procedures(0).pos)).update(state)
               if (config.alignAxi4) {
                 assert(testNumInfoOffset % 8 == 0)
                 IRSimulator.State.Edit.Memory64(testNumInfoOffset / 8, ISZ(u64"0xFFFFFFFFFFFFFFFF"),
@@ -181,7 +181,7 @@ class IRSimulatorTest extends SireumRcSpec {
                   for (_ <- 0 until ir.anvil.typeByteSize(AST.Typed.z)) yield u8"0xFF",
                   IRSimulator.State.Accesses.empty).update(state)
               }
-              IRSimulator(ir.anvil).evalProcedure(state, ir.procedure)
+              IRSimulator(ir.anvil).evalProcedure(state, ir.program.procedures(0))
               val displaySize = ir.anvil.config.printSize
               if (ir.anvil.config.shouldPrint) {
                 val offset = ir.globalInfoMap.get(Util.displayName).get.loc +
