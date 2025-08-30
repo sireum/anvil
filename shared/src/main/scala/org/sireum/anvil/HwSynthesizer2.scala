@@ -96,6 +96,136 @@ import HwSynthesizer2._
     return None()
   }
 
+  @pure def getIpArbiterTemplate(ip: IpType): ST = {
+    val mod = findChiselModule(ip).get
+
+    @pure def requestBundleST: ST = {
+      var portST: ISZ[ST] = ISZ[ST]()
+
+      ip match {
+        case BinaryIP(_, _) =>
+          for(i <- mod.portListWithoutControl.entries) {
+            portST = portST :+ st"val ${i._1} = ${i._2}(dataWidth.W)"
+          }
+        case IntrinsicIP(_) => halt("IP arbiter template, IntrinsicIP not impl")
+        case BlockMemoryIP() => halt("IP arbiter template, BlockMemoryIP not impl")
+        case LabelToFsmIP() => halt("IP arbiter template, LabelToFsmIP not impl")
+      }
+
+      return st"""
+                 |class ${mod.moduleName}RequestBundle(dataWidth: Int) extends Bundle {
+                 |  ${(portST, "")}
+                 |}
+               """
+    }
+
+    @pure def responseBundleST: ST = {
+      var portST: ISZ[ST] = ISZ[ST]()
+
+      ip match {
+        case BinaryIP(_, _) =>
+          val signedStr: String = if (mod.signed) "SInt" else "UInt"
+          portST = portST :+ st"val out = ${signedStr}(dataWidth.W)"
+        case IntrinsicIP(_) => halt("IP arbiter template, IntrinsicIP not impl")
+        case BlockMemoryIP() => halt("IP arbiter template, BlockMemoryIP not impl")
+        case LabelToFsmIP() => halt("IP arbiter template, LabelToFsmIP not impl")
+      }
+
+      return st"""
+                 |class ${mod.moduleName}ResponseBundle(dataWidth: Int) extends Bundle {
+                 |  ${(portST, "")}
+                 |}
+               """
+    }
+
+    @pure def IpIOST: ST = {
+      return st"""
+                 class ${mod.moduleName}IO(dataWidth: Int) extends Bundle {
+                   val req = Valid(new ${mod.moduleName}RequestBundle(dataWidth))
+                   val resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
+                 }
+               """
+    }
+
+    @pure def IpArbiterIOST: ST = {
+      return st"""
+                 |class ${mod.moduleName}ArbiterIO(numIPs: Int, dataWidth: Int) extends Bundle {
+                 |  val ipReqs  = Flipped(Vec(numIPs, Valid(new ${mod.moduleName}RequestBundle(dataWidth))))
+                 |  val ipResps = Vec(numIPs, Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
+                 |  val ip      = new ${mod.moduleName}IO(dataWidth)
+                 |}
+               """
+    }
+
+    @pure def arbiterModuleST: ST = {
+      return st"""
+                 |class ${mod.moduleName}ArbiterModule(numIPs: Int, dataWidth: Int) extends Module {
+                 |  val io = IO(new ${mod.moduleName}ArbiterIO(numIPs, dataWidth))
+                 |
+                 |  // ------------------ Stage 0: Input Cache ------------------
+                 |  val r_ipReq_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+                 |  val r_ipReq_valid_next = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+                 |  val r_ipReq_enable = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+                 |  val r_ipReq_bits = Reg(Vec(numIPs, new MultiplyRequestBundle(dataWidth)))
+                 |
+                 |  for (i <- 0 until numIPs) {
+                 |    r_ipReq_valid(i) := io.ipReqs(i).valid
+                 |    r_ipReq_valid_next(i) := r_ipReq_valid(i)
+                 |    when(r_ipReq_valid(i) & ~r_ipReq_valid_next(i)) {
+                 |      r_ipReq_enable(i) := true.B
+                 |      r_ipReq_bits(i) := io.ipReqs(i).bits
+                 |    } .otherwise {
+                 |      r_ipReq_enable(i) := false.B
+                 |    }
+                 |  }
+                 |
+                 |  // ------------------ Stage 1: Arbitration Decision Pipeline ------------------
+                 |  val r_foundReq = RegInit(false.B)
+                 |  val r_reqBits  = Reg(new ${mod.moduleName}RequestBundle(dataWidth))
+                 |  val r_chosen   = Reg(UInt(log2Ceil(numIPs).W))
+                 |
+                 |  r_foundReq := r_ipReq_enable.reduce(_ || _)
+                 |  for (i <- 0 until numIPs) {
+                 |    when(r_ipReq_enable(i)) {
+                 |      r_reqBits := r_ipReq_bits(i)
+                 |      r_chosen  := i.U
+                 |    }
+                 |  }
+                 |
+                 |  io.ip.req.valid := r_foundReq
+                 |  io.ip.req.bits  := r_reqBits
+                 |
+                 |  // ------------------ Stage 2: memory.resp handling ------------------
+                 |  val r_mem_resp_valid = RegNext(io.ip.resp.valid)
+                 |  val r_mem_resp_bits  = RegNext(io.ip.resp.bits)
+                 |  val r_mem_resp_id    = RegNext(r_chosen)
+                 |
+                 |  val r_ipResp_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+                 |  val r_ipResp_bits  = Reg(Vec(numIPs, new ${mod.moduleName}ResponseBundle(dataWidth)))
+                 |
+                 |  for (i <- 0 until numIPs) {
+                 |    r_ipResp_valid(i)    := false.B
+                 |    r_ipResp_bits(i).out := 0.U
+                 |  }
+                 |
+                 |  when(r_mem_resp_valid) {
+                 |    r_ipResp_valid(r_mem_resp_id) := true.B
+                 |    r_ipResp_bits(r_mem_resp_id)  := r_mem_resp_bits
+                 |  } .otherwise {
+                 |    r_ipResp_valid(r_mem_resp_id) := false.B
+                 |  }
+                 |
+                 |  for (i <- 0 until numIPs) {
+                 |    io.ipResps(i).valid := r_ipResp_valid(i)
+                 |    io.ipResps(i).bits  := r_ipResp_bits(i)
+                 |  }
+                 |}
+               """
+    }
+
+    return st""
+  }
+
   @pure def insDeclST(ip: IpType, numInstances: Z): ST = {
     val targetModule: ChiselModule = findChiselModule(ip).get
     val moduleInstances: ST = {
