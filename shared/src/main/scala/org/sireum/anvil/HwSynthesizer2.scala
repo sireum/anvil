@@ -223,7 +223,13 @@ import HwSynthesizer2._
                """
     }
 
-    return st""
+    return st"""
+               |${requestBundleST}
+               |${responseBundleST}
+               |${IpIOST}
+               |${IpArbiterIOST}
+               |${arbiterModuleST}
+             """
   }
 
   @pure def insDeclST(ip: IpType, numInstances: Z): ST = {
@@ -380,6 +386,354 @@ import HwSynthesizer2._
         case w if w <= 64 => 6
         case _ => halt("not support this width")
       }
+    }
+
+    @pure def arbiterModuleST: HashSMap[String, ISZ[ST]] = {
+      var arbiterModuleMap: HashSMap[String, ISZ[ST]] = HashSMap.empty
+      val importPaddingST: ST =
+        st"""
+            |import chisel3._
+            |import chisel3.util._
+            |import chisel3.experimental._
+            |
+          """
+
+      val xilinxAdderUnsigned64WrapperST: ST =
+        st"""
+            |class XilinxAdderUnsigned64Wrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clk = Input(Bool())
+            |    val ce = Input(Bool())
+            |    val A = Input(UInt(64.W))
+            |    val B = Input(UInt(64.W))
+            |    val valid = Output(Bool())
+            |    val S = Output(UInt(64.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxAdderUnsigned64Wrapper.v")
+            |}
+          """
+
+      val xilinxAdderSigned64WrapperST: ST =
+        st"""
+            |class XilinxAdderSigned64Wrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clk = Input(Bool())
+            |    val ce = Input(Bool())
+            |    val A = Input(SInt(64.W))
+            |    val B = Input(SInt(64.W))
+            |    val valid = Output(Bool())
+            |    val S = Output(SInt(64.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxAdderSigned64Wrapper.v")
+            |}
+          """
+
+      val xilinxSubtractorUnsigned64WrapperST: ST =
+        st"""
+            |class XilinxSubtractorUnsigned64Wrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clk = Input(Bool())
+            |    val ce = Input(Bool())
+            |    val A = Input(UInt(64.W))
+            |    val B = Input(UInt(64.W))
+            |    val valid = Output(Bool())
+            |    val S = Output(UInt(64.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxSubtractorUnsigned64Wrapper.v")
+            |}
+          """
+
+      val xilinxSubtractorSigned64WrapperST: ST =
+        st"""
+            |class XilinxSubtractorSigned64Wrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clk = Input(Bool())
+            |    val ce = Input(Bool())
+            |    val A = Input(SInt(64.W))
+            |    val B = Input(SInt(64.W))
+            |    val valid = Output(Bool())
+            |    val S = Output(SInt(64.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxSubtractorSigned64Wrapper.v")
+            |}
+          """
+
+      val xilinxMultiplierUnsigned64WrapperST: ST =
+        st"""
+            |class XilinxMultiplierUnsigned64Wrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clk = Input(Bool())
+            |    val ce = Input(Bool())
+            |    val a = Input(UInt(64.W))
+            |    val b = Input(UInt(64.W))
+            |    val valid = Output(Bool())
+            |    val p = Output(UInt(64.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxMultiplierUnsigned64Wrapper.v")
+            |}
+          """
+
+      val xilinxMultiplierSigned64WrapperST: ST =
+        st"""
+            |class XilinxMultiplierSigned64Wrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clk = Input(Bool())
+            |    val ce = Input(Bool())
+            |    val a = Input(SInt(64.W))
+            |    val b = Input(SInt(64.W))
+            |    val valid = Output(Bool())
+            |    val p = Output(SInt(64.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxMultiplierSigned64Wrapper.v")
+            |}
+          """
+
+      val xilinxDividerUnsigned64WrapperST: ST =
+        st"""
+            |class XilinxDividerUnsigned64Wrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clock = Input(Bool())
+            |    val resetn = Input(Bool())
+            |    val a = Input(UInt(64.W))
+            |    val b = Input(UInt(64.W))
+            |    val start = Input(Bool())
+            |    val valid = Output(Bool())
+            |    val quotient = Output(UInt(64.W))
+            |    val remainder = Output(UInt(64.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxDividerUnsigned64Wrapper.v")
+            |}
+          """
+
+      val xilinxDividerSigned64WrapperST: ST =
+        st"""
+            |class XilinxDividerSigned64Wrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clock = Input(Bool())
+            |    val resetn = Input(Bool())
+            |    val a = Input(SInt(64.W))
+            |    val b = Input(SInt(64.W))
+            |    val start = Input(Bool())
+            |    val valid = Output(Bool())
+            |    val quotient = Output(SInt(64.W))
+            |    val remainder = Output(SInt(64.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxDividerSigned64Wrapper.v")
+            |}
+          """
+
+      val xilinxBramWrapperST =
+        st"""
+            |class XilinxBRAMWrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clk = Input(Bool())
+            |    val ena = Input(Bool())
+            |    val wea = Input(Bool())
+            |    val addra = Input(UInt(10.W))
+            |    val dina = Input(UInt(64.W))
+            |    val douta = Output(UInt(64.W))
+            |    val enb = Input(Bool())
+            |    val web = Input(Bool())
+            |    val addrb = Input(UInt(10.W))
+            |    val dinb = Input(UInt(64.W))
+            |    val doutb = Output(UInt(64.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxBRAMWrapper.v")
+            |}
+          """
+
+      val xilinxIndexAdderWrapperST =
+        st"""
+            |class XilinxIndexAdderWrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clk   = Input(Bool())
+            |    val ce    = Input(Bool())
+            |    val A     = Input(UInt(16.W))
+            |    val B     = Input(UInt(16.W))
+            |    val valid = Output(Bool())
+            |    val S     = Output(UInt(16.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxIndexAdderWrapper.v")
+            |}
+          """
+
+      val xilinxIndexMultiplierWrapperST =
+        st"""
+            |class XilinxIndexMultiplierWrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val clk   = Input(Bool())
+            |    val ce    = Input(Bool())
+            |    val A     = Input(UInt(16.W))
+            |    val B     = Input(UInt(16.W))
+            |    val valid = Output(Bool())
+            |    val P     = Output(UInt(16.W))
+            |  })
+            |
+            |  addResource("/verilog/XilinxIndexMultiplierWrapper.v")
+            |}
+          """
+
+      val xilinxBufgWrapperST =
+        st"""
+            |class XilinxBUFGWrapper extends BlackBox with HasBlackBoxResource {
+            |  val io = IO(new Bundle {
+            |    val I    = Input(Clock())
+            |    val O    = Output(Clock())
+            |  })
+            |
+            |  addResource("/verilog/XilinxBUFGWrapper.v")
+            |}
+          """
+
+      for(i <- 0 until ipModules.size) {
+        ipModules(i) match {
+          case Adder(signed, _, _, _, _, xilinxIpValid) =>
+            if(xilinxIpValid) {
+              val t: ST = if(signed) xilinxAdderSigned64WrapperST else xilinxAdderUnsigned64WrapperST
+              arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
+            }
+          case Subtractor(signed, _, _, _, _, xilinxIpValid) => {
+            if(xilinxIpValid) {
+              val t: ST = if(signed) xilinxSubtractorSigned64WrapperST else xilinxSubtractorUnsigned64WrapperST
+              arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
+            }
+          }
+          case Multiplier(signed, _, _, _, _, xilinxIpValid) =>
+            if(xilinxIpValid) {
+              val t: ST = if(signed) xilinxMultiplierSigned64WrapperST else xilinxMultiplierUnsigned64WrapperST
+              arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
+            }
+          case Division(signed, _, _, _, _, xilinxIpValid) =>
+            if(xilinxIpValid) {
+              val t: ST = if(signed) xilinxDividerSigned64WrapperST else xilinxDividerUnsigned64WrapperST
+              arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
+            }
+          case Indexer(signed, _, _, _, _, xilinxIpValid) =>
+            if(xilinxIpValid) {
+              arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~>
+                (ISZ[ST]() :+ importPaddingST :+ xilinxIndexAdderWrapperST :+ xilinxIndexMultiplierWrapperST :+ ipModules(i).moduleST)
+            }
+          case BlockMemory(_, _, _, _, _, _, _, _, _, _) =>
+            val bramST: ST = if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) xilinxBramWrapperST else st""
+            arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ bramST :+ ipModules(i).moduleST)
+          case _ =>
+            arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ ipModules(i).moduleST)
+        }
+      }
+
+      return arbiterModuleMap
+    }
+
+    @strictpure def routerST: ST = {
+      st"""
+          |import chisel3._
+          |import chisel3.util._
+          |import chisel3.experimental._
+          |
+          |class Packet(val idWidth: Int, val cpWidth: Int) extends Bundle {
+          |  val srcID = UInt(idWidth.W)
+          |  val dstID = UInt(idWidth.W)
+          |  val srcCP = UInt(cpWidth.W)
+          |  val dstCP = UInt(cpWidth.W)
+          |}
+          |
+          |class RouterIO(val nPorts: Int, val idWidth: Int, val cpWidth: Int) extends Bundle {
+          |  val in  = Flipped(Vec(nPorts, Valid(new Packet(idWidth, cpWidth))))
+          |  val out = Vec(nPorts, Valid(new Packet(idWidth, cpWidth)))
+          |}
+          |
+          |class Router(val nPorts: Int, val idWidth: Int, val cpWidth: Int) extends Module {
+          |  val io = IO(new RouterIO(nPorts, idWidth, cpWidth))
+          |
+          |  // input buffer
+          |  val r_inputBuffer       = VecInit(Seq.fill(nPorts)(Reg(new Packet(idWidth, cpWidth))))
+          |  val r_inputBuffer_valid = VecInit(Seq.fill(nPorts)(Reg(Bool())))
+          |  for (i <- 0 until nPorts) {
+          |    r_inputBuffer(i)       := io.in(i).bits
+          |    r_inputBuffer_valid(i) := io.in(i).valid
+          |  }
+          |
+          |  // output buffer
+          |  val r_outputBuffer       = VecInit(Seq.fill(nPorts)(Reg(new Packet(idWidth, cpWidth))))
+          |  val r_outputBuffer_valid = VecInit(Seq.fill(nPorts)(Reg(Bool())))
+          |  for (i <- 0 until nPorts) {
+          |    io.out(i).bits  := r_outputBuffer(i)
+          |    io.out(i).valid := r_outputBuffer_valid(i)
+          |  }
+          |
+          |  // default: no write
+          |  for (i <- 0 until nPorts) {
+          |    r_outputBuffer(i).srcID := 0.U
+          |    r_outputBuffer(i).dstID := 0.U
+          |    r_outputBuffer(i).srcCP := 0.U
+          |    r_outputBuffer(i).dstCP := 0.U
+          |
+          |    r_outputBuffer_valid(i) := false.B
+          |  }
+          |
+          |  // arbiter
+          |  for (i <- 0 until nPorts) {
+          |    when(r_inputBuffer_valid(i)) {
+          |      r_outputBuffer_valid(r_inputBuffer(i).dstID) := true.B
+          |      r_outputBuffer(r_inputBuffer(i).dstID)       := r_inputBuffer(i)
+          |    }
+          |  }
+          |}
+        """
+    }
+
+    @strictpure def stackST: ST = {
+      st"""
+          |import chisel3._
+          |import chisel3.util._
+          |import chisel3.experimental._
+          |
+          |class Stack[T <: Data](val gen: T, val width: Int, val depth: Int) extends Module {
+          |  val io = IO(new Bundle {
+          |    val push         = Input(Bool())
+          |    val pop          = Input(Bool())
+          |    val en           = Input(Bool())
+          |    val dataIn       = Input(gen.cloneType)
+          |    val dataOut      = Output(gen.cloneType)
+          |    val valid        = Output(Bool())
+          |  })
+          |
+          |  val stack_mem = Mem(depth, gen)
+          |  val sp        = RegInit(0.U(log2Ceil(depth+1).W))
+          |  val out       = RegInit(0.U.asTypeOf(gen))
+          |  val popValid  = Reg(Bool())
+          |  val pushValid = Reg(Bool())
+          |
+          |  popValid  := false.B
+          |  pushValid := false.B
+          |
+          |  when (io.en) {
+          |    when(io.push && (sp < depth.U)) {
+          |      stack_mem(sp) := io.dataIn
+          |      sp            := sp + 1.U
+          |      pushValid     := true.B
+          |    }
+          |    when (io.pop && sp > 0.U) {
+          |      out      := stack_mem(sp - 1.U)
+          |      sp       := sp - 1.U
+          |      popValid := true.B
+          |    }
+          |  }
+          |
+          |  io.dataOut := out
+          |  io.valid   := pushValid | popValid
+          |}
+        """
     }
 
     val configST: ST =
@@ -1162,6 +1516,11 @@ import HwSynthesizer2._
     }
 
     output.add(T, ISZ("config.txt"), configST)
+    for(entry <- arbiterModuleST.entries) {
+      output.add(T, ISZ("chisel/src/main/scala", s"${entry._1}.scala"), st"${(entry._2, "")}")
+    }
+    output.add(T, ISZ("chisel/src/main/scala", s"Stack.scala"), stackST)
+    output.add(T, ISZ("chisel/src/main/scala", s"Router.scala"), routerST)
     output.add(T, ISZ("chisel/src/main/scala", s"chisel-${name}.scala"), processedProcedureST)
     output.add(T, ISZ("chisel", "build.sbt"), buildSbtST())
     output.add(T, ISZ("chisel", "project", "build.properties"), st"sbt.version=${output.sbtVersion}")
@@ -1409,212 +1768,34 @@ import HwSynthesizer2._
       return st"${(generalRegST, "\n")}"
     }
 
-    @pure def procedureST(stateMachineST: ST, stateMachineIdxRange: HashSMap[Z, Z], stateFunctionObjectST: ST): ST = {
-      val maxNumCps: Z = {
-        if(anvil.config.cpMax >0 )
-          (hwLog.maxNumLabel / anvil.config.cpMax) + (if (hwLog.maxNumLabel % anvil.config.cpMax == 0) 0 else 1)
-        else
-          0
+    @strictpure def cpST(moduleName: String): ST = {
+      st"""
+          |val ${moduleName}CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
+        """
+    }
+
+    @pure def globalTempST: ST = {
+      var globalTempSTs: ISZ[ST] = ISZ[ST]()
+      for(entry <- globalInfoMap.entries) {
+        if(isTempGlobal(anvil, entry._2.tipe, entry._1)) {
+          val signed: B = anvil.isSigned(entry._2.tipe)
+          val initValueST: ST = if(signed) st"0.S" else st"0.U"
+          val bitWidthST: ST = st"${anvil.typeBitSize(entry._2.tipe)}"
+          globalTempSTs = globalTempSTs :+ st"val ${globalName(entry._1)} = RegInit(${initValueST}(${bitWidthST}.W))"
+        }
       }
+      return st"${(globalTempSTs, "\n")}"
+    }
 
-      val adderSubtractorBlackBoxST =
-        st"""
-            |class XilinxAdderUnsigned64Wrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk = Input(Bool())
-            |    val ce = Input(Bool())
-            |    val A = Input(UInt(64.W))
-            |    val B = Input(UInt(64.W))
-            |    val valid = Output(Bool())
-            |    val S = Output(UInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxAdderUnsigned64Wrapper.v")
-            |}
-            |class XilinxAdderSigned64Wrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk = Input(Bool())
-            |    val ce = Input(Bool())
-            |    val A = Input(SInt(64.W))
-            |    val B = Input(SInt(64.W))
-            |    val valid = Output(Bool())
-            |    val S = Output(SInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxAdderSigned64Wrapper.v")
-            |}
-            |class XilinxSubtractorUnsigned64Wrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk = Input(Bool())
-            |    val ce = Input(Bool())
-            |    val A = Input(UInt(64.W))
-            |    val B = Input(UInt(64.W))
-            |    val valid = Output(Bool())
-            |    val S = Output(UInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxSubtractorUnsigned64Wrapper.v")
-            |}
-            |class XilinxSubtractorSigned64Wrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk = Input(Bool())
-            |    val ce = Input(Bool())
-            |    val A = Input(SInt(64.W))
-            |    val B = Input(SInt(64.W))
-            |    val valid = Output(Bool())
-            |    val S = Output(SInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxSubtractorSigned64Wrapper.v")
-            |}
-          """
-      val multiplierBlackBoxST =
-        st"""
-            |class XilinxMultiplierUnsigned64Wrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk = Input(Bool())
-            |    val ce = Input(Bool())
-            |    val a = Input(UInt(64.W))
-            |    val b = Input(UInt(64.W))
-            |    val valid = Output(Bool())
-            |    val p = Output(UInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxMultiplierUnsigned64Wrapper.v")
-            |}
-            |class XilinxMultiplierSigned64Wrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk = Input(Bool())
-            |    val ce = Input(Bool())
-            |    val a = Input(SInt(64.W))
-            |    val b = Input(SInt(64.W))
-            |    val valid = Output(Bool())
-            |    val p = Output(SInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxMultiplierSigned64Wrapper.v")
-            |}
-          """
-      val divisionBlackBoxST =
-        st"""
-            |class XilinxDividerUnsigned64Wrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clock = Input(Bool())
-            |    val resetn = Input(Bool())
-            |    val a = Input(UInt(64.W))
-            |    val b = Input(UInt(64.W))
-            |    val start = Input(Bool())
-            |    val valid = Output(Bool())
-            |    val quotient = Output(UInt(64.W))
-            |    val remainder = Output(UInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxDividerUnsigned64Wrapper.v")
-            |}
-            |class XilinxDividerSigned64Wrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clock = Input(Bool())
-            |    val resetn = Input(Bool())
-            |    val a = Input(SInt(64.W))
-            |    val b = Input(SInt(64.W))
-            |    val start = Input(Bool())
-            |    val valid = Output(Bool())
-            |    val quotient = Output(SInt(64.W))
-            |    val remainder = Output(SInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxDividerSigned64Wrapper.v")
-            |}
-          """
-
-      val memoryIpST =
-        st"""
-            |class XilinxBRAMWrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk = Input(Bool())
-            |    val ena = Input(Bool())
-            |    val wea = Input(Bool())
-            |    val addra = Input(UInt(10.W))
-            |    val dina = Input(UInt(64.W))
-            |    val douta = Output(UInt(64.W))
-            |    val enb = Input(Bool())
-            |    val web = Input(Bool())
-            |    val addrb = Input(UInt(10.W))
-            |    val dinb = Input(UInt(64.W))
-            |    val doutb = Output(UInt(64.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxBRAMWrapper.v")
-            |}
-          """
-      val indexIpST =
-        st"""
-            |class XilinxIndexAdderWrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk   = Input(Bool())
-            |    val ce    = Input(Bool())
-            |    val A     = Input(UInt(16.W))
-            |    val B     = Input(UInt(16.W))
-            |    val valid = Output(Bool())
-            |    val S     = Output(UInt(16.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxIndexAdderWrapper.v")
-            |}
-            |
-            |class XilinxIndexMultiplierWrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val clk   = Input(Bool())
-            |    val ce    = Input(Bool())
-            |    val A     = Input(UInt(16.W))
-            |    val B     = Input(UInt(16.W))
-            |    val valid = Output(Bool())
-            |    val P     = Output(UInt(16.W))
-            |  })
-            |
-            |  addResource("/verilog/XilinxIndexMultiplierWrapper.v")
-            |}
-          """
-      val BUFGST =
-        st"""
-            |class XilinxBUFGWrapper extends BlackBox with HasBlackBoxResource {
-            |  val io = IO(new Bundle {
-            |    val I    = Input(Clock())
-            |    val O    = Output(Clock())
-            |  })
-            |
-            |  addResource("/verilog/XilinxBUFGWrapper.v")
-            |}
-          """
-
-      val moduleDeclST: ST = {
-        var moduleST: ISZ[ST] = ISZ()
-        for(i <- 0 until ipModules.size) {
-          moduleST = moduleST :+ ipModules(i).moduleST
-        }
-
-        if(!anvil.config.noXilinxIp) {
-          moduleST = moduleST :+ divisionBlackBoxST
-          moduleST = moduleST :+ multiplierBlackBoxST
-          moduleST = moduleST :+ adderSubtractorBlackBoxST
-          moduleST = moduleST :+ indexIpST
-        }
-
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) {
-          moduleST = moduleST :+ memoryIpST
-        }
-
-        st"""${(moduleST, "\n")}"""
-      }
-
+    @pure def topST(stateMachineST: ST, stateMachineIdxRange: HashSMap[Z, Z], stateFunctionObjectST: ST): ST = {
       val instanceDeclST: ST = {
         var instanceST: ISZ[ST] = ISZ()
-        for(entry <- ipAlloc.binopAllocSizeMap.entries) {
+        for (entry <- ipAlloc.binopAllocSizeMap.entries) {
           val b: IpType = BinaryIP(entry._1._2, entry._1._1)
           instanceST = instanceST :+ insDeclST(b, entry._2)
         }
         instanceST = instanceST :+ insDeclST(IntrinsicIP(HwSynthesizer2.defaultIndexing), ipAlloc.indexingAllocSize)
-        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
+        if (anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           instanceST = instanceST :+ insDeclST(BlockMemoryIP(), 1)
         }
         st"""${(instanceST, "\n")}"""
@@ -1622,12 +1803,12 @@ import HwSynthesizer2._
 
       val instancePortFuncST: ST = {
         var instanceST: ISZ[ST] = ISZ()
-        for(entry <- ipAlloc.binopAllocSizeMap.entries) {
+        for (entry <- ipAlloc.binopAllocSizeMap.entries) {
           val b: IpType = BinaryIP(entry._1._2, entry._1._1)
           instanceST = instanceST :+ insPortFuncST(b, entry._2)
         }
         instanceST = instanceST :+ insPortFuncST(IntrinsicIP(HwSynthesizer2.defaultIndexing), ipAlloc.indexingAllocSize)
-        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
+        if (anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           instanceST = instanceST :+ insPortFuncST(BlockMemoryIP(), 1)
         }
         st"""${(instanceST, "\n")}"""
@@ -1635,96 +1816,16 @@ import HwSynthesizer2._
 
       val instancePortCallST: ST = {
         var instanceST: ISZ[ST] = ISZ()
-        for(entry <- ipAlloc.binopAllocSizeMap.entries) {
+        for (entry <- ipAlloc.binopAllocSizeMap.entries) {
           val b: IpType = BinaryIP(entry._1._2, entry._1._1)
           instanceST = instanceST :+ insPortCallST(b, entry._2)
         }
         instanceST = instanceST :+ insPortCallST(IntrinsicIP(HwSynthesizer2.defaultIndexing), ipAlloc.indexingAllocSize)
-        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
+        if (anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           instanceST = instanceST :+ insPortCallST(BlockMemoryIP(), 1)
         }
         st"""${(instanceST, "\n")}"""
       }
-
-      val broadcastBufferDeclST: ST =
-        st"""
-            |class StateBundle extends Bundle {
-            |  val index = UInt(${log2Up(maxNumCps)}.W)
-            |  val state = UInt(${log2Up(anvil.config.cpMax + 1)}.W)
-            |}
-            |
-            |class BroadcastBufferIO[T <: Data](gen: T, n: Int) extends Bundle {
-            |  val in  = Flipped(Vec(n, Decoupled(gen)))
-            |  val out = Vec(n, Decoupled(gen))
-            |}
-            |
-            |class BroadcastBuffer[T <: Data](gen: T, n: Int) extends Module {
-            |  val io = IO(new BroadcastBufferIO(gen, n))
-            |
-            |  // input data related register
-            |  val inValidReg = RegInit(VecInit(Seq.fill(n)(false.B)))
-            |  val inBitsReg  = Reg(Vec(n, gen))
-            |
-            |  // valid and data related register
-            |  val validReg = RegInit(false.B)
-            |  val dataReg  = Reg(gen)
-            |
-            |  // find the valid input
-            |  val anyInputValid = inValidReg.reduce(_ || _)
-            |  val selectedIdx = Wire(UInt(log2Ceil(n).W))
-            |  val selectedData = Wire(gen)
-            |
-            |  // output related register
-            |  val outValidReg = RegNext(validReg, init = false.B)
-            |  val outDataReg  = RegEnable(dataReg, enable = validReg)
-            |
-            |  // register for every inputs
-            |  for (i <- 0 until n) {
-            |    inValidReg(i) := io.in(i).valid
-            |    inBitsReg(i) := io.in(i).bits
-            |    io.in(i).ready := !inValidReg(i) && !validReg
-            |  }
-            |
-            |  selectedIdx := 0.U
-            |  selectedData := inBitsReg(0)
-            |  for (i <- 0 until n) {
-            |    when (inValidReg(i)) {
-            |      selectedIdx := i.U
-            |      selectedData := inBitsReg(i)
-            |    }
-            |  }
-            |
-            |  // accept the input data
-            |  when (!validReg && anyInputValid) {
-            |    dataReg := selectedData
-            |    validReg := true.B
-            |  }
-            |
-            |  // broadcast output
-            |  for (i <- 0 until n) {
-            |    io.out(i).valid := outValidReg
-            |    io.out(i).bits := outDataReg
-            |  }
-            |
-            |  // wait all consumer ready
-            |  val allFired = io.out.map(_.ready).reduce(_ && _) && outValidReg
-            |  when (allFired) {
-            |    validReg := false.B
-            |  }
-            |}
-            """
-
-      val broadcastBufferInsST =
-        st"""
-            |val broadcastBuffer = Module(new BroadcastBuffer(new StateBundle, ${maxNumCps}))
-            |for(i <- 0 until ${maxNumCps}) {
-            |  broadcastBuffer.io.in(i).valid := false.B
-            |  broadcastBuffer.io.in(i).bits.index := 0.U
-            |  broadcastBuffer.io.in(i).bits.state := ${anvil.config.cpMax}.U
-            |
-            |  broadcastBuffer.io.out(i).ready := true.B
-            |}
-          """
 
       val bramDefaultPortValueST: ST =
         st"""
@@ -1745,7 +1846,7 @@ import HwSynthesizer2._
           """
 
       val memWriteST: ST =
-        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default)
+        if (anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default)
           st"""
               |when(r_writeAddr === ${anvil.config.memory}.U) {
               |  writeState              := sBActive
@@ -1778,7 +1879,7 @@ import HwSynthesizer2._
             """
 
       val memReadST: ST = {
-        if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default)
+        if (anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default)
           st"""
               |when(r_readAddr === ${anvil.config.memory}.U) {
               |  r_s_axi_rdata         := r_ready
@@ -1811,56 +1912,6 @@ import HwSynthesizer2._
             """
       }
 
-      @pure def cpST: ST = {
-        if(anvil.config.cpMax <= 0) {
-          return st"""
-                     |val CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
-                   """
-        } else {
-          var vecInitValue: ISZ[ST] = ISZ[ST]()
-
-          for(i <- 0 until(maxNumCps)) {
-            vecInitValue = vecInitValue :+ (
-              if(maxNumCps == 1) st"val initVals = Seq(2.U(width.W))"
-              else if(i == 0) st"val initVals = Seq(2.U(width.W)"
-              else if(i == maxNumCps - 1) st", ${anvil.config.cpMax}.U(width.W))"
-              else st", ${anvil.config.cpMax}.U(width.W)"
-              )
-          }
-
-          return st"""
-                     |val width: Int = log2Up(${anvil.config.cpMax + 1})
-                     |${(vecInitValue, "")}
-                     |val CP = RegInit(VecInit(initVals))
-                     |"""
-        }
-      }
-
-      val readyST: ST =
-        if(anvil.config.cpMax <= 0)
-          st"""
-              |r_ready := Mux(CP === 0.U, 1.U, 0.U) | Mux(CP === 1.U, 2.U, 0.U)
-            """
-        else
-          st"""
-              |when(CP(0.U) === 0.U) {
-              |  r_ready := 1.U
-              |} .elsewhen(CP(0.U) === 1.U) {
-              |  r_ready := 2.U
-              |}
-            """
-
-      @pure def stateMachineObjectCallST: ST = {
-        var smST: ISZ[ST] = ISZ[ST]()
-        for(entry <- stateMachineIdxRange.entries) {
-          val (idxStateMachine, idxRange) = entry
-          for(i <- 0 until idxRange) {
-            smST = smST :+ st"StateMachine_${idxStateMachine}_${i}.stateMachine_${idxStateMachine}_${i}(this)"
-          }
-        }
-        return st"""${(smST, "\n")}"""
-      }
-
       @pure def axi4LiteInterfaceST: ST = {
         val simAxi4LiteST: ST =
           st"""
@@ -1880,7 +1931,7 @@ import HwSynthesizer2._
               |val r_readData      = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
               |val r_readLen       = Reg(UInt((C_S_AXI_DATA_WIDTH / 8).W))
               |
-              |${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) bramDefaultPortValueST.render else st""}
+              |${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) bramDefaultPortValueST.render else st""}
               |
               |// write state machine
               |val sWriteIdle :: sAWActive :: sWActive :: sBActive:: Nil = Enum(4)
@@ -1888,7 +1939,7 @@ import HwSynthesizer2._
               |
               |r_s_axi_awready := Mux(io.S_AXI_AWVALID, true.B ,false.B)
               |r_s_axi_wready  := Mux((writeState === sAWActive) & io.S_AXI_WVALID,  true.B, false.B)
-              |r_s_axi_bvalid  := Mux((writeState === sWActive)${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) s"& ${sharedMemName}.io.writeValid" else ""}, true.B, false.B) |
+              |r_s_axi_bvalid  := Mux((writeState === sWActive)${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) s"& ${sharedMemName}.io.writeValid" else ""}, true.B, false.B) |
               |                   Mux(io.S_AXI_WVALID & io.S_AXI_WREADY & (r_writeAddr === ${anvil.config.memory}.U), true.B, false.B)
               |switch(writeState) {
               |  is(sWriteIdle) {
@@ -1913,7 +1964,7 @@ import HwSynthesizer2._
               |val readState = RegInit(sReadIdle)
               |
               |r_s_axi_arready := Mux(io.S_AXI_ARVALID, true.B, false.B)
-              |r_s_axi_rvalid  := Mux((readState === sRActive) ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) s" & (${sharedMemName}.io.readValid | r_readAddr === ${anvil.config.memory}.U)" else ""}, true.B, false.B)
+              |r_s_axi_rvalid  := Mux((readState === sRActive) ${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) s" & (${sharedMemName}.io.readValid | r_readAddr === ${anvil.config.memory}.U)" else ""}, true.B, false.B)
               |switch(readState) {
               |  is(sReadIdle) {
               |    readState := Mux(io.S_AXI_ARVALID, sARActive, sReadIdle)
@@ -2054,7 +2105,7 @@ import HwSynthesizer2._
               |io.S_AXI_RVALID  := r_s_axi_rvalid
             """
 
-        if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) {
+        if (anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) {
           return genVerilgoAxi4LiteST
         } else {
           return simAxi4LiteST
@@ -2167,130 +2218,157 @@ import HwSynthesizer2._
             |io.M_AXI_RREADY := ${sharedMemName}.io.M_AXI_RREADY
           """
 
-      @pure def globalTempST: ST = {
-        var globalTempSTs: ISZ[ST] = ISZ[ST]()
-        for(entry <- globalInfoMap.entries) {
-          if(isTempGlobal(anvil, entry._2.tipe, entry._1)) {
-            val signed: B = anvil.isSigned(entry._2.tipe)
-            val initValueST: ST = if(signed) st"0.S" else st"0.U"
-            val bitWidthST: ST = st"${anvil.typeBitSize(entry._2.tipe)}"
-            globalTempSTs = globalTempSTs :+ st"val ${globalName(entry._1)} = RegInit(${initValueST}(${bitWidthST}.W))"
-          }
-        }
-        return st"${(globalTempSTs, "\n")}"
-      }
+      return st"""
+                 |import chisel3._
+                 |import chisel3.util._
+                 |import chisel3.experimental._
+                 |
+                 |${if(!anvil.config.useIP && anvil.config.cpMax > 0) findChiselModule(LabelToFsmIP()).get.moduleST else st""}
+                 |
+                 |import ${name}._
+                 |class ${name} (val C_S_AXI_DATA_WIDTH: Int = ${if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) 64 else 32},
+                 |               val C_S_AXI_ADDR_WIDTH: Int = ${if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) 8 else log2Up(anvil.config.memory)},
+                 |               val C_M_AXI_ADDR_WIDTH: Int = 32,
+                 |               val C_M_AXI_DATA_WIDTH: Int = 64,
+                 |               val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = BigInt("00000000", 16),
+                 |               val MEMORY_DEPTH: Int = ${anvil.config.memory},
+                 |               val ARRAY_REG_WIDTH:    Int = 8,
+                 |               val ARRAY_REG_DEPTH:    Int = ${anvil.config.memory},
+                 |               ${if (!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
+                 |               ${if (!anvil.config.splitTempSizes) s"val GENERAL_REG_DEPTH:   Int = ${maxRegisters.maxCount}," else ""}
+                 |               val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize * 8},
+                 |               val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize * 8}) extends Module {
+                 |
+                 |  val io = IO(new Bundle{
+                 |    // write address channel
+                 |    val S_AXI_AWADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
+                 |    val S_AXI_AWPROT  = Input(UInt(3.W))
+                 |    val S_AXI_AWVALID = Input(Bool())
+                 |    val S_AXI_AWREADY = Output(Bool())
+                 |
+                 |    // write data channel
+                 |    val S_AXI_WDATA  = Input(UInt(C_S_AXI_DATA_WIDTH.W))
+                 |    val S_AXI_WSTRB  = Input(UInt((C_S_AXI_DATA_WIDTH/8).W))
+                 |    val S_AXI_WVALID = Input(Bool())
+                 |    val S_AXI_WREADY = Output(Bool())
+                 |
+                 |    // write response channel
+                 |    val S_AXI_BRESP  = Output(UInt(2.W))
+                 |    val S_AXI_BVALID = Output(Bool())
+                 |    val S_AXI_BREADY = Input(Bool())
+                 |
+                 |    // read address channel
+                 |    val S_AXI_ARADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
+                 |    val S_AXI_ARPROT  = Input(UInt(3.W))
+                 |    val S_AXI_ARVALID = Input(Bool())
+                 |    val S_AXI_ARREADY = Output(Bool())
+                 |
+                 |    // read data channel
+                 |    val S_AXI_RDATA  = Output(UInt(C_S_AXI_DATA_WIDTH.W))
+                 |    val S_AXI_RRESP  = Output(UInt(2.W))
+                 |    val S_AXI_RVALID = Output(Bool())
+                 |    val S_AXI_RREADY = Input(Bool())
+                 |
+                 |    ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4) axi4FullMasterST else st""}
+                 |  })
+                 |
+                 |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Default) s"val ${sharedMemName} = RegInit(VecInit(Seq.fill(ARRAY_REG_DEPTH)(0.U(ARRAY_REG_WIDTH.W))))" else ""}
+                 |  // reg for general purpose
+                 |  ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
+                 |  // reg for code pointer
+                 |  ${cpST(name)}
+                 |  // reg for stack pointer
+                 |  val SP = RegInit(0.U(STACK_POINTER_WIDTH.W))
+                 |  // reg for display pointer
+                 |  val DP = RegInit(0.U(64.W))
+                 |  // reg for index in memcopy
+                 |  val Idx = RegInit(0.U(16.W))
+                 |  // reg for recording how many rounds needed for the left bytes
+                 |  val LeftByteRounds = RegInit(0.U(8.W))
+                 |  val IdxLeftByteRounds = RegInit(0.U(8.W))
+                 |  ${if(anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
+                 |
+                 |  // registers for valid and ready
+                 |  val r_valid = RegInit(false.B)
+                 |  val r_ready = RegInit(0.U(2.W))
+                 |
+                 |  ${if(anvil.config.useIP) instanceDeclST else st""}
+                 |  ${if(anvil.config.cpMax > 0) insDeclST(LabelToFsmIP(), 1) else st""}
+                 |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4) axi4FullMasterConnectionST else st""}
+                 |
+                 |  init(this)
+                 |
+                 |  ${axi4LiteInterfaceST}
+                 |
+                 |}
+                 |
+                 |${(stateMachineST, "")}
+                 |object ${name} {
+                 |  def init(o: ${name}): Unit = {
+                 |    import o._
+                 |    ${if(anvil.config.useIP) instancePortFuncST else st""}
+                 |    ${if(anvil.config.useIP) instancePortCallST else st""}
+                 |  }
+                 |}
+                 |${(stateFunctionObjectST, "\n")}
+          """
+
+    }
+
+    @pure def procedureST(stateMachineST: ST, stateFunctionObjectST: ST): ST = {
+      //println(stateMachineST.render)
+      println(stateFunctionObjectST.render)
 
       return st"""
-          |import chisel3._
-          |import chisel3.util._
-          |import chisel3.experimental._
-          |
-          |${if(anvil.config.useIP) moduleDeclST else st""}
-          |${if(!anvil.config.useIP && anvil.config.cpMax > 0) findChiselModule(LabelToFsmIP()).get.moduleST else st""}
-          |${if(anvil.config.cpMax > 0) broadcastBufferDeclST else st""}
-          |${if(anvil.config.genVerilog) BUFGST else st""}
-          |
-          |import ${name}._
-          |class ${name} (val C_S_AXI_DATA_WIDTH: Int = ${if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) 64 else 32},
-          |               val C_S_AXI_ADDR_WIDTH: Int = ${if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) 8 else log2Up(anvil.config.memory)},
-          |               val C_M_AXI_ADDR_WIDTH: Int = 32,
-          |               val C_M_AXI_DATA_WIDTH: Int = 64,
-          |               val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = BigInt("00000000", 16),
-          |               val MEMORY_DEPTH: Int = ${anvil.config.memory},
-          |               val ARRAY_REG_WIDTH:    Int = 8,
-          |               val ARRAY_REG_DEPTH:    Int = ${anvil.config.memory},
-          |               ${if (!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
-          |               ${if (!anvil.config.splitTempSizes) s"val GENERAL_REG_DEPTH:   Int = ${maxRegisters.maxCount}," else ""}
-          |               val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize * 8},
-          |               val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize * 8}) extends Module {
-          |
-          |  val io = IO(new Bundle{
-          |    // write address channel
-          |    val S_AXI_AWADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
-          |    val S_AXI_AWPROT  = Input(UInt(3.W))
-          |    val S_AXI_AWVALID = Input(Bool())
-          |    val S_AXI_AWREADY = Output(Bool())
-          |
-          |    // write data channel
-          |    val S_AXI_WDATA  = Input(UInt(C_S_AXI_DATA_WIDTH.W))
-          |    val S_AXI_WSTRB  = Input(UInt((C_S_AXI_DATA_WIDTH/8).W))
-          |    val S_AXI_WVALID = Input(Bool())
-          |    val S_AXI_WREADY = Output(Bool())
-          |
-          |    // write response channel
-          |    val S_AXI_BRESP  = Output(UInt(2.W))
-          |    val S_AXI_BVALID = Output(Bool())
-          |    val S_AXI_BREADY = Input(Bool())
-          |
-          |    // read address channel
-          |    val S_AXI_ARADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
-          |    val S_AXI_ARPROT  = Input(UInt(3.W))
-          |    val S_AXI_ARVALID = Input(Bool())
-          |    val S_AXI_ARREADY = Output(Bool())
-          |
-          |    // read data channel
-          |    val S_AXI_RDATA  = Output(UInt(C_S_AXI_DATA_WIDTH.W))
-          |    val S_AXI_RRESP  = Output(UInt(2.W))
-          |    val S_AXI_RVALID = Output(Bool())
-          |    val S_AXI_RREADY = Input(Bool())
-          |
-          |    ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4) axi4FullMasterST else st""}
-          |  })
-          |
-          |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Default) s"val ${sharedMemName} = RegInit(VecInit(Seq.fill(ARRAY_REG_DEPTH)(0.U(ARRAY_REG_WIDTH.W))))" else ""}
-          |  // reg for general purpose
-          |  ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
-          |  ${if(anvil.config.tempGlobal) globalTempST else st""}
-          |  // reg for code pointer
-          |  ${cpST.render}
-          |  // reg for stack pointer
-          |  val SP = RegInit(0.U(STACK_POINTER_WIDTH.W))
-          |  // reg for display pointer
-          |  val DP = RegInit(0.U(64.W))
-          |  // reg for index in memcopy
-          |  val Idx = RegInit(0.U(16.W))
-          |  // reg for recording how many rounds needed for the left bytes
-          |  val LeftByteRounds = RegInit(0.U(8.W))
-          |  val IdxLeftByteRounds = RegInit(0.U(8.W))
-          |  ${if(anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
-          |
-          |  // registers for valid and ready
-          |  val r_valid = RegInit(false.B)
-          |  val r_ready = RegInit(0.U(2.W))
-          |  ${readyST.render}
-          |
-          |  ${if(anvil.config.useIP) instanceDeclST else st""}
-          |  ${if(anvil.config.cpMax > 0) insDeclST(LabelToFsmIP(), 1) else st""}
-          |  ${if(anvil.config.cpMax > 0) broadcastBufferInsST else st""}
-          |  ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4) axi4FullMasterConnectionST else st""}
-          |
-          |  init(this)
-          |
-          |  ${axi4LiteInterfaceST}
-          |
-          |  ${stateMachineObjectCallST}
-          |}
-          |
-          |${(stateMachineST, "")}
-          |object ${name} {
-          |  def init(o: ${name}): Unit = {
-          |    import o._
-          |    ${if(anvil.config.useIP) instancePortFuncST else st""}
-          |    ${if(anvil.config.cpMax > 0) insPortFuncST(LabelToFsmIP(), 1) else st""}
-          |    ${if(anvil.config.useIP) instancePortCallST else st""}
-          |    ${if(anvil.config.cpMax > 0) insPortCallST(LabelToFsmIP(), 1) else st""}
-          |  }
-          |}
-          |${(stateFunctionObjectST, "\n")}
-          """
+                 |import chisel3._
+                 |import chisel3.util._
+                 |import chisel3.experimental._
+                 |
+                 |${if(!anvil.config.useIP && anvil.config.cpMax > 0) findChiselModule(LabelToFsmIP()).get.moduleST else st""}
+                 |
+                 |import ${name}._
+                 |class ${name} (addrWidth: Int, dataWidth: Int, cpWidth: Int, idWidth: Int, depth: Int) extends Module {
+                 |
+                 |  val io = IO(new Bundle{
+                 |    val routeIn     = Flipped(Valid(new Packet(idWidth, cpWidth)))
+                 |    val routeOut    = Valid(new Packet(idWidth, cpWidth))
+                 |  })
+                 |
+                 |  ${globalTempST}
+                 |  ${cpST(name)}
+                 |  // reg for recording how many rounds needed for the left bytes
+                 |  val LeftByteRounds = RegInit(0.U(8.W))
+                 |  val IdxLeftByteRounds = RegInit(0.U(8.W))
+                 |  ${if (anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
+                 |
+                 |  val r_srcID      = RegInit(2.U(idWidth.W))
+                 |  val r_srcCP      = RegInit(0.U(cpWidth.W))
+                 |  val r_srcResAddr = Reg(UInt(addrWidth.W))
+                 |  val r_res        = Reg(UInt(dataWidth.W))
+                 |
+                 |  val r_routeIn        = RegInit(0.U.asTypeOf(new Packet(idWidth, cpWidth)))
+                 |  val r_routeIn_valid  = RegInit(false.B)
+                 |  val r_routeOut       = Reg(new Packet(idWidth, cpWidth))
+                 |  val r_routeOut_valid = RegInit(false.B)
+                 |
+                 |  r_routeIn         := io.routeIn.bits
+                 |  r_routeIn_valid   := io.routeIn.valid
+                 |  io.routeOut.bits  := r_routeOut
+                 |  io.routeOut.valid := r_routeOut_valid
+                 |
+                 |${(stateMachineST, "")}
+                 |
+                 |}
+                 |${(stateFunctionObjectST, "\n")}
+               """
     }
 
     val basicBlockST = processBasicBlock(name, o.body.asInstanceOf[AST.IR.Body.Basic].blocks, hwLog)
 
-    return procedureST(basicBlockST._1._1, basicBlockST._1._2, basicBlockST._2)
+    return procedureST(basicBlockST._1, basicBlockST._2)
   }
 
-  @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], hwLog: HwSynthesizer2.HwLog): ((ST, HashSMap[Z, Z]), ST) = {
+  @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], hwLog: HwSynthesizer2.HwLog): (ST, ST) = {
     for(b <- bs) {
       if(b.label > hwLog.maxNumLabel) {
         hwLog.maxNumLabel = b.label
@@ -2298,125 +2376,55 @@ import HwSynthesizer2._
     }
 
     val ipPortLogic = HwSynthesizer2.IpPortAssign(anvil, ipAlloc, ISZ[ST](), ipModules, InputMap.empty, ISZ[ST](), ISZ[ST]())
-    @pure def basicBlockST(grounds: HashSMap[Z, ST], functions: ISZ[ST]): ((ST, HashSMap[Z, Z]), ST) = {
-      if(anvil.config.cpMax <= 0) {
-        var stateSTs: ISZ[ST] = ISZ[ST]()
-        stateSTs = stateSTs :+
+    @pure def basicBlockST(grounds: HashSMap[Z, ST], functions: ISZ[ST]): (ST, ST) = {
+      var stateSTs: ISZ[ST] = ISZ[ST]()
+      stateSTs = stateSTs :+
+        st"""
+            |is(0.U) {
+            |  r_routeOut_valid := false.B
+            |  when(r_routeIn_valid) {
+            |      r_srcCP := r_routeIn.srcCP
+            |      r_srcID := r_routeIn.srcID
+            |      ${name}CP  := r_routeIn.dstCP
+            |  }
+            |}
+          """
+      for(pair <- grounds.entries) {
+        stateSTs = stateSTs :+ pair._2
+      }
+
+      var fmsSTs: ISZ[ST] = ISZ[ST]()
+
+      var objectStateMachineST: ISZ[ISZ[ST]] = ISZ[ISZ[ST]]()
+      objectStateMachineST = objectStateMachineST :+ ISZ[ST]()
+      for(i <- 0 until(stateSTs.size)) {
+        val idxStateMachine = i / 1024
+        if(idxStateMachine >= objectStateMachineST.size) {
+          objectStateMachineST = objectStateMachineST :+ ISZ[ST]()
+        }
+
+        val updatedST = objectStateMachineST(idxStateMachine) :+ stateSTs(i)
+        objectStateMachineST = objectStateMachineST(idxStateMachine ~> updatedST)
+      }
+
+      for(j <- 0 until(objectStateMachineST.size)) {
+        fmsSTs = fmsSTs :+
           st"""
-              |is(2.U) {
-              |  CP := Mux(r_valid, 3.U, CP)
+              |object StateMachine_0_${j} {
+              |  def stateMachine_0_${j}(o:${name}): Unit = {
+              |    import o._
+              |    switch(${name}CP) {
+              |      ${(objectStateMachineST(j), "\n")}
+              |    }
+              |  }
               |}
             """
-        for(pair <- grounds.entries) {
-          stateSTs = stateSTs :+ pair._2
-        }
-
-        var fmsSTs: ISZ[ST] = ISZ[ST]()
-        var stateMachineObjectIdxRange: HashSMap[Z, Z] = HashSMap.empty[Z, Z]
-        stateMachineObjectIdxRange = stateMachineObjectIdxRange + 0 ~> (stateSTs.size / 1024 + (if(stateSTs.size % 1024 != 0) 1 else 0))
-
-        var objectStateMachineST: ISZ[ISZ[ST]] = ISZ[ISZ[ST]]()
-        objectStateMachineST = objectStateMachineST :+ ISZ[ST]()
-        for(i <- 0 until(stateSTs.size)) {
-          val idxStateMachine = i / 1024
-          if(idxStateMachine >= objectStateMachineST.size) {
-            objectStateMachineST = objectStateMachineST :+ ISZ[ST]()
-          }
-
-          val updatedST = objectStateMachineST(idxStateMachine) :+ stateSTs(i)
-          objectStateMachineST = objectStateMachineST(idxStateMachine ~> updatedST)
-        }
-
-        for(j <- 0 until(objectStateMachineST.size)) {
-          fmsSTs = fmsSTs :+
-            st"""
-                |object StateMachine_0_${j} {
-                |  def stateMachine_0_${j}(o:${name}): Unit = {
-                |    import o._
-                |    switch(CP) {
-                |      ${(objectStateMachineST(j), "\n")}
-                |    }
-                |  }
-                |}
-              """
-        }
-
-        return (
-          (st"""${(fmsSTs, "\n")}""", stateMachineObjectIdxRange),
-          st"""${(functions, "")}"""
-        )
-      } else {
-        // split state machine
-        var stateSTs: ISZ[ISZ[ST]] = ISZ[ISZ[ST]]()
-        // for state machine 0
-        stateSTs = stateSTs :+ ISZ[ST]()
-        val initST = stateSTs(0) :+
-          st"""
-              |is(2.U) {
-              |  CP(0.U) := Mux(r_valid, 3.U, 2.U)
-              |}
-              """
-        stateSTs = stateSTs(0 ~> initST)
-
-        for(pair <- grounds.entries) {
-          val (label, blockST) = pair
-          val (cpIdx, stateIdx) = getCpIndex(label)
-          if(stateSTs.size <= cpIdx) {
-            stateSTs = stateSTs :+ ISZ[ST]()
-          }
-          val updatedBlock = stateSTs(cpIdx) :+ st"${blockST}"
-          stateSTs = stateSTs(cpIdx ~> updatedBlock)
-        }
-
-        for(i <- 0 until stateSTs.size) {
-          val lastBlock = stateSTs(i) :+
-            st"""
-                |is(${anvil.config.cpMax}.U) {
-                |  when(broadcastBuffer.io.out(${i}.U).valid & broadcastBuffer.io.out(${i}.U).bits.index === ${i}.U) {
-                |    CP(${i}.U) := broadcastBuffer.io.out(${i}.U).bits.state
-                |  }
-                |}
-              """
-          stateSTs = stateSTs(i ~> lastBlock)
-        }
-
-        var fmsSTs: ISZ[ST] = ISZ[ST]()
-        var stateMachineObjectIdxRange: HashSMap[Z, Z] = HashSMap.empty[Z, Z]
-        for(i <- 0 until stateSTs.size) {
-          stateMachineObjectIdxRange = stateMachineObjectIdxRange + i ~> (stateSTs(i).size / 1024 + (if(stateSTs(i).size % 1024 != 0) 1 else 0))
-
-          var objectStateMachineST: ISZ[ISZ[ST]] = ISZ[ISZ[ST]]()
-          objectStateMachineST = objectStateMachineST :+ ISZ[ST]()
-          for(j <- 0 until stateSTs(i).size) {
-            val idxStateMachine = j / 1024
-            if(idxStateMachine >= objectStateMachineST.size) {
-              objectStateMachineST = objectStateMachineST :+ ISZ[ST]()
-            }
-
-            val updatedST = objectStateMachineST(idxStateMachine) :+ stateSTs(i)(j)
-            objectStateMachineST = objectStateMachineST(idxStateMachine ~> updatedST)
-          }
-
-          for(j <- 0 until(objectStateMachineST.size)) {
-            fmsSTs = fmsSTs :+
-              st"""
-                  |object StateMachine_${i}_${j} {
-                  |  def stateMachine_${i}_${j}(o:${name}): Unit = {
-                  |    import o._
-                  |    switch(CP(${i}.U)) {
-                  |      ${(objectStateMachineST(j), "\n")}
-                  |    }
-                  |  }
-                  |}
-              """
-          }
-        }
-
-        return (
-          (st"""${(fmsSTs, "\n")}""", stateMachineObjectIdxRange),
-          st"""${(functions, "")}"""
-        )
       }
+
+      return (
+        st"""${(fmsSTs, "\n")}""",
+        st"""${(functions, "")}"""
+      )
     }
 
     @pure def groundST(b: AST.IR.BasicBlock, ground: ST, jump: ST): (ST, ST) = {
@@ -2429,7 +2437,7 @@ import HwSynthesizer2._
 
       val jumpST: ST = {
         if(hwLog.isIndexerInCurrentBlock() && !hwLog.isMemCpyInCurrentBlock()) {
-          val jST = processJumpIntrinsic(hwLog.stateBlock.get, ipPortLogic, hwLog)
+          val jST = processJumpIntrinsic(name, hwLog.stateBlock.get, ipPortLogic, hwLog)
           val indexerName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
           st"""
               |when(${indexerName}_${hwLog.activeIndexerIndex}.io.valid) {
@@ -2487,8 +2495,8 @@ import HwSynthesizer2._
       hwLog.currentLabel = b.label
 
       if(b.label != 0) {
-        val processedGroundST = processGround(b.grounds, ipPortLogic, hwLog)
-        var jump = processJumpIntrinsic(b, ipPortLogic, hwLog)
+        val processedGroundST = processGround(name, b.grounds, ipPortLogic, hwLog)
+        var jump = processJumpIntrinsic(name, b, ipPortLogic, hwLog)
         if(ipPortLogic.whenCondST.nonEmpty) {
           jump =
             st"""
@@ -2514,7 +2522,7 @@ import HwSynthesizer2._
     return basicBlockST(allGroundsST, allFunctionsST)
   }
 
-  @pure def processGround(gs: ISZ[AST.IR.Stmt.Ground], ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
+  @pure def processGround(name: String, gs: ISZ[AST.IR.Stmt.Ground], ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
     var groundST = ISZ[ST]()
 
     for(g <- gs) {
@@ -2523,7 +2531,7 @@ import HwSynthesizer2._
           groundST = groundST :+ processStmtAssign(g, ipPortLogic, hwLog)
         }
         case g: AST.IR.Stmt.Intrinsic => {
-          groundST = groundST :+ processStmtIntrinsic(g, ipPortLogic, hwLog)
+          groundST = groundST :+ processStmtIntrinsic(name, g, ipPortLogic, hwLog)
         }
         case _ => {
           halt(s"processGround unimplemented")
@@ -2540,7 +2548,7 @@ import HwSynthesizer2._
     return st"""${(groundST, "\n")}"""
   }
 
-  @pure def processJumpIntrinsic(b: AST.IR.BasicBlock, ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
+  @pure def processJumpIntrinsic(name: String, b: AST.IR.BasicBlock, ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
     var intrinsicST: ISZ[ST] = ISZ[ST]()
     val j = b.jump
 
@@ -2549,7 +2557,7 @@ import HwSynthesizer2._
       val curCpIdx = getCpIndex(hwLog.currentLabel)._1
       val (nextCpIdx, nextPosIdx) = getCpIndex(label)
       if(curCpIdx == nextCpIdx) {
-        sts = sts :+ st"CP(${curCpIdx}.U) := ${nextPosIdx}.U"
+        sts = sts :+ st"${name}CP(${curCpIdx}.U) := ${nextPosIdx}.U"
       } else {
         sts = sts :+
           st"""
@@ -2557,7 +2565,7 @@ import HwSynthesizer2._
               |broadcastBuffer.io.in(${curCpIdx}.U).bits.index := ${nextCpIdx}.U
               |broadcastBuffer.io.in(${curCpIdx}.U).bits.state := ${nextPosIdx}.U
             """
-        sts = sts :+ st"CP(${curCpIdx}.U) := ${anvil.config.cpMax}.U"
+        sts = sts :+ st"${name}CP(${curCpIdx}.U) := ${anvil.config.cpMax}.U"
       }
 
       return st"${(sts, "\n")}"
@@ -2568,7 +2576,7 @@ import HwSynthesizer2._
         val targetAddrST: ST = processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F, ipPortLogic, hwLog)
         if (intrinsic.isTemp) {
           if(anvil.config.cpMax <= 0) {
-            intrinsicST = intrinsicST :+ st"CP := ${targetAddrST}"
+            intrinsicST = intrinsicST :+ st"${name}CP := ${targetAddrST}"
           } else {
             var portSTs: ISZ[ST] = ISZ[ST]()
             val instanceName: String = getIpInstanceName(LabelToFsmIP()).get
@@ -2579,12 +2587,12 @@ import HwSynthesizer2._
               st"""
                   |when(${instanceName}.io.valid) {
                   |  when(${instanceName}.io.isSameCpIndex) {
-                  |    CP(${instanceName}.io.cpIndex) := ${instanceName}.io.stateIndex
+                  |    ${name}CP(${instanceName}.io.cpIndex) := ${instanceName}.io.stateIndex
                   |  } .otherwise {
                   |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).valid      := true.B
                   |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).bits.index := ${instanceName}.io.cpIndex
                   |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).bits.state := ${instanceName}.io.stateIndex
-                  |    CP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${anvil.config.cpMax}.U
+                  |    ${name}CP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${anvil.config.cpMax}.U
                   |  }
                   |}
                 """
@@ -2604,7 +2612,7 @@ import HwSynthesizer2._
 
           intrinsicST = intrinsicST :+
             st"""
-                |CP := Cat(
+                |${name}CP := Cat(
                 |  ${(returnAddrST, "\n")}
                 |)
             """
@@ -2614,7 +2622,7 @@ import HwSynthesizer2._
         if(anvil.config.cpMax <= 0) {
           intrinsicST = intrinsicST :+
             st"""
-                |CP := ${globalName(intrinsic.name)}
+                |${name}CP := ${globalName(intrinsic.name)}
               """
         } else {
           var portSTs: ISZ[ST] = ISZ[ST]()
@@ -2626,12 +2634,12 @@ import HwSynthesizer2._
             st"""
                 |when(${instanceName}.io.valid) {
                 |  when(${instanceName}.io.isSameCpIndex) {
-                |    CP(${instanceName}.io.cpIndex) := ${instanceName}.io.stateIndex
+                |    ${name}CP(${instanceName}.io.cpIndex) := ${instanceName}.io.stateIndex
                 |  } .otherwise {
                 |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).valid      := true.B
                 |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).bits.index := ${instanceName}.io.cpIndex
                 |    broadcastBuffer.io.in(${getCpIndex(hwLog.currentLabel)._1}).bits.state := ${instanceName}.io.stateIndex
-                |    CP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${anvil.config.cpMax}.U
+                |    ${name}CP(${getCpIndex(hwLog.currentLabel)._1}.U) := ${anvil.config.cpMax}.U
                 |  }
                 |}
                 """
@@ -2640,7 +2648,7 @@ import HwSynthesizer2._
       }
       case j: AST.IR.Jump.Goto => {
         if(anvil.config.cpMax <= 0) {
-          intrinsicST = intrinsicST :+ st"CP := ${j.label}.U"
+          intrinsicST = intrinsicST :+ st"${name}CP := ${j.label}.U"
         } else {
           intrinsicST = intrinsicST :+ jumpSplitCpST(j.label)
         }
@@ -2648,7 +2656,7 @@ import HwSynthesizer2._
       case j: AST.IR.Jump.If => {
         val cond = processExpr(j.cond, F, ipPortLogic, hwLog)
         if(anvil.config.cpMax <= 0) {
-          intrinsicST = intrinsicST :+ st"CP := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
+          intrinsicST = intrinsicST :+ st"${name}CP := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
         } else {
           val thenST: ST = jumpSplitCpST(j.thenLabel)
           val elseST: ST = jumpSplitCpST(j.elseLabel)
@@ -2672,7 +2680,7 @@ import HwSynthesizer2._
         hwLog.tmpWireCount = hwLog.tmpWireCount + 1
 
         val defaultStatementST: ST = j.defaultLabelOpt match {
-          case Some(x) => if(anvil.config.cpMax <= 0) st"CP := ${x}.U" else jumpSplitCpST(x)
+          case Some(x) => if(anvil.config.cpMax <= 0) st"${name}CP := ${x}.U" else jumpSplitCpST(x)
           case None() => st""
         }
 
@@ -2681,7 +2689,7 @@ import HwSynthesizer2._
           isStatementST = isStatementST :+
             st"""
                 |is(${processExpr(i.value, F, ipPortLogic, hwLog).render}) {
-                |  ${if(anvil.config.cpMax <=0) st"CP := ${i.label}.U" else jumpSplitCpST(i.label)}
+                |  ${if(anvil.config.cpMax <=0) st"${name}CP := ${i.label}.U" else jumpSplitCpST(i.label)}
                 |}
               """
         }
@@ -2742,7 +2750,7 @@ import HwSynthesizer2._
     return result
   }
 
-  @pure def processStmtIntrinsic(i: AST.IR.Stmt.Intrinsic, ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
+  @pure def processStmtIntrinsic(name: String, i: AST.IR.Stmt.Intrinsic, ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
     var intrinsicST = st""
 
     i match {
@@ -2881,7 +2889,7 @@ import HwSynthesizer2._
           }
 
           // get the jump statement ST
-          val jumpST = processJumpIntrinsic(hwLog.stateBlock.get, ipPortLogic, hwLog)
+          val jumpST = processJumpIntrinsic(name, hwLog.stateBlock.get, ipPortLogic, hwLog)
           val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
           val indexerReadyDisableStr: String = if (hwLog.isIndexerInCurrentBlock()) s"${indexerInstanceName}_${hwLog.activeIndexerIndex}.io.ready := false.B" else ""
           val indexerValidStr: String = if (hwLog.isIndexerInCurrentBlock()) s"when(${indexerInstanceName}_${hwLog.activeIndexerIndex}.io.valid) {indexerValid := true.B; ${indexerReadyDisableStr}}" else ""
