@@ -26,6 +26,7 @@
 package org.sireum.anvil
 
 import org.sireum._
+import org.sireum.anvil._
 import org.sireum.anvil.Anvil.VarInfo
 import org.sireum.anvil.Util.{AnvilIRPrinter, constructLocalId, indexing, isTempGlobal, spType}
 import org.sireum.lang.ast.{IR, Typed}
@@ -36,56 +37,2188 @@ import org.sireum.lang.symbol.TypeInfo
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Position
 
+@sig trait ArbIpType {}
+@datatype class ArbBinaryIP(t: AST.IR.Exp.Binary.Op.Type, signed: B) extends ArbIpType
+@datatype class ArbIntrinsicIP(t: AST.IR.Exp.Intrinsic.Type) extends ArbIpType
+@datatype class ArbBlockMemoryIP() extends ArbIpType
+
+@datatype trait ArbIpModule {
+  @strictpure def arbIpId: Z
+  @strictpure def signed: B
+  @strictpure def moduleST: ST
+  @strictpure def width: Z
+  // 1st element of [String, (Z, String)] -> port name
+  // 1st element of (B, String) -> whether the current signal is control signal
+  // 2nd element of (B, String) -> the type of the current port
+  @strictpure def portList: HashSMap[String, (B, String)]
+  @strictpure def expression: ArbIpType
+  @strictpure def moduleName: String
+  @strictpure def instanceName: String
+}
+
+object ArbIpModule {
+  @datatype class StateValue(val state: Z, val value: String) {}
+  @datatype class Input(val stateValue: StateValue, val portValueType: String) {}
+}
+
+@record @unclonable class ArbInputMap(var ipMap: HashSMap[ArbIpType, HashSMap[String, anvil.ArbIpModule.Input]]) {}
+
+object ArbInputMap {
+  @strictpure def empty: ArbInputMap = ArbInputMap(HashSMap ++ ISZ[(ArbIpType, HashSMap[String, ArbIpModule.Input])](
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.And, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.And, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, F) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T) ~> HashSMap.empty,
+    ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F) ~> HashSMap.empty,
+    ArbIntrinsicIP(HwSynthesizer.defaultIndexing) ~> HashSMap.empty,
+    ArbBlockMemoryIP() ~> HashSMap.empty
+  ))
+}
+
+@datatype class ArbAdder(val signedPort: B,
+                         val moduleDeclarationName: String,
+                         val moduleInstanceName: String,
+                         val widthOfPort: Z,
+                         val exp: ArbIpType,
+                         val nonXilinxIP: B,
+                         val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    if(nonXilinxIP)
+      st"""
+          |class ${moduleName}(val width: Int = 64) extends Module {
+          |    val io = IO(new Bundle{
+          |        val a = Input(${portType}(width.W))
+          |        val b = Input(${portType}(width.W))
+          |        val start = Input(Bool())
+          |        val out = Output(${portType}(width.W))
+          |        val valid = Output(Bool())
+          |    })
+          |
+          |    val state = RegInit(0.U(2.W))
+          |    val regA = Reg(${portType}(width.W))
+          |    val regB = Reg(${portType}(width.W))
+          |    val result = Reg(${portType}(width.W))
+          |
+          |    io.valid := Mux(state === 2.U, true.B, false.B)
+          |    io.out := Mux(state === 2.U, result, 0.${if(signedPort) "S" else "U"})
+          |    switch(state) {
+          |        is(0.U) {
+          |            state := Mux(io.start, 1.U, 0.U)
+          |            regA := Mux(io.start, io.a, regA)
+          |            regB := Mux(io.start, io.b, regB)
+          |        }
+          |        is(1.U) {
+          |            result := regA + regB
+          |            state := 2.U
+          |        }
+          |        is(2.U) {
+          |            state := 0.U
+          |        }
+          |    }
+          |}
+        """
+    else
+      st"""
+          |class ${moduleName}(val width: Int = 64) extends Module {
+          |    val io = IO(new Bundle{
+          |        val a = Input(${portType}(width.W))
+          |        val b = Input(${portType}(width.W))
+          |        val start = Input(Bool())
+          |        val out = Output(${portType}(width.W))
+          |        val valid = Output(Bool())
+          |    })
+          |  val adder = Module(new ${if (signedPort) "XilinxAdderSigned64Wrapper" else "XilinxAdderUnsigned64Wrapper"})
+          |  adder.io.clk := clock.asBool
+          |  adder.io.A := RegNext(io.a)
+          |  adder.io.B := RegNext(io.b)
+          |  adder.io.ce := RegNext(io.start)
+          |  io.valid := RegNext(adder.io.valid)
+          |  io.out := RegNext(adder.io.S)
+          |}
+        """
+  }
+}
+
+@datatype class ArbSubtractor(val signedPort: B,
+                              val moduleDeclarationName: String,
+                              val moduleInstanceName: String,
+                              val widthOfPort: Z,
+                              val exp: ArbIpType,
+                              val nonXilinxIP: B,
+                              val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    if(nonXilinxIP)
+      st"""
+          |class ${moduleName}(val width: Int = 64) extends Module {
+          |    val io = IO(new Bundle{
+          |        val a = Input(${portType}(width.W))
+          |        val b = Input(${portType}(width.W))
+          |        val start = Input(Bool())
+          |        val out = Output(${portType}(width.W))
+          |        val valid = Output(Bool())
+          |    })
+          |    val state = RegInit(0.U(2.W))
+          |    val regA = Reg(${portType}(width.W))
+          |    val regB = Reg(${portType}(width.W))
+          |    val result = Reg(${portType}(width.W))
+          |
+          |    io.valid := Mux(state === 2.U, true.B, false.B)
+          |    io.out := Mux(state === 2.U, result, 0.${if (signedPort) "S" else "U"})
+          |    switch(state) {
+          |        is(0.U) {
+          |            state := Mux(io.start, 1.U, 0.U)
+          |            regA := Mux(io.start, io.a, regA)
+          |            regB := Mux(io.start, io.b, regB)
+          |        }
+          |        is(1.U) {
+          |            result := regA - regB
+          |            state := 2.U
+          |        }
+          |        is(2.U) {
+          |            state := 0.U
+          |        }
+          |    }
+          |}
+        """
+    else
+      st"""
+          |class ${moduleName}(val width: Int = 64) extends Module {
+          |    val io = IO(new Bundle{
+          |        val a = Input(${portType}(width.W))
+          |        val b = Input(${portType}(width.W))
+          |        val start = Input(Bool())
+          |        val out = Output(${portType}(width.W))
+          |        val valid = Output(Bool())
+          |    })
+          |  val subtractor = Module(new ${if (signedPort) "XilinxSubtractorSigned64Wrapper" else "XilinxSubtractorUnsigned64Wrapper"})
+          |  subtractor.io.clk := clock.asBool
+          |  subtractor.io.A   := RegNext(io.a)
+          |  subtractor.io.B   := RegNext(io.b)
+          |  subtractor.io.ce  := RegNext(io.start)
+          |  io.valid := RegNext(subtractor.io.valid)
+          |  io.out   := RegNext(subtractor.io.S)
+          |}
+        """
+  }
+}
+
+@datatype class ArbIndexer(val signedPort: B,
+                           val moduleDeclarationName: String,
+                           val moduleInstanceName: String,
+                           val widthOfPort: Z,
+                           val exp: ArbIpType,
+                           val nonXilinxIP: B,
+                           val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "baseOffset" ~> (F, "UInt".string) +
+      "dataOffset" ~> (F, "UInt".string) +
+      "index" ~> (F, "UInt".string) +
+      "elementSize" ~> (F, "UInt".string) +
+      "mask" ~> (F, "UInt".string) +
+      "ready" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure def indexAdderST: ST = {
+    st"""
+        |class IndexAdder(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(UInt(width.W))
+        |        val b = Input(UInt(width.W))
+        |        val start = Input(Bool())
+        |        val out = Output(UInt(width.W))
+        |        val valid = Output(Bool())
+        |    })
+        |
+        |    val add = Module(new XilinxIndexAdderWrapper)
+        |    add.io.clk := clock.asBool
+        |    add.io.ce  := io.start
+        |    add.io.A   := io.a
+        |    add.io.B   := io.b
+        |    io.valid   := add.io.valid
+        |    io.out     := add.io.S
+        |}
+      """
+  }
+  @strictpure def indexMultiplierST: ST = {
+    st"""
+        |class IndexMultiplier(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a     = Input(UInt(width.W))
+        |        val b     = Input(UInt(width.W))
+        |        val start = Input(Bool())
+        |        val out   = Output(UInt(width.W))
+        |        val valid = Output(Bool())
+        |    })
+        |
+        |    val mult = Module(new XilinxIndexMultiplierWrapper)
+        |    mult.io.clk := clock.asBool
+        |    mult.io.ce  := io.start
+        |    mult.io.A   := io.a
+        |    mult.io.B   := io.b
+        |    io.valid    := mult.io.valid
+        |    io.out      := mult.io.P
+        |}
+      """
+  }
+  @strictpure override def moduleST: ST = {
+    if(nonXilinxIP)
+      st"""
+          |class Indexer(val width: Int = 16) extends Module {
+          |    val io = IO(new Bundle{
+          |        val baseOffset = Input(UInt(width.W))
+          |        val dataOffset = Input(UInt(width.W))
+          |        val index = Input(UInt(width.W))
+          |        val elementSize = Input(UInt(width.W))
+          |        val mask = Input(UInt(width.W))
+          |        val ready = Input(Bool())
+          |        val valid = Output(Bool())
+          |        val out = Output(UInt(width.W))
+          |    })
+          |
+          |    val stateReg = RegInit(0.U(2.W))
+          |    switch(stateReg) {
+          |        is(0.U) {
+          |            stateReg := Mux(io.ready, 1.U, 0.U)
+          |        }
+          |        is(1.U) {
+          |            stateReg := 2.U
+          |        }
+          |        is(2.U) {
+          |            stateReg := 3.U
+          |        }
+          |        is(3.U) {
+          |            stateReg := Mux(!io.ready, 0.U, 3.U)
+          |        }
+          |    }
+          |
+          |    io.valid := Mux(stateReg === 3.U, true.B, false.B)
+          |
+          |    val regBaseAddr = RegNext(io.baseOffset + io.dataOffset)
+          |
+          |    val regIndex = RegNext(io.index)
+          |    val regMult = RegNext(regIndex * io.elementSize)
+          |
+          |    io.out := RegNext(regBaseAddr + (regMult & io.mask))
+          |}
+        """
+    else
+      st"""
+          |${indexAdderST}
+          |${indexMultiplierST}
+          |class Indexer(val width: Int = 16) extends Module {
+          |    val io = IO(new Bundle{
+          |        val baseOffset = Input(UInt(width.W))
+          |        val dataOffset = Input(UInt(width.W))
+          |        val index = Input(UInt(width.W))
+          |        val elementSize = Input(UInt(width.W))
+          |        val mask = Input(UInt(width.W))
+          |        val ready = Input(Bool())
+          |        val valid = Output(Bool())
+          |        val out = Output(UInt(width.W))
+          |    })
+          |
+          |
+          |    val sIdle :: sAdd1 :: sMult :: sAdd2 :: sEnd :: Nil = Enum(5)
+          |    val stateReg        = RegInit(sIdle)
+          |    val regBaseAddr     = Reg(UInt(width.W))
+          |    val regIndex        = Reg(UInt(width.W))
+          |    val regElementSize  = Reg(UInt(width.W))
+          |    val regMult         = Reg(UInt(width.W))
+          |    val regMask         = Reg(UInt(width.W))
+          |    val result          = Reg(UInt(width.W))
+          |
+          |    val adder           = Module(new IndexAdder(width))
+          |    val multiplier      = Module(new IndexMultiplier(width))
+          |
+          |    adder.io.a          := 0.U
+          |    adder.io.b          := 0.U
+          |    adder.io.start      := false.B
+          |    multiplier.io.a     := 0.U
+          |    multiplier.io.b     := 0.U
+          |    multiplier.io.start := false.B
+          |
+          |    switch(stateReg) {
+          |        is(sIdle) {
+          |            stateReg       := Mux(io.ready, sAdd1, sIdle)
+          |
+          |            regIndex       := io.index
+          |            regElementSize := io.elementSize
+          |            regMask        := io.mask
+          |        }
+          |        is(sAdd1) {
+          |            adder.io.a     := io.baseOffset
+          |            adder.io.b     := io.dataOffset
+          |            adder.io.start := true.B
+          |
+          |            when(adder.io.valid) {
+          |                adder.io.start      := false.B
+          |
+          |                stateReg            := sMult
+          |                regBaseAddr         := adder.io.out
+          |            }
+          |        }
+          |        is(sMult) {
+          |            multiplier.io.a     := regIndex
+          |            multiplier.io.b     := regElementSize
+          |            multiplier.io.start := true.B
+          |
+          |            when(multiplier.io.valid) {
+          |                multiplier.io.start := false.B
+          |                regMult             := multiplier.io.out & regMask
+          |                stateReg            := sAdd2
+          |            }
+          |        }
+          |        is(sAdd2) {
+          |            adder.io.a     := regBaseAddr
+          |            adder.io.b     := regMult
+          |            adder.io.start := true.B
+          |
+          |            when(adder.io.valid) {
+          |              adder.io.start := false.B
+          |              result         := adder.io.out
+          |              stateReg       := sEnd
+          |            }
+          |        }
+          |        is(sEnd) {
+          |            stateReg := sIdle
+          |        }
+          |    }
+          |
+          |    io.out   := Mux(stateReg === sEnd, result, 0.U)
+          |    io.valid := Mux(stateReg === sEnd, true.B, false.B)
+          |}
+        """
+  }
+}
+
+@datatype class ArbAnd(val signedPort: B,
+                       val moduleDeclarationName: String,
+                       val moduleInstanceName: String,
+                       val widthOfPort: Z,
+                       val exp: ArbIpType,
+                       val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(${portType}(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(${portType}(width.W))
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(io.a & io.b)
+        |}
+      """
+  }
+}
+
+@datatype class ArbOr(val signedPort: B,
+                      val moduleDeclarationName: String,
+                      val moduleInstanceName: String,
+                      val widthOfPort: Z,
+                      val exp: ArbIpType,
+                      val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(${portType}(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(${portType}(width.W))
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(io.a | io.b)
+        |}
+      """
+  }
+}
+
+@datatype class ArbXor(val signedPort: B,
+                       val moduleDeclarationName: String,
+                       val moduleInstanceName: String,
+                       val widthOfPort: Z,
+                       val exp: ArbIpType,
+                       val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(${portType}(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(${portType}(width.W))
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(io.a ^ io.b)
+        |}
+      """
+  }
+}
+
+@datatype class ArbEq(val signedPort: B,
+                      val moduleDeclarationName: String,
+                      val moduleInstanceName: String,
+                      val widthOfPort: Z,
+                      val exp: ArbIpType,
+                      val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(${portType}(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(Bool())
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(io.a === io.b)
+        |}
+      """
+  }
+}
+
+@datatype class ArbNe(val signedPort: B,
+                      val moduleDeclarationName: String,
+                      val moduleInstanceName: String,
+                      val widthOfPort: Z,
+                      val exp: ArbIpType,
+                      val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(${portType}(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(Bool())
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(io.a =/= io.b)
+        |}
+      """
+  }
+}
+
+@datatype class ArbGe(val signedPort: B,
+                      val moduleDeclarationName: String,
+                      val moduleInstanceName: String,
+                      val widthOfPort: Z,
+                      val exp: ArbIpType,
+                      val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(${portType}(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(Bool())
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(io.a >= io.b)
+        |}
+      """
+  }
+}
+
+@datatype class ArbGt(val signedPort: B,
+                      val moduleDeclarationName: String,
+                      val moduleInstanceName: String,
+                      val widthOfPort: Z,
+                      val exp: ArbIpType,
+                      val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(${portType}(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(Bool())
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(io.a > io.b)
+        |}
+      """
+  }
+}
+
+@datatype class ArbLe(val signedPort: B,
+                      val moduleDeclarationName: String,
+                      val moduleInstanceName: String,
+                      val widthOfPort: Z,
+                      val exp: ArbIpType,
+                      val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(${portType}(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(Bool())
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(io.a <= io.b)
+        |}
+      """
+  }
+}
+
+@datatype class ArbLt(val signedPort: B,
+                      val moduleDeclarationName: String,
+                      val moduleInstanceName: String,
+                      val widthOfPort: Z,
+                      val exp: ArbIpType,
+                      val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(${portType}(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(Bool())
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(io.a < io.b)
+        |}
+      """
+  }
+}
+
+@datatype class ArbShr(val signedPort: B,
+                       val moduleDeclarationName: String,
+                       val moduleInstanceName: String,
+                       val widthOfPort: Z,
+                       val exp: ArbIpType,
+                       val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, "UInt".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(UInt(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(${portType}(width.W))
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(Mux(io.b > 64.U, ${if(signed) "io.a >> 64.U" else "0.U"}, io.a >> io.b(6,0)))
+        |}
+      """
+  }
+}
+
+@datatype class ArbShl(val signedPort: B,
+                       val moduleDeclarationName: String,
+                       val moduleInstanceName: String,
+                       val widthOfPort: Z,
+                       val exp: ArbIpType,
+                       val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, "UInt".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(UInt(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(${portType}(width.W))
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(Mux(io.b > 64.U, ${if(signed) "0.S" else "0.U"}, io.a << io.b(6,0)))
+        |}
+      """
+  }
+}
+
+@datatype class ArbUshr(val signedPort: B,
+                        val moduleDeclarationName: String,
+                        val moduleInstanceName: String,
+                        val widthOfPort: Z,
+                        val exp: ArbIpType,
+                        val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, "UInt".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(val width: Int = 64) extends Module {
+        |    val io = IO(new Bundle{
+        |        val a = Input(${portType}(width.W))
+        |        val b = Input(UInt(width.W))
+        |        val start = Input(Bool())
+        |        val valid = Output(Bool())
+        |        val out = Output(${portType}(width.W))
+        |    })
+        |
+        |    io.valid := RegNext(io.start)
+        |    io.out := RegNext(Mux(io.b > 64.U, ${if(signed) "0.S" else "0.U"}, io.a${if(signed) ".asUInt" else ""} >> io.b(6,0))${if(signed) ".asSInt" else ""})
+        |}
+      """
+  }
+}
+
+@datatype class ArbMultiplier(val signedPort: B,
+                              val moduleDeclarationName: String,
+                              val moduleInstanceName: String,
+                              val widthOfPort: Z,
+                              val exp: ArbIpType,
+                              val nonXilinxIP: B,
+                              val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    if(nonXilinxIP)
+      st"""
+          |class ${moduleName}(val width: Int = 64) extends Module {
+          |    val io = IO(new Bundle{
+          |        val a = Input(${portType}(width.W))
+          |        val b = Input(${portType}(width.W))
+          |        val start = Input(Bool())
+          |        val out = Output(${portType}(width.W))
+          |        val valid = Output(Bool())
+          |    })
+          |
+          |    io.out := io.a * io.b
+          |    io.valid := RegNext(RegNext(true.B))
+          |}
+        """
+    else
+      st"""
+          |class ${moduleName}(val width: Int = 64) extends Module {
+          |  val io = IO(new Bundle {
+          |    val a = Input(${portType}(width.W))
+          |    val b = Input(${portType}(width.W))
+          |    val start = Input(Bool())
+          |    val out = Output(${portType}(width.W))
+          |    val valid = Output(Bool())
+          |  })
+          |  val div = Module(new ${if (signedPort) "XilinxMultiplierSigned64Wrapper" else "XilinxMultiplierUnsigned64Wrapper"})
+          |  div.io.clk := clock.asBool
+          |  div.io.a := io.a
+          |  div.io.b := io.b
+          |  div.io.ce := io.start
+          |  io.valid := div.io.valid
+          |  io.out := div.io.p
+          |}
+        """
+  }
+}
+
+@datatype class ArbDivision(val signedPort: B,
+                            val moduleDeclarationName: String,
+                            val moduleInstanceName: String,
+                            val widthOfPort: Z,
+                            val exp: ArbIpType,
+                            val nonXilinxIP: B,
+                            val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    if(nonXilinxIP)
+      st"""
+          |class ${moduleName}(val width: Int = 64) extends Module {
+          |  val io = IO(new Bundle {
+          |    val a = Input(${portType}(width.W))
+          |    val b = Input(${portType}(width.W))
+          |    val start = Input(Bool())
+          |    val valid = Output(Bool())
+          |    val quotient = Output(${portType}(width.W))
+          |    val remainder = Output(${portType}(width.W))
+          |  })
+          |
+          |  val a_neg = io.a(width-1)
+          |  val b_neg = io.b(width-1)
+          |  val a_abs = Mux(a_neg, -io.a, io.a).asUInt
+          |  val b_abs = Mux(b_neg, -io.b, io.b).asUInt
+          |
+          |  val dividend = RegInit(0.U(width.W))
+          |  val divisor = RegInit(0.U(width.W))
+          |  val quotient = RegInit(0.U(width.W))
+          |  val remainder = RegInit(0.U(width.W))
+          |  val count = RegInit((width - 1).U((1+log2Ceil(width)).W))
+          |  val busy = RegInit(false.B)
+          |
+          |  when(io.start && !busy) {
+          |    dividend := a_abs
+          |    divisor := b_abs
+          |    quotient := 0.U
+          |    remainder := 0.U
+          |    count := width.U
+          |    busy := true.B
+          |  } .elsewhen(busy) {
+          |    when(count === 0.U) {
+          |      count := width.U
+          |      busy := false.B
+          |    } .otherwise {
+          |      val shifted = remainder << 1 | (dividend >> (width - 1))
+          |      remainder := shifted
+          |
+          |      when (shifted >= divisor) {
+          |        remainder := shifted - divisor
+          |        quotient := (quotient << 1) | 1.U
+          |      } .otherwise {
+          |        quotient := quotient << 1
+          |      }
+          |
+          |      dividend := dividend << 1
+          |      count := count - 1.U
+          |    }
+          |  }
+          |
+          |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient)${if(signedPort) ".asSInt" else ""}
+          |  io.remainder := Mux(a_neg, -remainder, remainder)${if(signedPort) ".asSInt" else ""}
+          |  io.valid := count === 0.U
+          |}
+      """
+    else
+      st"""
+          |class ${moduleName}(val width: Int = 64) extends Module {
+          |  val io = IO(new Bundle {
+          |    val a = Input(${portType}(width.W))
+          |    val b = Input(${portType}(width.W))
+          |    val start = Input(Bool())
+          |    val valid = Output(Bool())
+          |    val quotient = Output(${portType}(width.W))
+          |    val remainder = Output(${portType}(width.W))
+          |  })
+          |  val div = Module(new ${if (signedPort) "XilinxDividerSigned64Wrapper" else "XilinxDividerUnsigned64Wrapper"})
+          |  div.io.clock := clock.asBool
+          |  div.io.resetn := !reset.asBool
+          |  div.io.a := io.a
+          |  div.io.b := io.b
+          |  div.io.start := io.start
+          |  io.valid := div.io.valid
+          |  io.quotient := div.io.quotient
+          |  io.remainder := div.io.remainder
+          |}
+        """
+  }
+}
+
+@datatype class ArbRemainder(val signedPort: B,
+                             val moduleDeclarationName: String,
+                             val moduleInstanceName: String,
+                             val widthOfPort: Z,
+                             val exp: ArbIpType,
+                             val nonXilinxIP: B,
+                             val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    if(nonXilinxIP)
+      st"""
+          |class ${moduleName}(val width: Int = 64) extends Module {
+          |  val io = IO(new Bundle {
+          |    val a = Input(${portType}(width.W))
+          |    val b = Input(${portType}(width.W))
+          |    val start = Input(Bool())
+          |    val valid = Output(Bool())
+          |    val quotient = Output(${portType}(width.W))
+          |    val remainder = Output(${portType}(width.W))
+          |  })
+          |
+          |  val a_neg = io.a(width-1)
+          |  val b_neg = io.b(width-1)
+          |  val a_abs = Mux(a_neg, -io.a, io.a).asUInt
+          |  val b_abs = Mux(b_neg, -io.b, io.b).asUInt
+          |
+          |  val dividend = RegInit(0.U(width.W))
+          |  val divisor = RegInit(0.U(width.W))
+          |  val quotient = RegInit(0.U(width.W))
+          |  val remainder = RegInit(0.U(width.W))
+          |  val count = RegInit((width - 1).U((1+log2Ceil(width)).W))
+          |  val busy = RegInit(false.B)
+          |
+          |  when(io.start && !busy) {
+          |    dividend := a_abs
+          |    divisor := b_abs
+          |    quotient := 0.U
+          |    remainder := 0.U
+          |    count := width.U
+          |    busy := true.B
+          |  } .elsewhen(busy) {
+          |    when(count === 0.U) {
+          |      count := width.U
+          |      busy := false.B
+          |    } .otherwise {
+          |      val shifted = remainder << 1 | (dividend >> (width - 1))
+          |      remainder := shifted
+          |
+          |      when (shifted >= divisor) {
+          |        remainder := shifted - divisor
+          |        quotient := (quotient << 1) | 1.U
+          |      } .otherwise {
+          |        quotient := quotient << 1
+          |      }
+          |
+          |      dividend := dividend << 1
+          |      count := count - 1.U
+          |    }
+          |  }
+          |
+          |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient)${if(signedPort) ".asSInt" else ""}
+          |  io.remainder := Mux(a_neg, -remainder, remainder)${if(signedPort) ".asSInt" else ""}
+          |  io.valid := count === 0.U
+          |}
+      """
+    else
+      st"""
+          |class ${moduleName}(val width: Int = 64) extends Module {
+          |  val io = IO(new Bundle {
+          |    val a = Input(${portType}(width.W))
+          |    val b = Input(${portType}(width.W))
+          |    val start = Input(Bool())
+          |    val valid = Output(Bool())
+          |    val quotient = Output(${portType}(width.W))
+          |    val remainder = Output(${portType}(width.W))
+          |  })
+          |  val div = Module(new ${if (signedPort) "XilinxDividerSigned64Wrapper" else "XilinxDividerUnsigned64Wrapper"})
+          |  div.io.clock := clock.asBool
+          |  div.io.resetn := !reset.asBool
+          |  div.io.a := io.a
+          |  div.io.b := io.b
+          |  div.io.start := io.start
+          |  io.valid := div.io.valid
+          |  io.quotient := div.io.quotient
+          |  io.remainder := div.io.remainder
+          |}
+        """
+  }
+}
+
+@datatype class ArbBlockMemory(val signedPort: B,
+                               val moduleDeclarationName: String,
+                               val moduleInstanceName: String,
+                               val widthOfBRAM: Z,
+                               val depthOfBRAM: Z,
+                               val exp: ArbIpType,
+                               val memoryType: Anvil.Config.MemoryAccess.Type,
+                               val genVerilog: B,
+                               val erase: B,
+                               val aligned: B,
+                               val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfBRAM
+  @strictpure def depth: Z = depthOfBRAM
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    if(!aligned)
+      HashSMap.empty[String, (B, String)] +
+        "mode" ~> (F, "UInt".string) +
+        "readAddr" ~> (F, "UInt".string) +
+        "readOffset" ~> (F, "UInt".string) +
+        "readLen" ~> (F, "UInt".string) +
+        "writeAddr" ~> (F, "UInt".string) +
+        "writeOffset" ~> (F, "UInt".string) +
+        "writeLen" ~> (F, "UInt".string) +
+        "writeData" ~> (F, "UInt".string) +
+        "dmaSrcAddr" ~> (F, "UInt".string) +
+        "dmaDstAddr" ~> (F, "UInt".string) +
+        "dmaDstOffset" ~> (F, "UInt".string) +
+        "dmaSrcLen" ~> (F, "UInt".string)+
+        "dmaDstLen" ~> (F, "UInt".string)
+    else
+      HashSMap.empty[String, (B, String)] +
+        "mode" ~> (F, "UInt".string) +
+        "readAddr" ~> (F, "UInt".string) +
+        "writeAddr" ~> (F, "UInt".string) +
+        "writeData" ~> (F, "UInt".string) +
+        "dmaSrcAddr" ~> (F, "UInt".string) +
+        "dmaDstAddr" ~> (F, "UInt".string) +
+        "dmaSrcLen" ~> (F, "UInt".string) +
+        "dmaDstLen" ~> (F, "UInt".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure def bramIpST: ST = {
+    st"""
+        |class BRAMIP (val depth: Int = 1024, val width: Int = 8) extends Module {
+        |    val io = IO(new Bundle{
+        |        val ena = Input(Bool())
+        |        val wea = Input(Bool())
+        |        val addra = Input(UInt(log2Ceil(depth).W))
+        |        val dina = Input(UInt(width.W))
+        |        val douta = Output(UInt(width.W))
+        |
+        |        val enb = Input(Bool())
+        |        val web = Input(Bool())
+        |        val addrb = Input(UInt(log2Ceil(depth).W))
+        |        val dinb = Input(UInt(width.W))
+        |        val doutb = Output(UInt(width.W))
+        |    })
+        |
+        |    val mem = SyncReadMem(depth, UInt(width.W))
+        |
+        |    io.douta := 0.U
+        |    io.doutb := 0.U
+        |
+        |    when(io.ena) {
+        |      when(io.wea) {
+        |        mem.write(io.addra, io.dina)
+        |      } .otherwise {
+        |        io.douta := mem.read(io.addra)
+        |      }
+        |    }
+        |
+        |    when(io.enb) {
+        |      when(io.web) {
+        |        mem.write(io.addrb, io.dinb)
+        |      } .otherwise {
+        |        io.doutb := mem.read(io.addrb)
+        |      }
+        |    }
+        |}
+      """
+  }
+  @pure override def moduleST: ST = {
+    val bramInsST: ST =
+      if(!genVerilog) st"val bram = Module(new BRAMIP(${depthOfBRAM}, 8))"
+      else
+        st"""
+            |val bram = Module(new XilinxBRAMWrapper)
+            |bram.io.clk := clock.asBool
+          """
+    val dmaZeroOutST: ST =
+      if(erase)
+        st"""
+            |when((r_dmaDstCount >= io.dmaDstLen) & (r_dmaSrcCount >= io.dmaSrcLen)) {
+            |  r_dmaState := sDmaDone
+            |}
+          """
+      else
+        st"""
+            |when(r_dmaSrcCount >= io.dmaSrcLen) {
+            |  r_dmaState := sDmaDone
+            |}
+          """
+
+    val bramModuleST: ST =
+      st"""
+          |${if(!genVerilog) bramIpST else st""}
+          |class ${moduleName}(val depth: Int = ${depthOfBRAM}, val width: Int = ${widthOfBRAM}) extends Module {
+          |  val io = IO(new Bundle {
+          |    val mode = Input(UInt(2.W)) // 00 -> disable, 01 -> read, 10 -> write, 11 -> DMA
+          |
+          |    // Byte level read/write port
+          |    val readAddr    = Input(UInt(log2Ceil(depth).W))
+          |    val readOffset  = Input(UInt(log2Ceil(depth).W))
+          |    val readLen     = Input(UInt(4.W))
+          |    val readData    = Output(UInt(64.W))
+          |    val readValid   = Output(Bool())
+          |
+          |    val writeAddr   = Input(UInt(log2Ceil(depth).W))
+          |    val writeOffset = Input(UInt(log2Ceil(depth).W))
+          |    val writeLen    = Input(UInt(4.W))
+          |    val writeData   = Input(UInt(64.W))
+          |    val writeValid  = Output(Bool())
+          |
+          |    // DMA
+          |    val dmaSrcAddr   = Input(UInt(log2Ceil(depth).W))  // byte address
+          |    val dmaDstAddr   = Input(UInt(log2Ceil(depth).W))  // byte address
+          |    val dmaDstOffset = Input(UInt(log2Ceil(depth).W))
+          |    val dmaSrcLen    = Input(UInt(log2Ceil(depth).W)) // byte count
+          |    val dmaDstLen    = Input(UInt(log2Ceil(depth).W)) // byte count
+          |    val dmaValid     = Output(Bool())
+          |  })
+          |
+          |  ${bramInsST}
+          |
+          |  // BRAM default
+          |  bram.io.ena := false.B
+          |  bram.io.wea := false.B
+          |  bram.io.addra := 0.U
+          |  bram.io.dina := 0.U
+          |
+          |  bram.io.enb := false.B
+          |  bram.io.web := false.B
+          |  bram.io.addrb := 0.U
+          |  bram.io.dinb := 0.U
+          |
+          |  val w_readEnable  = io.mode === 1.U
+          |  val w_writeEnable = io.mode === 2.U
+          |  val w_dmaEnable   = io.mode === 3.U
+          |
+          |  // === READ Operation ===
+          |  val sReadIdle :: sReadFirst :: sReadTrans :: sReadEnd :: Nil = Enum(4)
+          |
+          |  val r_readCnt      = Reg(UInt(4.W))
+          |  val r_lastReadCnt  = Reg(UInt(4.W))
+          |  val r_readAddr     = Reg(UInt(log2Ceil(depth).W))
+          |  val r_readState    = RegInit(sReadIdle)
+          |  val r_readBytes    = Reg(Vec(8, UInt(8.W)))
+          |
+          |  switch(r_readState) {
+          |    is(sReadIdle) {
+          |      when(w_readEnable) {
+          |        r_readState   := sReadFirst
+          |        r_readCnt     := 0.U
+          |        r_lastReadCnt := 0.U
+          |        r_readAddr    := io.readAddr + io.readOffset
+          |      }
+          |      r_readBytes(0) := 0.U
+          |      r_readBytes(1) := 0.U
+          |      r_readBytes(2) := 0.U
+          |      r_readBytes(3) := 0.U
+          |      r_readBytes(4) := 0.U
+          |      r_readBytes(5) := 0.U
+          |      r_readBytes(6) := 0.U
+          |      r_readBytes(7) := 0.U
+          |    }
+          |    is(sReadFirst) {
+          |      bram.io.addra := r_readAddr
+          |      bram.io.ena   := true.B
+          |      bram.io.wea   := false.B
+          |
+          |      r_lastReadCnt := r_readCnt
+          |      r_readCnt     := r_readCnt + 1.U
+          |      r_readAddr    := r_readAddr + 1.U
+          |      r_readState   := sReadTrans
+          |    }
+          |    is(sReadTrans) {
+          |      r_readBytes(r_lastReadCnt) := bram.io.douta
+          |
+          |      bram.io.addra          := r_readAddr
+          |      bram.io.ena            := true.B
+          |      bram.io.wea            := false.B
+          |
+          |      r_lastReadCnt          := r_readCnt
+          |      r_readCnt              := r_readCnt + 1.U
+          |      r_readAddr             := r_readAddr + 1.U
+          |
+          |      r_readState            := Mux(io.readLen === 1.U, sReadEnd, Mux(r_readCnt < io.readLen, sReadTrans, sReadEnd))
+          |    }
+          |    is(sReadEnd) {
+          |      r_readState   := sReadIdle
+          |    }
+          |  }
+          |
+          |  io.readData  := Cat(r_readBytes(7.U),
+          |                      r_readBytes(6.U),
+          |                      r_readBytes(5.U),
+          |                      r_readBytes(4.U),
+          |                      r_readBytes(3.U),
+          |                      r_readBytes(2.U),
+          |                      r_readBytes(1.U),
+          |                      r_readBytes(0.U))
+          |  io.readValid := Mux(r_readState === sReadEnd, true.B, false.B)
+          |
+          |  // === WRITE Operation ===
+          |  val sWriteIdle :: sWriteTrans :: sWriteEnd :: Nil = Enum(3)
+          |
+          |  val r_writeCnt      = Reg(UInt(4.W))
+          |  val r_writeAddr     = Reg(UInt(log2Ceil(depth).W))
+          |  val r_writeState    = RegInit(sWriteIdle)
+          |  val r_writeBytes    = Reg(Vec(8, UInt(8.W)))
+          |  val r_writeLen      = Reg(UInt(4.W))
+          |
+          |  switch(r_writeState) {
+          |    is(sWriteIdle) {
+          |      when(w_writeEnable) {
+          |        r_writeState      := sWriteTrans
+          |        r_writeCnt        := 0.U
+          |        r_writeAddr       := io.writeAddr + io.writeOffset
+          |        r_writeLen        := io.writeLen - 1.U
+          |
+          |        r_writeBytes(0.U) := io.writeData(7, 0)
+          |        r_writeBytes(1.U) := io.writeData(15, 8)
+          |        r_writeBytes(2.U) := io.writeData(23, 16)
+          |        r_writeBytes(3.U) := io.writeData(31, 24)
+          |        r_writeBytes(4.U) := io.writeData(39, 32)
+          |        r_writeBytes(5.U) := io.writeData(47, 40)
+          |        r_writeBytes(6.U) := io.writeData(55, 48)
+          |        r_writeBytes(7.U) := io.writeData(63, 56)
+          |      }
+          |    }
+          |    is(sWriteTrans) {
+          |      bram.io.addrb := r_writeAddr
+          |      bram.io.enb   := true.B
+          |      bram.io.web   := true.B
+          |      bram.io.dinb  := r_writeBytes(r_writeCnt)
+          |
+          |      r_writeCnt    := r_writeCnt + 1.U
+          |      r_writeAddr   := r_writeAddr + 1.U
+          |      r_writeState  := Mux(r_writeCnt < r_writeLen, sWriteTrans, sWriteEnd)
+          |    }
+          |    is(sWriteEnd) {
+          |      r_writeState  := sWriteIdle
+          |    }
+          |  }
+          |
+          |  io.writeValid := Mux(r_writeState === sWriteEnd, true.B, false.B)
+          |
+          |  // DMA logic
+          |  val sDmaIdle :: sDmaFirstRead :: sDmaTrans :: sDmaDone :: Nil = Enum(4)
+          |
+          |  val r_dmaSrcCount = Reg(UInt(log2Ceil(depth).W))
+          |  val r_dmaDstCount = Reg(UInt(log2Ceil(depth).W))
+          |  val r_dmaSrcAddr  = Reg(UInt(log2Ceil(depth).W))
+          |  val r_dmaDstAddr  = Reg(UInt(log2Ceil(depth).W))
+          |  val r_dmaState    = RegInit(sDmaIdle)
+          |
+          |  switch(r_dmaState) {
+          |    is(sDmaIdle) {
+          |      when(w_dmaEnable) {
+          |        r_dmaState    := Mux(io.dmaSrcLen === 0.U, sDmaTrans, sDmaFirstRead)
+          |
+          |        r_dmaSrcCount := 0.U
+          |        r_dmaDstCount := 0.U
+          |        r_dmaSrcAddr  := io.dmaSrcAddr
+          |        r_dmaDstAddr  := io.dmaDstAddr + io.dmaDstOffset
+          |      }
+          |    }
+          |    is(sDmaFirstRead) {
+          |      r_dmaState    := sDmaTrans
+          |
+          |      // first read
+          |      bram.io.addra := r_dmaSrcAddr
+          |      bram.io.ena   := true.B
+          |      bram.io.wea   := false.B
+          |
+          |      r_dmaSrcAddr  := r_dmaSrcAddr + 1.U
+          |      r_dmaSrcCount := r_dmaSrcCount + 1.U
+          |    }
+          |    is(sDmaTrans) {
+          |      // write the data from the read port
+          |      when(r_dmaDstCount < io.dmaDstLen) {
+          |        bram.io.addrb := r_dmaDstAddr
+          |        bram.io.enb   := true.B
+          |        bram.io.web   := true.B
+          |        bram.io.dinb  := Mux(r_dmaDstCount >= r_dmaSrcCount, 0.U, bram.io.douta)
+          |
+          |        r_dmaDstAddr  := r_dmaDstAddr + 1.U
+          |        r_dmaDstCount := r_dmaDstCount + 1.U
+          |      }
+          |
+          |      // keep all the data from read port valid
+          |      bram.io.ena   := true.B
+          |      when(r_dmaSrcCount < io.dmaSrcLen) {
+          |        bram.io.addra := r_dmaSrcAddr
+          |        bram.io.wea   := false.B
+          |
+          |        r_dmaSrcAddr  := r_dmaSrcAddr + 1.U
+          |        r_dmaSrcCount := r_dmaSrcCount + 1.U
+          |      }
+          |
+          |      ${dmaZeroOutST.render}
+          |    }
+          |    is(sDmaDone) {
+          |      r_dmaState := sDmaIdle
+          |    }
+          |  }
+          |
+          |  io.dmaValid := Mux(r_dmaState === sDmaDone, true.B, false.B)
+          |}
+      """
+
+    val ddrModuleST: ST =
+      st"""
+          |class ${moduleName}(val C_M_AXI_ADDR_WIDTH: Int,
+          |                     val C_M_AXI_DATA_WIDTH: Int,
+          |                     val C_M_TARGET_SLAVE_BASE_ADDR: BigInt,
+          |                     val MEMORY_DEPTH: Int) extends Module {
+          |
+          |  val io = IO(new Bundle{
+          |    val mode = Input(UInt(2.W)) // 00 -> disable, 01 -> read, 10 -> write, 11 -> DMA
+          |
+          |    // Byte level read/write port
+          |    val readAddr    = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val readOffset  = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val readLen     = Input(UInt(log2Up(C_M_AXI_DATA_WIDTH / 8 + 1).W))
+          |    val readData    = Output(UInt(C_M_AXI_DATA_WIDTH.W))
+          |    val readValid   = Output(Bool())
+          |
+          |    val writeAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val writeOffset = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val writeLen    = Input(UInt(log2Up(C_M_AXI_DATA_WIDTH / 8 + 1).W))
+          |    val writeData   = Input(UInt(C_M_AXI_DATA_WIDTH.W))
+          |    val writeValid  = Output(Bool())
+          |
+          |    // DMA
+          |    val dmaSrcAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
+          |    val dmaDstAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
+          |    val dmaDstOffset = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val dmaSrcLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
+          |    val dmaDstLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
+          |    val dmaValid     = Output(Bool())
+          |
+          |    // master write address channel
+          |    val M_AXI_AWID    = Output(UInt(1.W))
+          |    val M_AXI_AWADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val M_AXI_AWLEN   = Output(UInt(8.W))
+          |    val M_AXI_AWSIZE  = Output(UInt(3.W))
+          |    val M_AXI_AWBURST = Output(UInt(2.W))
+          |    val M_AXI_AWLOCK  = Output(Bool())
+          |    val M_AXI_AWCACHE = Output(UInt(4.W))
+          |    val M_AXI_AWPROT  = Output(UInt(3.W))
+          |    val M_AXI_AWQOS   = Output(UInt(4.W))
+          |    val M_AXI_AWUSER  = Output(UInt(1.W))
+          |    val M_AXI_AWVALID = Output(Bool())
+          |    val M_AXI_AWREADY = Input(Bool())
+          |
+          |    // master write data channel
+          |    val M_AXI_WDATA  = Output(UInt(C_M_AXI_DATA_WIDTH.W))
+          |    val M_AXI_WSTRB  = Output(UInt((C_M_AXI_DATA_WIDTH/8).W))
+          |    val M_AXI_WLAST  = Output(Bool())
+          |    val M_AXI_WUSER  = Output(UInt(1.W))
+          |    val M_AXI_WVALID = Output(Bool())
+          |    val M_AXI_WREADY = Input(Bool())
+          |
+          |    // master write response channel
+          |    val M_AXI_BID    = Input(UInt(1.W))
+          |    val M_AXI_BRESP  = Input(UInt(2.W))
+          |    val M_AXI_BUSER  = Input(UInt(1.W))
+          |    val M_AXI_BVALID = Input(Bool())
+          |    val M_AXI_BREADY = Output(Bool())
+          |
+          |    // master read address channel
+          |    val M_AXI_ARID    = Output(UInt(1.W))
+          |    val M_AXI_ARADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val M_AXI_ARLEN   = Output(UInt(8.W))
+          |    val M_AXI_ARSIZE  = Output(UInt(3.W))
+          |    val M_AXI_ARBURST = Output(UInt(2.W))
+          |    val M_AXI_ARLOCK  = Output(Bool())
+          |    val M_AXI_ARCACHE = Output(UInt(4.W))
+          |    val M_AXI_ARPROT  = Output(UInt(3.W))
+          |    val M_AXI_ARQOS   = Output(UInt(4.W))
+          |    val M_AXI_ARUSER  = Output(UInt(1.W))
+          |    val M_AXI_ARVALID = Output(Bool())
+          |    val M_AXI_ARREADY = Input(Bool())
+          |
+          |    // master read data channel
+          |    val M_AXI_RID    = Input(UInt(1.W))
+          |    val M_AXI_RDATA  = Input(UInt(C_M_AXI_DATA_WIDTH.W))
+          |    val M_AXI_RRESP  = Input(UInt(2.W))
+          |    val M_AXI_RLAST  = Input(Bool())
+          |    val M_AXI_RUSER  = Input(UInt(1.W))
+          |    val M_AXI_RVALID = Input(Bool())
+          |    val M_AXI_RREADY = Output(Bool())
+          |  })
+          |
+          |  // registers for diff channels
+          |  // write address channel
+          |  val r_m_axi_awvalid = RegInit(false.B)
+          |  val r_m_axi_awaddr  = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_m_axi_awlen   = Reg(UInt(8.W))
+          |
+          |  // write data channel
+          |  val r_m_axi_wvalid  = RegInit(false.B)
+          |  val r_m_axi_wdata   = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val r_m_axi_wstrb   = Reg(UInt((C_M_AXI_DATA_WIDTH/8).W))
+          |  val r_m_axi_wlast   = RegInit(false.B)
+          |  val r_w_valid       = RegInit(false.B)
+          |
+          |  // write response channel
+          |  val r_m_axi_bready  = RegInit(false.B)
+          |  val r_b_valid       = RegInit(false.B)
+          |
+          |  // read address channel
+          |  val r_m_axi_arvalid = RegInit(false.B)
+          |  val r_m_axi_araddr  = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_m_axi_arlen   = Reg(UInt(8.W))
+          |
+          |  // read data channel
+          |  val r_m_axi_rready  = RegInit(false.B)
+          |  val r_r_valid       = RegInit(false.B)
+          |
+          |  val r_read_req      = RegNext(io.mode === 1.U)
+          |  val r_write_req     = RegNext(io.mode === 2.U)
+          |  val r_dma_req       = RegNext(io.mode === 3.U)
+          |
+          |  // read logic
+          |  val r_read_buffer   = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_buffer_shift0 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val r_buffer_shift1 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val r_buffer_shift2 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val r_buffer_shift3 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val r_buffer_shift4 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val r_buffer_shift5 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val r_buffer_shift6 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val r_buffer_shift7 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val r_final_buffer  = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val r_read_addr     = RegNext(io.readAddr + io.readOffset)
+          |  val r_read_offset   = RegNext(r_read_addr(2,0))
+          |  val r_read_req_next = RegNext(r_read_req)
+          |
+          |  r_buffer_shift0 := r_read_buffer
+          |  r_buffer_shift1 := r_read_buffer >> 8
+          |  r_buffer_shift2 := r_read_buffer >> 16
+          |  r_buffer_shift3 := r_read_buffer >> 24
+          |  r_buffer_shift4 := r_read_buffer >> 32
+          |  r_buffer_shift5 := r_read_buffer >> 40
+          |  r_buffer_shift6 := r_read_buffer >> 48
+          |  r_buffer_shift7 := r_read_buffer >> 56
+          |  r_final_buffer  := MuxLookup(r_read_offset, 0.U,
+          |                              Seq(
+          |                                  0.U -> Cat(0.U(C_M_AXI_DATA_WIDTH.W), r_buffer_shift0),
+          |                                  1.U -> Cat(0.U(C_M_AXI_DATA_WIDTH.W), r_buffer_shift1),
+          |                                  2.U -> Cat(0.U(C_M_AXI_DATA_WIDTH.W), r_buffer_shift2),
+          |                                  3.U -> Cat(0.U(C_M_AXI_DATA_WIDTH.W), r_buffer_shift3),
+          |                                  4.U -> Cat(0.U(C_M_AXI_DATA_WIDTH.W), r_buffer_shift4),
+          |                                  5.U -> Cat(0.U(C_M_AXI_DATA_WIDTH.W), r_buffer_shift5),
+          |                                  6.U -> Cat(0.U(C_M_AXI_DATA_WIDTH.W), r_buffer_shift6),
+          |                                  7.U -> Cat(0.U(C_M_AXI_DATA_WIDTH.W), r_buffer_shift7)
+          |                              ))
+          |
+          |  io.readValid        := RegNext(RegNext(r_read_req & r_r_valid))
+          |  io.readData         := r_final_buffer
+          |
+          |  r_m_axi_arlen     := Mux(r_dma_req, 0.U, 1.U)
+          |
+          |  when(r_read_req & ~r_read_req_next) {
+          |    r_m_axi_arvalid := true.B
+          |    r_m_axi_araddr  := r_read_addr + C_M_TARGET_SLAVE_BASE_ADDR.U
+          |  }
+          |
+          |  when(io.M_AXI_ARVALID & io.M_AXI_ARREADY) {
+          |    r_m_axi_arvalid := false.B
+          |  }
+          |
+          |  when(io.M_AXI_RVALID & io.M_AXI_RREADY) {
+          |    r_read_buffer   := Cat(io.M_AXI_RDATA, r_read_buffer(2 * C_M_AXI_DATA_WIDTH - 1, C_M_AXI_DATA_WIDTH))
+          |  }
+          |
+          |  when(io.M_AXI_RVALID & io.M_AXI_RREADY & io.M_AXI_RLAST) {
+          |    r_r_valid       := true.B
+          |  }
+          |
+          |  when(r_r_valid) {
+          |    r_r_valid       := false.B
+          |  }
+          |
+          |  // write logic
+          |  io.writeValid           := RegNext(r_write_req & r_b_valid)
+          |  val r_write_buffer      = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_padding     = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_masking     = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_reversing   = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_data        = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_data_shift  = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_data_1      = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_data_2      = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_addr        = RegNext(io.writeAddr + io.writeOffset)
+          |  val r_write_req_next    = RegNext(r_write_req)
+          |  val r_write_running     = RegInit(false.B)
+          |  val r_write_offset      = Reg(UInt(3.W))
+          |  val r_aw_enable         = RegInit(false.B)
+          |  val r_first_write_valid = RegInit(false.B)
+          |  val w_m_axi_wlast       = io.M_AXI_WVALID & io.M_AXI_WREADY
+          |
+          |  r_m_axi_awlen     := Mux(r_dma_req, 0.U, 1.U)
+          |
+          |  r_write_offset    := r_write_addr(2, 0)
+          |  r_write_padding   := MuxLookup(io.writeLen, 1.U,
+          |                                  Seq(
+          |                                      1.U -> "hFF".U,
+          |                                      2.U -> "hFFFF".U,
+          |                                      3.U -> "hFFFFFF".U,
+          |                                      4.U -> "hFFFFFFFF".U,
+          |                                      5.U -> "hFFFFFFFFFF".U,
+          |                                      6.U -> "hFFFFFFFFFFFF".U,
+          |                                      7.U -> "hFFFFFFFFFFFFFF".U,
+          |                                      8.U -> "hFFFFFFFFFFFFFFFF".U
+          |                                  ))
+          |  r_write_masking   := MuxLookup(r_write_offset, 0.U,
+          |                                  Seq(
+          |                                      0.U -> r_write_padding,
+          |                                      1.U -> (r_write_padding << 8),
+          |                                      2.U -> (r_write_padding << 16),
+          |                                      3.U -> (r_write_padding << 24),
+          |                                      4.U -> (r_write_padding << 32),
+          |                                      5.U -> (r_write_padding << 40),
+          |                                      6.U -> (r_write_padding << 48),
+          |                                      7.U -> (r_write_padding << 56)
+          |                                  ))
+          |  r_write_reversing := ~r_write_masking
+          |
+          |  r_write_data      := Cat(0.U(C_M_AXI_DATA_WIDTH.W), io.writeData)
+          |  r_write_data_shift:= MuxLookup(r_write_offset, 0.U,
+          |                                  Seq(
+          |                                      0.U -> r_write_data,
+          |                                      1.U -> (r_write_data << 8),
+          |                                      2.U -> (r_write_data << 16),
+          |                                      3.U -> (r_write_data << 24),
+          |                                      4.U -> (r_write_data << 32),
+          |                                      5.U -> (r_write_data << 40),
+          |                                      6.U -> (r_write_data << 48),
+          |                                      7.U -> (r_write_data << 56)
+          |                                  ))
+          |
+          |  when(r_write_req & ~r_write_req_next) {
+          |    r_m_axi_arvalid := true.B
+          |    r_m_axi_araddr  := r_write_addr + C_M_TARGET_SLAVE_BASE_ADDR.U
+          |  }
+          |
+          |  when(io.M_AXI_RVALID & io.M_AXI_RREADY) {
+          |    r_write_buffer  := Cat(io.M_AXI_RDATA, r_write_buffer(2 * C_M_AXI_DATA_WIDTH - 1, C_M_AXI_DATA_WIDTH))
+          |  }
+          |
+          |  when(r_r_valid) {
+          |    r_write_data_1  := r_write_buffer & r_write_reversing
+          |  }
+          |
+          |  when(r_write_req & RegNext(r_r_valid)) {
+          |    r_write_running := true.B
+          |    r_write_data_2  := r_write_data_1 | r_write_data_shift
+          |  }
+          |
+          |  when(r_write_running & ~r_aw_enable) {
+          |    r_aw_enable     := true.B
+          |    r_m_axi_awvalid := true.B
+          |    r_m_axi_awaddr  := r_write_addr + C_M_TARGET_SLAVE_BASE_ADDR.U
+          |  }
+          |
+          |  when(r_write_running) {
+          |    r_first_write_valid := true.B
+          |    r_m_axi_wvalid  := true.B
+          |    r_m_axi_wdata   := Mux(r_first_write_valid, r_write_data_2(2 * C_M_AXI_DATA_WIDTH - 1, C_M_AXI_DATA_WIDTH), r_write_data_2(C_M_AXI_DATA_WIDTH - 1, 0))
+          |    r_m_axi_wstrb   := "hFF".U
+          |  }
+          |
+          |  when(io.M_AXI_AWVALID & io.M_AXI_AWREADY) {
+          |    r_m_axi_awvalid := false.B
+          |  }
+          |
+          |  when(io.M_AXI_WVALID & io.M_AXI_WREADY) {
+          |    r_m_axi_wlast   := true.B
+          |  }
+          |
+          |  when(io.M_AXI_WVALID & io.M_AXI_WREADY & io.M_AXI_WLAST) {
+          |    r_aw_enable     := false.B
+          |    r_write_running := false.B
+          |    r_w_valid       := true.B
+          |    r_m_axi_wvalid  := false.B
+          |  }
+          |
+          |  when(r_w_valid & io.M_AXI_BVALID & io.M_AXI_BREADY) {
+          |    r_w_valid       := false.B
+          |    r_b_valid       := true.B
+          |    r_m_axi_bready  := false.B
+          |    r_m_axi_wlast   := false.B
+          |    r_first_write_valid := false.B
+          |  } .otherwise {
+          |    r_m_axi_bready  := true.B
+          |  }
+          |
+          |  when(r_b_valid) {
+          |    r_b_valid       := false.B
+          |  }
+          |
+          |  // dma logic
+          |  val r_dma_req_next     = RegNext(r_dma_req)
+          |  val r_dmaSrc_addr      = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_dmaSrc_len       = Reg(UInt(log2Up(MEMORY_DEPTH).W))
+          |  val r_dmaDst_addr      = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_dmaDst_len       = Reg(UInt(log2Up(MEMORY_DEPTH).W))
+          |  val r_dma_read_data    = Reg(UInt(C_M_AXI_DATA_WIDTH.W))
+          |  val r_dma_status       = RegInit(0.U(2.W)) // 0.U - Idle, 1.U - read, 2.U - write
+          |  val r_dmaSrc_finish    = RegNext(r_dmaSrc_len === 0.U)
+          |  val r_dmaDst_finish    = RegNext(r_dmaDst_len === 0.U)
+          |  val r_dmaErase_enable  = RegInit(false.B)
+          |  val r_dmaRead_running  = RegInit(false.B)
+          |  val r_dmaWrite_running = RegInit(false.B)
+          |
+          |  io.dmaValid := RegNext(r_dma_req & (r_dma_status === 3.U))
+          |
+          |  when(r_dma_req & ~r_dma_req_next) {
+          |    r_dmaSrc_addr      := io.dmaSrcAddr
+          |    r_dmaDst_addr      := io.dmaDstAddr + io.dmaDstOffset
+          |    r_dmaSrc_len       := io.dmaSrcLen
+          |    r_dmaDst_len       := io.dmaDstLen
+          |    // r_dmaSrc_finish    := false.B
+          |    // r_dmaDst_finish    := false.B
+          |
+          |    r_dmaRead_running  := false.B
+          |    r_dmaWrite_running := false.B
+          |
+          |    r_dmaErase_enable  := io.dmaSrcLen === 0.U
+          |
+          |    r_dma_status       := Mux(io.dmaSrcLen === 0.U, 2.U, 1.U)
+          |  } .elsewhen(r_dma_req & r_r_valid) {
+          |    r_dma_status       := 2.U
+          |    r_dmaSrc_len       := Mux(r_dmaSrc_len =/= 0.U, r_dmaSrc_len - 8.U, r_dmaSrc_len)
+          |  } .elsewhen(r_dma_req & r_b_valid) {
+          |    r_dma_status       := Mux(!r_dmaSrc_finish, 1.U, Mux(r_dmaDst_finish, 3.U, 2.U))
+          |
+          |    r_dmaRead_running  := false.B
+          |    r_dmaWrite_running := false.B
+          |
+          |    r_dmaSrc_addr      := r_dmaSrc_addr + 8.U
+          |    r_dmaDst_addr      := r_dmaDst_addr + 8.U
+          |  }
+          |
+          |  when(r_dma_req & io.M_AXI_AWVALID & io.M_AXI_AWREADY) {
+          |    r_dmaDst_len       := Mux(r_dmaDst_len =/= 0.U, r_dmaDst_len - 8.U, r_dmaDst_len)
+          |  }
+          |
+          |  when(r_dma_status === 3.U) {
+          |    r_dma_status       := 0.U
+          |    r_dmaErase_enable  := false.B
+          |  }
+          |
+          |  when(r_dma_status === 1.U & ~r_dmaRead_running) {
+          |    r_dmaRead_running  := true.B
+          |
+          |    r_m_axi_arvalid    := true.B
+          |    r_m_axi_araddr     := r_dmaSrc_addr + C_M_TARGET_SLAVE_BASE_ADDR.U
+          |  }
+          |
+          |  when(io.M_AXI_RVALID & io.M_AXI_RREADY & io.M_AXI_RLAST) {
+          |    r_dma_read_data    := io.M_AXI_RDATA
+          |  }
+          |
+          |  when(r_dma_status === 2.U & ~r_dmaWrite_running) {
+          |    r_dmaWrite_running := true.B
+          |
+          |    r_m_axi_awvalid    := true.B
+          |    r_m_axi_awaddr     := r_dmaDst_addr + C_M_TARGET_SLAVE_BASE_ADDR.U
+          |    r_m_axi_wvalid     := true.B
+          |    r_m_axi_wdata      := Mux((r_dmaSrc_finish & !r_dmaDst_finish) | r_dmaErase_enable, 0.U, r_dma_read_data)
+          |    r_m_axi_wstrb      := "hFF".U
+          |  }
+          |
+          |  // AXI4 Full port connection
+          |  io.M_AXI_AWID    := 0.U
+          |  io.M_AXI_AWLEN   := r_m_axi_awlen
+          |  io.M_AXI_AWSIZE  := log2Up(C_M_AXI_DATA_WIDTH / 8 - 1).U
+          |  io.M_AXI_AWBURST := 1.U
+          |  io.M_AXI_AWLOCK  := false.B
+          |  io.M_AXI_AWCACHE := 2.U
+          |  io.M_AXI_AWPROT  := 0.U
+          |  io.M_AXI_AWQOS   := 0.U
+          |  io.M_AXI_AWUSER  := 0.U
+          |  io.M_AXI_AWADDR  := Cat(r_m_axi_awaddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
+          |  io.M_AXI_AWVALID := r_m_axi_awvalid
+          |
+          |  io.M_AXI_WSTRB   := r_m_axi_wstrb
+          |  io.M_AXI_WUSER   := 0.U
+          |  io.M_AXI_WDATA   := r_m_axi_wdata
+          |  io.M_AXI_WLAST   := Mux(r_write_req, r_m_axi_wlast, w_m_axi_wlast)
+          |  io.M_AXI_WVALID  := r_m_axi_wvalid
+          |
+          |  io.M_AXI_BREADY  := true.B
+          |
+          |  io.M_AXI_ARID    := 0.U
+          |  io.M_AXI_ARLEN   := r_m_axi_arlen
+          |  io.M_AXI_ARSIZE  := log2Up(C_M_AXI_DATA_WIDTH / 8 - 1).U
+          |  io.M_AXI_ARBURST := 1.U
+          |  io.M_AXI_ARLOCK  := false.B
+          |  io.M_AXI_ARCACHE := 2.U
+          |  io.M_AXI_ARPROT  := 0.U
+          |  io.M_AXI_ARQOS   := 0.U
+          |  io.M_AXI_ARUSER  := 0.U
+          |  io.M_AXI_ARADDR  := Cat(r_m_axi_araddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
+          |  io.M_AXI_ARVALID := r_m_axi_arvalid
+          |
+          |  io.M_AXI_RREADY  := true.B
+          |}
+        """
+
+    val alignDdrModuleST: ST =
+      st"""
+          |class ${moduleName}(val C_M_AXI_ADDR_WIDTH: Int,
+          |                    val C_M_AXI_DATA_WIDTH: Int,
+          |                    val C_M_TARGET_SLAVE_BASE_ADDR: BigInt,
+          |                    val MEMORY_DEPTH: Int) extends Module {
+          |
+          |  val io = IO(new Bundle{
+          |    val mode = Input(UInt(2.W)) // 00 -> disable, 01 -> read, 10 -> write, 11 -> DMA
+          |
+          |    // Byte level read/write port
+          |    val readAddr    = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val readData    = Output(UInt(C_M_AXI_DATA_WIDTH.W))
+          |    val readValid   = Output(Bool())
+          |
+          |    val writeAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val writeData   = Input(UInt(C_M_AXI_DATA_WIDTH.W))
+          |    val writeValid  = Output(Bool())
+          |
+          |    // DMA
+          |    val dmaSrcAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
+          |    val dmaDstAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
+          |    val dmaSrcLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
+          |    val dmaDstLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
+          |    val dmaValid     = Output(Bool())
+          |
+          |    // master write address channel
+          |    val M_AXI_AWID    = Output(UInt(1.W))
+          |    val M_AXI_AWADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val M_AXI_AWLEN   = Output(UInt(8.W))
+          |    val M_AXI_AWSIZE  = Output(UInt(3.W))
+          |    val M_AXI_AWBURST = Output(UInt(2.W))
+          |    val M_AXI_AWLOCK  = Output(Bool())
+          |    val M_AXI_AWCACHE = Output(UInt(4.W))
+          |    val M_AXI_AWPROT  = Output(UInt(3.W))
+          |    val M_AXI_AWQOS   = Output(UInt(4.W))
+          |    val M_AXI_AWUSER  = Output(UInt(1.W))
+          |    val M_AXI_AWVALID = Output(Bool())
+          |    val M_AXI_AWREADY = Input(Bool())
+          |
+          |    // master write data channel
+          |    val M_AXI_WDATA  = Output(UInt(C_M_AXI_DATA_WIDTH.W))
+          |    val M_AXI_WSTRB  = Output(UInt((C_M_AXI_DATA_WIDTH/8).W))
+          |    val M_AXI_WLAST  = Output(Bool())
+          |    val M_AXI_WUSER  = Output(UInt(1.W))
+          |    val M_AXI_WVALID = Output(Bool())
+          |    val M_AXI_WREADY = Input(Bool())
+          |
+          |    // master write response channel
+          |    val M_AXI_BID    = Input(UInt(1.W))
+          |    val M_AXI_BRESP  = Input(UInt(2.W))
+          |    val M_AXI_BUSER  = Input(UInt(1.W))
+          |    val M_AXI_BVALID = Input(Bool())
+          |    val M_AXI_BREADY = Output(Bool())
+          |
+          |    // master read address channel
+          |    val M_AXI_ARID    = Output(UInt(1.W))
+          |    val M_AXI_ARADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val M_AXI_ARLEN   = Output(UInt(8.W))
+          |    val M_AXI_ARSIZE  = Output(UInt(3.W))
+          |    val M_AXI_ARBURST = Output(UInt(2.W))
+          |    val M_AXI_ARLOCK  = Output(Bool())
+          |    val M_AXI_ARCACHE = Output(UInt(4.W))
+          |    val M_AXI_ARPROT  = Output(UInt(3.W))
+          |    val M_AXI_ARQOS   = Output(UInt(4.W))
+          |    val M_AXI_ARUSER  = Output(UInt(1.W))
+          |    val M_AXI_ARVALID = Output(Bool())
+          |    val M_AXI_ARREADY = Input(Bool())
+          |
+          |    // master read data channel
+          |    val M_AXI_RID    = Input(UInt(1.W))
+          |    val M_AXI_RDATA  = Input(UInt(C_M_AXI_DATA_WIDTH.W))
+          |    val M_AXI_RRESP  = Input(UInt(2.W))
+          |    val M_AXI_RLAST  = Input(Bool())
+          |    val M_AXI_RUSER  = Input(UInt(1.W))
+          |    val M_AXI_RVALID = Input(Bool())
+          |    val M_AXI_RREADY = Output(Bool())
+          |  })
+          |
+          |  // registers for diff channels
+          |  // write address channel
+          |  val r_m_axi_awvalid = RegInit(false.B)
+          |  val r_m_axi_awaddr  = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |
+          |  // write data channel
+          |  val r_m_axi_wvalid  = RegInit(false.B)
+          |  val r_m_axi_wdata   = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val r_m_axi_wstrb   = Reg(UInt((C_M_AXI_DATA_WIDTH/8).W))
+          |  val r_m_axi_wlast   = RegInit(false.B)
+          |  val r_w_valid       = RegInit(false.B)
+          |
+          |  // write response channel
+          |  val r_b_valid       = RegInit(false.B)
+          |
+          |  // read address channel
+          |  val r_m_axi_arvalid = RegInit(false.B)
+          |  val r_m_axi_araddr  = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |
+          |  // read data channel
+          |  val r_m_axi_rready  = RegInit(false.B)
+          |  val r_r_valid       = RegInit(false.B)
+          |
+          |  val r_read_req      = RegNext(io.mode === 1.U)
+          |  val r_write_req     = RegNext(io.mode === 2.U)
+          |  val r_dma_req       = RegNext(io.mode === 3.U)
+          |
+          |  // read logic
+          |  val r_read_req_next = RegNext(r_read_req)
+          |  val r_read_addr     = RegNext(io.readAddr + C_M_TARGET_SLAVE_BASE_ADDR.U)
+          |
+          |  io.readValid        := r_read_req & r_r_valid
+          |  io.readData         := RegNext(io.M_AXI_RDATA)
+          |
+          |  when(r_read_req & ~r_read_req_next) {
+          |    r_m_axi_arvalid   := true.B
+          |    r_m_axi_araddr    := r_read_addr
+          |  }
+          |
+          |  when(io.M_AXI_ARVALID & io.M_AXI_ARREADY) {
+          |    r_m_axi_arvalid   := false.B
+          |  }
+          |
+          |  when(io.M_AXI_RVALID & io.M_AXI_RREADY & io.M_AXI_RLAST) {
+          |    r_r_valid         := true.B
+          |  }
+          |
+          |  when(r_r_valid) {
+          |    r_r_valid         := false.B
+          |  }
+          |
+          |  // write logic
+          |  io.writeValid        := r_write_req & r_b_valid
+          |  val r_write_addr     = RegNext(io.writeAddr + C_M_TARGET_SLAVE_BASE_ADDR.U)
+          |  val r_write_req_next = RegNext(r_write_req)
+          |  val r_write_data     = RegNext(io.writeData)
+          |
+          |  when(r_write_req & ~r_write_req_next) {
+          |    r_m_axi_awvalid := true.B
+          |    r_m_axi_awaddr  := r_write_addr
+          |    r_m_axi_wvalid  := true.B
+          |    r_m_axi_wdata   := r_write_data
+          |    r_m_axi_wstrb   := "hFF".U
+          |    r_m_axi_wlast   := true.B
+          |  }
+          |
+          |  when(io.M_AXI_AWVALID & io.M_AXI_AWREADY) {
+          |    r_m_axi_awvalid := false.B
+          |  }
+          |
+          |  when(io.M_AXI_WVALID & io.M_AXI_WREADY & io.M_AXI_WLAST) {
+          |    r_w_valid       := true.B
+          |    r_m_axi_wvalid  := false.B
+          |  }
+          |
+          |  when(r_w_valid & io.M_AXI_BVALID & io.M_AXI_BREADY) {
+          |    r_w_valid       := false.B
+          |    r_b_valid       := true.B
+          |    r_m_axi_wlast   := false.B
+          |  }
+          |
+          |  when(r_b_valid) {
+          |    r_b_valid       := false.B
+          |  }
+          |
+          |  // dma logic
+          |  val r_dma_req_next     = RegNext(r_dma_req)
+          |  val r_dmaSrc_addr      = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_dmaSrc_len       = Reg(UInt(log2Up(MEMORY_DEPTH).W))
+          |  val r_dmaDst_addr      = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_dmaDst_len       = Reg(UInt(log2Up(MEMORY_DEPTH).W))
+          |
+          |  val r_dma_read_data    = Reg(UInt(C_M_AXI_DATA_WIDTH.W))
+          |  val r_dma_status       = RegInit(0.U(2.W)) // 0.U - Idle, 1.U - read, 2.U - write
+          |  val r_dmaSrc_finish    = RegNext(r_dmaSrc_len === 0.U)
+          |  val r_dmaDst_finish    = RegNext(r_dmaDst_len === 0.U)
+          |  val r_dmaErase_enable  = RegInit(false.B)
+          |  val r_dmaRead_running  = RegInit(false.B)
+          |  val r_dmaWrite_running = RegInit(false.B)
+          |
+          |  io.dmaValid := RegNext(r_dma_req & (r_dma_status === 3.U))
+          |
+          |  when(r_dma_req & ~r_dma_req_next) {
+          |    r_dmaSrc_addr      := io.dmaSrcAddr
+          |    r_dmaDst_addr      := io.dmaDstAddr
+          |    r_dmaSrc_len       := io.dmaSrcLen
+          |    r_dmaDst_len       := io.dmaDstLen
+          |
+          |    r_dmaRead_running  := false.B
+          |    r_dmaWrite_running := false.B
+          |
+          |    r_dmaErase_enable  := io.dmaSrcLen === 0.U
+          |
+          |    r_dma_status       := Mux(io.dmaSrcLen === 0.U, 2.U, 1.U)
+          |  } .elsewhen(r_dma_req & r_r_valid) {
+          |    r_dma_status       := 2.U
+          |    r_dmaSrc_len       := Mux(r_dmaSrc_len =/= 0.U, r_dmaSrc_len - 8.U, r_dmaSrc_len)
+          |  } .elsewhen(r_dma_req & r_b_valid) {
+          |    r_dma_status       := Mux(!r_dmaSrc_finish, 1.U, Mux(r_dmaDst_finish, 3.U, 2.U))
+          |
+          |    r_dmaRead_running  := false.B
+          |    r_dmaWrite_running := false.B
+          |
+          |    r_dmaSrc_addr      := r_dmaSrc_addr + 8.U
+          |    r_dmaDst_addr      := r_dmaDst_addr + 8.U
+          |  }
+          |
+          |  when(r_dma_req & io.M_AXI_AWVALID & io.M_AXI_AWREADY) {
+          |    r_dmaDst_len       := Mux(r_dmaDst_len =/= 0.U, r_dmaDst_len - 8.U, r_dmaDst_len)
+          |  }
+          |
+          |  when(r_dma_status === 3.U) {
+          |    r_dma_status       := 0.U
+          |    r_dmaErase_enable  := false.B
+          |  }
+          |
+          |  when(r_dma_status === 1.U & ~r_dmaRead_running) {
+          |    r_dmaRead_running  := true.B
+          |
+          |    r_m_axi_arvalid    := true.B
+          |    r_m_axi_araddr     := r_dmaSrc_addr
+          |  }
+          |
+          |  when(io.M_AXI_RVALID & io.M_AXI_RREADY & io.M_AXI_RLAST) {
+          |    r_dma_read_data    := io.M_AXI_RDATA
+          |  }
+          |
+          |  when(r_dma_status === 2.U & ~r_dmaWrite_running) {
+          |    r_dmaWrite_running := true.B
+          |
+          |    r_m_axi_awvalid    := true.B
+          |    r_m_axi_awaddr     := r_dmaDst_addr
+          |    r_m_axi_wvalid     := true.B
+          |    r_m_axi_wdata      := Mux(r_dmaSrc_finish | r_dmaErase_enable, 0.U, r_dma_read_data)
+          |    r_m_axi_wstrb      := "hFF".U
+          |    r_m_axi_wlast      := true.B
+          |  }
+          |
+          |  // AXI4 Full port connection
+          |  io.M_AXI_AWID    := 0.U
+          |  io.M_AXI_AWLEN   := 0.U
+          |  io.M_AXI_AWSIZE  := log2Up(C_M_AXI_DATA_WIDTH / 8 - 1).U
+          |  io.M_AXI_AWBURST := 1.U
+          |  io.M_AXI_AWLOCK  := false.B
+          |  io.M_AXI_AWCACHE := 2.U
+          |  io.M_AXI_AWPROT  := 0.U
+          |  io.M_AXI_AWQOS   := 0.U
+          |  io.M_AXI_AWUSER  := 0.U
+          |  io.M_AXI_AWADDR  := r_m_axi_awaddr
+          |  io.M_AXI_AWVALID := r_m_axi_awvalid
+          |
+          |  io.M_AXI_WSTRB   := r_m_axi_wstrb
+          |  io.M_AXI_WUSER   := 0.U
+          |  io.M_AXI_WDATA   := r_m_axi_wdata
+          |  io.M_AXI_WLAST   := r_m_axi_wlast
+          |  io.M_AXI_WVALID  := r_m_axi_wvalid
+          |
+          |  io.M_AXI_BREADY  := true.B
+          |
+          |  io.M_AXI_ARID    := 0.U
+          |  io.M_AXI_ARLEN   := 0.U
+          |  io.M_AXI_ARSIZE  := log2Up(C_M_AXI_DATA_WIDTH / 8 - 1).U
+          |  io.M_AXI_ARBURST := 1.U
+          |  io.M_AXI_ARLOCK  := false.B
+          |  io.M_AXI_ARCACHE := 2.U
+          |  io.M_AXI_ARPROT  := 0.U
+          |  io.M_AXI_ARQOS   := 0.U
+          |  io.M_AXI_ARUSER  := 0.U
+          |  io.M_AXI_ARADDR  := r_m_axi_araddr
+          |  io.M_AXI_ARVALID := r_m_axi_arvalid
+          |
+          |  io.M_AXI_RREADY  := true.B
+          |}
+        """
+
+    if (memoryType == Anvil.Config.MemoryAccess.BramNative) {
+      return bramModuleST
+    } else if(memoryType == Anvil.Config.MemoryAccess.BramAxi4 || memoryType == Anvil.Config.MemoryAccess.Ddr) {
+      return if(aligned) alignDdrModuleST else ddrModuleST
+    } else {
+      return st""
+    }
+  }
+}
+
 import HwSynthesizer2._
 @record class HwSynthesizer2(val anvil: Anvil) {
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
 
-  var ipAlloc: Util.IpAlloc = Util.IpAlloc(HashSMap.empty, HashSMap.empty, 0)
-  val hwLog: HwSynthesizer2.HwLog = HwSynthesizer2.HwLog(0, MNone(), F, F, 0, 0, 0)
+  val hwLog: HwSynthesizer2.HwLog = HwSynthesizer2.HwLog(0, MNone(), F, F, 0, 0)
 
   val xilinxIPValid: B = if(anvil.config.useIP) anvil.config.noXilinxIp else T
-  var ipModules: ISZ[ChiselModule] = ISZ[ChiselModule](
-    Adder(F, "AdderUnsigned64", "adderUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Add, F), xilinxIPValid),
-    Adder(T, "AdderSigned64", "adderSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Add, T), xilinxIPValid),
-    Subtractor(F, "SubtractorUnsigned64", "subtractorUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Sub, F), xilinxIPValid),
-    Subtractor(T, "SubtractorSigned64", "subtractorSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Sub, T), xilinxIPValid),
-    Indexer(F, "Indexer", "indexer", anvil.typeBitSize(spType), IntrinsicIP(defaultIndexing), xilinxIPValid),
-    And(F, "AndUnsigned64", "andUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.And, F)),
-    And(T, "AndSigned64", "andSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.And, T)),
-    Or(F, "OrUnsigned64", "orUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Or, F)),
-    Or(T, "OrSigned64", "orSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Or, T)),
-    Xor(F, "XorUnsigned64", "xorUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Xor, F)),
-    Xor(T, "XorSigned64", "xorSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Xor, T)),
-    Eq(F, "EqUnsigned64", "eqUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Eq, F)),
-    Eq(T, "EqSigned64", "eqSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Eq, T)),
-    Ne(F, "NeUnsigned64", "neUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ne, F)),
-    Ne(T, "NeSigned64", "neSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ne, T)),
-    Gt(F, "GtUnsigned64", "gtUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Gt, F)),
-    Gt(T, "GtSigned64", "gtSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Gt, T)),
-    Ge(F, "GeUnsigned64", "geUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ge, F)),
-    Ge(T, "GeSigned64", "geSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ge, T)),
-    Lt(F, "LtUnsigned64", "ltUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Lt, F)),
-    Lt(T, "LtSigned64", "ltSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Lt, T)),
-    Le(F, "LeUnsigned64", "leUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Le, F)),
-    Le(T, "LeSigned64", "leSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Le, T)),
-    Shr(F, "ShrUnsigned64", "shrUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shr, F)),
-    Shr(T, "ShrSigned64", "shrSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shr, T)),
-    Shl(F, "ShlUnsigned64", "shlUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shl, F)),
-    Shl(T, "ShlSigned64", "shlSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Shl, T)),
-    Ushr(F, "UshrUnsigned64", "ushrUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ushr, F)),
-    Ushr(T, "UshrSigned64", "ushrSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Ushr, T)),
-    Multiplier(F, "MultiplierUnsigned64", "multiplierUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Mul, F), xilinxIPValid),
-    Multiplier(T, "MultiplierSigned64", "multiplierSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Mul, T), xilinxIPValid),
-    Division(F, "DivisionUnsigned64", "divisionUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, F), xilinxIPValid),
-    Division(T, "DivisionSigned64", "divisionSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), xilinxIPValid),
-    Remainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, F), xilinxIPValid),
-    Remainder(T, "RemainerSigned64", "remainerSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), xilinxIPValid),
-    BlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory, BlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4),
-    LabelToFsm(F, "LabelToFsmIP", "labelToFsmIp", 0, LabelToFsmIP())
+  var ipArbiterUsage: HashSSet[ArbIpType] = HashSSet.empty[ArbIpType]
+  var ipModules: ISZ[ArbIpModule] = ISZ[ArbIpModule](
+    ArbAdder(F, "AdderUnsigned64", "adderUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F), xilinxIPValid, 0),
+    ArbAdder(T, "AdderSigned64", "adderSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, T), xilinxIPValid, 1),
+    ArbSubtractor(F, "SubtractorUnsigned64", "subtractorUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F), xilinxIPValid, 2),
+    ArbSubtractor(T, "SubtractorSigned64", "subtractorSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, T), xilinxIPValid, 3),
+    ArbIndexer(F, "Indexer", "indexer", anvil.typeBitSize(spType), ArbIntrinsicIP(defaultIndexing), xilinxIPValid, 4),
+    ArbAnd(F, "AndUnsigned64", "andUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.And, F), 5),
+    ArbAnd(T, "AndSigned64", "andSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.And, T), 6),
+    ArbOr(F, "OrUnsigned64", "orUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, F), 7),
+    ArbOr(T, "OrSigned64", "orSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, T), 8),
+    ArbXor(F, "XorUnsigned64", "xorUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, F), 9),
+    ArbXor(T, "XorSigned64", "xorSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, T), 10),
+    ArbEq(F, "EqUnsigned64", "eqUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, F), 11),
+    ArbEq(T, "EqSigned64", "eqSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, T), 12),
+    ArbNe(F, "NeUnsigned64", "neUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, F), 13),
+    ArbNe(T, "NeSigned64", "neSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, T), 14),
+    ArbGt(F, "GtUnsigned64", "gtUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, F), 15),
+    ArbGt(T, "GtSigned64", "gtSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, T), 16),
+    ArbGe(F, "GeUnsigned64", "geUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, F), 17),
+    ArbGe(T, "GeSigned64", "geSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, T), 18),
+    ArbLt(F, "LtUnsigned64", "ltUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, F), 19),
+    ArbLt(T, "LtSigned64", "ltSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, T), 20),
+    ArbLe(F, "LeUnsigned64", "leUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, F), 21),
+    ArbLe(T, "LeSigned64", "leSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, T), 22),
+    ArbShr(F, "ShrUnsigned64", "shrUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, F), 23),
+    ArbShr(T, "ShrSigned64", "shrSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, T), 24),
+    ArbShl(F, "ShlUnsigned64", "shlUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, F), 25),
+    ArbShl(T, "ShlSigned64", "shlSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, T), 26),
+    ArbUshr(F, "UshrUnsigned64", "ushrUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, F), 27),
+    ArbUshr(T, "UshrSigned64", "ushrSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, T), 28),
+    ArbMultiplier(F, "MultiplierUnsigned64", "multiplierUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, F), xilinxIPValid, 29),
+    ArbMultiplier(T, "MultiplierSigned64", "multiplierSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, T), xilinxIPValid, 30),
+    ArbDivision(F, "DivisionUnsigned64", "divisionUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, F), xilinxIPValid, 31),
+    ArbDivision(T, "DivisionSigned64", "divisionSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T), xilinxIPValid, 32),
+    ArbRemainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), xilinxIPValid, 33),
+    ArbRemainder(T, "RemainerSigned64", "remainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), xilinxIPValid, 34),
+    ArbBlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4, 35)
   )
 
-  @pure def findChiselModule(ip: IpType): Option[ChiselModule] = {
+  @pure def findChiselModule(ip: ArbIpType): Option[ArbIpModule] = {
     for(i <- 0 until ipModules.size) {
       if(ipModules(i).expression == ip) {
         return Some(ipModules(i))
@@ -94,20 +2227,23 @@ import HwSynthesizer2._
     return None()
   }
 
-  @pure def getIpArbiterTemplate(ip: IpType): ST = {
+  @pure def getIpArbiterTemplate(ip: ArbIpType): ST = {
     val mod = findChiselModule(ip).get
 
     @pure def requestBundleST: ST = {
       var portST: ISZ[ST] = ISZ[ST]()
 
       ip match {
-        case BinaryIP(_, _) =>
-          for(i <- mod.portListWithoutControl.entries) {
-            portST = portST :+ st"val ${i._1} = ${i._2}(dataWidth.W)"
+        case ArbBinaryIP(_, _) =>
+          for(i <- mod.portList.entries) {
+            // check whether the current signal is a control signal
+            // we do not instantiate control signal in Request bundle
+            if(i._2._1) {
+              portST = portST :+ st"val ${i._1} = ${i._2}(dataWidth.W)"
+            }
           }
-        case IntrinsicIP(_) => halt("IP arbiter template, IntrinsicIP not impl")
-        case BlockMemoryIP() => halt("IP arbiter template, BlockMemoryIP not impl")
-        case LabelToFsmIP() => halt("IP arbiter template, LabelToFsmIP not impl")
+        case ArbIntrinsicIP(_) => halt("IP arbiter template, IntrinsicIP not impl")
+        case ArbBlockMemoryIP() => halt("IP arbiter template, BlockMemoryIP not impl")
       }
 
       return st"""
@@ -121,12 +2257,11 @@ import HwSynthesizer2._
       var portST: ISZ[ST] = ISZ[ST]()
 
       ip match {
-        case BinaryIP(_, _) =>
+        case ArbBinaryIP(_, _) =>
           val signedStr: String = if (mod.signed) "SInt" else "UInt"
           portST = portST :+ st"val out = ${signedStr}(dataWidth.W)"
-        case IntrinsicIP(_) => halt("IP arbiter template, IntrinsicIP not impl")
-        case BlockMemoryIP() => halt("IP arbiter template, BlockMemoryIP not impl")
-        case LabelToFsmIP() => halt("IP arbiter template, LabelToFsmIP not impl")
+        case ArbIntrinsicIP(_) => halt("IP arbiter template, IntrinsicIP not impl")
+        case ArbBlockMemoryIP() => halt("IP arbiter template, BlockMemoryIP not impl")
       }
 
       return st"""
@@ -230,49 +2365,28 @@ import HwSynthesizer2._
              """
   }
 
-  @pure def insDeclST(ip: IpType, numInstances: Z): ST = {
-    val targetModule: ChiselModule = findChiselModule(ip).get
-    val moduleInstances: ST = {
-      val modDeclIns: ISZ[ST] = if(targetModule.expression == BlockMemoryIP()) {
-        for (i <- 0 until numInstances) yield
-          if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
-            st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${targetModule.asInstanceOf[BlockMemory].depth}, ${targetModule.width}))"""
-          else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
-            st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(C_M_AXI_DATA_WIDTH = C_M_AXI_DATA_WIDTH, C_M_AXI_ADDR_WIDTH = C_M_AXI_ADDR_WIDTH, C_M_TARGET_SLAVE_BASE_ADDR = C_M_TARGET_SLAVE_BASE_ADDR, MEMORY_DEPTH = MEMORY_DEPTH))"""
-          else
-            st""
-      } else if(targetModule.expression == LabelToFsmIP()) {
-        if(anvil.config.cpMax > 0) {
-          for (i <- 0 until numInstances) yield
-            st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${hwLog.maxNumLabel}, ${anvil.config.cpMax}))"""
-        } else {
-          ISZ[ST]()
-        }
+  @pure def insDeclST(ip: ArbIpType): ST = {
+    val targetModule: ArbIpModule = findChiselModule(ip).get
+    val moduleInstances: ST = if(targetModule.expression == ArbBlockMemoryIP()) {
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
+          st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${targetModule.asInstanceOf[BlockMemory].depth}, ${targetModule.width}))"""
+        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
+          st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(C_M_AXI_DATA_WIDTH = C_M_AXI_DATA_WIDTH, C_M_AXI_ADDR_WIDTH = C_M_AXI_ADDR_WIDTH, C_M_TARGET_SLAVE_BASE_ADDR = C_M_TARGET_SLAVE_BASE_ADDR, MEMORY_DEPTH = MEMORY_DEPTH))"""
+        else
+          st""
       } else {
-        for (i <- 0 until numInstances) yield
-          st"""val ${targetModule.instanceName}_${i} = Module(new ${targetModule.moduleName}(${targetModule.width}))"""
+          st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${targetModule.width}))"""
       }
-
-      st"""
-          |${(modDeclIns, "\n")}
-        """
-    }
     return moduleInstances
   }
 
-  @pure def insPortCallST(ip: IpType, numInstances: Z): ST = {
-    val targetModule: ChiselModule = findChiselModule(ip).get
-    var portCallST: ISZ[ST] = ISZ()
-    for(i <- 0 until numInstances) {
-      portCallST = portCallST :+ st"init${targetModule.instanceName}_${i}()"
-    }
-    return st"""
-        |${(portCallST, "\n")}
-      """
+  @strictpure def insPortCallST(ip: ArbIpType): ST = {
+    val targetModule: ArbIpModule = findChiselModule(ip).get
+    st"init${targetModule.instanceName}()"
   }
 
-  @pure def insPortFuncST(ip: IpType, numInstances: Z): ST = {
-    val targetModule: ChiselModule = findChiselModule(ip).get
+  @pure def insPortFuncST(ip: ArbIpType): ST = {
+    val targetModule: ArbIpModule = findChiselModule(ip).get
     @pure def inputPortListSTWithoutMux(modIdx: Z): ST = {
       @strictpure def defaultValue(portValueType: String): String = {
         portValueType match {
@@ -285,12 +2399,10 @@ import HwSynthesizer2._
       var muxLogicST: ISZ[ST] = ISZ[ST]()
 
       for(entry <- targetModule.portList.entries) {
-        if(ip == BlockMemoryIP()) {
-          muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}.io.${entry._1} := ${defaultValue(entry._2)}"
-        } else if(ip == LabelToFsmIP()) {
-          muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}.io.${entry._1} := ${defaultValue(entry._2)}"
+        if(ip == ArbBlockMemoryIP()) {
+          muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}.io.${entry._1} := ${defaultValue(entry._2._2)}"
         } else {
-          muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}_${modIdx}.io.${entry._1} := ${defaultValue(entry._2)}"
+          muxLogicST = muxLogicST :+ st"o.${targetModule.instanceName}_${modIdx}.io.${entry._1} := ${defaultValue(entry._2._2)}"
         }
       }
 
@@ -301,24 +2413,11 @@ import HwSynthesizer2._
         """
     }
 
-    val instancePort: ST = {
-      val modPortInsWithoutMux: ISZ[ST] = {
-        for(i <- 0 until numInstances) yield
-          st"""${(inputPortListSTWithoutMux(i), "\n")}"""
-      }
-
-      st"""
-            |${(modPortInsWithoutMux, "\n")}
-        """
-    }
-
-    return st"""
-               |${(instancePort, "\n")}
-               """
+    return st"not implmented for insPortFuncST"
   }
 
-  @pure def insertIPInput(ip: IpType, newHashSMap: HashSMap[Z, HashSMap[String, ChiselModule.Input]], inputMap: InputMap): Unit = {
-    var h: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = inputMap.ipMap.get(ip).get
+  @pure def insertIPInput(ip: ArbIpType, newHashSMap: HashSMap[String, ArbIpModule.Input], inputMap: ArbInputMap): Unit = {
+    var h: HashSMap[String, ArbIpModule.Input] = inputMap.ipMap.get(ip).get
     for(entry <- newHashSMap.entries) {
       h = h + entry._1 ~> entry._2
     }
@@ -327,7 +2426,7 @@ import HwSynthesizer2._
     inputMap.ipMap = inputMap.ipMap + (ip, h)
   }
 
-  @pure def getIpInstanceName(ip: IpType): Option[String] = {
+  @pure def getIpInstanceName(ip: ArbIpType): Option[String] = {
     for(i <- 0 until ipModules.size) {
       if(ipModules(i).expression == ip) {
         return Some(ipModules(i).instanceName)
@@ -336,15 +2435,31 @@ import HwSynthesizer2._
     return None()
   }
 
-  @pure def populateInputs(label: Z, hashSMap: HashSMap[String, (ST, String)], instanceIndex: Z) : HashSMap[Z, HashSMap[String, ChiselModule.Input]] = {
-    var inputList: HashSMap[String, ChiselModule.Input] = HashSMap.empty
-    var finalList: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = HashSMap.empty
-    for(entry <- hashSMap.entries) {
-      val stateValue: ChiselModule.StateValue = ChiselModule.StateValue(label, entry._2._1.render)
-      inputList = inputList + entry._1 ~> ChiselModule.Input(stateValue, entry._2._2)
+  @pure def getIpModuleName(ip: ArbIpType): Option[String] = {
+    for(i <- 0 until ipModules.size) {
+      if(ipModules(i).expression == ip) {
+        return Some(ipModules(i).moduleName)
+      }
     }
-    finalList = finalList + instanceIndex ~> inputList
-    return finalList
+    return None()
+  }
+
+  @pure def getArbiterIpId(ip: ArbIpType): Option[Z] = {
+    for(i <- 0 until ipModules.size) {
+      if(ipModules(i).expression == ip) {
+        return Some(ipModules(i).arbIpId)
+      }
+    }
+    return None()
+  }
+
+  @pure def populateInputs(label: Z, hashSMap: HashSMap[String, (ST, String)]) : HashSMap[String, ArbIpModule.Input] = {
+    var inputList: HashSMap[String, ArbIpModule.Input] = HashSMap.empty
+    for(entry <- hashSMap.entries) {
+      val stateValue: ArbIpModule.StateValue = ArbIpModule.StateValue(label, entry._2._1.render)
+      inputList = inputList + entry._1 ~> ArbIpModule.Input(stateValue, entry._2._2)
+    }
+    return inputList
   }
 
 
@@ -355,9 +2470,6 @@ import HwSynthesizer2._
    */
   def printProcedure(name: String, program: AST.IR.Program, output: Anvil.Output, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): Unit = {
     val o = program.procedures(0)
-    if(anvil.config.useIP) {
-      ipAlloc = Util.ipAlloc(anvil, o, anvil.config.ipMax)
-    }
     var r = HashSMap.empty[ISZ[String], ST]
     val processedProcedureST = processProcedure(name, o, maxRegisters, globalInfoMap)
     r = r + ISZ(name) ~> o.prettyST(anvil.printer)
@@ -595,33 +2707,33 @@ import HwSynthesizer2._
 
       for(i <- 0 until ipModules.size) {
         ipModules(i) match {
-          case Adder(signed, _, _, _, _, xilinxIpValid) =>
+          case ArbAdder(signed, _, _, _, _, xilinxIpValid, _) =>
             if(xilinxIpValid) {
               val t: ST = if(signed) xilinxAdderSigned64WrapperST else xilinxAdderUnsigned64WrapperST
               arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
             }
-          case Subtractor(signed, _, _, _, _, xilinxIpValid) => {
+          case ArbSubtractor(signed, _, _, _, _, xilinxIpValid, _) => {
             if(xilinxIpValid) {
               val t: ST = if(signed) xilinxSubtractorSigned64WrapperST else xilinxSubtractorUnsigned64WrapperST
               arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
             }
           }
-          case Multiplier(signed, _, _, _, _, xilinxIpValid) =>
+          case ArbMultiplier(signed, _, _, _, _, xilinxIpValid, _) =>
             if(xilinxIpValid) {
               val t: ST = if(signed) xilinxMultiplierSigned64WrapperST else xilinxMultiplierUnsigned64WrapperST
               arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
             }
-          case Division(signed, _, _, _, _, xilinxIpValid) =>
+          case ArbDivision(signed, _, _, _, _, xilinxIpValid, _) =>
             if(xilinxIpValid) {
               val t: ST = if(signed) xilinxDividerSigned64WrapperST else xilinxDividerUnsigned64WrapperST
               arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
             }
-          case Indexer(signed, _, _, _, _, xilinxIpValid) =>
+          case ArbIndexer(signed, _, _, _, _, xilinxIpValid, _) =>
             if(xilinxIpValid) {
               arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~>
                 (ISZ[ST]() :+ importPaddingST :+ xilinxIndexAdderWrapperST :+ xilinxIndexMultiplierWrapperST :+ ipModules(i).moduleST)
             }
-          case BlockMemory(_, _, _, _, _, _, _, _, _, _) =>
+          case ArbBlockMemory(_, _, _, _, _, _, _, _, _, _, _) =>
             val bramST: ST = if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) xilinxBramWrapperST else st""
             arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ bramST :+ ipModules(i).moduleST)
           case _ =>
@@ -1758,39 +3870,27 @@ import HwSynthesizer2._
     @pure def topST(stateMachineST: ST, stateMachineIdxRange: HashSMap[Z, Z], stateFunctionObjectST: ST): ST = {
       val instanceDeclST: ST = {
         var instanceST: ISZ[ST] = ISZ()
-        for (entry <- ipAlloc.binopAllocSizeMap.entries) {
-          val b: IpType = BinaryIP(entry._1._2, entry._1._1)
-          instanceST = instanceST :+ insDeclST(b, entry._2)
-        }
-        instanceST = instanceST :+ insDeclST(IntrinsicIP(HwSynthesizer2.defaultIndexing), ipAlloc.indexingAllocSize)
+        instanceST = instanceST :+ insDeclST(ArbIntrinsicIP(HwSynthesizer2.defaultIndexing))
         if (anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
-          instanceST = instanceST :+ insDeclST(BlockMemoryIP(), 1)
+          instanceST = instanceST :+ insDeclST(ArbBlockMemoryIP())
         }
         st"""${(instanceST, "\n")}"""
       }
 
       val instancePortFuncST: ST = {
         var instanceST: ISZ[ST] = ISZ()
-        for (entry <- ipAlloc.binopAllocSizeMap.entries) {
-          val b: IpType = BinaryIP(entry._1._2, entry._1._1)
-          instanceST = instanceST :+ insPortFuncST(b, entry._2)
-        }
-        instanceST = instanceST :+ insPortFuncST(IntrinsicIP(HwSynthesizer2.defaultIndexing), ipAlloc.indexingAllocSize)
+        instanceST = instanceST :+ insPortFuncST(ArbIntrinsicIP(HwSynthesizer2.defaultIndexing))
         if (anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
-          instanceST = instanceST :+ insPortFuncST(BlockMemoryIP(), 1)
+          instanceST = instanceST :+ insPortFuncST(ArbBlockMemoryIP())
         }
         st"""${(instanceST, "\n")}"""
       }
 
       val instancePortCallST: ST = {
         var instanceST: ISZ[ST] = ISZ()
-        for (entry <- ipAlloc.binopAllocSizeMap.entries) {
-          val b: IpType = BinaryIP(entry._1._2, entry._1._1)
-          instanceST = instanceST :+ insPortCallST(b, entry._2)
-        }
-        instanceST = instanceST :+ insPortCallST(IntrinsicIP(HwSynthesizer2.defaultIndexing), ipAlloc.indexingAllocSize)
+        instanceST = instanceST :+ insPortCallST(ArbIntrinsicIP(HwSynthesizer2.defaultIndexing))
         if (anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
-          instanceST = instanceST :+ insPortCallST(BlockMemoryIP(), 1)
+          instanceST = instanceST :+ insPortCallST(ArbBlockMemoryIP())
         }
         st"""${(instanceST, "\n")}"""
       }
@@ -1799,8 +3899,6 @@ import HwSynthesizer2._
                  |import chisel3._
                  |import chisel3.util._
                  |import chisel3.experimental._
-                 |
-                 |${if(!anvil.config.useIP && anvil.config.cpMax > 0) findChiselModule(LabelToFsmIP()).get.moduleST else st""}
                  |
                  |import ${name}._
                  |class ${name} (val C_S_AXI_DATA_WIDTH: Int = ${if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) 64 else 32},
@@ -1862,7 +3960,6 @@ import HwSynthesizer2._
                  |  val r_ready = RegInit(0.U(2.W))
                  |
                  |  ${if(anvil.config.useIP) instanceDeclST else st""}
-                 |  ${if(anvil.config.cpMax > 0) insDeclST(LabelToFsmIP(), 1) else st""}
                  |
                  |  init(this)
                  |
@@ -1889,8 +3986,6 @@ import HwSynthesizer2._
                  |import chisel3._
                  |import chisel3.util._
                  |import chisel3.experimental._
-                 |
-                 |${if(!anvil.config.useIP && anvil.config.cpMax > 0) findChiselModule(LabelToFsmIP()).get.moduleST else st""}
                  |
                  |import ${name}._
                  |class ${name} (addrWidth: Int, dataWidth: Int, cpWidth: Int, idWidth: Int, depth: Int) extends Module {
@@ -1939,7 +4034,7 @@ import HwSynthesizer2._
       }
     }
 
-    val ipPortLogic = HwSynthesizer2.IpPortAssign(anvil, ipAlloc, ISZ[ST](), ipModules, InputMap.empty, ISZ[ST](), ISZ[ST]())
+    val ipPortLogic = HwSynthesizer2.IpPortAssign(anvil, ISZ[ST](), ipModules, ArbInputMap.empty, ISZ[ST](), ISZ[ST]())
     @pure def basicBlockST(grounds: HashSMap[Z, ST], functions: ISZ[ST]): (ST, ST) = {
       var stateSTs: ISZ[ST] = ISZ[ST]()
       stateSTs = stateSTs :+
@@ -2002,11 +4097,11 @@ import HwSynthesizer2._
       val jumpST: ST = {
         if(hwLog.isIndexerInCurrentBlock() && !hwLog.isMemCpyInCurrentBlock()) {
           val jST = processJumpIntrinsic(name, hwLog.stateBlock.get, ipPortLogic, hwLog)
-          val indexerName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
+          val indexerName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
           st"""
-              |when(${indexerName}_${hwLog.activeIndexerIndex}.io.valid) {
+              |when(${indexerName}.io.valid) {
               |  ${jST.render}
-              |  ${indexerName}_${hwLog.activeIndexerIndex}.io.ready := false.B
+              |  ${indexerName}.io.ready := false.B
               |}
             """
         }
@@ -2106,7 +4201,7 @@ import HwSynthesizer2._
       groundST = groundST ++ ipPortLogic.sts
 
       ipPortLogic.sts = ISZ[ST]()
-      ipPortLogic.inputMap = InputMap.empty
+      ipPortLogic.inputMap = ArbInputMap.empty
     }
 
     return st"""${(groundST, "\n")}"""
@@ -2116,15 +4211,8 @@ import HwSynthesizer2._
     var intrinsicST: ISZ[ST] = ISZ[ST]()
     val j = b.jump
 
-    @pure def jumpSplitCpST(label: Z): ST = {
-      var sts: ISZ[ST] = ISZ[ST]()
-      val curCpIdx = getCpIndex(hwLog.currentLabel)._1
-      val (nextCpIdx, nextPosIdx) = getCpIndex(label)
-      if(curCpIdx == nextCpIdx) {
-        sts = sts :+ st"${name}CP(${curCpIdx}.U) := ${nextPosIdx}.U"
-      }
-
-      return st"${(sts, "\n")}"
+    @strictpure def jumpSplitCpST(label: Z): ST = {
+      st"${name}CP := ${hwLog.currentLabel}.U"
     }
 
     j match {
@@ -2255,7 +4343,7 @@ import HwSynthesizer2._
 
     i match {
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.AlignRw) => {
-        val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+        val indexerInstanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
         ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
 
         if(intrinsic.isRead) {
@@ -2279,7 +4367,7 @@ import HwSynthesizer2._
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.TempLoad) => {
         if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           val readAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
-          val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+          val indexerInstanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
           val tempST: ST = st"${if (!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"}"
           val byteST: ST = st"(${intrinsic.bytes * 8 - 1}, 0)"
           val signedST: ST = if(intrinsic.isSigned && anvil.config.splitTempSizes) st".asSInt" else st""
@@ -2310,12 +4398,12 @@ import HwSynthesizer2._
 
           val padST = st".asSInt.pad(${if (!anvil.config.splitTempSizes) "GENERAL_REG_WIDTH" else s"${anvil.typeBitSize(intrinsic.tipe)}"})"
           val placeholder: String = if (hwLog.isIndexerInCurrentBlock()) "  " else ""
-          val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
+          val indexerInstanceName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
 
           intrinsicST =
             st"""
                 |val ${tmpWire} = (${rhsOffsetST.render}).asUInt
-                |${if (hwLog.isIndexerInCurrentBlock()) s"when(${indexerInstanceName}_${hwLog.activeIndexerIndex}.io.valid){" else ""}
+                |${if (hwLog.isIndexerInCurrentBlock()) s"when(${indexerInstanceName}.io.valid){" else ""}
                 |${placeholder}${if (!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"} := Cat(
                 |  ${placeholder}${(internalST, "\n")}
                 |)${placeholder}${if (intrinsic.isSigned) s"${padST.render}" else ""}${if (!anvil.config.splitTempSizes) ".asUInt" else ""}
@@ -2330,7 +4418,7 @@ import HwSynthesizer2._
           val eraseBaseST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
           val eraseOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
           val eraseBytesST: ST = st"${intrinsic.bytes}.U"
-          val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+          val indexerInstanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.dmaValid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
           val ioDmaDstOffsetST: ST = st"${indexerInstanceName}.io.dmaDstOffset := ${eraseOffsetST.render}"
@@ -2352,7 +4440,7 @@ import HwSynthesizer2._
           val dmaDstOffsetST: ST = if(intrinsic.loffset < 0) st"(${intrinsic.loffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.loffset}.U"
           val dmaSrcLenST: ST = processExpr(intrinsic.rhsBytes, F, ipPortLogic, hwLog)
           val dmaSrcAddrST: ST = processExpr(intrinsic.rhs, F, ipPortLogic, hwLog)
-          val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+          val indexerInstanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.dmaValid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
           val ioDmaDstOffsetST: ST = st"${indexerInstanceName}.io.dmaDstOffset := ${dmaDstOffsetST.render}"
@@ -2390,9 +4478,9 @@ import HwSynthesizer2._
 
           // get the jump statement ST
           val jumpST = processJumpIntrinsic(name, hwLog.stateBlock.get, ipPortLogic, hwLog)
-          val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
-          val indexerReadyDisableStr: String = if (hwLog.isIndexerInCurrentBlock()) s"${indexerInstanceName}_${hwLog.activeIndexerIndex}.io.ready := false.B" else ""
-          val indexerValidStr: String = if (hwLog.isIndexerInCurrentBlock()) s"when(${indexerInstanceName}_${hwLog.activeIndexerIndex}.io.valid) {indexerValid := true.B; ${indexerReadyDisableStr}}" else ""
+          val indexerInstanceName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
+          val indexerReadyDisableStr: String = if (hwLog.isIndexerInCurrentBlock()) s"${indexerInstanceName}.io.ready := false.B" else ""
+          val indexerValidStr: String = if (hwLog.isIndexerInCurrentBlock()) s"when(${indexerInstanceName}.io.valid) {indexerValid := true.B; ${indexerReadyDisableStr}}" else ""
           val indexerConditionStr: String = if (hwLog.isIndexerInCurrentBlock()) "indexerValid & " else ""
 
           intrinsicST =
@@ -2432,7 +4520,7 @@ import HwSynthesizer2._
           val writeLenST: ST = st"${intrinsic.bytes}.U"
           val writeDataST: ST = processExpr(intrinsic.rhs, F, ipPortLogic, hwLog)
           val signedST: ST = if(intrinsic.isSigned) st".asUInt" else st""
-          val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+          val indexerInstanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.writeValid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
           intrinsicST =
@@ -2458,9 +4546,9 @@ import HwSynthesizer2._
           }
 
           if (isLhsOffsetIndexing(intrinsic.lhsOffset)) {
-            val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
+            val indexerInstanceName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
             shareMemAssign = shareMemAssign :+
-              st"when(${indexerInstanceName}_${hwLog.activeIndexerIndex}.io.valid){"
+              st"when(${indexerInstanceName}.io.valid){"
           }
 
           for (i <- 0 to (intrinsic.bytes - 1) by 1) {
@@ -2513,17 +4601,16 @@ import HwSynthesizer2._
           }
 
           if(intrinsic.isInc) {
-            val ipT: IpType = if(isPlus) BinaryIP(AST.IR.Exp.Binary.Op.Add, F) else BinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
-            val allocIndex: Z = getIpAllocIndex(intrinsic.value)
+            val ipT: ArbIpType = if(isPlus) ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F) else ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
             var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
             val indexerInstanceName: String = getIpInstanceName(ipT).get
             hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt") +
-              "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-            insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-            ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
+              "start" ~> (st"Mux(${indexerInstanceName}.io.valid, false.B, true.B)", "Bool")
+            insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
+            ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.valid"
             intrinsicST =
               st"""
-                  |${targetReg} := ${indexerInstanceName}_${allocIndex}.io.out"""
+                  |${targetReg} := ${indexerInstanceName}.io.out"""
           } else {
             intrinsicST =
               st"""
@@ -2576,7 +4663,7 @@ import HwSynthesizer2._
         val rhsST = processExpr(a.rhs, F, ipPortLogic, hwLog)
         if(isIntrinsicLoad(a.rhs)) {
           if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
-            val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+            val indexerInstanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
             val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, hwLog)
             val offsetWidth: Z = log2Up(anvil.config.memory * 8)
             val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
@@ -2613,7 +4700,7 @@ import HwSynthesizer2._
         val rhsST = processExpr(a.rhs, F, ipPortLogic, hwLog)
         if(isIntrinsicLoad(a.rhs)) {
           if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
-            val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+            val indexerInstanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
             val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, hwLog)
             val offsetWidth: Z = log2Up(anvil.config.memory * 8)
             val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
@@ -2652,14 +4739,6 @@ import HwSynthesizer2._
     return assignST
   }
 
-  @pure def getIpAllocIndex(e: AST.IR.Exp): Z = {
-    val index: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(e)) match {
-      case Some(n) => n
-      case None() => halt(s"not found index in function getIpAllocIndex, exp is ${e.prettyST(anvil.printer)}")
-    }
-    return index
-  }
-
   @strictpure def globalName(name: ISZ[String]): ST = st"global_${(name, "_")}"
 
   @pure def processExpr(exp: AST.IR.Exp, isForcedSign: B, ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
@@ -2671,7 +4750,7 @@ import HwSynthesizer2._
       }
       case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => {
         if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
-          val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
+          val indexerInstanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
           val byteST: ST = st"(${intrinsic.bytes * 8 - 1}, 0)"
           val signedST: ST = if(intrinsic.isSigned) st".asSInt" else st""
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.readValid"
@@ -2696,8 +4775,6 @@ import HwSynthesizer2._
       }
       case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Indexing) => {
         hwLog.indexerInCurrentBlock = T
-        val allocIndex = getIpAllocIndex(exp)
-        hwLog.activeIndexerIndex = allocIndex
 
         val baseOffsetST: ST = processExpr(intrinsic.baseOffset, F, ipPortLogic, hwLog)
         val dataOffset: Z = intrinsic.dataOffset
@@ -2717,10 +4794,10 @@ import HwSynthesizer2._
           "mask" ~> (st"${mask}.U", "UInt") +
           "ready" ~> (st"true.B", "Bool")
 
-        insertIPInput(IntrinsicIP(defaultIndexing), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-        val indexerInstanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
+        insertIPInput(ArbIntrinsicIP(defaultIndexing), populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
+        val indexerInstanceName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
 
-        exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
+        exprST = st"${indexerInstanceName}.io.out"
       }
       case exp: AST.IR.Exp.Temp => {
         val noSplitST: ST = st"${generalRegName}(${exp.n}.U)${if(isSignedExp(exp)) ".asSInt" else ""}"
@@ -2766,19 +4843,40 @@ import HwSynthesizer2._
         val isBoolOperation = isBoolExp(exp.left) || isBoolExp(exp.right)
         val leftST = st"${processExpr(exp.left, F, ipPortLogic, hwLog).render}${if(isSIntOperation && (!isSignedExp(exp.left))) ".asSInt" else ""}"
         val rightST = st"${processExpr(exp.right, F, ipPortLogic, hwLog).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
+
+        @pure def genIpArbiterPortLogic(opType: IR.Exp.Binary.Op.Type): ST = {
+          // add one usage for current binary operation
+          ipArbiterUsage = ipArbiterUsage + ArbBinaryIP(opType, isSIntOperation)
+
+          val arbiterID: Z = getArbiterIpId(ArbBinaryIP(opType, isSIntOperation)).get
+          val moduleName: String = getIpModuleName(ArbBinaryIP(opType, isSIntOperation)).get
+
+          var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
+          if(isSIntOperation) {
+            hashSMap = hashSMap + "a".string ~> (st"${leftST.render}", "SInt".string) + "b".string ~> (st"${rightST.render}", "SInt".string)
+          } else {
+            hashSMap = hashSMap + "a".string ~> (st"${leftST.render}", "UInt".string) + "b".string ~> (st"${rightST.render}", "UInt".string)
+          }
+          hashSMap = hashSMap + "_valid".string ~> (st"Mux(r_${moduleName}_resp_valid, false.B, true.B)", "Bool".string)
+
+          insertIPInput(ArbBinaryIP(opType, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${moduleName}_resp_valid"
+
+          return st"r_${moduleName}_resp.out"
+        }
+
         exp.op match {
           case AST.IR.Exp.Binary.Op.Add => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
               var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
               if(isSIntOperation) {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2794,9 +4892,9 @@ import HwSynthesizer2._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Sub, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Sub, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2812,9 +4910,9 @@ import HwSynthesizer2._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Mul, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Mul, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               //ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}_${allocIndex}.io.start := RegNext(false.B)"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
@@ -2831,9 +4929,9 @@ import HwSynthesizer2._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               //ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}_${allocIndex}.io.start := RegNext(false.B)"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.quotient"
@@ -2850,9 +4948,9 @@ import HwSynthesizer2._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.remainder"
             } else {
@@ -2869,9 +4967,9 @@ import HwSynthesizer2._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.And, signed)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.And, signed)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.And, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.And, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2888,9 +4986,9 @@ import HwSynthesizer2._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, signed)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Or, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2907,9 +5005,9 @@ import HwSynthesizer2._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, signed)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Xor, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -2932,9 +5030,9 @@ import HwSynthesizer2._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, signed)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Eq, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -2951,9 +5049,9 @@ import HwSynthesizer2._
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
               val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, signed)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ne, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -2969,9 +5067,9 @@ import HwSynthesizer2._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -2987,9 +5085,9 @@ import HwSynthesizer2._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -3005,9 +5103,9 @@ import HwSynthesizer2._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -3023,9 +5121,9 @@ import HwSynthesizer2._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
             } else {
@@ -3041,9 +5139,9 @@ import HwSynthesizer2._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -3060,9 +5158,9 @@ import HwSynthesizer2._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -3079,9 +5177,9 @@ import HwSynthesizer2._
               } else {
                 hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
               }
-              val indexerInstanceName: String = getIpInstanceName(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation)).get
+              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation)).get
               hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(BinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
+              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
               ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
               exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
             } else {
@@ -3116,7 +5214,6 @@ object HwSynthesizer2 {
                                   var stateBlock: MOption[AST.IR.BasicBlock],
                                   var memCpyInCurrentBlock: B,
                                   var indexerInCurrentBlock: B,
-                                  var activeIndexerIndex: Z,
                                   var currentLabel: Z,
                                   var maxNumLabel: Z) extends MAnvilIRTransformer{
 
@@ -3132,15 +5229,15 @@ object HwSynthesizer2 {
 
   @record @unclonable class IpPortAssign(val anvil: Anvil,
                                          var sts: ISZ[ST],
-                                         val ipModules: ISZ[ChiselModule],
-                                         var inputMap: InputMap,
+                                         val ipModules: ISZ[ArbIpModule],
+                                         var inputMap: ArbInputMap,
                                          var whenCondST: ISZ[ST],
                                          var whenStmtST: ISZ[ST]) extends MAnvilIRTransformer {
-    @pure def getInputPort(ip: IpType): HashSMap[Z, HashSMap[String, ChiselModule.Input]] = {
+    @pure def getInputPort(ip: ArbIpType): HashSMap[String, ArbIpModule.Input] = {
       return inputMap.ipMap.get(ip).get
     }
 
-    @pure def getIpInstanceName(ip: IpType): Option[String] = {
+    @pure def getIpInstanceName(ip: ArbIpType): Option[String] = {
       for(i <- 0 until ipModules.size) {
         if(ipModules(i).expression == ip) {
           return Some(ipModules(i).instanceName)
@@ -3158,20 +5255,18 @@ object HwSynthesizer2 {
       }
 
     @pure def binExp(o: AST.IR.Exp): Unit = {
-      @pure def inputLogic(ipt: IpType): Unit = {
-        val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(o)).get
+      @pure def inputLogic(ipt: ArbIpType): Unit = {
         val instanceName: String = getIpInstanceName(ipt).get
-        val inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = getInputPort(ipt)
-        val h: HashSMap[String, ChiselModule.Input] = inputs.get(instanceIndex).get
-        for (entry <- h.entries) {
-          sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
+        val inputs: HashSMap[String, ArbIpModule.Input] = getInputPort(ipt)
+        for (entry <- inputs.entries) {
+          sts = sts :+ st"${instanceName}_.io.${entry._1} := ${entry._2.stateValue.value}"
         }
       }
       o match {
         case o: AST.IR.Exp.Binary =>
           if(anvil.config.useIP) {
             val signed: B = isSignedExp(o.left) || isSignedExp(o.right)
-            inputLogic(BinaryIP(o.op, signed))
+            inputLogic(ArbBinaryIP(o.op, signed))
           }
         case _ =>
       }
@@ -3212,12 +5307,10 @@ object HwSynthesizer2 {
 
     override def preIntrinsicIndexing(o: Intrinsic.Indexing): MAnvilIRTransformer.PreResult[Intrinsic.Indexing] = {
       if(anvil.config.useIP) {
-        val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(AST.IR.Exp.Intrinsic(o))).get
-        val instanceName: String = getIpInstanceName(IntrinsicIP(defaultIndexing)).get
-        val inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = getInputPort(IntrinsicIP(defaultIndexing))
-        val h: HashSMap[String, ChiselModule.Input] = inputs.get(instanceIndex).get
-        for (entry <- h.entries) {
-          sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
+        val instanceName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
+        val inputs: HashSMap[String, ArbIpModule.Input] = getInputPort(ArbIntrinsicIP(defaultIndexing))
+        for (entry <- inputs.entries) {
+          sts = sts :+ st"${instanceName}_.io.${entry._1} := ${entry._2.stateValue.value}"
         }
       }
       return MAnvilIRTransformer.PreResultIntrinsicIndexing
@@ -3226,19 +5319,17 @@ object HwSynthesizer2 {
     override def preIntrinsicRegisterAssign(o: Intrinsic.RegisterAssign): MAnvilIRTransformer.PreResult[Intrinsic.RegisterAssign] = {
       if(anvil.config.useIP) {
         if (o.isInc) {
-          val ipT: IpType = o.value match {
+          val ipT: ArbIpType = o.value match {
             case AST.IR.Exp.Int(_, v, _) => {
-              if (v < 0) BinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
-              else BinaryIP(AST.IR.Exp.Binary.Op.Add, F)
+              if (v < 0) ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
+              else ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F)
             }
-            case _ => BinaryIP(AST.IR.Exp.Binary.Op.Add, F)
+            case _ => ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F)
           }
-          val instanceIndex: Z = ipAlloc.allocMap.get(Util.IpAlloc.Ext.exp(o.value)).get
           val instanceName: String = getIpInstanceName(ipT).get
-          val inputs: HashSMap[Z, HashSMap[String, ChiselModule.Input]] = getInputPort(ipT)
-          val h: HashSMap[String, ChiselModule.Input] = inputs.get(instanceIndex).get
-          for (entry <- h.entries) {
-            sts = sts :+ st"${instanceName}_${instanceIndex}.io.${entry._1} := ${entry._2.stateValue.value}"
+          val inputs: HashSMap[String, ArbIpModule.Input] = getInputPort(ipT)
+          for (entry <- inputs.entries) {
+            sts = sts :+ st"${instanceName}_.io.${entry._1} := ${entry._2.stateValue.value}"
           }
         }
       }
