@@ -2417,12 +2417,15 @@ import HwSynthesizer2._
   }
 
   @pure def insertIPInput(ip: ArbIpType, newHashSMap: HashSMap[String, ArbIpModule.Input], inputMap: ArbInputMap): Unit = {
+    // record the original inputMap
     var h: HashSMap[String, ArbIpModule.Input] = inputMap.ipMap.get(ip).get
+    // add new element to original inputMap
     for(entry <- newHashSMap.entries) {
       h = h + entry._1 ~> entry._2
     }
-
+    // delete original inputMap
     inputMap.ipMap = inputMap.ipMap - (ip, inputMap.ipMap.get(ip).get)
+    // add the updated inputMap
     inputMap.ipMap = inputMap.ipMap + (ip, h)
   }
 
@@ -4604,8 +4607,8 @@ import HwSynthesizer2._
             val ipT: ArbIpType = if(isPlus) ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F) else ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
             var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
             val indexerInstanceName: String = getIpInstanceName(ipT).get
-            hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt") +
-              "start" ~> (st"Mux(${indexerInstanceName}.io.valid, false.B, true.B)", "Bool")
+            hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt".string) + "b" ~> (st"${rightST.render}", "UInt".string) +
+              "start" ~> (st"Mux(${indexerInstanceName}.io.valid, false.B, true.B)", "Bool".string)
             insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
             ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.valid"
             intrinsicST =
@@ -4787,12 +4790,12 @@ import HwSynthesizer2._
 
         var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
         hashSMap = hashSMap +
-          "baseOffset" ~> (st"${baseOffsetST.render}", "UInt") +
-          "dataOffset" ~> (st"${dataOffset}.U", "UInt") +
-          "index" ~> (st"${indexST.render}", "UInt") +
-          "elementSize" ~> (st"${elementSize}.U", "UInt") +
-          "mask" ~> (st"${mask}.U", "UInt") +
-          "ready" ~> (st"true.B", "Bool")
+          "baseOffset" ~> (st"${baseOffsetST.render}", "UInt".string) +
+          "dataOffset" ~> (st"${dataOffset}.U", "UInt".string) +
+          "index" ~> (st"${indexST.render}", "UInt".string) +
+          "elementSize" ~> (st"${elementSize}.U", "UInt".string) +
+          "mask" ~> (st"${mask}.U", "UInt".string) +
+          "ready" ~> (st"true.B", "Bool".string)
 
         insertIPInput(ArbIntrinsicIP(defaultIndexing), populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
         val indexerInstanceName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
@@ -4845,19 +4848,26 @@ import HwSynthesizer2._
         val rightST = st"${processExpr(exp.right, F, ipPortLogic, hwLog).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
 
         @pure def genIpArbiterPortLogic(opType: IR.Exp.Binary.Op.Type): ST = {
-          // add one usage for current binary operation
-          ipArbiterUsage = ipArbiterUsage + ArbBinaryIP(opType, isSIntOperation)
+          val arbBinIp: ArbIpType = ArbBinaryIP(opType, isSIntOperation)
 
-          val arbiterID: Z = getArbiterIpId(ArbBinaryIP(opType, isSIntOperation)).get
-          val moduleName: String = getIpModuleName(ArbBinaryIP(opType, isSIntOperation)).get
+          // add one usage for current binary operation
+          ipArbiterUsage = ipArbiterUsage + arbBinIp
+
+          val arbiterID: Z = getArbiterIpId(arbBinIp).get
+          val moduleName: String = getIpModuleName(arbBinIp).get
 
           var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
           if(isSIntOperation) {
-            hashSMap = hashSMap + "a".string ~> (st"${leftST.render}", "SInt".string) + "b".string ~> (st"${rightST.render}", "SInt".string)
+            hashSMap = hashSMap +
+              "a".string ~> (st"${leftST.render}", "SInt".string) +
+              "b".string ~> (st"${rightST.render}", "SInt".string)
           } else {
-            hashSMap = hashSMap + "a".string ~> (st"${leftST.render}", "UInt".string) + "b".string ~> (st"${rightST.render}", "UInt".string)
+            hashSMap = hashSMap +
+              "a".string ~> (st"${leftST.render}", "UInt".string) +
+              "b".string ~> (st"${rightST.render}", "UInt".string)
           }
-          hashSMap = hashSMap + "_valid".string ~> (st"Mux(r_${moduleName}_resp_valid, false.B, true.B)", "Bool".string)
+          hashSMap = hashSMap +
+            "_valid".string ~> (st"Mux(r_${moduleName}_resp_valid, false.B, true.B)", "Bool".string)
 
           insertIPInput(ArbBinaryIP(opType, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${moduleName}_resp_valid"
@@ -4868,148 +4878,56 @@ import HwSynthesizer2._
         exp.op match {
           case AST.IR.Exp.Binary.Op.Add => {
             if(anvil.config.useIP) {
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} + ${rightST.render})"
             }
           }
           case AST.IR.Exp.Binary.Op.Sub => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} - ${rightST.render})"
             }
           }
           case AST.IR.Exp.Binary.Op.Mul => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if (isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              //ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}_${allocIndex}.io.start := RegNext(false.B)"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} * ${rightST.render})"
             }
           }
           case AST.IR.Exp.Binary.Op.Div => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if (isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              //ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}_${allocIndex}.io.start := RegNext(false.B)"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.quotient"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} / ${rightST.render})"
             }
           }
           case AST.IR.Exp.Binary.Op.Rem => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if (isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.remainder"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} % ${rightST.render})"
             }
           }
           case AST.IR.Exp.Binary.Op.And => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation || isBoolOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              }
-              val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.And, signed)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.And, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} & ${rightST.render})"
             }
           }
           case AST.IR.Exp.Binary.Op.Or  => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation || isBoolOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              }
-              val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, signed)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} | ${rightST.render})"
             }
           }
           case AST.IR.Exp.Binary.Op.Xor => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation || isBoolOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              }
-              val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, signed)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} ^ ${rightST.render})"
             }
@@ -5022,128 +4940,49 @@ import HwSynthesizer2._
           }
           case AST.IR.Exp.Binary.Op.Eq => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation || isBoolOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              }
-              val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, signed)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} === ${rightST.render}).asUInt"
             }
           }
           case AST.IR.Exp.Binary.Op.Ne => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation || isBoolOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              }
-              val signed: B = if (!isSIntOperation || isBoolOperation) F else T
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, signed)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, signed), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} =/= ${rightST.render}).asUInt"
             }
           }
           case AST.IR.Exp.Binary.Op.Ge => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} >= ${rightST.render}).asUInt"
             }
           }
           case AST.IR.Exp.Binary.Op.Gt => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} > ${rightST.render}).asUInt"
             }
           }
           case AST.IR.Exp.Binary.Op.Le => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} <= ${rightST.render}).asUInt"
             }
           }
           case AST.IR.Exp.Binary.Op.Lt => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}", "SInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out.asUInt"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               exprST = st"(${leftST.render} < ${rightST.render}).asUInt"
             }
           }
           case AST.IR.Exp.Binary.Op.Shr => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               val right: ST = if(anvil.typeBitSize(exp.right.tipe) > 7) st"${rightST.render}(6,0)" else st"${rightST.render}"
               exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} >> ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})"
@@ -5151,18 +4990,7 @@ import HwSynthesizer2._
           }
           case AST.IR.Exp.Binary.Op.Ushr => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               val right: ST = if(anvil.typeBitSize(exp.right.tipe) > 7) st"${rightST.render}(6,0)" else st"${rightST.render}"
               exprST = st"(((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asUInt" else ""} >> ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ""})"
@@ -5170,18 +4998,7 @@ import HwSynthesizer2._
           }
           case AST.IR.Exp.Binary.Op.Shl => {
             if(anvil.config.useIP) {
-              val allocIndex: Z = getIpAllocIndex(exp)
-              var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-              if(!isSIntOperation) {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt") + "b" ~> (st"${rightST.render}", "UInt")
-              } else {
-                hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "SInt") + "b" ~> (st"${rightST.render}.asUInt", "UInt")
-              }
-              val indexerInstanceName: String = getIpInstanceName(ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation)).get
-              hashSMap = hashSMap + "start" ~> (st"Mux(${indexerInstanceName}_${allocIndex}.io.valid, false.B, true.B)", "Bool")
-              insertIPInput(ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap, allocIndex), ipPortLogic.inputMap)
-              ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}_${allocIndex}.io.valid"
-              exprST = st"${indexerInstanceName}_${allocIndex}.io.out"
+              exprST = genIpArbiterPortLogic(exp.op)
             } else {
               val right: ST = if(anvil.typeBitSize(exp.right.tipe) > 7) st"${rightST.render}(6,0)" else st"${rightST.render}"
               exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} << ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})"
