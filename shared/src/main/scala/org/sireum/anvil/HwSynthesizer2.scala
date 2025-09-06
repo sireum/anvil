@@ -2229,26 +2229,26 @@ import HwSynthesizer2._
 
   @pure def getIpArbiterTemplate(ip: ArbIpType): ST = {
     val mod = findChiselModule(ip).get
+    val outputNameStr: String = ip match {
+      case ArbBinaryIP(_, _) => "out"
+      case ArbIntrinsicIP(_) => "out"
+      case ArbBlockMemoryIP() => "data"
+    }
 
     @pure def requestBundleST: ST = {
       var portST: ISZ[ST] = ISZ[ST]()
 
-      ip match {
-        case ArbBinaryIP(_, _) =>
-          for(i <- mod.portList.entries) {
-            // check whether the current signal is a control signal
-            // we do not instantiate control signal in Request bundle
-            if(i._2._1) {
-              portST = portST :+ st"val ${i._1} = ${i._2}(dataWidth.W)"
-            }
-          }
-        case ArbIntrinsicIP(_) => halt("IP arbiter template, IntrinsicIP not impl")
-        case ArbBlockMemoryIP() => halt("IP arbiter template, BlockMemoryIP not impl")
+      for(i <- mod.portList.entries) {
+        // check whether the current signal is a control signal
+        // we do not instantiate control signal in Request bundle
+        if(!i._2._1) {
+          portST = portST :+ st"val ${i._1} = ${i._2._2}(dataWidth.W)"
+        }
       }
 
       return st"""
                  |class ${mod.moduleName}RequestBundle(dataWidth: Int) extends Bundle {
-                 |  ${(portST, "")}
+                 |  ${(portST, "\n")}
                  |}
                """
     }
@@ -2259,9 +2259,11 @@ import HwSynthesizer2._
       ip match {
         case ArbBinaryIP(_, _) =>
           val signedStr: String = if (mod.signed) "SInt" else "UInt"
-          portST = portST :+ st"val out = ${signedStr}(dataWidth.W)"
-        case ArbIntrinsicIP(_) => halt("IP arbiter template, IntrinsicIP not impl")
-        case ArbBlockMemoryIP() => halt("IP arbiter template, BlockMemoryIP not impl")
+          portST = portST :+ st"val ${outputNameStr} = ${signedStr}(dataWidth.W)"
+        case ArbIntrinsicIP(_) =>
+          portST = portST :+ st"val ${outputNameStr} = UInt(dataWidth.W)"
+        case ArbBlockMemoryIP() =>
+          portST = portST :+ st"val ${outputNameStr} = UInt(dataWidth.W)"
       }
 
       return st"""
@@ -2273,10 +2275,10 @@ import HwSynthesizer2._
 
     @pure def IpIOST: ST = {
       return st"""
-                 class ${mod.moduleName}IO(dataWidth: Int) extends Bundle {
-                   val req = Valid(new ${mod.moduleName}RequestBundle(dataWidth))
-                   val resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
-                 }
+                 |class ${mod.moduleName}IO(dataWidth: Int) extends Bundle {
+                 |  val req = Valid(new ${mod.moduleName}RequestBundle(dataWidth))
+                 |  val resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
+                 |}
                """
     }
 
@@ -2299,7 +2301,7 @@ import HwSynthesizer2._
                  |  val r_ipReq_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
                  |  val r_ipReq_valid_next = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
                  |  val r_ipReq_enable = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-                 |  val r_ipReq_bits = Reg(Vec(numIPs, new MultiplyRequestBundle(dataWidth)))
+                 |  val r_ipReq_bits = Reg(Vec(numIPs, new ${mod.moduleName}RequestBundle(dataWidth)))
                  |
                  |  for (i <- 0 until numIPs) {
                  |    r_ipReq_valid(i) := io.ipReqs(i).valid
@@ -2338,7 +2340,7 @@ import HwSynthesizer2._
                  |
                  |  for (i <- 0 until numIPs) {
                  |    r_ipResp_valid(i)    := false.B
-                 |    r_ipResp_bits(i).out := 0.U
+                 |    r_ipResp_bits(i).${outputNameStr} := 0.U
                  |  }
                  |
                  |  when(r_mem_resp_valid) {
@@ -2708,39 +2710,47 @@ import HwSynthesizer2._
             |}
           """
 
+      @pure def arbIpSt(xilinxIpValid: B, xilinxIpWrapperSt: ST, moduleSt: ST, arbTemplateSt: ST): ISZ[ST] = {
+        var sts: ISZ[ST] = ISZ[ST]()
+        sts = sts :+
+          importPaddingST :+
+          (if(xilinxIpValid) xilinxIpWrapperSt else st"") :+
+          moduleSt :+
+          arbTemplateSt
+
+        return sts
+      }
+
       for(i <- 0 until ipModules.size) {
         ipModules(i) match {
           case ArbAdder(signed, _, _, _, _, xilinxIpValid, _) =>
-            if(xilinxIpValid) {
-              val t: ST = if(signed) xilinxAdderSigned64WrapperST else xilinxAdderUnsigned64WrapperST
-              arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
-            }
+            val t: ST = if(signed) xilinxAdderSigned64WrapperST else xilinxAdderUnsigned64WrapperST
+            arbiterModuleMap = arbiterModuleMap +
+              ipModules(i).moduleName ~> arbIpSt(xilinxIpValid, t, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
           case ArbSubtractor(signed, _, _, _, _, xilinxIpValid, _) => {
-            if(xilinxIpValid) {
-              val t: ST = if(signed) xilinxSubtractorSigned64WrapperST else xilinxSubtractorUnsigned64WrapperST
-              arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
-            }
+            val t: ST = if(signed) xilinxSubtractorSigned64WrapperST else xilinxSubtractorUnsigned64WrapperST
+            arbiterModuleMap = arbiterModuleMap +
+              ipModules(i).moduleName ~> arbIpSt(xilinxIpValid, t, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
           }
           case ArbMultiplier(signed, _, _, _, _, xilinxIpValid, _) =>
-            if(xilinxIpValid) {
-              val t: ST = if(signed) xilinxMultiplierSigned64WrapperST else xilinxMultiplierUnsigned64WrapperST
-              arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
-            }
+            val t: ST = if(signed) xilinxMultiplierSigned64WrapperST else xilinxMultiplierUnsigned64WrapperST
+            arbiterModuleMap = arbiterModuleMap +
+              ipModules(i).moduleName ~> arbIpSt(xilinxIpValid, t, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
           case ArbDivision(signed, _, _, _, _, xilinxIpValid, _) =>
-            if(xilinxIpValid) {
-              val t: ST = if(signed) xilinxDividerSigned64WrapperST else xilinxDividerUnsigned64WrapperST
-              arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ t :+ ipModules(i).moduleST)
-            }
-          case ArbIndexer(signed, _, _, _, _, xilinxIpValid, _) =>
-            if(xilinxIpValid) {
-              arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~>
-                (ISZ[ST]() :+ importPaddingST :+ xilinxIndexAdderWrapperST :+ xilinxIndexMultiplierWrapperST :+ ipModules(i).moduleST)
-            }
-          case ArbBlockMemory(_, _, _, _, _, _, _, _, _, _, _) =>
-            val bramST: ST = if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) xilinxBramWrapperST else st""
-            arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ bramST :+ ipModules(i).moduleST)
+            val t: ST = if(signed) xilinxDividerSigned64WrapperST else xilinxDividerUnsigned64WrapperST
+            arbiterModuleMap = arbiterModuleMap +
+              ipModules(i).moduleName ~> arbIpSt(xilinxIpValid, t, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
+          case ArbIndexer(_, _, _, _, _, xilinxIpValid, _) =>
+            val ts: ISZ[ST] = ISZ[ST]() :+ xilinxIndexAdderWrapperST :+ xilinxIndexMultiplierWrapperST
+            arbiterModuleMap = arbiterModuleMap +
+              ipModules(i).moduleName ~> arbIpSt(xilinxIpValid, st"${(ts,"")}", ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
+          case ArbBlockMemory(_, modName, _, _, _, _, _, _, _, _, _) =>
+            val valid: B = anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative
+            arbiterModuleMap = arbiterModuleMap +
+              ipModules(i).moduleName ~> arbIpSt(valid, xilinxBramWrapperST, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
           case _ =>
-            arbiterModuleMap = arbiterModuleMap + ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ ipModules(i).moduleST)
+            arbiterModuleMap = arbiterModuleMap +
+              ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ ipModules(i).moduleST)
         }
       }
 
@@ -4002,6 +4012,7 @@ import HwSynthesizer2._
                  |  val LeftByteRounds = RegInit(0.U(8.W))
                  |  val IdxLeftByteRounds = RegInit(0.U(8.W))
                  |  ${if (anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
+                 |  val ${name}CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
                  |
                  |  val r_srcID      = RegInit(2.U(idWidth.W))
                  |  val r_srcCP      = RegInit(0.U(cpWidth.W))
