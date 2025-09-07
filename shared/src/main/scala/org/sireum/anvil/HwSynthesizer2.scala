@@ -2177,14 +2177,14 @@ import HwSynthesizer2._
 
   val hwLog: HwSynthesizer2.HwLog = HwSynthesizer2.HwLog(0, MNone(), F, F, 0, 0)
 
-  val xilinxIPValid: B = if(anvil.config.useIP) anvil.config.noXilinxIp else T
+  val noXilinxIp: B = anvil.config.noXilinxIp
   var ipArbiterUsage: HashSSet[ArbIpType] = HashSSet.empty[ArbIpType]
   var ipModules: ISZ[ArbIpModule] = ISZ[ArbIpModule](
-    ArbAdder(F, "AdderUnsigned64", "adderUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F), xilinxIPValid, 0),
-    ArbAdder(T, "AdderSigned64", "adderSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, T), xilinxIPValid, 1),
-    ArbSubtractor(F, "SubtractorUnsigned64", "subtractorUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F), xilinxIPValid, 2),
-    ArbSubtractor(T, "SubtractorSigned64", "subtractorSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, T), xilinxIPValid, 3),
-    ArbIndexer(F, "Indexer", "indexer", anvil.typeBitSize(spType), ArbIntrinsicIP(defaultIndexing), xilinxIPValid, 4),
+    ArbAdder(F, "AdderUnsigned64", "adderUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F), noXilinxIp, 0),
+    ArbAdder(T, "AdderSigned64", "adderSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, T), noXilinxIp, 1),
+    ArbSubtractor(F, "SubtractorUnsigned64", "subtractorUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F), noXilinxIp, 2),
+    ArbSubtractor(T, "SubtractorSigned64", "subtractorSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, T), noXilinxIp, 3),
+    ArbIndexer(F, "Indexer", "indexer", anvil.typeBitSize(spType), ArbIntrinsicIP(defaultIndexing), noXilinxIp, 4),
     ArbAnd(F, "AndUnsigned64", "andUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.And, F), 5),
     ArbAnd(T, "AndSigned64", "andSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.And, T), 6),
     ArbOr(F, "OrUnsigned64", "orUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, F), 7),
@@ -2209,12 +2209,12 @@ import HwSynthesizer2._
     ArbShl(T, "ShlSigned64", "shlSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, T), 26),
     ArbUshr(F, "UshrUnsigned64", "ushrUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, F), 27),
     ArbUshr(T, "UshrSigned64", "ushrSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, T), 28),
-    ArbMultiplier(F, "MultiplierUnsigned64", "multiplierUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, F), xilinxIPValid, 29),
-    ArbMultiplier(T, "MultiplierSigned64", "multiplierSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, T), xilinxIPValid, 30),
-    ArbDivision(F, "DivisionUnsigned64", "divisionUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, F), xilinxIPValid, 31),
-    ArbDivision(T, "DivisionSigned64", "divisionSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T), xilinxIPValid, 32),
-    ArbRemainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), xilinxIPValid, 33),
-    ArbRemainder(T, "RemainerSigned64", "remainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), xilinxIPValid, 34),
+    ArbMultiplier(F, "MultiplierUnsigned64", "multiplierUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, F), noXilinxIp, 29),
+    ArbMultiplier(T, "MultiplierSigned64", "multiplierSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, T), noXilinxIp, 30),
+    ArbDivision(F, "DivisionUnsigned64", "divisionUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, F), noXilinxIp, 31),
+    ArbDivision(T, "DivisionSigned64", "divisionSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T), noXilinxIp, 32),
+    ArbRemainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
+    ArbRemainder(T, "RemainerSigned64", "remainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
     ArbBlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4, 35)
   )
 
@@ -2235,6 +2235,9 @@ import HwSynthesizer2._
       case ArbBlockMemoryIP() => "data"
     }
 
+    val blockMemoryParaTypeStr: String = ", addrWidth: Int, depth: Int"
+    val blockMemoryParaStr: String = ", addrWidth, depth"
+
     @pure def requestBundleST: ST = {
       var portST: ISZ[ST] = ISZ[ST]()
 
@@ -2246,9 +2249,41 @@ import HwSynthesizer2._
         }
       }
 
+      val blockMemoryPortST: ST = {
+        if(anvil.config.alignAxi4)
+          st"""
+              |val mode       = UInt(2.W)
+              |val readAddr   = UInt(addrWidth.W)
+              |val writeAddr  = UInt(addrWidth.W)
+              |val writeData  = UInt(dataWidth.W)
+              |val dmaSrcAddr = UInt(addrWidth.W)
+              |val dmaDstAddr = UInt(addrWidth.W)
+              |val dmaSrcLen  = UInt(log2Up(depth).W)
+              |val dmaDstLen  = UInt(log2Up(depth).W)
+            """
+        else
+          st"""
+              |val mode         = UInt(2.W)
+              |val readAddr     = UInt(addrWidth.W)
+              |val readOffset   = UInt(log2Up(depth).W)
+              |val readLen      = UInt(4.W)
+              |val writeAddr    = UInt(addrWidth.W)
+              |val writeOffset  = UInt(log2Up(depth).W)
+              |val writeLen     = UInt(4.W)
+              |val writeData    = UInt(dataWidth.W)
+              |val dmaSrcAddr   = UInt(addrWidth.W)
+              |val dmaDstAddr   = UInt(addrWidth.W)
+              |val dmaDstOffset = UInt(log2Up(depth).W)
+              |val dmaSrcLen    = UInt(log2Up(depth).W)
+              |val dmaDstLen    = UInt(log2Up(depth).W)
+            """
+      }
+
+      val finalPortST: ST = if(ip == ArbBlockMemoryIP()) blockMemoryPortST else st"${(portST, "\n")}"
+
       return st"""
-                 |class ${mod.moduleName}RequestBundle(dataWidth: Int) extends Bundle {
-                 |  ${(portST, "\n")}
+                 |class ${mod.moduleName}RequestBundle(dataWidth: Int${if(ip == ArbBlockMemoryIP()) blockMemoryParaTypeStr else ""}) extends Bundle {
+                 |  ${finalPortST}
                  |}
                """
     }
@@ -2273,89 +2308,215 @@ import HwSynthesizer2._
                """
     }
 
-    @pure def IpIOST: ST = {
-      return st"""
-                 |class ${mod.moduleName}IO(dataWidth: Int) extends Bundle {
-                 |  val req = Valid(new ${mod.moduleName}RequestBundle(dataWidth))
-                 |  val resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
-                 |}
-               """
+    @strictpure def IpIOST: ST = {
+      st"""
+          |class ${mod.moduleName}IO(dataWidth: Int${if(ip == ArbBlockMemoryIP()) blockMemoryParaTypeStr else ""}) extends Bundle {
+          |  val req = Valid(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))
+          |  val resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
+          |}
+        """
     }
 
-    @pure def IpArbiterIOST: ST = {
-      return st"""
-                 |class ${mod.moduleName}ArbiterIO(numIPs: Int, dataWidth: Int) extends Bundle {
-                 |  val ipReqs  = Flipped(Vec(numIPs, Valid(new ${mod.moduleName}RequestBundle(dataWidth))))
-                 |  val ipResps = Vec(numIPs, Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
-                 |  val ip      = new ${mod.moduleName}IO(dataWidth)
-                 |}
-               """
+    @strictpure def IpArbiterIOST: ST = {
+      st"""
+          |class ${mod.moduleName}ArbiterIO(numIPs: Int, dataWidth: Int${if(ip == ArbBlockMemoryIP()) blockMemoryParaTypeStr else ""}) extends Bundle {
+          |  val ipReqs  = Flipped(Vec(numIPs, Valid(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))))
+          |  val ipResps = Vec(numIPs, Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
+          |  val ip      = new ${mod.moduleName}IO(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""})
+          |}
+        """
     }
 
-    @pure def arbiterModuleST: ST = {
-      return st"""
-                 |class ${mod.moduleName}ArbiterModule(numIPs: Int, dataWidth: Int) extends Module {
-                 |  val io = IO(new ${mod.moduleName}ArbiterIO(numIPs, dataWidth))
-                 |
-                 |  // ------------------ Stage 0: Input Cache ------------------
-                 |  val r_ipReq_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-                 |  val r_ipReq_valid_next = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-                 |  val r_ipReq_enable = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-                 |  val r_ipReq_bits = Reg(Vec(numIPs, new ${mod.moduleName}RequestBundle(dataWidth)))
-                 |
-                 |  for (i <- 0 until numIPs) {
-                 |    r_ipReq_valid(i) := io.ipReqs(i).valid
-                 |    r_ipReq_valid_next(i) := r_ipReq_valid(i)
-                 |    when(r_ipReq_valid(i) & ~r_ipReq_valid_next(i)) {
-                 |      r_ipReq_enable(i) := true.B
-                 |      r_ipReq_bits(i) := io.ipReqs(i).bits
-                 |    } .otherwise {
-                 |      r_ipReq_enable(i) := false.B
-                 |    }
-                 |  }
-                 |
-                 |  // ------------------ Stage 1: Arbitration Decision Pipeline ------------------
-                 |  val r_foundReq = RegInit(false.B)
-                 |  val r_reqBits  = Reg(new ${mod.moduleName}RequestBundle(dataWidth))
-                 |  val r_chosen   = Reg(UInt(log2Ceil(numIPs).W))
-                 |
-                 |  r_foundReq := r_ipReq_enable.reduce(_ || _)
-                 |  for (i <- 0 until numIPs) {
-                 |    when(r_ipReq_enable(i)) {
-                 |      r_reqBits := r_ipReq_bits(i)
-                 |      r_chosen  := i.U
-                 |    }
-                 |  }
-                 |
-                 |  io.ip.req.valid := r_foundReq
-                 |  io.ip.req.bits  := r_reqBits
-                 |
-                 |  // ------------------ Stage 2: memory.resp handling ------------------
-                 |  val r_mem_resp_valid = RegNext(io.ip.resp.valid)
-                 |  val r_mem_resp_bits  = RegNext(io.ip.resp.bits)
-                 |  val r_mem_resp_id    = RegNext(r_chosen)
-                 |
-                 |  val r_ipResp_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-                 |  val r_ipResp_bits  = Reg(Vec(numIPs, new ${mod.moduleName}ResponseBundle(dataWidth)))
-                 |
-                 |  for (i <- 0 until numIPs) {
-                 |    r_ipResp_valid(i)    := false.B
-                 |    r_ipResp_bits(i).${outputNameStr} := 0.U
-                 |  }
-                 |
-                 |  when(r_mem_resp_valid) {
-                 |    r_ipResp_valid(r_mem_resp_id) := true.B
-                 |    r_ipResp_bits(r_mem_resp_id)  := r_mem_resp_bits
-                 |  } .otherwise {
-                 |    r_ipResp_valid(r_mem_resp_id) := false.B
-                 |  }
-                 |
-                 |  for (i <- 0 until numIPs) {
-                 |    io.ipResps(i).valid := r_ipResp_valid(i)
-                 |    io.ipResps(i).bits  := r_ipResp_bits(i)
-                 |  }
-                 |}
-               """
+    @strictpure def arbiterModuleST: ST = {
+      st"""
+          |class ${mod.moduleName}ArbiterModule(numIPs: Int, dataWidth: Int${if(ip == ArbBlockMemoryIP()) blockMemoryParaTypeStr else ""}) extends Module {
+          |  val io = IO(new ${mod.moduleName}ArbiterIO(numIPs, dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))
+          |
+          |  // ------------------ Stage 0: Input Cache ------------------
+          |  val r_ipReq_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+          |  val r_ipReq_valid_next = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+          |  val r_ipReq_enable = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+          |  val r_ipReq_bits = Reg(Vec(numIPs, new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""})))
+          |
+          |  for (i <- 0 until numIPs) {
+          |    r_ipReq_valid(i) := io.ipReqs(i).valid
+          |    r_ipReq_valid_next(i) := r_ipReq_valid(i)
+          |    when(r_ipReq_valid(i) & ~r_ipReq_valid_next(i)) {
+          |      r_ipReq_enable(i) := true.B
+          |      r_ipReq_bits(i) := io.ipReqs(i).bits
+          |    } .otherwise {
+          |      r_ipReq_enable(i) := false.B
+          |    }
+          |  }
+          |
+          |  // ------------------ Stage 1: Arbitration Decision Pipeline ------------------
+          |  val r_foundReq = RegInit(false.B)
+          |  val r_reqBits  = Reg(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))
+          |  val r_chosen   = Reg(UInt(log2Ceil(numIPs).W))
+          |
+          |  r_foundReq := r_ipReq_enable.reduce(_ || _)
+          |  for (i <- 0 until numIPs) {
+          |    when(r_ipReq_enable(i)) {
+          |      r_reqBits := r_ipReq_bits(i)
+          |      r_chosen  := i.U
+          |    }
+          |  }
+          |
+          |  io.ip.req.valid := r_foundReq
+          |  io.ip.req.bits  := r_reqBits
+          |
+          |  // ------------------ Stage 2: memory.resp handling ------------------
+          |  val r_mem_resp_valid = RegNext(io.ip.resp.valid)
+          |  val r_mem_resp_bits  = RegNext(io.ip.resp.bits)
+          |  val r_mem_resp_id    = RegNext(r_chosen)
+          |
+          |  val r_ipResp_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+          |  val r_ipResp_bits  = Reg(Vec(numIPs, new ${mod.moduleName}ResponseBundle(dataWidth)))
+          |
+          |  for (i <- 0 until numIPs) {
+          |    r_ipResp_valid(i)    := false.B
+          |    r_ipResp_bits(i).${outputNameStr} := 0.U
+          |  }
+          |
+          |  when(r_mem_resp_valid) {
+          |    r_ipResp_valid(r_mem_resp_id) := true.B
+          |    r_ipResp_bits(r_mem_resp_id)  := r_mem_resp_bits
+          |  } .otherwise {
+          |    r_ipResp_valid(r_mem_resp_id) := false.B
+          |  }
+          |
+          |  for (i <- 0 until numIPs) {
+          |    io.ipResps(i).valid := r_ipResp_valid(i)
+          |    io.ipResps(i).bits  := r_ipResp_bits(i)
+          |  }
+          |}
+        """
+    }
+
+    @pure def interfaceLogicST: ST = {
+      var sts: ISZ[ST] = ISZ[ST]()
+      val h: HashSMap[String, (B, String)] = mod.portList
+      for(entry <- h.entries) {
+        // it is control signal
+        if(entry._2._1) {
+          sts = sts :+ st"mod.io.${entry._1} := r_mod_start"
+        } else {
+          sts = sts :+ st"mod.io.${entry._1} := r_req.${entry._1}"
+        }
+      }
+      sts = sts :+ st"io.resp.bits.${outputNameStr} := r_resp_data"
+
+      return st"${(sts, "\n")}"
+    }
+
+    @strictpure def modWrapperST: ST = {
+      val respDataStr: String = ip match {
+        case ArbBlockMemoryIP() => "readData"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, _) => "quotient"
+        case _ => "out"
+      }
+
+      val reqValidST: ST =
+        if(ip == BlockMemoryIP())
+          st"""
+              |val r_busy       = RegInit(0.U(2.W))
+              |when(r_req_valid & ~r_req_valid_next) {
+              |    r_busy := 3.U
+              |} .elsewhen(mem.io.readValid | mem.io.writeValid | mem.io.dmaValid) {
+              |    r_busy := 0.U
+              |}
+            """
+        else
+          st"""
+              |val r_mod_start = RegInit(false.B)
+              |when(r_req_valid) {
+              |    r_mod_start := true.B
+              |} .elsewhen(r_resp_valid) {
+              |    r_mod_start := false.B
+              |}
+            """
+
+      val blockMemoryAxi4PortST: ST =
+        st"""
+            |// master write address channel
+            |val M_AXI_AWID    = Output(UInt(1.W))
+            |val M_AXI_AWADDR  = Output(UInt(addrWidth.W))
+            |val M_AXI_AWLEN   = Output(UInt(8.W))
+            |val M_AXI_AWSIZE  = Output(UInt(3.W))
+            |val M_AXI_AWBURST = Output(UInt(2.W))
+            |val M_AXI_AWLOCK  = Output(Bool())
+            |val M_AXI_AWCACHE = Output(UInt(4.W))
+            |val M_AXI_AWPROT  = Output(UInt(3.W))
+            |val M_AXI_AWQOS   = Output(UInt(4.W))
+            |val M_AXI_AWUSER  = Output(UInt(1.W))
+            |val M_AXI_AWVALID = Output(Bool())
+            |val M_AXI_AWREADY = Input(Bool())
+            |
+            |// master write data channel
+            |val M_AXI_WDATA  = Output(UInt(dataWidth.W))
+            |val M_AXI_WSTRB  = Output(UInt((dataWidth/8).W))
+            |val M_AXI_WLAST  = Output(Bool())
+            |val M_AXI_WUSER  = Output(UInt(1.W))
+            |val M_AXI_WVALID = Output(Bool())
+            |val M_AXI_WREADY = Input(Bool())
+            |
+            |// master write response channel
+            |val M_AXI_BID    = Input(UInt(1.W))
+            |val M_AXI_BRESP  = Input(UInt(2.W))
+            |val M_AXI_BUSER  = Input(UInt(1.W))
+            |val M_AXI_BVALID = Input(Bool())
+            |val M_AXI_BREADY = Output(Bool())
+            |
+            |// master read address channel
+            |val M_AXI_ARID    = Output(UInt(1.W))
+            |val M_AXI_ARADDR  = Output(UInt(addrWidth.W))
+            |val M_AXI_ARLEN   = Output(UInt(8.W))
+            |val M_AXI_ARSIZE  = Output(UInt(3.W))
+            |val M_AXI_ARBURST = Output(UInt(2.W))
+            |val M_AXI_ARLOCK  = Output(Bool())
+            |val M_AXI_ARCACHE = Output(UInt(4.W))
+            |val M_AXI_ARPROT  = Output(UInt(3.W))
+            |val M_AXI_ARQOS   = Output(UInt(4.W))
+            |val M_AXI_ARUSER  = Output(UInt(1.W))
+            |val M_AXI_ARVALID = Output(Bool())
+            |val M_AXI_ARREADY = Input(Bool())
+            |
+            |// master read data channel
+            |val M_AXI_RID    = Input(UInt(1.W))
+            |val M_AXI_RDATA  = Input(UInt(dataWidth.W))
+            |val M_AXI_RRESP  = Input(UInt(2.W))
+            |val M_AXI_RLAST  = Input(Bool())
+            |val M_AXI_RUSER  = Input(UInt(1.W))
+            |val M_AXI_RVALID = Input(Bool())
+            |val M_AXI_RREADY = Output(Bool())
+          """
+
+      st"""
+          |class ${mod.moduleName}Wrapper(val dataWidth: Int ${if(ip == ArbBlockMemoryIP()) blockMemoryParaTypeStr else ""}) extends Module {
+          |    val io = IO(new Bundle{
+          |        val req = Input(Valid(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""})))
+          |        val resp = Output(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
+          |        ${if(ip == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) blockMemoryAxi4PortST else st""}
+          |    })
+          |
+          |    val mod = Module(new ${mod.moduleName}(dataWidth))
+          |
+          |    val r_req            = Reg(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))
+          |    val r_req_valid      = RegNext(io.req.valid, false.B)
+          |    ${if(ip == ArbBlockMemoryIP()) "val r_req_valid_next = RegNext(r_req_valid, false.B)" else ""}
+          |
+          |    val r_resp_data  = RegNext(mod.io.${respDataStr})
+          |    val r_resp_valid = RegNext(${if(ip == ArbBlockMemoryIP()) "mod.io.readValid | mod.io.writeValid | mod.io.dmaValid" else "mod.io.valid"})
+          |
+          |    ${reqValidST}
+          |
+          |    r_req := io.req.bits
+          |
+          |
+          |    ${interfaceLogicST}
+          |    io.resp.valid    := r_resp_valid
+          |}
+        """
     }
 
     return st"""
@@ -2364,6 +2525,7 @@ import HwSynthesizer2._
                |${IpIOST}
                |${IpArbiterIOST}
                |${arbiterModuleST}
+               |${modWrapperST}
              """
   }
 
@@ -2710,11 +2872,11 @@ import HwSynthesizer2._
             |}
           """
 
-      @pure def arbIpSt(xilinxIpValid: B, xilinxIpWrapperSt: ST, moduleSt: ST, arbTemplateSt: ST): ISZ[ST] = {
+      @pure def arbIpSt(noXilinxIp: B, xilinxIpWrapperSt: ST, moduleSt: ST, arbTemplateSt: ST): ISZ[ST] = {
         var sts: ISZ[ST] = ISZ[ST]()
         sts = sts :+
           importPaddingST :+
-          (if(xilinxIpValid) xilinxIpWrapperSt else st"") :+
+          (if(noXilinxIp) st"" else xilinxIpWrapperSt) :+
           moduleSt :+
           arbTemplateSt
 
@@ -2745,7 +2907,7 @@ import HwSynthesizer2._
             arbiterModuleMap = arbiterModuleMap +
               ipModules(i).moduleName ~> arbIpSt(xilinxIpValid, st"${(ts,"")}", ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
           case ArbBlockMemory(_, modName, _, _, _, _, _, _, _, _, _) =>
-            val valid: B = anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative
+            val valid: B = anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative
             arbiterModuleMap = arbiterModuleMap +
               ipModules(i).moduleName ~> arbIpSt(valid, xilinxBramWrapperST, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
           case _ =>
