@@ -141,13 +141,25 @@ object ArbInputMap {
           |    val regB = Reg(${portType}(width.W))
           |    val result = Reg(${portType}(width.W))
           |
+          |    val r_start      = RegInit(false.B)
+          |    val r_start_next = RegInit(false.B)
+          |    val r_busy       = RegInit(true.B)
+          |
+          |    r_start      := io.start
+          |    r_start_next := r_start
+          |    when(r_start & ~r_start_next) {
+          |        r_busy := false.B
+          |    } .elsewhen(io.valid) {
+          |        r_busy := true.B
+          |    }
+          |
           |    io.valid := Mux(state === 2.U, true.B, false.B)
           |    io.out := Mux(state === 2.U, result, 0.${if(signedPort) "S" else "U"})
           |    switch(state) {
           |        is(0.U) {
-          |            state := Mux(io.start, 1.U, 0.U)
-          |            regA := Mux(io.start, io.a, regA)
-          |            regB := Mux(io.start, io.b, regB)
+          |            state := Mux(r_start & ~r_busy, 1.U, 0.U)
+          |            regA := Mux(r_start, io.a, regA)
+          |            regB := Mux(r_start, io.b, regB)
           |        }
           |        is(1.U) {
           |            result := regA + regB
@@ -217,13 +229,25 @@ object ArbInputMap {
           |    val regB = Reg(${portType}(width.W))
           |    val result = Reg(${portType}(width.W))
           |
+          |    val r_start      = RegInit(false.B)
+          |    val r_start_next = RegInit(false.B)
+          |    val r_busy       = RegInit(true.B)
+          |
+          |    r_start      := io.start
+          |    r_start_next := r_start
+          |    when(r_start & ~r_start_next) {
+          |        r_busy := false.B
+          |    } .elsewhen(io.valid) {
+          |        r_busy := true.B
+          |    }
+          |
           |    io.valid := Mux(state === 2.U, true.B, false.B)
           |    io.out := Mux(state === 2.U, result, 0.${if (signedPort) "S" else "U"})
           |    switch(state) {
           |        is(0.U) {
-          |            state := Mux(io.start, 1.U, 0.U)
-          |            regA := Mux(io.start, io.a, regA)
-          |            regB := Mux(io.start, io.b, regB)
+          |            state := Mux(r_start & ~r_busy, 1.U, 0.U)
+          |            regA := Mux(r_start, io.a, regA)
+          |            regB := Mux(r_start, io.b, regB)
           |        }
           |        is(1.U) {
           |            result := regA - regB
@@ -336,6 +360,18 @@ object ArbInputMap {
           |        val out = Output(UInt(width.W))
           |    })
           |
+          |    val r_start      = RegInit(false.B)
+          |    val r_start_next = RegInit(false.B)
+          |    val r_busy       = RegInit(true.B)
+          |
+          |    r_start      := io.ready
+          |    r_start_next := r_start
+          |    when(r_start & ~r_start_next) {
+          |        r_busy := false.B
+          |    } .elsewhen(io.valid) {
+          |        r_busy := true.B
+          |    }
+          |
           |    val stateReg = RegInit(0.U(2.W))
           |    switch(stateReg) {
           |        is(0.U) {
@@ -352,7 +388,7 @@ object ArbInputMap {
           |        }
           |    }
           |
-          |    io.valid := Mux(stateReg === 3.U, true.B, false.B)
+          |    io.valid := Mux(stateReg === 3.U & ~r_busy, true.B, false.B)
           |
           |    val regBaseAddr = RegNext(io.baseOffset + io.dataOffset)
           |
@@ -482,7 +518,19 @@ object ArbInputMap {
         |        val out = Output(${portType}(width.W))
         |    })
         |
-        |    io.valid := RegNext(io.start)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    io.valid := r_start & ~r_busy
         |    io.out := RegNext(io.a & io.b)
         |}
       """
@@ -519,7 +567,19 @@ object ArbInputMap {
         |        val out = Output(${portType}(width.W))
         |    })
         |
-        |    io.valid := RegNext(io.start)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    io.valid := r_start & ~r_busy
         |    io.out := RegNext(io.a | io.b)
         |}
       """
@@ -556,7 +616,19 @@ object ArbInputMap {
         |        val out = Output(${portType}(width.W))
         |    })
         |
-        |    io.valid := RegNext(io.start)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    io.valid := r_start & ~r_busy
         |    io.out := RegNext(io.a ^ io.b)
         |}
       """
@@ -593,7 +665,19 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    io.valid := RegNext(io.start)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    io.valid := r_start & ~r_busy
         |    io.out := RegNext(io.a === io.b)
         |}
       """
@@ -630,7 +714,19 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    io.valid := RegNext(io.start)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    io.valid := r_start & ~r_busy
         |    io.out := RegNext(io.a =/= io.b)
         |}
       """
@@ -667,7 +763,19 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    io.valid := RegNext(io.start)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    io.valid := r_start & ~r_busy
         |    io.out := RegNext(io.a >= io.b)
         |}
       """
@@ -704,7 +812,19 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    io.valid := RegNext(io.start)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    io.valid := r_start & ~r_busy
         |    io.out := RegNext(io.a > io.b)
         |}
       """
@@ -741,7 +861,19 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    io.valid := RegNext(io.start)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    io.valid := r_start & ~r_busy
         |    io.out := RegNext(io.a <= io.b)
         |}
       """
@@ -778,7 +910,19 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    io.valid := RegNext(io.start)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    io.valid := r_start & ~r_busy
         |    io.out := RegNext(io.a < io.b)
         |}
       """
@@ -815,8 +959,40 @@ object ArbInputMap {
         |        val out = Output(${portType}(width.W))
         |    })
         |
-        |    io.valid := RegNext(io.start)
-        |    io.out := RegNext(Mux(io.b > 64.U, ${if(signed) "io.a >> 64.U" else "0.U"}, io.a >> io.b(6,0)))
+        |    val big  = RegNext(io.b >= width.U)
+        |    val sh   = RegNext(io.b(5, 0))
+        |    val aU   = RegNext(io.a)
+        |    ${if(signedPort) "val sign = RegNext(io.a(width-1) === 1.U)" else ""}
+        |    ${if(signedPort) "val top  = RegNext(Mux(sign, (-1).S(64.W), 0.S(64.W)))" else ""}
+        |
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    val v1 = RegNext(io.start, init=false.B)
+        |    val v2 = RegNext(v1,       init=false.B)
+        |    val v3 = RegNext(v2,       init=false.B)
+        |    val v4 = RegNext(v3,       init=false.B)
+        |    val v5 = RegNext(v4,       init=false.B)
+        |    val v6 = RegNext(v5,       init=false.B)
+        |    val v7 = RegNext(v6,       init=false.B)
+        |    val v8 = RegNext(v7,       init=false.B)
+        |    val v9 = RegNext(v8,       init=false.B)
+        |
+        |    when(v8 & ~v9) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    val s1 = RegNext(Mux(sh(0), aU >> 1, aU))
+        |    val s2 = RegNext(Mux(sh(1), s1 >> 2, s1))
+        |    val s3 = RegNext(Mux(sh(2), s2 >> 4, s2))
+        |    val s4 = RegNext(Mux(sh(3), s3 >> 8, s3))
+        |    val s5 = RegNext(Mux(sh(4), s4 >> 16, s4))
+        |    val s6 = RegNext(Mux(sh(5), s5 >> 32, s5))
+        |    val s7 = RegNext(Mux(big, ${if(signedPort) "top" else "0.U"}, s6))
+        |
+        |    io.valid := v1 & ~r_busy
+        |    io.out := s7
         |}
       """
   }
@@ -852,8 +1028,38 @@ object ArbInputMap {
         |        val out = Output(${portType}(width.W))
         |    })
         |
-        |    io.valid := RegNext(io.start)
-        |    io.out := RegNext(Mux(io.b > 64.U, ${if(signed) "0.S" else "0.U"}, io.a << io.b(6,0)))
+        |    val big = RegNext(io.b >= width.U)
+        |    val sh  = RegNext(io.b(5, 0))
+        |    val aU  = RegNext(io.a.asUInt)
+        |
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    val v1 = RegNext(io.start, init=false.B)
+        |    val v2 = RegNext(v1,       init=false.B)
+        |    val v3 = RegNext(v2,       init=false.B)
+        |    val v4 = RegNext(v3,       init=false.B)
+        |    val v5 = RegNext(v4,       init=false.B)
+        |    val v6 = RegNext(v5,       init=false.B)
+        |    val v7 = RegNext(v6,       init=false.B)
+        |    val v8 = RegNext(v7,       init=false.B)
+        |    val v9 = RegNext(v8,       init=false.B)
+        |
+        |    when(v8 & ~v9) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    val s1 = RegNext(Mux(sh(0), aU << 1, aU))
+        |    val s2 = RegNext(Mux(sh(1), s1 << 2, s1))
+        |    val s3 = RegNext(Mux(sh(2), s2 << 4, s2))
+        |    val s4 = RegNext(Mux(sh(3), s3 << 8, s3))
+        |    val s5 = RegNext(Mux(sh(4), s4 << 16, s4))
+        |    val s6 = RegNext(Mux(sh(5), s5 << 32, s5))
+        |    val s7 = RegNext(Mux(big, 0.U, s6))
+        |
+        |    io.valid := v1 & ~r_busy
+        |    io.out := s7${if(signedPort) ".asSInt" else ""}
         |}
       """
   }
@@ -888,9 +1094,38 @@ object ArbInputMap {
         |        val valid = Output(Bool())
         |        val out = Output(${portType}(width.W))
         |    })
+        |    val big  = RegNext(io.b >= width.U)
+        |    val sh   = RegNext(io.b(5, 0))
+        |    val aU   = RegNext(io.a.asUInt)
         |
-        |    io.valid := RegNext(io.start)
-        |    io.out := RegNext(Mux(io.b > 64.U, ${if(signed) "0.S" else "0.U"}, io.a${if(signed) ".asUInt" else ""} >> io.b(6,0))${if(signed) ".asSInt" else ""})
+        |    val r_busy       = RegInit(true.B)
+        |
+        |    val v1 = RegNext(io.start, init=false.B)
+        |    val v2 = RegNext(v1,       init=false.B)
+        |    val v3 = RegNext(v2,       init=false.B)
+        |    val v4 = RegNext(v3,       init=false.B)
+        |    val v5 = RegNext(v4,       init=false.B)
+        |    val v6 = RegNext(v5,       init=false.B)
+        |    val v7 = RegNext(v6,       init=false.B)
+        |    val v8 = RegNext(v7,       init=false.B)
+        |    val v9 = RegNext(v8,       init=false.B)
+        |
+        |    when(v8 & ~v9) {
+        |        r_busy := false.B
+        |    } .elsewhen(io.valid) {
+        |        r_busy := true.B
+        |    }
+        |
+        |    val s1 = RegNext(Mux(sh(0), aU >> 1, aU))
+        |    val s2 = RegNext(Mux(sh(1), s1 >> 2, s1))
+        |    val s3 = RegNext(Mux(sh(2), s2 >> 4, s2))
+        |    val s4 = RegNext(Mux(sh(3), s3 >> 8, s3))
+        |    val s5 = RegNext(Mux(sh(4), s4 >> 16, s4))
+        |    val s6 = RegNext(Mux(sh(5), s5 >> 32, s5))
+        |    val s7 = RegNext(Mux(big, 0.U, s6))
+        |
+        |    io.valid := v1 & ~r_busy
+        |    io.out := s7${if(signedPort) ".asSInt" else ""}
         |}
       """
   }
@@ -928,8 +1163,20 @@ object ArbInputMap {
           |        val valid = Output(Bool())
           |    })
           |
+          |    val r_start      = RegInit(false.B)
+          |    val r_start_next = RegInit(false.B)
+          |    val r_busy       = RegInit(true.B)
+          |
+          |    r_start      := io.start
+          |    r_start_next := r_start
+          |    when(r_start & ~r_start_next) {
+          |        r_busy := false.B
+          |    } .elsewhen(io.valid) {
+          |        r_busy := true.B
+          |    }
+          |
           |    io.out := io.a * io.b
-          |    io.valid := RegNext(RegNext(true.B))
+          |    io.valid := r_start & ~r_busy
           |}
         """
     else
@@ -1026,9 +1273,21 @@ object ArbInputMap {
           |    }
           |  }
           |
+          |  val r_start      = RegInit(false.B)
+          |  val r_start_next = RegInit(false.B)
+          |  val r_busy       = RegInit(true.B)
+          |
+          |  r_start      := io.start
+          |  r_start_next := r_start
+          |  when(r_start & ~r_start_next) {
+          |      r_busy := false.B
+          |  } .elsewhen(io.valid) {
+          |      r_busy := true.B
+          |  }
+          |
           |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient)${if(signedPort) ".asSInt" else ""}
           |  io.remainder := Mux(a_neg, -remainder, remainder)${if(signedPort) ".asSInt" else ""}
-          |  io.valid := count === 0.U
+          |  io.valid := (count === 0.U) & ~r_busy
           |}
       """
     else
@@ -1128,9 +1387,21 @@ object ArbInputMap {
           |    }
           |  }
           |
+          |  val r_start      = RegInit(false.B)
+          |  val r_start_next = RegInit(false.B)
+          |  val r_busy       = RegInit(true.B)
+          |
+          |  r_start      := io.start
+          |  r_start_next := r_start
+          |  when(r_start & ~r_start_next) {
+          |      r_busy := false.B
+          |  } .elsewhen(io.valid) {
+          |      r_busy := true.B
+          |  }
+          |
           |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient)${if(signedPort) ".asSInt" else ""}
           |  io.remainder := Mux(a_neg, -remainder, remainder)${if(signedPort) ".asSInt" else ""}
-          |  io.valid := count === 0.U
+          |  io.valid := (count === 0.U) & ~r_busy
           |}
       """
     else
@@ -2235,6 +2506,30 @@ import HwSynthesizer2._
       case ArbBlockMemoryIP() => "data"
     }
 
+    val outputTypeStr: String = ip match {
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, _) => "Bool()"
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, _) => "Bool()"
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, _) => "Bool()"
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, _) => "Bool()"
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, _) => "Bool()"
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, _) => "Bool()"
+      case ArbBinaryIP(_, _) => if (mod.signed) "SInt(dataWidth.W)" else "UInt(dataWidth.W)"
+      case ArbIntrinsicIP(_) => "UInt(dataWidth.W)"
+      case ArbBlockMemoryIP() => "UInt(dataWidth.W)"
+    }
+
+    val outputDefaultStr: String = ip match {
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, _) => "false.B"
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, _) => "false.B"
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, _) => "false.B"
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, _) => "false.B"
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, _) => "false.B"
+      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, _) => "false.B"
+      case ArbBinaryIP(_, _) => if (mod.signed) "0.S" else "0.U"
+      case ArbIntrinsicIP(_) => "0.U"
+      case ArbBlockMemoryIP() => "0.U"
+    }
+
     val blockMemoryParaTypeStr: String = ", addrWidth: Int, depth: Int"
     val blockMemoryParaStr: String = ", addrWidth, depth"
 
@@ -2290,16 +2585,7 @@ import HwSynthesizer2._
 
     @pure def responseBundleST: ST = {
       var portST: ISZ[ST] = ISZ[ST]()
-
-      ip match {
-        case ArbBinaryIP(_, _) =>
-          val signedStr: String = if (mod.signed) "SInt" else "UInt"
-          portST = portST :+ st"val ${outputNameStr} = ${signedStr}(dataWidth.W)"
-        case ArbIntrinsicIP(_) =>
-          portST = portST :+ st"val ${outputNameStr} = UInt(dataWidth.W)"
-        case ArbBlockMemoryIP() =>
-          portST = portST :+ st"val ${outputNameStr} = UInt(dataWidth.W)"
-      }
+      portST = portST :+ st"val ${outputNameStr} = ${outputTypeStr}"
 
       return st"""
                  |class ${mod.moduleName}ResponseBundle(dataWidth: Int) extends Bundle {
@@ -2375,7 +2661,7 @@ import HwSynthesizer2._
           |
           |  for (i <- 0 until numIPs) {
           |    r_ipResp_valid(i)    := false.B
-          |    r_ipResp_bits(i).${outputNameStr} := 0.U
+          |    r_ipResp_bits(i).${outputNameStr} := ${outputDefaultStr}
           |  }
           |
           |  when(r_mem_resp_valid) {
@@ -2409,10 +2695,50 @@ import HwSynthesizer2._
       return st"${(sts, "\n")}"
     }
 
+    @strictpure def testFunctionST: ST = {
+      st"""
+          |class ${mod.moduleName}FunctionModule(dataWidth: Int) extends Module{
+          |  val io = IO(new Bundle{
+          |    val arb_req  = Valid(new ${mod.moduleName}RequestBundle(dataWidth))
+          |    val arb_resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
+          |  })
+          |
+          |  val r_arb_req          = Reg(new ${mod.moduleName}RequestBundle(dataWidth))
+          |  val r_arb_req_valid    = RegInit(false.B)
+          |  val r_arb_resp         = Reg(new ${mod.moduleName}ResponseBundle(dataWidth))
+          |  val r_arb_resp_valid   = RegInit(false.B)
+          |  r_arb_resp       := io.arb_resp.bits
+          |  r_arb_resp_valid := io.arb_resp.valid
+          |  io.arb_req.bits  := r_arb_req
+          |  io.arb_req.valid := r_arb_req_valid
+          |
+          |  val ${mod.moduleName}CP            = RegInit(0.U(4.W))
+          |  val r_res            = Reg(${outputTypeStr})
+          |
+          |  switch(${mod.moduleName}CP) {
+          |    is(0.U) {
+          |      r_arb_req_valid := true.B
+          |      r_arb_req.a     := 1.S
+          |      r_arb_req.b     := (-2).S
+          |      when(r_arb_resp_valid) {
+          |          r_res                := r_arb_resp.out
+          |          r_arb_req_valid := false.B
+          |          ${mod.moduleName}CP := 1.U
+          |      }
+          |    }
+          |    is(1.U) {
+          |      printf("result:%d\n", r_res)
+          |    }
+          |  }
+          |}
+        """
+    }
+
     @strictpure def modWrapperST: ST = {
       val respDataStr: String = ip match {
         case ArbBlockMemoryIP() => "readData"
         case ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, _) => "quotient"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, _) => "remainder"
         case _ => "out"
       }
 
@@ -2526,6 +2852,7 @@ import HwSynthesizer2._
                |${IpArbiterIOST}
                |${arbiterModuleST}
                |${modWrapperST}
+               |${testFunctionST}
              """
   }
 
@@ -2912,7 +3239,7 @@ import HwSynthesizer2._
               ipModules(i).moduleName ~> arbIpSt(valid, xilinxBramWrapperST, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
           case _ =>
             arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> (ISZ[ST]() :+ importPaddingST :+ ipModules(i).moduleST)
+              ipModules(i).moduleName ~> arbIpSt(T, st"", ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
         }
       }
 
