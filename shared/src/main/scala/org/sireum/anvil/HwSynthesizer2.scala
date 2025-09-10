@@ -414,18 +414,31 @@ object ArbInputMap {
           |        val out = Output(UInt(width.W))
           |    })
           |
-          |
           |    val sIdle :: sAdd1 :: sMult :: sAdd2 :: sEnd :: Nil = Enum(5)
           |    val stateReg        = RegInit(sIdle)
           |    val regBaseAddr     = Reg(UInt(width.W))
-          |    val regIndex        = Reg(UInt(width.W))
-          |    val regElementSize  = Reg(UInt(width.W))
+          |    val regIndex        = RegNext(io.index)
+          |    val regElementSize  = RegNext(io.elementSize)
           |    val regMult         = Reg(UInt(width.W))
-          |    val regMask         = Reg(UInt(width.W))
-          |    val result          = Reg(UInt(width.W))
+          |    val regMask         = RegNext(io.mask)
+          |    val result          = RegInit(0.U(width.W))
+          |    val regBaseOffset   = RegNext(io.baseOffset)
+          |    val regDataOffset   = RegNext(io.dataOffset)
           |
           |    val adder           = Module(new IndexAdder(width))
           |    val multiplier      = Module(new IndexMultiplier(width))
+          |
+          |    val r_start      = RegInit(false.B)
+          |    val r_start_next = RegInit(false.B)
+          |    val r_busy       = RegInit(true.B)
+          |
+          |    r_start      := io.ready
+          |    r_start_next := r_start
+          |    when(r_start & ~r_start_next) {
+          |        r_busy := false.B
+          |    } .elsewhen(io.valid) {
+          |        r_busy := true.B
+          |    }
           |
           |    adder.io.a          := 0.U
           |    adder.io.b          := 0.U
@@ -436,15 +449,11 @@ object ArbInputMap {
           |
           |    switch(stateReg) {
           |        is(sIdle) {
-          |            stateReg       := Mux(io.ready, sAdd1, sIdle)
-          |
-          |            regIndex       := io.index
-          |            regElementSize := io.elementSize
-          |            regMask        := io.mask
+          |            stateReg       := Mux(r_start & ~r_busy, sAdd1, sIdle)
           |        }
           |        is(sAdd1) {
-          |            adder.io.a     := io.baseOffset
-          |            adder.io.b     := io.dataOffset
+          |            adder.io.a     := regBaseOffset
+          |            adder.io.b     := regDataOffset
           |            adder.io.start := true.B
           |
           |            when(adder.io.valid) {
@@ -481,8 +490,8 @@ object ArbInputMap {
           |        }
           |    }
           |
-          |    io.out   := Mux(stateReg === sEnd, result, 0.U)
-          |    io.valid := Mux(stateReg === sEnd, true.B, false.B)
+          |    io.out   := Mux(stateReg === sEnd & ~r_busy, result, 0.U)
+          |    io.valid := Mux(stateReg === sEnd & ~r_busy, true.B, false.B)
           |}
         """
   }
@@ -1449,7 +1458,7 @@ object ArbInputMap {
   @strictpure override def portList: HashSMap[String, (B, String)] = {
     if(!aligned)
       HashSMap.empty[String, (B, String)] +
-        "mode" ~> (F, "UInt".string) +
+        "mode" ~> (T, "UInt".string) +
         "readAddr" ~> (F, "UInt".string) +
         "readOffset" ~> (F, "UInt".string) +
         "readLen" ~> (F, "UInt".string) +
@@ -1464,7 +1473,7 @@ object ArbInputMap {
         "dmaDstLen" ~> (F, "UInt".string)
     else
       HashSMap.empty[String, (B, String)] +
-        "mode" ~> (F, "UInt".string) +
+        "mode" ~> (T, "UInt".string) +
         "readAddr" ~> (F, "UInt".string) +
         "writeAddr" ~> (F, "UInt".string) +
         "writeData" ~> (F, "UInt".string) +
@@ -2530,8 +2539,8 @@ import HwSynthesizer2._
       case ArbBlockMemoryIP() => "0.U"
     }
 
-    val blockMemoryParaTypeStr: String = ", addrWidth: Int, depth: Int"
-    val blockMemoryParaStr: String = ", addrWidth, depth"
+    val blockMemoryParaTypeStr: String = ", depth: Int"
+    val blockMemoryParaStr: String = ", depth"
 
     @pure def requestBundleST: ST = {
       var portST: ISZ[ST] = ISZ[ST]()
@@ -2548,26 +2557,26 @@ import HwSynthesizer2._
         if(anvil.config.alignAxi4)
           st"""
               |val mode       = UInt(2.W)
-              |val readAddr   = UInt(addrWidth.W)
-              |val writeAddr  = UInt(addrWidth.W)
-              |val writeData  = UInt(dataWidth.W)
-              |val dmaSrcAddr = UInt(addrWidth.W)
-              |val dmaDstAddr = UInt(addrWidth.W)
+              |val readAddr   = UInt(log2Up(depth).W)
+              |val writeAddr  = UInt(log2Up(depth).W)
+              |val writeData  = UInt(log2Up(depth).W)
+              |val dmaSrcAddr = UInt(log2Up(depth).W)
+              |val dmaDstAddr = UInt(log2Up(depth).W)
               |val dmaSrcLen  = UInt(log2Up(depth).W)
               |val dmaDstLen  = UInt(log2Up(depth).W)
             """
         else
           st"""
               |val mode         = UInt(2.W)
-              |val readAddr     = UInt(addrWidth.W)
+              |val readAddr     = UInt(log2Up(depth).W)
               |val readOffset   = UInt(log2Up(depth).W)
               |val readLen      = UInt(4.W)
-              |val writeAddr    = UInt(addrWidth.W)
+              |val writeAddr    = UInt(log2Up(depth).W)
               |val writeOffset  = UInt(log2Up(depth).W)
               |val writeLen     = UInt(4.W)
               |val writeData    = UInt(dataWidth.W)
-              |val dmaSrcAddr   = UInt(addrWidth.W)
-              |val dmaDstAddr   = UInt(addrWidth.W)
+              |val dmaSrcAddr   = UInt(log2Up(depth).W)
+              |val dmaDstAddr   = UInt(log2Up(depth).W)
               |val dmaDstOffset = UInt(log2Up(depth).W)
               |val dmaSrcLen    = UInt(log2Up(depth).W)
               |val dmaDstLen    = UInt(log2Up(depth).W)
@@ -2685,7 +2694,11 @@ import HwSynthesizer2._
       for(entry <- h.entries) {
         // it is control signal
         if(entry._2._1) {
-          sts = sts :+ st"mod.io.${entry._1} := r_mod_start"
+          if(ip == ArbBlockMemoryIP()) {
+            sts = sts :+ st"mod.io.${entry._1} := r_mode"
+          } else {
+            sts = sts :+ st"mod.io.${entry._1} := r_mod_start"
+          }
         } else {
           sts = sts :+ st"mod.io.${entry._1} := r_req.${entry._1}"
         }
@@ -2697,13 +2710,13 @@ import HwSynthesizer2._
 
     @strictpure def testFunctionST: ST = {
       st"""
-          |class ${mod.moduleName}FunctionModule(dataWidth: Int) extends Module{
+          |class ${mod.moduleName}FunctionModule(dataWidth: Int${if(ip == ArbBlockMemoryIP()) ", depth: Int" else ""}) extends Module{
           |  val io = IO(new Bundle{
-          |    val arb_req  = Valid(new ${mod.moduleName}RequestBundle(dataWidth))
+          |    val arb_req  = Valid(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) ", depth" else ""}))
           |    val arb_resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
           |  })
           |
-          |  val r_arb_req          = Reg(new ${mod.moduleName}RequestBundle(dataWidth))
+          |  val r_arb_req          = Reg(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) ", depth" else ""}))
           |  val r_arb_req_valid    = RegInit(false.B)
           |  val r_arb_resp         = Reg(new ${mod.moduleName}ResponseBundle(dataWidth))
           |  val r_arb_resp_valid   = RegInit(false.B)
@@ -2718,10 +2731,10 @@ import HwSynthesizer2._
           |  switch(${mod.moduleName}CP) {
           |    is(0.U) {
           |      r_arb_req_valid := true.B
-          |      r_arb_req.a     := 1.S
-          |      r_arb_req.b     := (-2).S
+          |      //r_arb_req.a     := 1.S
+          |      //r_arb_req.b     := (-2).S
           |      when(r_arb_resp_valid) {
-          |          r_res                := r_arb_resp.out
+          |          //r_res                := r_arb_resp.out
           |          r_arb_req_valid := false.B
           |          ${mod.moduleName}CP := 1.U
           |      }
@@ -2743,14 +2756,10 @@ import HwSynthesizer2._
       }
 
       val reqValidST: ST =
-        if(ip == BlockMemoryIP())
+        if(ip == ArbBlockMemoryIP())
           st"""
-              |val r_busy       = RegInit(0.U(2.W))
-              |when(r_req_valid & ~r_req_valid_next) {
-              |    r_busy := 3.U
-              |} .elsewhen(mem.io.readValid | mem.io.writeValid | mem.io.dmaValid) {
-              |    r_busy := 0.U
-              |}
+              |val r_mode = RegInit(0.U(2.W))
+              |r_mode := Mux(r_req_valid & ~memory_valid, r_req.mode, 0.U)
             """
         else
           st"""
@@ -2831,8 +2840,9 @@ import HwSynthesizer2._
           |    val r_req_valid      = RegNext(io.req.valid, false.B)
           |    ${if(ip == ArbBlockMemoryIP()) "val r_req_valid_next = RegNext(r_req_valid, false.B)" else ""}
           |
+          |    ${if(ip == ArbBlockMemoryIP()) "val memory_valid = mod.io.readValid | mod.io.writeValid | mod.io.dmaValid" else ""}
           |    val r_resp_data  = RegNext(mod.io.${respDataStr})
-          |    val r_resp_valid = RegNext(${if(ip == ArbBlockMemoryIP()) "mod.io.readValid | mod.io.writeValid | mod.io.dmaValid" else "mod.io.valid"})
+          |    val r_resp_valid = RegNext(${if(ip == ArbBlockMemoryIP()) "memory_valid" else "mod.io.valid"})
           |
           |    ${reqValidST}
           |
@@ -2992,16 +3002,15 @@ import HwSynthesizer2._
       }
     }
 
-    @pure def arbiterModuleST: HashSMap[String, ISZ[ST]] = {
-      var arbiterModuleMap: HashSMap[String, ISZ[ST]] = HashSMap.empty
-      val importPaddingST: ST =
-        st"""
-            |import chisel3._
-            |import chisel3.util._
-            |import chisel3.experimental._
-            |
-          """
+    val importPaddingST: ST =
+      st"""
+          |import chisel3._
+          |import chisel3.util._
+          |import chisel3.experimental._
+          |
+        """
 
+    @strictpure def xilinxIpWrapper: ISZ[ST] = {
       val xilinxAdderUnsigned64WrapperST: ST =
         st"""
             |class XilinxAdderUnsigned64Wrapper extends BlackBox with HasBlackBoxResource {
@@ -3199,11 +3208,28 @@ import HwSynthesizer2._
             |}
           """
 
-      @pure def arbIpSt(noXilinxIp: B, xilinxIpWrapperSt: ST, moduleSt: ST, arbTemplateSt: ST): ISZ[ST] = {
+      ISZ[ST]() :+
+        importPaddingST :+
+        xilinxAdderUnsigned64WrapperST :+
+        xilinxAdderSigned64WrapperST :+
+        xilinxSubtractorUnsigned64WrapperST :+
+        xilinxSubtractorSigned64WrapperST :+
+        xilinxMultiplierUnsigned64WrapperST :+
+        xilinxMultiplierSigned64WrapperST :+
+        xilinxDividerUnsigned64WrapperST :+
+        xilinxDividerSigned64WrapperST :+
+        (if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) xilinxBramWrapperST else st"") :+
+        xilinxIndexAdderWrapperST :+
+        xilinxIndexMultiplierWrapperST
+    }
+
+    @pure def arbiterModuleST: HashSMap[String, ISZ[ST]] = {
+      var arbiterModuleMap: HashSMap[String, ISZ[ST]] = HashSMap.empty
+
+      @pure def arbIpSt(moduleSt: ST, arbTemplateSt: ST): ISZ[ST] = {
         var sts: ISZ[ST] = ISZ[ST]()
         sts = sts :+
           importPaddingST :+
-          (if(noXilinxIp) st"" else xilinxIpWrapperSt) :+
           moduleSt :+
           arbTemplateSt
 
@@ -3212,34 +3238,30 @@ import HwSynthesizer2._
 
       for(i <- 0 until ipModules.size) {
         ipModules(i) match {
-          case ArbAdder(signed, _, _, _, _, xilinxIpValid, _) =>
-            val t: ST = if(signed) xilinxAdderSigned64WrapperST else xilinxAdderUnsigned64WrapperST
+          case ArbAdder(signed, _, _, _, _, _, _) =>
             arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(xilinxIpValid, t, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case ArbSubtractor(signed, _, _, _, _, xilinxIpValid, _) => {
-            val t: ST = if(signed) xilinxSubtractorSigned64WrapperST else xilinxSubtractorUnsigned64WrapperST
+              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
+          case ArbSubtractor(signed, _, _, _, _, _, _) =>
             arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(xilinxIpValid, t, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          }
-          case ArbMultiplier(signed, _, _, _, _, xilinxIpValid, _) =>
-            val t: ST = if(signed) xilinxMultiplierSigned64WrapperST else xilinxMultiplierUnsigned64WrapperST
+              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
+          case ArbMultiplier(signed, _, _, _, _, _, _) =>
             arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(xilinxIpValid, t, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case ArbDivision(signed, _, _, _, _, xilinxIpValid, _) =>
-            val t: ST = if(signed) xilinxDividerSigned64WrapperST else xilinxDividerUnsigned64WrapperST
+              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
+          case ArbDivision(signed, _, _, _, _, _, _) =>
             arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(xilinxIpValid, t, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case ArbIndexer(_, _, _, _, _, xilinxIpValid, _) =>
-            val ts: ISZ[ST] = ISZ[ST]() :+ xilinxIndexAdderWrapperST :+ xilinxIndexMultiplierWrapperST
+              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
+          case ArbRemainder(signed, _, _, _, _, _, _) =>
             arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(xilinxIpValid, st"${(ts,"")}", ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
+              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
+          case ArbIndexer(_, _, _, _, _, _, _) =>
+            arbiterModuleMap = arbiterModuleMap +
+              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
           case ArbBlockMemory(_, modName, _, _, _, _, _, _, _, _, _) =>
-            val valid: B = anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative
             arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(valid, xilinxBramWrapperST, ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
+              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
           case _ =>
             arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(T, st"", ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
+              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
         }
       }
 
@@ -4128,6 +4150,9 @@ import HwSynthesizer2._
     }
 
     output.add(T, ISZ("config.txt"), configST)
+    if(!anvil.config.noXilinxIp) {
+      output.add(T, ISZ("chisel/src/main/scala", s"XilinxIpWrapper.scala"), st"${(xilinxIpWrapper, "\n")}")
+    }
     for(entry <- arbiterModuleST.entries) {
       output.add(T, ISZ("chisel/src/main/scala", s"${entry._1}.scala"), st"${(entry._2, "")}")
     }
