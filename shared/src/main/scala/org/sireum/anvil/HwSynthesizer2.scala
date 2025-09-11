@@ -1786,9 +1786,9 @@ object ArbInputMap {
           |    val writeValid  = Output(Bool())
           |
           |    // DMA
-          |    val dmaSrcAddr   = Input(UInt(log2Up(MEMORY_DEPTH)))  // byte address
-          |    val dmaDstAddr   = Input(UInt(log2Up(MEMORY_DEPTH)))  // byte address
-          |    val dmaDstOffset = Input(UInt(log2Up(MEMORY_DEPTH)))
+          |    val dmaSrcAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))  // byte address
+          |    val dmaDstAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))  // byte address
+          |    val dmaDstOffset = Input(UInt(log2Up(MEMORY_DEPTH).W))
           |    val dmaSrcLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
           |    val dmaDstLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
           |    val dmaValid     = Output(Bool())
@@ -1849,13 +1849,13 @@ object ArbInputMap {
           |  // registers for diff channels
           |  // write address channel
           |  val r_m_axi_awvalid = RegInit(false.B)
-          |  val r_m_axi_awaddr  = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
-          |  val r_m_axi_awlen   = Reg(UInt(8.W))
+          |  val r_m_axi_awaddr  = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_m_axi_awlen   = RegInit(0.U(8.W))
           |
           |  // write data channel
           |  val r_m_axi_wvalid  = RegInit(false.B)
           |  val r_m_axi_wdata   = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
-          |  val r_m_axi_wstrb   = Reg(UInt((C_M_AXI_DATA_WIDTH/8).W))
+          |  val r_m_axi_wstrb   = RegInit(0.U((C_M_AXI_DATA_WIDTH/8).W))
           |  val r_m_axi_wlast   = RegInit(false.B)
           |  val r_w_valid       = RegInit(false.B)
           |
@@ -1865,16 +1865,16 @@ object ArbInputMap {
           |
           |  // read address channel
           |  val r_m_axi_arvalid = RegInit(false.B)
-          |  val r_m_axi_araddr  = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
-          |  val r_m_axi_arlen   = Reg(UInt(8.W))
+          |  val r_m_axi_araddr  = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_m_axi_arlen   = RegInit(0.U(8.W))
           |
           |  // read data channel
           |  val r_m_axi_rready  = RegInit(false.B)
           |  val r_r_valid       = RegInit(false.B)
           |
-          |  val r_read_req      = RegNext(io.mode === 1.U)
-          |  val r_write_req     = RegNext(io.mode === 2.U)
-          |  val r_dma_req       = RegNext(io.mode === 3.U)
+          |  val r_read_req      = RegNext(io.mode === 1.U, init = false.B)
+          |  val r_write_req     = RegNext(io.mode === 2.U, init = false.B)
+          |  val r_dma_req       = RegNext(io.mode === 3.U, init = false.B)
           |
           |  // read logic
           |  val r_read_buffer   = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
@@ -1887,9 +1887,9 @@ object ArbInputMap {
           |  val r_buffer_shift6 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
           |  val r_buffer_shift7 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
           |  val r_final_buffer  = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
-          |  val r_read_addr     = RegNext(io.readAddr + io.readOffset)
-          |  val r_read_offset   = RegNext(r_read_addr(2,0))
-          |  val r_read_req_next = RegNext(r_read_req)
+          |  val r_read_addr     = RegNext(io.readAddr + io.readOffset, init = 0.U)
+          |  val r_read_offset   = RegNext(r_read_addr(2,0), init = 0.U)
+          |  val r_read_req_next = RegNext(r_read_req, init = false.B)
           |
           |  r_buffer_shift0 := r_read_buffer
           |  r_buffer_shift1 := r_read_buffer >> 8
@@ -1940,17 +1940,17 @@ object ArbInputMap {
           |  // write logic
           |  io.writeValid           := RegNext(r_write_req & r_b_valid)
           |  val r_write_buffer      = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
-          |  val r_write_padding     = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
-          |  val r_write_masking     = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
-          |  val r_write_reversing   = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
-          |  val r_write_data        = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
-          |  val r_write_data_shift  = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
-          |  val r_write_data_1      = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
-          |  val r_write_data_2      = Reg(UInt((2 * C_M_AXI_DATA_WIDTH).W))
-          |  val r_write_addr        = RegNext(io.writeAddr + io.writeOffset)
-          |  val r_write_req_next    = RegNext(r_write_req)
+          |  val r_write_padding     = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_masking     = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_reversing   = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_data        = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_data_shift  = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_data_1      = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_data_2      = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
+          |  val r_write_addr        = RegNext(io.writeAddr + io.writeOffset, init = 0.U)
+          |  val r_write_req_next    = RegNext(r_write_req, init = false.B)
           |  val r_write_running     = RegInit(false.B)
-          |  val r_write_offset      = Reg(UInt(3.W))
+          |  val r_write_offset      = RegInit(0.U(3.W))
           |  val r_aw_enable         = RegInit(false.B)
           |  val r_first_write_valid = RegInit(false.B)
           |  val w_m_axi_wlast       = io.M_AXI_WVALID & io.M_AXI_WREADY
@@ -2057,14 +2057,14 @@ object ArbInputMap {
           |
           |  // dma logic
           |  val r_dma_req_next     = RegNext(r_dma_req)
-          |  val r_dmaSrc_addr      = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
-          |  val r_dmaSrc_len       = Reg(UInt(log2Up(MEMORY_DEPTH).W))
-          |  val r_dmaDst_addr      = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
-          |  val r_dmaDst_len       = Reg(UInt(log2Up(MEMORY_DEPTH).W))
-          |  val r_dma_read_data    = Reg(UInt(C_M_AXI_DATA_WIDTH.W))
+          |  val r_dmaSrc_addr      = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_dmaSrc_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_dmaDst_addr      = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_dmaDst_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_dma_read_data    = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
           |  val r_dma_status       = RegInit(0.U(2.W)) // 0.U - Idle, 1.U - read, 2.U - write
-          |  val r_dmaSrc_finish    = RegNext(r_dmaSrc_len === 0.U)
-          |  val r_dmaDst_finish    = RegNext(r_dmaDst_len === 0.U)
+          |  val r_dmaSrc_finish    = RegNext(r_dmaSrc_len === 0.U, init = false.B)
+          |  val r_dmaDst_finish    = RegNext(r_dmaDst_len === 0.U, init = false.B)
           |  val r_dmaErase_enable  = RegInit(false.B)
           |  val r_dmaRead_running  = RegInit(false.B)
           |  val r_dmaWrite_running = RegInit(false.B)
@@ -2138,7 +2138,7 @@ object ArbInputMap {
           |  io.M_AXI_AWPROT  := 0.U
           |  io.M_AXI_AWQOS   := 0.U
           |  io.M_AXI_AWUSER  := 0.U
-          |  io.M_AXI_AWADDR  := Cat(r_m_axi_awaddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
+          |  io.M_AXI_AWADDR  := Cat(r_m_axi_awaddr(log2Up(MEMORY_DEPTH) - 1, 3), 0.U(3.W))
           |  io.M_AXI_AWVALID := r_m_axi_awvalid
           |
           |  io.M_AXI_WSTRB   := r_m_axi_wstrb
@@ -2158,7 +2158,7 @@ object ArbInputMap {
           |  io.M_AXI_ARPROT  := 0.U
           |  io.M_AXI_ARQOS   := 0.U
           |  io.M_AXI_ARUSER  := 0.U
-          |  io.M_AXI_ARADDR  := Cat(r_m_axi_araddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
+          |  io.M_AXI_ARADDR  := Cat(r_m_axi_araddr(log2Up(MEMORY_DEPTH) - 1, 3), 0.U(3.W))
           |  io.M_AXI_ARVALID := r_m_axi_arvalid
           |
           |  io.M_AXI_RREADY  := true.B
@@ -2824,6 +2824,59 @@ import HwSynthesizer2._
             |val M_AXI_RREADY = Output(Bool())
           """
 
+      val blockMemoryAxi4PortAssignST: ST = {
+        st"""
+            |io.M_AXI_AWID        := mod.io.M_AXI_AWID
+            |io.M_AXI_AWADDR      := mod.io.M_AXI_AWADDR
+            |io.M_AXI_AWLEN       := mod.io.M_AXI_AWLEN
+            |io.M_AXI_AWSIZE      := mod.io.M_AXI_AWSIZE
+            |io.M_AXI_AWBURST     := mod.io.M_AXI_AWBURST
+            |io.M_AXI_AWLOCK      := mod.io.M_AXI_AWLOCK
+            |io.M_AXI_AWCACHE     := mod.io.M_AXI_AWCACHE
+            |io.M_AXI_AWPROT      := mod.io.M_AXI_AWPROT
+            |io.M_AXI_AWQOS       := mod.io.M_AXI_AWQOS
+            |io.M_AXI_AWUSER      := mod.io.M_AXI_AWUSER
+            |io.M_AXI_AWVALID     := mod.io.M_AXI_AWVALID
+            |mod.io.M_AXI_AWREADY := io.M_AXI_AWREADY
+            |
+            |io.M_AXI_WDATA      := mod.io.M_AXI_WDATA
+            |io.M_AXI_WSTRB      := mod.io.M_AXI_WSTRB
+            |io.M_AXI_WLAST      := mod.io.M_AXI_WLAST
+            |io.M_AXI_WUSER      := mod.io.M_AXI_WUSER
+            |io.M_AXI_WVALID     := mod.io.M_AXI_WVALID
+            |mod.io.M_AXI_WREADY := io.M_AXI_WREADY
+            |
+            |mod.io.M_AXI_BID    := io.M_AXI_BID
+            |mod.io.M_AXI_BRESP  := io.M_AXI_BRESP
+            |mod.io.M_AXI_BUSER  := io.M_AXI_BUSER
+            |mod.io.M_AXI_BVALID := io.M_AXI_BVALID
+            |io.M_AXI_BREADY     := mod.io.M_AXI_BREADY
+            |
+            |io.M_AXI_ARID        := mod.io.M_AXI_ARID
+            |io.M_AXI_ARADDR      := mod.io.M_AXI_ARADDR
+            |io.M_AXI_ARLEN       := mod.io.M_AXI_ARLEN
+            |io.M_AXI_ARSIZE      := mod.io.M_AXI_ARSIZE
+            |io.M_AXI_ARBURST     := mod.io.M_AXI_ARBURST
+            |io.M_AXI_ARLOCK      := mod.io.M_AXI_ARLOCK
+            |io.M_AXI_ARCACHE     := mod.io.M_AXI_ARCACHE
+            |io.M_AXI_ARPROT      := mod.io.M_AXI_ARPROT
+            |io.M_AXI_ARQOS       := mod.io.M_AXI_ARQOS
+            |io.M_AXI_ARUSER      := mod.io.M_AXI_ARUSER
+            |io.M_AXI_ARVALID     := mod.io.M_AXI_ARVALID
+            |mod.io.M_AXI_ARREADY := io.M_AXI_ARREADY
+            |
+            |mod.io.M_AXI_RID    := io.M_AXI_RID
+            |mod.io.M_AXI_RDATA  := io.M_AXI_RDATA
+            |mod.io.M_AXI_RRESP  := io.M_AXI_RRESP
+            |mod.io.M_AXI_RLAST  := io.M_AXI_RLAST
+            |mod.io.M_AXI_RUSER  := io.M_AXI_RUSER
+            |mod.io.M_AXI_RVALID := io.M_AXI_RVALID
+            |io.M_AXI_RREADY     := mod.io.M_AXI_RREADY
+          """
+      }
+
+      val isAxi4Port: B = anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr
+
       st"""
           |class ${mod.moduleName}Wrapper(val dataWidth: Int ${if(ip == ArbBlockMemoryIP()) blockMemoryParaTypeStr else ""}) extends Module {
           |    val io = IO(new Bundle{
@@ -2849,6 +2902,8 @@ import HwSynthesizer2._
           |
           |    ${interfaceLogicST}
           |    io.resp.valid    := r_resp_valid
+          |
+          |    ${if(ip == ArbBlockMemoryIP() && isAxi4Port) blockMemoryAxi4PortAssignST else st""}
           |}
         """
     }
