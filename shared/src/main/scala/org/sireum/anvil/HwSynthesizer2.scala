@@ -1548,7 +1548,7 @@ object ArbInputMap {
     val bramModuleST: ST =
       st"""
           |${if(!genVerilog) bramIpST else st""}
-          |class ${moduleName}(val depth: Int = ${depthOfBRAM}, val width: Int = ${widthOfBRAM}) extends Module {
+          |class ${moduleName}(val width: Int = ${widthOfBRAM}, val depth: Int = ${depthOfBRAM}) extends Module {
           |  val io = IO(new Bundle {
           |    val mode = Input(UInt(2.W)) // 00 -> disable, 01 -> read, 10 -> write, 11 -> DMA
           |
@@ -1765,38 +1765,37 @@ object ArbInputMap {
 
     val ddrModuleST: ST =
       st"""
-          |class ${moduleName}(val C_M_AXI_ADDR_WIDTH: Int,
-          |                     val C_M_AXI_DATA_WIDTH: Int,
-          |                     val C_M_TARGET_SLAVE_BASE_ADDR: BigInt,
-          |                     val MEMORY_DEPTH: Int) extends Module {
+          |class ${moduleName}( val C_M_AXI_DATA_WIDTH: Int,
+          |                     val MEMORY_DEPTH: Int,
+          |                     val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = 0x0) extends Module {
           |
           |  val io = IO(new Bundle{
           |    val mode = Input(UInt(2.W)) // 00 -> disable, 01 -> read, 10 -> write, 11 -> DMA
           |
           |    // Byte level read/write port
-          |    val readAddr    = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
-          |    val readOffset  = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val readAddr    = Input(UInt(log2Up(MEMORY_DEPTH).W))
+          |    val readOffset  = Input(UInt(log2Up(MEMORY_DEPTH).W))
           |    val readLen     = Input(UInt(log2Up(C_M_AXI_DATA_WIDTH / 8 + 1).W))
           |    val readData    = Output(UInt(C_M_AXI_DATA_WIDTH.W))
           |    val readValid   = Output(Bool())
           |
-          |    val writeAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
-          |    val writeOffset = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val writeAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))
+          |    val writeOffset = Input(UInt(log2Up(MEMORY_DEPTH).W))
           |    val writeLen    = Input(UInt(log2Up(C_M_AXI_DATA_WIDTH / 8 + 1).W))
           |    val writeData   = Input(UInt(C_M_AXI_DATA_WIDTH.W))
           |    val writeValid  = Output(Bool())
           |
           |    // DMA
-          |    val dmaSrcAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
-          |    val dmaDstAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
-          |    val dmaDstOffset = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val dmaSrcAddr   = Input(UInt(log2Up(MEMORY_DEPTH)))  // byte address
+          |    val dmaDstAddr   = Input(UInt(log2Up(MEMORY_DEPTH)))  // byte address
+          |    val dmaDstOffset = Input(UInt(log2Up(MEMORY_DEPTH)))
           |    val dmaSrcLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
           |    val dmaDstLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
           |    val dmaValid     = Output(Bool())
           |
           |    // master write address channel
           |    val M_AXI_AWID    = Output(UInt(1.W))
-          |    val M_AXI_AWADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val M_AXI_AWADDR  = Output(UInt(log2Up(MEMORY_DEPTH).W))
           |    val M_AXI_AWLEN   = Output(UInt(8.W))
           |    val M_AXI_AWSIZE  = Output(UInt(3.W))
           |    val M_AXI_AWBURST = Output(UInt(2.W))
@@ -1825,7 +1824,7 @@ object ArbInputMap {
           |
           |    // master read address channel
           |    val M_AXI_ARID    = Output(UInt(1.W))
-          |    val M_AXI_ARADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val M_AXI_ARADDR  = Output(UInt(log2Up(MEMORY_DEPTH).W))
           |    val M_AXI_ARLEN   = Output(UInt(8.W))
           |    val M_AXI_ARSIZE  = Output(UInt(3.W))
           |    val M_AXI_ARBURST = Output(UInt(2.W))
@@ -2168,33 +2167,32 @@ object ArbInputMap {
 
     val alignDdrModuleST: ST =
       st"""
-          |class ${moduleName}(val C_M_AXI_ADDR_WIDTH: Int,
-          |                    val C_M_AXI_DATA_WIDTH: Int,
-          |                    val C_M_TARGET_SLAVE_BASE_ADDR: BigInt,
-          |                    val MEMORY_DEPTH: Int) extends Module {
+          |class ${moduleName}(val C_M_AXI_DATA_WIDTH: Int,
+          |                    val MEMORY_DEPTH: Int,
+          |                    val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = 0x0) extends Module {
           |
           |  val io = IO(new Bundle{
           |    val mode = Input(UInt(2.W)) // 00 -> disable, 01 -> read, 10 -> write, 11 -> DMA
           |
           |    // Byte level read/write port
-          |    val readAddr    = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val readAddr    = Input(UInt(log2Up(MEMORY_DEPTH).W))
           |    val readData    = Output(UInt(C_M_AXI_DATA_WIDTH.W))
           |    val readValid   = Output(Bool())
           |
-          |    val writeAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val writeAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))
           |    val writeData   = Input(UInt(C_M_AXI_DATA_WIDTH.W))
           |    val writeValid  = Output(Bool())
           |
           |    // DMA
-          |    val dmaSrcAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
-          |    val dmaDstAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
+          |    val dmaSrcAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))  // byte address
+          |    val dmaDstAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))  // byte address
           |    val dmaSrcLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
           |    val dmaDstLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
           |    val dmaValid     = Output(Bool())
           |
           |    // master write address channel
           |    val M_AXI_AWID    = Output(UInt(1.W))
-          |    val M_AXI_AWADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val M_AXI_AWADDR  = Output(UInt(log2Up(MEMORY_DEPTH).W))
           |    val M_AXI_AWLEN   = Output(UInt(8.W))
           |    val M_AXI_AWSIZE  = Output(UInt(3.W))
           |    val M_AXI_AWBURST = Output(UInt(2.W))
@@ -2223,7 +2221,7 @@ object ArbInputMap {
           |
           |    // master read address channel
           |    val M_AXI_ARID    = Output(UInt(1.W))
-          |    val M_AXI_ARADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val M_AXI_ARADDR  = Output(UInt(log2Up(MEMORY_DEPTH).W))
           |    val M_AXI_ARLEN   = Output(UInt(8.W))
           |    val M_AXI_ARSIZE  = Output(UInt(3.W))
           |    val M_AXI_ARBURST = Output(UInt(2.W))
@@ -2248,7 +2246,7 @@ object ArbInputMap {
           |  // registers for diff channels
           |  // write address channel
           |  val r_m_axi_awvalid = RegInit(false.B)
-          |  val r_m_axi_awaddr  = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_m_axi_awaddr  = Reg(UInt(log2Up(MEMORY_DEPTH).W))
           |
           |  // write data channel
           |  val r_m_axi_wvalid  = RegInit(false.B)
@@ -2262,7 +2260,7 @@ object ArbInputMap {
           |
           |  // read address channel
           |  val r_m_axi_arvalid = RegInit(false.B)
-          |  val r_m_axi_araddr  = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_m_axi_araddr  = Reg(UInt(log2Up(MEMORY_DEPTH).W))
           |
           |  // read data channel
           |  val r_m_axi_rready  = RegInit(false.B)
@@ -2332,9 +2330,9 @@ object ArbInputMap {
           |
           |  // dma logic
           |  val r_dma_req_next     = RegNext(r_dma_req)
-          |  val r_dmaSrc_addr      = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_dmaSrc_addr      = Reg(UInt(log2Up(MEMORY_DEPTH).W))
           |  val r_dmaSrc_len       = Reg(UInt(log2Up(MEMORY_DEPTH).W))
-          |  val r_dmaDst_addr      = Reg(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_dmaDst_addr      = Reg(UInt(log2Up(MEMORY_DEPTH).W))
           |  val r_dmaDst_len       = Reg(UInt(log2Up(MEMORY_DEPTH).W))
           |
           |  val r_dma_read_data    = Reg(UInt(C_M_AXI_DATA_WIDTH.W))
@@ -2775,7 +2773,7 @@ import HwSynthesizer2._
         st"""
             |// master write address channel
             |val M_AXI_AWID    = Output(UInt(1.W))
-            |val M_AXI_AWADDR  = Output(UInt(addrWidth.W))
+            |val M_AXI_AWADDR  = Output(UInt(log2Up(depth).W))
             |val M_AXI_AWLEN   = Output(UInt(8.W))
             |val M_AXI_AWSIZE  = Output(UInt(3.W))
             |val M_AXI_AWBURST = Output(UInt(2.W))
@@ -2804,7 +2802,7 @@ import HwSynthesizer2._
             |
             |// master read address channel
             |val M_AXI_ARID    = Output(UInt(1.W))
-            |val M_AXI_ARADDR  = Output(UInt(addrWidth.W))
+            |val M_AXI_ARADDR  = Output(UInt(log2Up(depth).W))
             |val M_AXI_ARLEN   = Output(UInt(8.W))
             |val M_AXI_ARSIZE  = Output(UInt(3.W))
             |val M_AXI_ARBURST = Output(UInt(2.W))
@@ -2834,7 +2832,7 @@ import HwSynthesizer2._
           |        ${if(ip == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) blockMemoryAxi4PortST else st""}
           |    })
           |
-          |    val mod = Module(new ${mod.moduleName}(dataWidth))
+          |    val mod = Module(new ${mod.moduleName}(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))
           |
           |    val r_req            = Reg(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))
           |    val r_req_valid      = RegNext(io.req.valid, false.B)
