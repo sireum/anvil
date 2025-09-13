@@ -1456,31 +1456,51 @@ object ArbInputMap {
   @strictpure override def width: Z = widthOfBRAM
   @strictpure def depth: Z = depthOfBRAM
   @strictpure override def portList: HashSMap[String, (B, String)] = {
-    if(!aligned)
-      HashSMap.empty[String, (B, String)] +
-        "mode" ~> (T, "UInt".string) +
-        "readAddr" ~> (F, "UInt".string) +
-        "readOffset" ~> (F, "UInt".string) +
-        "readLen" ~> (F, "UInt".string) +
-        "writeAddr" ~> (F, "UInt".string) +
-        "writeOffset" ~> (F, "UInt".string) +
-        "writeLen" ~> (F, "UInt".string) +
-        "writeData" ~> (F, "UInt".string) +
-        "dmaSrcAddr" ~> (F, "UInt".string) +
-        "dmaDstAddr" ~> (F, "UInt".string) +
-        "dmaDstOffset" ~> (F, "UInt".string) +
-        "dmaSrcLen" ~> (F, "UInt".string)+
-        "dmaDstLen" ~> (F, "UInt".string)
-    else
-      HashSMap.empty[String, (B, String)] +
-        "mode" ~> (T, "UInt".string) +
-        "readAddr" ~> (F, "UInt".string) +
-        "writeAddr" ~> (F, "UInt".string) +
-        "writeData" ~> (F, "UInt".string) +
-        "dmaSrcAddr" ~> (F, "UInt".string) +
-        "dmaDstAddr" ~> (F, "UInt".string) +
-        "dmaSrcLen" ~> (F, "UInt".string) +
-        "dmaDstLen" ~> (F, "UInt".string)
+    memoryType match {
+      case Anvil.Config.MemoryAccess.BramNative =>
+        HashSMap.empty[String, (B, String)] +
+          "mode" ~> (T, "UInt".string) +
+          "readAddr" ~> (F, "UInt".string) +
+          "readOffset" ~> (F, "UInt".string) +
+          "readLen" ~> (F, "UInt".string) +
+          "writeAddr" ~> (F, "UInt".string) +
+          "writeOffset" ~> (F, "UInt".string) +
+          "writeLen" ~> (F, "UInt".string) +
+          "writeData" ~> (F, "UInt".string) +
+          "dmaSrcAddr" ~> (F, "UInt".string) +
+          "dmaDstAddr" ~> (F, "UInt".string) +
+          "dmaDstOffset" ~> (F, "UInt".string) +
+          "dmaSrcLen" ~> (F, "UInt".string)+
+          "dmaDstLen" ~> (F, "UInt".string)
+      case Anvil.Config.MemoryAccess.Default =>
+        halt("not impl default in ArbBlockMemory")
+      case _ =>
+        if(!aligned)
+          HashSMap.empty[String, (B, String)] +
+            "mode" ~> (T, "UInt".string) +
+            "readAddr" ~> (F, "UInt".string) +
+            "readOffset" ~> (F, "UInt".string) +
+            "readLen" ~> (F, "UInt".string) +
+            "writeAddr" ~> (F, "UInt".string) +
+            "writeOffset" ~> (F, "UInt".string) +
+            "writeLen" ~> (F, "UInt".string) +
+            "writeData" ~> (F, "UInt".string) +
+            "dmaSrcAddr" ~> (F, "UInt".string) +
+            "dmaDstAddr" ~> (F, "UInt".string) +
+            "dmaDstOffset" ~> (F, "UInt".string) +
+            "dmaSrcLen" ~> (F, "UInt".string)+
+            "dmaDstLen" ~> (F, "UInt".string)
+        else
+          HashSMap.empty[String, (B, String)] +
+            "mode" ~> (T, "UInt".string) +
+            "readAddr" ~> (F, "UInt".string) +
+            "writeAddr" ~> (F, "UInt".string) +
+            "writeData" ~> (F, "UInt".string) +
+            "dmaSrcAddr" ~> (F, "UInt".string) +
+            "dmaDstAddr" ~> (F, "UInt".string) +
+            "dmaSrcLen" ~> (F, "UInt".string) +
+            "dmaDstLen" ~> (F, "UInt".string)
+    }
   }
   @strictpure override def expression: ArbIpType = exp
   @strictpure def bramIpST: ST = {
@@ -1765,37 +1785,38 @@ object ArbInputMap {
 
     val ddrModuleST: ST =
       st"""
-          |class ${moduleName}( val C_M_AXI_DATA_WIDTH: Int,
-          |                     val MEMORY_DEPTH: Int,
-          |                     val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = 0x0) extends Module {
+          |class ${moduleName}(val C_M_AXI_DATA_WIDTH: Int,
+          |                    val C_M_AXI_ADDR_WIDTH: Int,
+          |                    val MEMORY_DEPTH: Int,
+          |                    val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = 0x0) extends Module {
           |
           |  val io = IO(new Bundle{
           |    val mode = Input(UInt(2.W)) // 00 -> disable, 01 -> read, 10 -> write, 11 -> DMA
           |
           |    // Byte level read/write port
-          |    val readAddr    = Input(UInt(log2Up(MEMORY_DEPTH).W))
-          |    val readOffset  = Input(UInt(log2Up(MEMORY_DEPTH).W))
+          |    val readAddr    = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val readOffset  = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
           |    val readLen     = Input(UInt(log2Up(C_M_AXI_DATA_WIDTH / 8 + 1).W))
           |    val readData    = Output(UInt(C_M_AXI_DATA_WIDTH.W))
           |    val readValid   = Output(Bool())
           |
-          |    val writeAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))
-          |    val writeOffset = Input(UInt(log2Up(MEMORY_DEPTH).W))
+          |    val writeAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
+          |    val writeOffset = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
           |    val writeLen    = Input(UInt(log2Up(C_M_AXI_DATA_WIDTH / 8 + 1).W))
           |    val writeData   = Input(UInt(C_M_AXI_DATA_WIDTH.W))
           |    val writeValid  = Output(Bool())
           |
           |    // DMA
-          |    val dmaSrcAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))  // byte address
-          |    val dmaDstAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))  // byte address
-          |    val dmaDstOffset = Input(UInt(log2Up(MEMORY_DEPTH).W))
+          |    val dmaSrcAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
+          |    val dmaDstAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
+          |    val dmaDstOffset = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
           |    val dmaSrcLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
           |    val dmaDstLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
           |    val dmaValid     = Output(Bool())
           |
           |    // master write address channel
           |    val M_AXI_AWID    = Output(UInt(1.W))
-          |    val M_AXI_AWADDR  = Output(UInt(log2Up(MEMORY_DEPTH).W))
+          |    val M_AXI_AWADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
           |    val M_AXI_AWLEN   = Output(UInt(8.W))
           |    val M_AXI_AWSIZE  = Output(UInt(3.W))
           |    val M_AXI_AWBURST = Output(UInt(2.W))
@@ -1824,7 +1845,7 @@ object ArbInputMap {
           |
           |    // master read address channel
           |    val M_AXI_ARID    = Output(UInt(1.W))
-          |    val M_AXI_ARADDR  = Output(UInt(log2Up(MEMORY_DEPTH).W))
+          |    val M_AXI_ARADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
           |    val M_AXI_ARLEN   = Output(UInt(8.W))
           |    val M_AXI_ARSIZE  = Output(UInt(3.W))
           |    val M_AXI_ARBURST = Output(UInt(2.W))
@@ -1849,7 +1870,7 @@ object ArbInputMap {
           |  // registers for diff channels
           |  // write address channel
           |  val r_m_axi_awvalid = RegInit(false.B)
-          |  val r_m_axi_awaddr  = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_m_axi_awaddr  = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
           |  val r_m_axi_awlen   = RegInit(0.U(8.W))
           |
           |  // write data channel
@@ -1865,7 +1886,7 @@ object ArbInputMap {
           |
           |  // read address channel
           |  val r_m_axi_arvalid = RegInit(false.B)
-          |  val r_m_axi_araddr  = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_m_axi_araddr  = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
           |  val r_m_axi_arlen   = RegInit(0.U(8.W))
           |
           |  // read data channel
@@ -1938,7 +1959,7 @@ object ArbInputMap {
           |  }
           |
           |  // write logic
-          |  io.writeValid           := RegNext(r_write_req & r_b_valid)
+          |  io.writeValid           := RegNext(r_write_req & r_b_valid, init = false.B)
           |  val r_write_buffer      = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
           |  val r_write_padding     = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
           |  val r_write_masking     = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
@@ -2057,9 +2078,9 @@ object ArbInputMap {
           |
           |  // dma logic
           |  val r_dma_req_next     = RegNext(r_dma_req)
-          |  val r_dmaSrc_addr      = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_dmaSrc_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
           |  val r_dmaSrc_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
-          |  val r_dmaDst_addr      = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_dmaDst_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
           |  val r_dmaDst_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
           |  val r_dma_read_data    = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
           |  val r_dma_status       = RegInit(0.U(2.W)) // 0.U - Idle, 1.U - read, 2.U - write
@@ -2069,7 +2090,7 @@ object ArbInputMap {
           |  val r_dmaRead_running  = RegInit(false.B)
           |  val r_dmaWrite_running = RegInit(false.B)
           |
-          |  io.dmaValid := RegNext(r_dma_req & (r_dma_status === 3.U))
+          |  io.dmaValid := RegNext(r_dma_req & (r_dma_status === 3.U), init = false.B)
           |
           |  when(r_dma_req & ~r_dma_req_next) {
           |    r_dmaSrc_addr      := io.dmaSrcAddr
@@ -2138,7 +2159,7 @@ object ArbInputMap {
           |  io.M_AXI_AWPROT  := 0.U
           |  io.M_AXI_AWQOS   := 0.U
           |  io.M_AXI_AWUSER  := 0.U
-          |  io.M_AXI_AWADDR  := Cat(r_m_axi_awaddr(log2Up(MEMORY_DEPTH) - 1, 3), 0.U(3.W))
+          |  io.M_AXI_AWADDR  := Cat(r_m_axi_awaddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
           |  io.M_AXI_AWVALID := r_m_axi_awvalid
           |
           |  io.M_AXI_WSTRB   := r_m_axi_wstrb
@@ -2158,7 +2179,7 @@ object ArbInputMap {
           |  io.M_AXI_ARPROT  := 0.U
           |  io.M_AXI_ARQOS   := 0.U
           |  io.M_AXI_ARUSER  := 0.U
-          |  io.M_AXI_ARADDR  := Cat(r_m_axi_araddr(log2Up(MEMORY_DEPTH) - 1, 3), 0.U(3.W))
+          |  io.M_AXI_ARADDR  := Cat(r_m_axi_araddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
           |  io.M_AXI_ARVALID := r_m_axi_arvalid
           |
           |  io.M_AXI_RREADY  := true.B
@@ -2168,6 +2189,7 @@ object ArbInputMap {
     val alignDdrModuleST: ST =
       st"""
           |class ${moduleName}(val C_M_AXI_DATA_WIDTH: Int,
+          |                    val C_M_AXI_ADDR_WIDTH: Int,
           |                    val MEMORY_DEPTH: Int,
           |                    val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = 0x0) extends Module {
           |
@@ -2175,24 +2197,24 @@ object ArbInputMap {
           |    val mode = Input(UInt(2.W)) // 00 -> disable, 01 -> read, 10 -> write, 11 -> DMA
           |
           |    // Byte level read/write port
-          |    val readAddr    = Input(UInt(log2Up(MEMORY_DEPTH).W))
+          |    val readAddr    = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
           |    val readData    = Output(UInt(C_M_AXI_DATA_WIDTH.W))
           |    val readValid   = Output(Bool())
           |
-          |    val writeAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))
+          |    val writeAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))
           |    val writeData   = Input(UInt(C_M_AXI_DATA_WIDTH.W))
           |    val writeValid  = Output(Bool())
           |
           |    // DMA
-          |    val dmaSrcAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))  // byte address
-          |    val dmaDstAddr   = Input(UInt(log2Up(MEMORY_DEPTH).W))  // byte address
+          |    val dmaSrcAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
+          |    val dmaDstAddr   = Input(UInt(C_M_AXI_ADDR_WIDTH.W))  // byte address
           |    val dmaSrcLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
           |    val dmaDstLen    = Input(UInt(log2Up(MEMORY_DEPTH).W)) // byte count
           |    val dmaValid     = Output(Bool())
           |
           |    // master write address channel
           |    val M_AXI_AWID    = Output(UInt(1.W))
-          |    val M_AXI_AWADDR  = Output(UInt(log2Up(MEMORY_DEPTH).W))
+          |    val M_AXI_AWADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
           |    val M_AXI_AWLEN   = Output(UInt(8.W))
           |    val M_AXI_AWSIZE  = Output(UInt(3.W))
           |    val M_AXI_AWBURST = Output(UInt(2.W))
@@ -2221,7 +2243,7 @@ object ArbInputMap {
           |
           |    // master read address channel
           |    val M_AXI_ARID    = Output(UInt(1.W))
-          |    val M_AXI_ARADDR  = Output(UInt(log2Up(MEMORY_DEPTH).W))
+          |    val M_AXI_ARADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
           |    val M_AXI_ARLEN   = Output(UInt(8.W))
           |    val M_AXI_ARSIZE  = Output(UInt(3.W))
           |    val M_AXI_ARBURST = Output(UInt(2.W))
@@ -2246,12 +2268,12 @@ object ArbInputMap {
           |  // registers for diff channels
           |  // write address channel
           |  val r_m_axi_awvalid = RegInit(false.B)
-          |  val r_m_axi_awaddr  = Reg(UInt(log2Up(MEMORY_DEPTH).W))
+          |  val r_m_axi_awaddr  = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
           |
           |  // write data channel
           |  val r_m_axi_wvalid  = RegInit(false.B)
           |  val r_m_axi_wdata   = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
-          |  val r_m_axi_wstrb   = Reg(UInt((C_M_AXI_DATA_WIDTH/8).W))
+          |  val r_m_axi_wstrb   = RegInit(0.U((C_M_AXI_DATA_WIDTH/8).W))
           |  val r_m_axi_wlast   = RegInit(false.B)
           |  val r_w_valid       = RegInit(false.B)
           |
@@ -2260,19 +2282,19 @@ object ArbInputMap {
           |
           |  // read address channel
           |  val r_m_axi_arvalid = RegInit(false.B)
-          |  val r_m_axi_araddr  = Reg(UInt(log2Up(MEMORY_DEPTH).W))
+          |  val r_m_axi_araddr  = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
           |
           |  // read data channel
           |  val r_m_axi_rready  = RegInit(false.B)
           |  val r_r_valid       = RegInit(false.B)
           |
-          |  val r_read_req      = RegNext(io.mode === 1.U)
-          |  val r_write_req     = RegNext(io.mode === 2.U)
-          |  val r_dma_req       = RegNext(io.mode === 3.U)
+          |  val r_read_req      = RegNext(io.mode === 1.U, init = false.B)
+          |  val r_write_req     = RegNext(io.mode === 2.U, init = false.B)
+          |  val r_dma_req       = RegNext(io.mode === 3.U, init = false.B)
           |
           |  // read logic
-          |  val r_read_req_next = RegNext(r_read_req)
-          |  val r_read_addr     = RegNext(io.readAddr + C_M_TARGET_SLAVE_BASE_ADDR.U)
+          |  val r_read_req_next = RegNext(r_read_req, init = false.B)
+          |  val r_read_addr     = RegNext(io.readAddr + C_M_TARGET_SLAVE_BASE_ADDR.U, init = 0.U)
           |
           |  io.readValid        := r_read_req & r_r_valid
           |  io.readData         := RegNext(io.M_AXI_RDATA)
@@ -2296,9 +2318,9 @@ object ArbInputMap {
           |
           |  // write logic
           |  io.writeValid        := r_write_req & r_b_valid
-          |  val r_write_addr     = RegNext(io.writeAddr + C_M_TARGET_SLAVE_BASE_ADDR.U)
-          |  val r_write_req_next = RegNext(r_write_req)
-          |  val r_write_data     = RegNext(io.writeData)
+          |  val r_write_addr     = RegNext(io.writeAddr + C_M_TARGET_SLAVE_BASE_ADDR.U, init = 0.U)
+          |  val r_write_req_next = RegNext(r_write_req, init = false.B)
+          |  val r_write_data     = RegNext(io.writeData, init = 0.U)
           |
           |  when(r_write_req & ~r_write_req_next) {
           |    r_m_axi_awvalid := true.B
@@ -2329,16 +2351,16 @@ object ArbInputMap {
           |  }
           |
           |  // dma logic
-          |  val r_dma_req_next     = RegNext(r_dma_req)
-          |  val r_dmaSrc_addr      = Reg(UInt(log2Up(MEMORY_DEPTH).W))
-          |  val r_dmaSrc_len       = Reg(UInt(log2Up(MEMORY_DEPTH).W))
-          |  val r_dmaDst_addr      = Reg(UInt(log2Up(MEMORY_DEPTH).W))
-          |  val r_dmaDst_len       = Reg(UInt(log2Up(MEMORY_DEPTH).W))
+          |  val r_dma_req_next     = RegNext(r_dma_req, init = false.B)
+          |  val r_dmaSrc_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_dmaSrc_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_dmaDst_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_dmaDst_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
           |
-          |  val r_dma_read_data    = Reg(UInt(C_M_AXI_DATA_WIDTH.W))
+          |  val r_dma_read_data    = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
           |  val r_dma_status       = RegInit(0.U(2.W)) // 0.U - Idle, 1.U - read, 2.U - write
-          |  val r_dmaSrc_finish    = RegNext(r_dmaSrc_len === 0.U)
-          |  val r_dmaDst_finish    = RegNext(r_dmaDst_len === 0.U)
+          |  val r_dmaSrc_finish    = RegNext(r_dmaSrc_len === 0.U, init = false.B)
+          |  val r_dmaDst_finish    = RegNext(r_dmaDst_len === 0.U, init = false.B)
           |  val r_dmaErase_enable  = RegInit(false.B)
           |  val r_dmaRead_running  = RegInit(false.B)
           |  val r_dmaWrite_running = RegInit(false.B)
@@ -2537,8 +2559,16 @@ import HwSynthesizer2._
       case ArbBlockMemoryIP() => "0.U"
     }
 
-    val blockMemoryParaTypeStr: String = ", depth: Int"
-    val blockMemoryParaStr: String = ", depth"
+    val blockMemoryParaTypeStr: String = ip match {
+      case ArbBlockMemoryIP() =>
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) ", depth: Int" else ", addrWidth: Int, depth: Int"
+      case _ => ""
+    }
+    val blockMemoryParaStr: String = ip match {
+      case ArbBlockMemoryIP() =>
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) ", depth" else ", addrWidth, depth"
+      case _ => ""
+    }
 
     @pure def requestBundleST: ST = {
       var portST: ISZ[ST] = ISZ[ST]()
@@ -2551,40 +2581,58 @@ import HwSynthesizer2._
         }
       }
 
-      val blockMemoryPortST: ST = {
-        if(anvil.config.alignAxi4)
-          st"""
-              |val mode       = UInt(2.W)
-              |val readAddr   = UInt(log2Up(depth).W)
-              |val writeAddr  = UInt(log2Up(depth).W)
-              |val writeData  = UInt(log2Up(depth).W)
-              |val dmaSrcAddr = UInt(log2Up(depth).W)
-              |val dmaDstAddr = UInt(log2Up(depth).W)
-              |val dmaSrcLen  = UInt(log2Up(depth).W)
-              |val dmaDstLen  = UInt(log2Up(depth).W)
-            """
-        else
-          st"""
-              |val mode         = UInt(2.W)
-              |val readAddr     = UInt(log2Up(depth).W)
-              |val readOffset   = UInt(log2Up(depth).W)
-              |val readLen      = UInt(4.W)
-              |val writeAddr    = UInt(log2Up(depth).W)
-              |val writeOffset  = UInt(log2Up(depth).W)
-              |val writeLen     = UInt(4.W)
-              |val writeData    = UInt(dataWidth.W)
-              |val dmaSrcAddr   = UInt(log2Up(depth).W)
-              |val dmaDstAddr   = UInt(log2Up(depth).W)
-              |val dmaDstOffset = UInt(log2Up(depth).W)
-              |val dmaSrcLen    = UInt(log2Up(depth).W)
-              |val dmaDstLen    = UInt(log2Up(depth).W)
-            """
+      val blockMemoryPortST: ST = anvil.config.memoryAccess match {
+          case Anvil.Config.MemoryAccess.BramNative =>
+            st"""
+                |val mode         = UInt(2.W)
+                |val readAddr     = UInt(log2Up(depth).W)
+                |val readOffset   = UInt(log2Up(depth).W)
+                |val readLen      = UInt(4.W)
+                |val writeAddr    = UInt(log2Up(depth).W)
+                |val writeOffset  = UInt(log2Up(depth).W)
+                |val writeLen     = UInt(4.W)
+                |val writeData    = UInt(dataWidth.W)
+                |val dmaSrcAddr   = UInt(log2Up(depth).W)
+                |val dmaDstAddr   = UInt(log2Up(depth).W)
+                |val dmaDstOffset = UInt(log2Up(depth).W)
+                |val dmaSrcLen    = UInt(log2Up(depth).W)
+                |val dmaDstLen    = UInt(log2Up(depth).W)
+              """
+          case Anvil.Config.MemoryAccess.Default => halt("not impl default BlockMemory")
+          case _ =>
+            if(anvil.config.alignAxi4)
+              st"""
+                  |val mode       = UInt(2.W)
+                  |val readAddr   = UInt(addrWidth.W)
+                  |val writeAddr  = UInt(addrWidth.W)
+                  |val writeData  = UInt(dataWidth.W)
+                  |val dmaSrcAddr = UInt(addrWidth.W)
+                  |val dmaDstAddr = UInt(addrWidth.W)
+                  |val dmaSrcLen  = UInt(log2Up(depth).W)
+                  |val dmaDstLen  = UInt(log2Up(depth).W)
+                """
+            else
+              st"""
+                  |val mode         = UInt(2.W)
+                  |val readAddr     = UInt(addrWidth.W)
+                  |val readOffset   = UInt(addrWidth.W)
+                  |val readLen      = UInt(4.W)
+                  |val writeAddr    = UInt(addrWidth.W)
+                  |val writeOffset  = UInt(addrWidth.W)
+                  |val writeLen     = UInt(4.W)
+                  |val writeData    = UInt(dataWidth.W)
+                  |val dmaSrcAddr   = UInt(addrWidth.W)
+                  |val dmaDstAddr   = UInt(addrWidth.W)
+                  |val dmaDstOffset = UInt(addrWidth.W)
+                  |val dmaSrcLen    = UInt(log2Up(depth).W)
+                  |val dmaDstLen    = UInt(log2Up(depth).W)
+                """
       }
 
       val finalPortST: ST = if(ip == ArbBlockMemoryIP()) blockMemoryPortST else st"${(portST, "\n")}"
 
       return st"""
-                 |class ${mod.moduleName}RequestBundle(dataWidth: Int${if(ip == ArbBlockMemoryIP()) blockMemoryParaTypeStr else ""}) extends Bundle {
+                 |class ${mod.moduleName}RequestBundle(dataWidth: Int${blockMemoryParaTypeStr}) extends Bundle {
                  |  ${finalPortST}
                  |}
                """
@@ -2603,8 +2651,8 @@ import HwSynthesizer2._
 
     @strictpure def IpIOST: ST = {
       st"""
-          |class ${mod.moduleName}IO(dataWidth: Int${if(ip == ArbBlockMemoryIP()) blockMemoryParaTypeStr else ""}) extends Bundle {
-          |  val req = Valid(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))
+          |class ${mod.moduleName}IO(dataWidth: Int${blockMemoryParaTypeStr}) extends Bundle {
+          |  val req = Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr}))
           |  val resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
           |}
         """
@@ -2612,24 +2660,24 @@ import HwSynthesizer2._
 
     @strictpure def IpArbiterIOST: ST = {
       st"""
-          |class ${mod.moduleName}ArbiterIO(numIPs: Int, dataWidth: Int${if(ip == ArbBlockMemoryIP()) blockMemoryParaTypeStr else ""}) extends Bundle {
-          |  val ipReqs  = Flipped(Vec(numIPs, Valid(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))))
+          |class ${mod.moduleName}ArbiterIO(numIPs: Int, dataWidth: Int${blockMemoryParaTypeStr}) extends Bundle {
+          |  val ipReqs  = Flipped(Vec(numIPs, Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr}))))
           |  val ipResps = Vec(numIPs, Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
-          |  val ip      = new ${mod.moduleName}IO(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""})
+          |  val ip      = new ${mod.moduleName}IO(dataWidth${blockMemoryParaStr})
           |}
         """
     }
 
     @strictpure def arbiterModuleST: ST = {
       st"""
-          |class ${mod.moduleName}ArbiterModule(numIPs: Int, dataWidth: Int${if(ip == ArbBlockMemoryIP()) blockMemoryParaTypeStr else ""}) extends Module {
-          |  val io = IO(new ${mod.moduleName}ArbiterIO(numIPs, dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))
+          |class ${mod.moduleName}ArbiterModule(numIPs: Int, dataWidth: Int${blockMemoryParaTypeStr}) extends Module {
+          |  val io = IO(new ${mod.moduleName}ArbiterIO(numIPs, dataWidth${blockMemoryParaStr}))
           |
           |  // ------------------ Stage 0: Input Cache ------------------
           |  val r_ipReq_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
           |  val r_ipReq_valid_next = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
           |  val r_ipReq_enable = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-          |  val r_ipReq_bits = Reg(Vec(numIPs, new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""})))
+          |  val r_ipReq_bits = RegInit(VecInit(Seq.fill(numIPs)(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr})))))
           |
           |  for (i <- 0 until numIPs) {
           |    r_ipReq_valid(i) := io.ipReqs(i).valid
@@ -2644,8 +2692,8 @@ import HwSynthesizer2._
           |
           |  // ------------------ Stage 1: Arbitration Decision Pipeline ------------------
           |  val r_foundReq = RegInit(false.B)
-          |  val r_reqBits  = Reg(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))
-          |  val r_chosen   = Reg(UInt(log2Ceil(numIPs).W))
+          |  val r_reqBits  = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr})))
+          |  val r_chosen   = RegInit(0.U(log2Up(numIPs).W))
           |
           |  r_foundReq := r_ipReq_enable.reduce(_ || _)
           |  for (i <- 0 until numIPs) {
@@ -2659,12 +2707,12 @@ import HwSynthesizer2._
           |  io.ip.req.bits  := r_reqBits
           |
           |  // ------------------ Stage 2: memory.resp handling ------------------
-          |  val r_mem_resp_valid = RegNext(io.ip.resp.valid)
+          |  val r_mem_resp_valid = RegNext(io.ip.resp.valid, init = false.B)
           |  val r_mem_resp_bits  = RegNext(io.ip.resp.bits)
-          |  val r_mem_resp_id    = RegNext(r_chosen)
+          |  val r_mem_resp_id    = RegNext(r_chosen, init = 0.U)
           |
           |  val r_ipResp_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-          |  val r_ipResp_bits  = Reg(Vec(numIPs, new ${mod.moduleName}ResponseBundle(dataWidth)))
+          |  val r_ipResp_bits  = RegInit(VecInit(Seq.fill(numIPs)(0.U.asTypeOf(new ${mod.moduleName}ResponseBundle(dataWidth)))))
           |
           |  for (i <- 0 until numIPs) {
           |    r_ipResp_valid(i)    := false.B
@@ -2708,15 +2756,15 @@ import HwSynthesizer2._
 
     @strictpure def testFunctionST: ST = {
       st"""
-          |class ${mod.moduleName}FunctionModule(dataWidth: Int${if(ip == ArbBlockMemoryIP()) ", depth: Int" else ""}) extends Module{
+          |class ${mod.moduleName}FunctionModule(dataWidth: Int${blockMemoryParaTypeStr}) extends Module{
           |  val io = IO(new Bundle{
-          |    val arb_req  = Valid(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) ", depth" else ""}))
+          |    val arb_req  = Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr}))
           |    val arb_resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
           |  })
           |
-          |  val r_arb_req          = Reg(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) ", depth" else ""}))
+          |  val r_arb_req          = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr})))
           |  val r_arb_req_valid    = RegInit(false.B)
-          |  val r_arb_resp         = Reg(new ${mod.moduleName}ResponseBundle(dataWidth))
+          |  val r_arb_resp         = RegInit(0.U.asTypeOf(new ${mod.moduleName}ResponseBundle(dataWidth)))
           |  val r_arb_resp_valid   = RegInit(false.B)
           |  r_arb_resp       := io.arb_resp.bits
           |  r_arb_resp_valid := io.arb_resp.valid
@@ -2757,7 +2805,11 @@ import HwSynthesizer2._
         if(ip == ArbBlockMemoryIP())
           st"""
               |val r_mode = RegInit(0.U(2.W))
-              |r_mode := Mux(r_req_valid & ~memory_valid, r_req.mode, 0.U)
+              |when(memory_valid) {
+              |  r_mode := 0.U
+              |} .elsewhen(r_req_valid) {
+              |  r_mode := r_req.mode
+              |}
             """
         else
           st"""
@@ -2773,7 +2825,7 @@ import HwSynthesizer2._
         st"""
             |// master write address channel
             |val M_AXI_AWID    = Output(UInt(1.W))
-            |val M_AXI_AWADDR  = Output(UInt(log2Up(depth).W))
+            |val M_AXI_AWADDR  = Output(UInt(addrWidth.W))
             |val M_AXI_AWLEN   = Output(UInt(8.W))
             |val M_AXI_AWSIZE  = Output(UInt(3.W))
             |val M_AXI_AWBURST = Output(UInt(2.W))
@@ -2802,7 +2854,7 @@ import HwSynthesizer2._
             |
             |// master read address channel
             |val M_AXI_ARID    = Output(UInt(1.W))
-            |val M_AXI_ARADDR  = Output(UInt(log2Up(depth).W))
+            |val M_AXI_ARADDR  = Output(UInt(addrWidth.W))
             |val M_AXI_ARLEN   = Output(UInt(8.W))
             |val M_AXI_ARSIZE  = Output(UInt(3.W))
             |val M_AXI_ARBURST = Output(UInt(2.W))
@@ -2878,22 +2930,22 @@ import HwSynthesizer2._
       val isAxi4Port: B = anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr
 
       st"""
-          |class ${mod.moduleName}Wrapper(val dataWidth: Int ${if(ip == ArbBlockMemoryIP()) blockMemoryParaTypeStr else ""}) extends Module {
+          |class ${mod.moduleName}Wrapper(val dataWidth: Int ${blockMemoryParaTypeStr}) extends Module {
           |    val io = IO(new Bundle{
-          |        val req = Input(Valid(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""})))
+          |        val req = Input(Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr})))
           |        val resp = Output(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
           |        ${if(ip == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) blockMemoryAxi4PortST else st""}
           |    })
           |
-          |    val mod = Module(new ${mod.moduleName}(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))
+          |    val mod = Module(new ${mod.moduleName}(dataWidth${blockMemoryParaStr}))
           |
-          |    val r_req            = Reg(new ${mod.moduleName}RequestBundle(dataWidth${if(ip == ArbBlockMemoryIP()) blockMemoryParaStr else ""}))
-          |    val r_req_valid      = RegNext(io.req.valid, false.B)
-          |    ${if(ip == ArbBlockMemoryIP()) "val r_req_valid_next = RegNext(r_req_valid, false.B)" else ""}
+          |    val r_req            = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr})))
+          |    val r_req_valid      = RegNext(io.req.valid, init = false.B)
+          |    ${if(ip == ArbBlockMemoryIP()) "val r_req_valid_next = RegNext(r_req_valid, init = false.B)" else ""}
           |
           |    ${if(ip == ArbBlockMemoryIP()) "val memory_valid = mod.io.readValid | mod.io.writeValid | mod.io.dmaValid" else ""}
           |    val r_resp_data  = RegNext(mod.io.${respDataStr})
-          |    val r_resp_valid = RegNext(${if(ip == ArbBlockMemoryIP()) "memory_valid" else "mod.io.valid"})
+          |    val r_resp_valid = RegNext(${if(ip == ArbBlockMemoryIP()) "memory_valid" else "mod.io.valid"}, init = false.B)
           |
           |    ${reqValidST}
           |
