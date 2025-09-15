@@ -2480,42 +2480,42 @@ import HwSynthesizer2._
   val noXilinxIp: B = anvil.config.noXilinxIp
   var ipArbiterUsage: HashSSet[ArbIpType] = HashSSet.empty[ArbIpType]
   var ipModules: ISZ[ArbIpModule] = ISZ[ArbIpModule](
-    ArbAdder(F, "AdderUnsigned64", "adderUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F), noXilinxIp, 0),
-    ArbAdder(T, "AdderSigned64", "adderSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, T), noXilinxIp, 1),
-    ArbSubtractor(F, "SubtractorUnsigned64", "subtractorUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F), noXilinxIp, 2),
-    ArbSubtractor(T, "SubtractorSigned64", "subtractorSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, T), noXilinxIp, 3),
-    ArbIndexer(F, "Indexer", "indexer", anvil.typeBitSize(spType), ArbIntrinsicIP(defaultIndexing), noXilinxIp, 4),
-    ArbAnd(F, "AndUnsigned64", "andUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.And, F), 5),
-    ArbAnd(T, "AndSigned64", "andSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.And, T), 6),
-    ArbOr(F, "OrUnsigned64", "orUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, F), 7),
-    ArbOr(T, "OrSigned64", "orSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, T), 8),
-    ArbXor(F, "XorUnsigned64", "xorUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, F), 9),
-    ArbXor(T, "XorSigned64", "xorSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, T), 10),
-    ArbEq(F, "EqUnsigned64", "eqUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, F), 11),
-    ArbEq(T, "EqSigned64", "eqSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, T), 12),
-    ArbNe(F, "NeUnsigned64", "neUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, F), 13),
-    ArbNe(T, "NeSigned64", "neSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, T), 14),
-    ArbGt(F, "GtUnsigned64", "gtUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, F), 15),
-    ArbGt(T, "GtSigned64", "gtSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, T), 16),
-    ArbGe(F, "GeUnsigned64", "geUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, F), 17),
-    ArbGe(T, "GeSigned64", "geSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, T), 18),
-    ArbLt(F, "LtUnsigned64", "ltUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, F), 19),
-    ArbLt(T, "LtSigned64", "ltSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, T), 20),
-    ArbLe(F, "LeUnsigned64", "leUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, F), 21),
-    ArbLe(T, "LeSigned64", "leSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, T), 22),
-    ArbShr(F, "ShrUnsigned64", "shrUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, F), 23),
-    ArbShr(T, "ShrSigned64", "shrSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, T), 24),
-    ArbShl(F, "ShlUnsigned64", "shlUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, F), 25),
-    ArbShl(T, "ShlSigned64", "shlSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, T), 26),
-    ArbUshr(F, "UshrUnsigned64", "ushrUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, F), 27),
-    ArbUshr(T, "UshrSigned64", "ushrSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, T), 28),
-    ArbMultiplier(F, "MultiplierUnsigned64", "multiplierUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, F), noXilinxIp, 29),
-    ArbMultiplier(T, "MultiplierSigned64", "multiplierSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, T), noXilinxIp, 30),
-    ArbDivision(F, "DivisionUnsigned64", "divisionUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, F), noXilinxIp, 31),
-    ArbDivision(T, "DivisionSigned64", "divisionSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T), noXilinxIp, 32),
-    ArbRemainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
-    ArbRemainder(T, "RemainerSigned64", "remainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
-    ArbBlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4, 35)
+    ArbAdder(F, "AdderUnsigned64", "arbAdderUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F), noXilinxIp, 0),
+    ArbAdder(T, "AdderSigned64", "arbAdderSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, T), noXilinxIp, 1),
+    ArbSubtractor(F, "SubtractorUnsigned64", "arbSubtractorUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F), noXilinxIp, 2),
+    ArbSubtractor(T, "SubtractorSigned64", "arbSubtractorSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, T), noXilinxIp, 3),
+    ArbIndexer(F, "Indexer", "arbIndexer", anvil.typeBitSize(spType), ArbIntrinsicIP(defaultIndexing), noXilinxIp, 4),
+    ArbAnd(F, "AndUnsigned64", "arbAndUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.And, F), 5),
+    ArbAnd(T, "AndSigned64", "arbAndSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.And, T), 6),
+    ArbOr(F, "OrUnsigned64", "arbOrUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, F), 7),
+    ArbOr(T, "OrSigned64", "arbOrSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Or, T), 8),
+    ArbXor(F, "XorUnsigned64", "arbXorUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, F), 9),
+    ArbXor(T, "XorSigned64", "arbXorSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Xor, T), 10),
+    ArbEq(F, "EqUnsigned64", "arbEqUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, F), 11),
+    ArbEq(T, "EqSigned64", "arbEqSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, T), 12),
+    ArbNe(F, "NeUnsigned64", "arbNeUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, F), 13),
+    ArbNe(T, "NeSigned64", "arbNeSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, T), 14),
+    ArbGt(F, "GtUnsigned64", "arbGtUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, F), 15),
+    ArbGt(T, "GtSigned64", "arbGtSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, T), 16),
+    ArbGe(F, "GeUnsigned64", "arbGeUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, F), 17),
+    ArbGe(T, "GeSigned64", "arbGeSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, T), 18),
+    ArbLt(F, "LtUnsigned64", "arbLtUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, F), 19),
+    ArbLt(T, "LtSigned64", "arbLtSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, T), 20),
+    ArbLe(F, "LeUnsigned64", "arbLeUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, F), 21),
+    ArbLe(T, "LeSigned64", "arbLeSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, T), 22),
+    ArbShr(F, "ShrUnsigned64", "arbShrUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, F), 23),
+    ArbShr(T, "ShrSigned64", "arbShrSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shr, T), 24),
+    ArbShl(F, "ShlUnsigned64", "arbShlUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, F), 25),
+    ArbShl(T, "ShlSigned64", "arbShlSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Shl, T), 26),
+    ArbUshr(F, "UshrUnsigned64", "arbUshrUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, F), 27),
+    ArbUshr(T, "UshrSigned64", "arbUshrSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Ushr, T), 28),
+    ArbMultiplier(F, "MultiplierUnsigned64", "abrMultiplierUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, F), noXilinxIp, 29),
+    ArbMultiplier(T, "MultiplierSigned64", "arbMultiplierSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, T), noXilinxIp, 30),
+    ArbDivision(F, "DivisionUnsigned64", "arbDivisionUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, F), noXilinxIp, 31),
+    ArbDivision(T, "DivisionSigned64", "arbDivisionSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T), noXilinxIp, 32),
+    ArbRemainder(F, "RemainerUnsigned64", "arbRemainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
+    ArbRemainder(T, "RemainerSigned64", "arbRemainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
+    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4, 35)
   )
 
   @pure def findChiselModule(ip: ArbIpType): Option[ArbIpModule] = {
@@ -2525,6 +2525,22 @@ import HwSynthesizer2._
       }
     }
     return None()
+  }
+
+  @strictpure def blockMemoryParaTypeStr(ip: ArbIpType): String = {
+    ip match {
+      case ArbBlockMemoryIP() =>
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) ", depth: Int" else ", addrWidth: Int, depth: Int"
+      case _ => ""
+    }
+  }
+
+  @strictpure def blockMemoryParaStr(ip: ArbIpType): String = {
+    ip match {
+      case ArbBlockMemoryIP() =>
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) ", depth" else ", addrWidth, depth"
+      case _ => ""
+    }
   }
 
   @pure def getIpArbiterTemplate(ip: ArbIpType): ST = {
@@ -2559,16 +2575,6 @@ import HwSynthesizer2._
       case ArbBlockMemoryIP() => "0.U"
     }
 
-    val blockMemoryParaTypeStr: String = ip match {
-      case ArbBlockMemoryIP() =>
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) ", depth: Int" else ", addrWidth: Int, depth: Int"
-      case _ => ""
-    }
-    val blockMemoryParaStr: String = ip match {
-      case ArbBlockMemoryIP() =>
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) ", depth" else ", addrWidth, depth"
-      case _ => ""
-    }
 
     @pure def requestBundleST: ST = {
       var portST: ISZ[ST] = ISZ[ST]()
@@ -2632,7 +2638,7 @@ import HwSynthesizer2._
       val finalPortST: ST = if(ip == ArbBlockMemoryIP()) blockMemoryPortST else st"${(portST, "\n")}"
 
       return st"""
-                 |class ${mod.moduleName}RequestBundle(dataWidth: Int${blockMemoryParaTypeStr}) extends Bundle {
+                 |class ${mod.moduleName}RequestBundle(dataWidth: Int${blockMemoryParaTypeStr(ip)}) extends Bundle {
                  |  ${finalPortST}
                  |}
                """
@@ -2651,8 +2657,8 @@ import HwSynthesizer2._
 
     @strictpure def IpIOST: ST = {
       st"""
-          |class ${mod.moduleName}IO(dataWidth: Int${blockMemoryParaTypeStr}) extends Bundle {
-          |  val req = Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr}))
+          |class ${mod.moduleName}IO(dataWidth: Int${blockMemoryParaTypeStr(ip)}) extends Bundle {
+          |  val req = Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)}))
           |  val resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
           |}
         """
@@ -2660,24 +2666,24 @@ import HwSynthesizer2._
 
     @strictpure def IpArbiterIOST: ST = {
       st"""
-          |class ${mod.moduleName}ArbiterIO(numIPs: Int, dataWidth: Int${blockMemoryParaTypeStr}) extends Bundle {
-          |  val ipReqs  = Flipped(Vec(numIPs, Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr}))))
+          |class ${mod.moduleName}ArbiterIO(numIPs: Int, dataWidth: Int${blockMemoryParaTypeStr(ip)}) extends Bundle {
+          |  val ipReqs  = Flipped(Vec(numIPs, Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)}))))
           |  val ipResps = Vec(numIPs, Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
-          |  val ip      = new ${mod.moduleName}IO(dataWidth${blockMemoryParaStr})
+          |  val ip      = new ${mod.moduleName}IO(dataWidth${blockMemoryParaStr(ip)})
           |}
         """
     }
 
     @strictpure def arbiterModuleST: ST = {
       st"""
-          |class ${mod.moduleName}ArbiterModule(numIPs: Int, dataWidth: Int${blockMemoryParaTypeStr}) extends Module {
-          |  val io = IO(new ${mod.moduleName}ArbiterIO(numIPs, dataWidth${blockMemoryParaStr}))
+          |class ${mod.moduleName}ArbiterModule(numIPs: Int, dataWidth: Int${blockMemoryParaTypeStr(ip)}) extends Module {
+          |  val io = IO(new ${mod.moduleName}ArbiterIO(numIPs, dataWidth${blockMemoryParaStr(ip)}))
           |
           |  // ------------------ Stage 0: Input Cache ------------------
           |  val r_ipReq_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
           |  val r_ipReq_valid_next = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
           |  val r_ipReq_enable = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-          |  val r_ipReq_bits = RegInit(VecInit(Seq.fill(numIPs)(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr})))))
+          |  val r_ipReq_bits = RegInit(VecInit(Seq.fill(numIPs)(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)})))))
           |
           |  for (i <- 0 until numIPs) {
           |    r_ipReq_valid(i) := io.ipReqs(i).valid
@@ -2692,7 +2698,7 @@ import HwSynthesizer2._
           |
           |  // ------------------ Stage 1: Arbitration Decision Pipeline ------------------
           |  val r_foundReq = RegInit(false.B)
-          |  val r_reqBits  = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr})))
+          |  val r_reqBits  = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)})))
           |  val r_chosen   = RegInit(0.U(log2Up(numIPs).W))
           |
           |  r_foundReq := r_ipReq_enable.reduce(_ || _)
@@ -2756,13 +2762,13 @@ import HwSynthesizer2._
 
     @strictpure def testFunctionST: ST = {
       st"""
-          |class ${mod.moduleName}FunctionModule(dataWidth: Int${blockMemoryParaTypeStr}) extends Module{
+          |class ${mod.moduleName}FunctionModule(dataWidth: Int${blockMemoryParaTypeStr(ip)}) extends Module{
           |  val io = IO(new Bundle{
-          |    val arb_req  = Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr}))
+          |    val arb_req  = Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)}))
           |    val arb_resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
           |  })
           |
-          |  val r_arb_req          = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr})))
+          |  val r_arb_req          = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)})))
           |  val r_arb_req_valid    = RegInit(false.B)
           |  val r_arb_resp         = RegInit(0.U.asTypeOf(new ${mod.moduleName}ResponseBundle(dataWidth)))
           |  val r_arb_resp_valid   = RegInit(false.B)
@@ -2930,16 +2936,16 @@ import HwSynthesizer2._
       val isAxi4Port: B = anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr
 
       st"""
-          |class ${mod.moduleName}Wrapper(val dataWidth: Int ${blockMemoryParaTypeStr}) extends Module {
+          |class ${mod.moduleName}Wrapper(val dataWidth: Int ${blockMemoryParaTypeStr(ip)}) extends Module {
           |    val io = IO(new Bundle{
-          |        val req = Input(Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr})))
+          |        val req = Input(Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)})))
           |        val resp = Output(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
           |        ${if(ip == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) blockMemoryAxi4PortST else st""}
           |    })
           |
-          |    val mod = Module(new ${mod.moduleName}(dataWidth${blockMemoryParaStr}))
+          |    val mod = Module(new ${mod.moduleName}(dataWidth${blockMemoryParaStr(ip)}))
           |
-          |    val r_req            = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr})))
+          |    val r_req            = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)})))
           |    val r_req_valid      = RegNext(io.req.valid, init = false.B)
           |    ${if(ip == ArbBlockMemoryIP()) "val r_req_valid_next = RegNext(r_req_valid, init = false.B)" else ""}
           |
@@ -4486,6 +4492,30 @@ import HwSynthesizer2._
 
   @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): ST = {
 
+    @pure def generalPurposeRegisterST: ST = {
+      var generalRegMap: HashMap[String, (Z,Z,B)] = HashMap.empty[String, (Z,Z,B)]
+      var generalRegST: ISZ[ST] = ISZ[ST]()
+
+      for(i <- 0 until maxRegisters.unsigneds.size){
+        if(maxRegisters.unsigneds(i) > 0) {
+          generalRegMap = generalRegMap + (s"${generalRegName}U${i+1}" ~> (i+1, maxRegisters.unsigneds(i), F))
+        }
+      }
+
+      for(entry <- maxRegisters.signeds.entries) {
+        if(entry._2 > 0) {
+          generalRegMap = generalRegMap + (s"${generalRegName}S${entry._1}" ~> (entry._1, entry._2, T))
+        }
+      }
+
+      for(entry <- generalRegMap.entries) {
+        //generalRegST = generalRegST :+ st"val ${entry._1} = RegInit(VecInit(${entry._2._2}, ${if(entry._2._3) "SInt" else "UInt"}(${entry._2._1}.W)))"
+        generalRegST = generalRegST :+ st"val ${entry._1} = RegInit(VecInit(Seq.fill(${entry._2._2})(${if(entry._2._3) "0.S" else "0.U"}(${entry._2._1}.W))))"
+      }
+
+      return st"${(generalRegST, "\n")}"
+    }
+
     @pure def globalTempST: ST = {
       var globalTempSTs: ISZ[ST] = ISZ[ST]()
       for(entry <- globalInfoMap.entries) {
@@ -4614,15 +4644,47 @@ import HwSynthesizer2._
       //println(stateMachineST.render)
       //println(stateFunctionObjectST.render)
 
+      var allArbIOST: ISZ[ST] = ISZ[ST]()
+      var allArbInstanceST: ISZ[ST] = ISZ[ST]()
+
+      for(e <- ipArbiterUsage.elements) {
+        val instName: String = getIpInstanceName(e).get
+
+        allArbIOST = allArbIOST :+
+          st"""
+              |val ${instName}_req    = Valid(new ${getIpModuleName(e).get}RequestBundle(dataWidth${blockMemoryParaStr(e)}))
+              |val ${instName}_resp   = Flipped(Valid(new ${getIpModuleName(e).get}ResponseBundle(dataWidth)))
+            """
+
+        allArbInstanceST = allArbInstanceST :+
+          st"""
+              |// ${getIpModuleName(e).get} Arbiter
+              |val r_${instName}_req          = Reg(new ${getIpModuleName(e).get}RequestBundle(dataWidth${blockMemoryParaStr(e)}))
+              |val r_${instName}_req_valid    = RegInit(false.B)
+              |val r_${instName}_resp         = Reg(new ${getIpModuleName(e).get}ResponseBundle(dataWidth))
+              |val r_${instName}_resp_valid   = RegInit(false.B)
+              |// connection for ${getIpModuleName(e).get} Arbiter
+              |r_${instName}_resp       := io.${instName}_resp.bits
+              |r_${instName}_resp_valid := io.${instName}_resp.valid
+              |io.${instName}_req.bits  := r_${instName}_req
+              |io.${instName}_req.valid := r_${instName}_req_valid
+            """
+      }
+
       return st"""
                  |import chisel3._
                  |import chisel3.util._
                  |import chisel3.experimental._
                  |
-                 |import ${name}._
-                 |class ${name} (addrWidth: Int, dataWidth: Int, cpWidth: Int, idWidth: Int, depth: Int) extends Module {
+                 |class ${name} (addrWidth: Int,
+                 |               dataWidth: Int,
+                 |               cpWidth: Int,
+                 |               spWidth: Int,
+                 |               idWidth: Int,
+                 |               depth: Int) extends Module {
                  |
                  |  val io = IO(new Bundle{
+                 |    ${(allArbIOST, "")}
                  |    val routeIn     = Flipped(Valid(new Packet(idWidth, cpWidth)))
                  |    val routeOut    = Valid(new Packet(idWidth, cpWidth))
                  |  })
@@ -4631,7 +4693,15 @@ import HwSynthesizer2._
                  |  val LeftByteRounds = RegInit(0.U(8.W))
                  |  val IdxLeftByteRounds = RegInit(0.U(8.W))
                  |  ${if (anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
-                 |  val ${name}CP = RegInit(2.U(CODE_POINTER_WIDTH.W))
+                 |  // reg for general purpose
+                 |  ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
+                 |  ${if(anvil.config.tempGlobal) globalTempST else st""}
+                 |  // reg for code pointer
+                 |  val ${name}CP = RegInit(2.U(cpWidth.W))
+                 |  // reg for stack pointer
+                 |  val SP = RegInit(0.U(spWidth.W))
+                 |  // reg for display pointer
+                 |  val DP = RegInit(0.U(64.W))
                  |
                  |  val r_srcID      = RegInit(2.U(idWidth.W))
                  |  val r_srcCP      = RegInit(0.U(cpWidth.W))
@@ -4642,15 +4712,18 @@ import HwSynthesizer2._
                  |  val r_routeIn_valid  = RegInit(false.B)
                  |  val r_routeOut       = Reg(new Packet(idWidth, cpWidth))
                  |  val r_routeOut_valid = RegInit(false.B)
-                 |
                  |  r_routeIn         := io.routeIn.bits
                  |  r_routeIn_valid   := io.routeIn.valid
                  |  io.routeOut.bits  := r_routeOut
                  |  io.routeOut.valid := r_routeOut_valid
                  |
+                 |  ${(allArbInstanceST, "\n")}
+                 |
+                 |  StateMachine.stateMachine(this)
+                 |}
+                 |
                  |${(stateMachineST, "")}
                  |
-                 |}
                  |${(stateFunctionObjectST, "\n")}
                """
     }
@@ -4685,36 +4758,20 @@ import HwSynthesizer2._
         stateSTs = stateSTs :+ pair._2
       }
 
-      var fmsSTs: ISZ[ST] = ISZ[ST]()
-
-      var objectStateMachineST: ISZ[ISZ[ST]] = ISZ[ISZ[ST]]()
-      objectStateMachineST = objectStateMachineST :+ ISZ[ST]()
-      for(i <- 0 until(stateSTs.size)) {
-        val idxStateMachine = i / 1024
-        if(idxStateMachine >= objectStateMachineST.size) {
-          objectStateMachineST = objectStateMachineST :+ ISZ[ST]()
-        }
-
-        val updatedST = objectStateMachineST(idxStateMachine) :+ stateSTs(i)
-        objectStateMachineST = objectStateMachineST(idxStateMachine ~> updatedST)
-      }
-
-      for(j <- 0 until(objectStateMachineST.size)) {
-        fmsSTs = fmsSTs :+
-          st"""
-              |object StateMachine_0_${j} {
-              |  def stateMachine_0_${j}(o:${name}): Unit = {
-              |    import o._
-              |    switch(${name}CP) {
-              |      ${(objectStateMachineST(j), "\n")}
-              |    }
-              |  }
-              |}
-            """
-      }
+      val fmsST: ST =
+        st"""
+            |object StateMachine {
+            |  def stateMachine(o:${name}): Unit = {
+            |    import o._
+            |    switch(${name}CP) {
+            |      ${(stateSTs, "")}
+            |    }
+            |  }
+            |}
+          """
 
       return (
-        st"""${(fmsSTs, "\n")}""",
+        st"""${(fmsST, "\n")}""",
         st"""${(functions, "")}"""
       )
     }
@@ -5237,13 +5294,13 @@ import HwSynthesizer2._
             val ipT: ArbIpType = if(isPlus) ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F) else ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
             var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
             val indexerInstanceName: String = getIpInstanceName(ipT).get
-            hashSMap = hashSMap + "a" ~> (st"${leftST.render}", "UInt".string) + "b" ~> (st"${rightST.render}", "UInt".string) +
-              "start" ~> (st"Mux(${indexerInstanceName}.io.valid, false.B, true.B)", "Bool".string)
+            hashSMap = hashSMap + ".a" ~> (st"${leftST.render}", "UInt".string) + ".b" ~> (st"${rightST.render}", "UInt".string) +
+              ".start" ~> (st"Mux(r_${indexerInstanceName}_resp_valid, false.B, true.B)", "Bool".string)
             insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
-            ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"${indexerInstanceName}.io.valid"
+            ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${indexerInstanceName}_resp_valid"
             intrinsicST =
               st"""
-                  |${targetReg} := ${indexerInstanceName}.io.out"""
+                  |${targetReg} := r_${indexerInstanceName}_resp.out"""
           } else {
             intrinsicST =
               st"""
@@ -5484,83 +5541,51 @@ import HwSynthesizer2._
           ipArbiterUsage = ipArbiterUsage + arbBinIp
 
           val arbiterID: Z = getArbiterIpId(arbBinIp).get
-          val moduleName: String = getIpModuleName(arbBinIp).get
+          val instanceName: String = getIpInstanceName(arbBinIp).get
 
           var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
           if(isSIntOperation) {
             hashSMap = hashSMap +
-              "a".string ~> (st"${leftST.render}", "SInt".string) +
-              "b".string ~> (st"${rightST.render}", "SInt".string)
+              ".a".string ~> (st"${leftST.render}", "SInt".string) +
+              ".b".string ~> (st"${rightST.render}", "SInt".string)
           } else {
             hashSMap = hashSMap +
-              "a".string ~> (st"${leftST.render}", "UInt".string) +
-              "b".string ~> (st"${rightST.render}", "UInt".string)
+              ".a".string ~> (st"${leftST.render}", "UInt".string) +
+              ".b".string ~> (st"${rightST.render}", "UInt".string)
           }
           hashSMap = hashSMap +
-            "_valid".string ~> (st"Mux(r_${moduleName}_resp_valid, false.B, true.B)", "Bool".string)
+            "_valid".string ~> (st"Mux(r_${instanceName}_resp_valid, false.B, true.B)", "Bool".string)
 
           insertIPInput(ArbBinaryIP(opType, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
-          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${moduleName}_resp_valid"
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
 
-          return st"r_${moduleName}_resp.out"
+          return st"r_${instanceName}_resp.out"
         }
 
         exp.op match {
           case AST.IR.Exp.Binary.Op.Add => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} + ${rightST.render})"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Sub => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} - ${rightST.render})"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Mul => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} * ${rightST.render})"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Div => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} / ${rightST.render})"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Rem => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} % ${rightST.render})"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.And => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} & ${rightST.render})"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Or  => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} | ${rightST.render})"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Xor => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} ^ ${rightST.render})"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.CondAnd => {
             halt(s"processExpr, you got an error about Op.CondAnd")
@@ -5569,70 +5594,31 @@ import HwSynthesizer2._
             halt(s"processExpr, you got an error about Op.CondOr")
           }
           case AST.IR.Exp.Binary.Op.Eq => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} === ${rightST.render}).asUInt"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Ne => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} =/= ${rightST.render}).asUInt"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Ge => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} >= ${rightST.render}).asUInt"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Gt => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} > ${rightST.render}).asUInt"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Le => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} <= ${rightST.render}).asUInt"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Lt => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              exprST = st"(${leftST.render} < ${rightST.render}).asUInt"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Shr => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              val right: ST = if(anvil.typeBitSize(exp.right.tipe) > 7) st"${rightST.render}(6,0)" else st"${rightST.render}"
-              exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} >> ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Ushr => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              val right: ST = if(anvil.typeBitSize(exp.right.tipe) > 7) st"${rightST.render}(6,0)" else st"${rightST.render}"
-              exprST = st"(((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asUInt" else ""} >> ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ""})"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case AST.IR.Exp.Binary.Op.Shl => {
-            if(anvil.config.useIP) {
-              exprST = genIpArbiterPortLogic(exp.op)
-            } else {
-              val right: ST = if(anvil.typeBitSize(exp.right.tipe) > 7) st"${rightST.render}(6,0)" else st"${rightST.render}"
-              exprST = st"((${leftST.render})${if(anvil.isSigned(exp.left.tipe)) ".asSInt" else ".asUInt"} << ${right.render}${if(anvil.isSigned(exp.right.tipe)) ".asUInt" else ""})"
-            }
+            exprST = genIpArbiterPortLogic(exp.op)
           }
           case _ => {
             halt(s"processExpr AST.IR.Exp.Binary unimplemented")
@@ -5706,7 +5692,7 @@ object HwSynthesizer2 {
         val instanceName: String = getIpInstanceName(ipt).get
         val inputs: HashSMap[String, ArbIpModule.Input] = getInputPort(ipt)
         for (entry <- inputs.entries) {
-          sts = sts :+ st"${instanceName}_.io.${entry._1} := ${entry._2.stateValue.value}"
+          sts = sts :+ st"r_${instanceName}${entry._1} := ${entry._2.stateValue.value}"
         }
       }
       o match {
@@ -5757,7 +5743,7 @@ object HwSynthesizer2 {
         val instanceName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
         val inputs: HashSMap[String, ArbIpModule.Input] = getInputPort(ArbIntrinsicIP(defaultIndexing))
         for (entry <- inputs.entries) {
-          sts = sts :+ st"${instanceName}_.io.${entry._1} := ${entry._2.stateValue.value}"
+          sts = sts :+ st"r_${instanceName}${entry._1} := ${entry._2.stateValue.value}"
         }
       }
       return MAnvilIRTransformer.PreResultIntrinsicIndexing
@@ -5776,7 +5762,7 @@ object HwSynthesizer2 {
           val instanceName: String = getIpInstanceName(ipT).get
           val inputs: HashSMap[String, ArbIpModule.Input] = getInputPort(ipT)
           for (entry <- inputs.entries) {
-            sts = sts :+ st"${instanceName}_.io.${entry._1} := ${entry._2.stateValue.value}"
+            sts = sts :+ st"r_${instanceName}${entry._1} := ${entry._2.stateValue.value}"
           }
         }
       }
