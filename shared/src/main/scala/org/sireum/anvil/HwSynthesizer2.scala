@@ -5292,10 +5292,13 @@ import HwSynthesizer2._
 
           if(intrinsic.isInc) {
             val ipT: ArbIpType = if(isPlus) ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F) else ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
+            ipArbiterUsage = ipArbiterUsage + ipT
+
             var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
             val indexerInstanceName: String = getIpInstanceName(ipT).get
-            hashSMap = hashSMap + ".a" ~> (st"${leftST.render}", "UInt".string) + ".b" ~> (st"${rightST.render}", "UInt".string) +
-              ".start" ~> (st"Mux(r_${indexerInstanceName}_resp_valid, false.B, true.B)", "Bool".string)
+            hashSMap = hashSMap +
+              ".a" ~> (st"${leftST.render}", "UInt".string) +
+              ".b" ~> (st"${rightST.render}", "UInt".string)
             insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
             ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${indexerInstanceName}_resp_valid"
             intrinsicST =
@@ -5553,8 +5556,7 @@ import HwSynthesizer2._
               ".a".string ~> (st"${leftST.render}", "UInt".string) +
               ".b".string ~> (st"${rightST.render}", "UInt".string)
           }
-          hashSMap = hashSMap +
-            "_valid".string ~> (st"Mux(r_${instanceName}_resp_valid, false.B, true.B)", "Bool".string)
+          hashSMap = hashSMap + "_valid".string ~> (st"true.B", "Bool".string)
 
           insertIPInput(ArbBinaryIP(opType, isSIntOperation), populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
@@ -5692,7 +5694,7 @@ object HwSynthesizer2 {
         val instanceName: String = getIpInstanceName(ipt).get
         val inputs: HashSMap[String, ArbIpModule.Input] = getInputPort(ipt)
         for (entry <- inputs.entries) {
-          sts = sts :+ st"r_${instanceName}${entry._1} := ${entry._2.stateValue.value}"
+          sts = sts :+ st"r_${instanceName}_req${entry._1} := ${entry._2.stateValue.value}"
         }
       }
       o match {
@@ -5743,7 +5745,7 @@ object HwSynthesizer2 {
         val instanceName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
         val inputs: HashSMap[String, ArbIpModule.Input] = getInputPort(ArbIntrinsicIP(defaultIndexing))
         for (entry <- inputs.entries) {
-          sts = sts :+ st"r_${instanceName}${entry._1} := ${entry._2.stateValue.value}"
+          sts = sts :+ st"r_${instanceName}_req${entry._1} := ${entry._2.stateValue.value}"
         }
       }
       return MAnvilIRTransformer.PreResultIntrinsicIndexing
@@ -5762,7 +5764,7 @@ object HwSynthesizer2 {
           val instanceName: String = getIpInstanceName(ipT).get
           val inputs: HashSMap[String, ArbIpModule.Input] = getInputPort(ipT)
           for (entry <- inputs.entries) {
-            sts = sts :+ st"r_${instanceName}${entry._1} := ${entry._2.stateValue.value}"
+            sts = sts :+ st"r_${instanceName}_req${entry._1} := ${entry._2.stateValue.value}"
           }
         }
       }
