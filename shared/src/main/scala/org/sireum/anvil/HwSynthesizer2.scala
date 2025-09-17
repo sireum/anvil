@@ -2543,6 +2543,14 @@ import HwSynthesizer2._
     }
   }
 
+  @strictpure def blockMemoryParaAssignmentStr(ip: ArbIpType): String = {
+    ip match {
+      case ArbBlockMemoryIP() =>
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) ", depth = depth" else ", addrWidth = addrWidth, depth = depth"
+      case _ => ""
+    }
+  }
+
   @pure def getIpArbiterTemplate(ip: ArbIpType): ST = {
     val mod = findChiselModule(ip).get
     val outputNameStr: String = ip match {
@@ -3085,7 +3093,7 @@ import HwSynthesizer2._
   def printProcedure(name: String, program: AST.IR.Program, output: Anvil.Output, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): Unit = {
     val o = program.procedures(0)
     var r = HashSMap.empty[ISZ[String], ST]
-    val processedProcedureST = processProcedure(name, o, maxRegisters, globalInfoMap)
+    val (processedProcedureST, topST) = processProcedure(name, o, maxRegisters, globalInfoMap)
     r = r + ISZ(name) ~> o.prettyST(anvil.printer)
 
     @strictpure def cyclesXilinxAdder(width: Z): Z = {
@@ -4293,6 +4301,9 @@ import HwSynthesizer2._
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxMultiplierUnsigned64Wrapper.v"), xilinxMul64ST(F))
     }
 
+    // temporary top function
+    output.add(T, ISZ("chisel/src/main/scala", s"Top.scala"), topST)
+
     if (anvil.config.genVerilog) {
       @strictpure def xilinxBUFGWrapperST: ST = {
         st"""
@@ -4311,13 +4322,6 @@ import HwSynthesizer2._
       output.add(T, ISZ("chisel/src/test/scala", s"${name}VerilogGeneration.scala"), verilogGenerationST(name))
     }
 
-    anvil.config.simOpt match {
-      case Some(simConfig) => {
-        output.add(T, ISZ("chisel/src/test/scala", s"${name}Bench.scala"), testBenchST(name, simConfig.cycles))
-      }
-      case _ =>
-    }
-
     return
   }
 
@@ -4329,7 +4333,7 @@ import HwSynthesizer2._
           |object ${moduleName}VerilogGeneration extends App {
           |  (new ChiselStage).execute(
           |    Array("--target-dir", "generated_verilog"),
-          |    Seq(ChiselGeneratorAnnotation(() => new ${moduleName}(
+          |    Seq(ChiselGeneratorAnnotation(() => new Top(
           |      addrWidth = 32,
           |      dataWidth = 64,
           |      cpWidth = ${anvil.cpTypeByteSize * 8},
@@ -4343,117 +4347,6 @@ import HwSynthesizer2._
         """
 
     return verilogGenST
-  }
-
-  @pure def testBenchST(moduleName: String, cycles: Z): ST = {
-    val benchST: ST =
-      st"""
-          |import chisel3._
-          |import chiseltest._
-          |import chiseltest.simulator.WriteVcdAnnotation
-          |import org.scalatest.flatspec.AnyFlatSpec
-          |
-          |class ${moduleName}Bench extends AnyFlatSpec with ChiselScalatestTester {
-          |  "${moduleName}Bench" should "work" in {
-          |    test(new ${moduleName}(
-          |      addrWidth = 32,
-          |      dataWidth = 64,
-          |      cpWidth = ${anvil.cpTypeByteSize * 8},
-          |      spWidth = ${anvil.spTypeByteSize * 8},
-          |      idWidth = 6,
-          |      depth = ${anvil.config.memory}
-          |    )).withAnnotations(Seq(WriteVcdAnnotation, VerilatorBackendAnnotation)) { dut =>
-          |      dut.clock.setTimeout(10000)
-          |
-          |      dut.reset.poke(true.B)
-          |      for (i <- 0 until (5)) {
-          |        dut.clock.step()
-          |      }
-          |      dut.reset.poke(false.B)
-          |      dut.clock.step()
-          |
-          |      // write 8 FF to testNum
-          |      dut.io.S_AXI_AWVALID.poke(true.B)
-          |      dut.io.S_AXI_AWADDR.poke(0.U)
-          |      dut.clock.step()
-          |      dut.clock.step()
-          |
-          |      dut.io.S_AXI_AWVALID.poke(false.B)
-          |      dut.io.S_AXI_WVALID.poke(true.B)
-          |      dut.io.S_AXI_WDATA.poke("hFFFFFFFF".U)
-          |      dut.io.S_AXI_WSTRB.poke("hF".U)
-          |      dut.clock.step()
-          |      dut.clock.step()
-          |
-          |      dut.io.S_AXI_WVALID.poke(false.B)
-          |      dut.io.S_AXI_BREADY.poke(true.B)
-          |      dut.clock.step(6)
-          |      //while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
-          |      //  dut.clock.step(1)
-          |      //}
-          |
-          |      dut.io.S_AXI_AWVALID.poke(true.B)
-          |      dut.io.S_AXI_AWADDR.poke(4.U)
-          |      dut.clock.step()
-          |      dut.clock.step()
-          |
-          |      dut.io.S_AXI_AWVALID.poke(false.B)
-          |      dut.io.S_AXI_WVALID.poke(true.B)
-          |      dut.io.S_AXI_WDATA.poke("hFFFFFFFF".U)
-          |      dut.io.S_AXI_WSTRB.poke("hF".U)
-          |      dut.clock.step()
-          |      dut.clock.step()
-          |
-          |      dut.io.S_AXI_WVALID.poke(false.B)
-          |      dut.io.S_AXI_BREADY.poke(true.B)
-          |      dut.clock.step(6)
-          |      //while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
-          |      //  dut.clock.step(1)
-          |      //}
-          |
-          |      // write valid signal
-          |      dut.io.S_AXI_AWVALID.poke(true.B)
-          |      dut.io.S_AXI_AWADDR.poke(${anvil.config.memory}.U)
-          |      dut.clock.step()
-          |      dut.clock.step()
-          |
-          |      dut.io.S_AXI_AWVALID.poke(false.B)
-          |      dut.io.S_AXI_WVALID.poke(true.B)
-          |      dut.io.S_AXI_WDATA.poke("h01".U)
-          |      dut.io.S_AXI_WSTRB.poke("h1".U)
-          |      dut.clock.step()
-          |      dut.clock.step()
-          |
-          |      dut.io.S_AXI_WVALID.poke(false.B)
-          |      dut.io.S_AXI_BREADY.poke(true.B)
-          |      dut.clock.step(6)
-          |      //while (!dut.io.S_AXI_BVALID.peek().litToBoolean) {
-          |      //  dut.clock.step(1)
-          |      //}
-          |
-          |      dut.clock.step(${cycles})
-          |
-          |      for(i <- 0 until ${anvil.config.printSize / 4 + 1}) {
-          |        dut.io.S_AXI_ARVALID.poke(true.B)
-          |        dut.io.S_AXI_ARADDR.poke((20 + i * 4).U)
-          |        dut.clock.step(1)
-          |        dut.clock.step(1)
-          |
-          |        dut.io.S_AXI_ARVALID.poke(false.B)
-          |        dut.io.S_AXI_RREADY.poke(true.B)
-          |        dut.clock.step(8)
-          |        //while (!dut.io.S_AXI_RVALID.peek().litToBoolean) {
-          |        //  dut.clock.step(1)
-          |        //}
-          |      }
-          |
-          |      dut.clock.step(50)
-          |    }
-          |  }
-          |}
-        """
-
-    return benchST
   }
 
   @pure def buildSbtST(): ST = {
@@ -4503,7 +4396,7 @@ import HwSynthesizer2._
     return sbtST
   }
 
-  @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): ST = {
+  @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): (ST, ST) = {
 
     @pure def generalPurposeRegisterST: ST = {
       var generalRegMap: HashMap[String, (Z,Z,B)] = HashMap.empty[String, (Z,Z,B)]
@@ -4542,32 +4435,21 @@ import HwSynthesizer2._
       return st"${(globalTempSTs, "\n")}"
     }
 
-    @pure def topST(stateMachineST: ST, stateMachineIdxRange: HashSMap[Z, Z], stateFunctionObjectST: ST): ST = {
-      val instanceDeclST: ST = {
-        var instanceST: ISZ[ST] = ISZ()
-        instanceST = instanceST :+ insDeclST(ArbIntrinsicIP(HwSynthesizer2.defaultIndexing))
-        if (anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
-          instanceST = instanceST :+ insDeclST(ArbBlockMemoryIP())
-        }
-        st"""${(instanceST, "\n")}"""
-      }
-
-      val instancePortFuncST: ST = {
-        var instanceST: ISZ[ST] = ISZ()
-        instanceST = instanceST :+ insPortFuncST(ArbIntrinsicIP(HwSynthesizer2.defaultIndexing))
-        if (anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
-          instanceST = instanceST :+ insPortFuncST(ArbBlockMemoryIP())
-        }
-        st"""${(instanceST, "\n")}"""
-      }
-
-      val instancePortCallST: ST = {
-        var instanceST: ISZ[ST] = ISZ()
-        instanceST = instanceST :+ insPortCallST(ArbIntrinsicIP(HwSynthesizer2.defaultIndexing))
-        if (anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
-          instanceST = instanceST :+ insPortCallST(ArbBlockMemoryIP())
-        }
-        st"""${(instanceST, "\n")}"""
+    @pure def topST(): ST = {
+      var allArbiterST: ISZ[ST] = ISZ[ST]()
+      for(e <- ipArbiterUsage.elements) {
+        val moduleName: String = getIpModuleName(e).get
+        val instanceName: String = getIpInstanceName(e).get
+        val paraStr: String = if(e == ArbBlockMemoryIP()) blockMemoryParaAssignmentStr(e) else ""
+        allArbiterST = allArbiterST :+
+          st"""
+              |val ${instanceName}Wrapper = Module(new ${moduleName}Wrapper(dataWidth = dataWidth${paraStr}))
+              |val ${instanceName}ArbiterModule = Module(new ${moduleName}ArbiterModule(numIPs = 1, dataWidth = dataWidth${paraStr}))
+              |${instanceName}Wrapper.io.req <> ${instanceName}ArbiterModule.io.ip.req
+              |${instanceName}Wrapper.io.resp <> ${instanceName}ArbiterModule.io.ip.resp
+              |mod.io.${instanceName}_req <> ${instanceName}ArbiterModule.io.ipReqs(0)
+              |mod.io.${instanceName}_resp <> ${instanceName}ArbiterModule.io.ipResps(0)
+            """
       }
 
       return st"""
@@ -4575,82 +4457,68 @@ import HwSynthesizer2._
                  |import chisel3.util._
                  |import chisel3.experimental._
                  |
-                 |import ${name}._
-                 |class ${name} (val C_S_AXI_DATA_WIDTH: Int = ${if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) 64 else 32},
-                 |               val C_S_AXI_ADDR_WIDTH: Int = ${if(anvil.config.genVerilog && (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4)) 8 else log2Up(anvil.config.memory)},
-                 |               val C_M_AXI_ADDR_WIDTH: Int = 32,
-                 |               val C_M_AXI_DATA_WIDTH: Int = 64,
-                 |               val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = BigInt("00000000", 16),
-                 |               val MEMORY_DEPTH: Int = ${anvil.config.memory},
-                 |               val ARRAY_REG_WIDTH:    Int = 8,
-                 |               val ARRAY_REG_DEPTH:    Int = ${anvil.config.memory},
-                 |               ${if (!anvil.config.splitTempSizes) "val GENERAL_REG_WIDTH:   Int = 64," else ""}
-                 |               ${if (!anvil.config.splitTempSizes) s"val GENERAL_REG_DEPTH:   Int = ${maxRegisters.maxCount}," else ""}
-                 |               val STACK_POINTER_WIDTH: Int = ${anvil.spTypeByteSize * 8},
-                 |               val CODE_POINTER_WIDTH:  Int = ${anvil.cpTypeByteSize * 8}) extends Module {
-                 |
+                 |class Top(addrWidth: Int,
+                 |          dataWidth: Int,
+                 |          cpWidth: Int,
+                 |          spWidth: Int,
+                 |          idWidth: Int,
+                 |          depth: Int) extends Module {
                  |  val io = IO(new Bundle{
-                 |    // write address channel
-                 |    val S_AXI_AWADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
-                 |    val S_AXI_AWPROT  = Input(UInt(3.W))
-                 |    val S_AXI_AWVALID = Input(Bool())
-                 |    val S_AXI_AWREADY = Output(Bool())
+                 |    val start = Input(Bool())
+                 |    val valid = Output(Bool())
+                 |  })
                  |
-                 |    // write data channel
-                 |    val S_AXI_WDATA  = Input(UInt(C_S_AXI_DATA_WIDTH.W))
-                 |    val S_AXI_WSTRB  = Input(UInt((C_S_AXI_DATA_WIDTH/8).W))
-                 |    val S_AXI_WVALID = Input(Bool())
-                 |    val S_AXI_WREADY = Output(Bool())
                  |
-                 |    // write response channel
-                 |    val S_AXI_BRESP  = Output(UInt(2.W))
-                 |    val S_AXI_BVALID = Output(Bool())
-                 |    val S_AXI_BREADY = Input(Bool())
+                 |  val mod = Module(new ${name}(
+                 |    addrWidth = addrWidth,
+                 |    dataWidth = dataWidth,
+                 |    cpWidth = cpWidth,
+                 |    spWidth = spWidth,
+                 |    idWidth = idWidth,
+                 |    depth = depth
+                 |  ))
                  |
-                 |    // read address channel
-                 |    val S_AXI_ARADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
-                 |    val S_AXI_ARPROT  = Input(UInt(3.W))
-                 |    val S_AXI_ARVALID = Input(Bool())
-                 |    val S_AXI_ARREADY = Output(Bool())
+                 |  io.valid := mod.io.valid
                  |
-                 |    // read data channel
-                 |    val S_AXI_RDATA  = Output(UInt(C_S_AXI_DATA_WIDTH.W))
-                 |    val S_AXI_RRESP  = Output(UInt(2.W))
-                 |    val S_AXI_RVALID = Output(Bool())
-                 |    val S_AXI_RREADY = Input(Bool())
+                 |  ${(allArbiterST, "")}
                  |
-                 |  // reg for stack pointer
-                 |  val SP = RegInit(0.U(STACK_POINTER_WIDTH.W))
-                 |  // reg for display pointer
-                 |  val DP = RegInit(0.U(64.W))
-                 |  // reg for index in memcopy
-                 |  val Idx = RegInit(0.U(16.W))
-                 |  // reg for recording how many rounds needed for the left bytes
-                 |  val LeftByteRounds = RegInit(0.U(8.W))
-                 |  val IdxLeftByteRounds = RegInit(0.U(8.W))
-                 |  ${if(anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
+                 |  val router  = Module(new Router(nPorts = 2, idWidth = idWidth, cpWidth = cpWidth))
+                 |  router.io.out(0) <> mod.io.routeIn
+                 |  router.io.in(0) <> mod.io.routeOut
+                 |  val r_routeIn         = RegInit(0.U.asTypeOf(new Packet(idWidth = idWidth, cpWidth = cpWidth)))
+                 |  val r_routeIn_valid   = RegInit(false.B)
+                 |  val r_routeOut        = RegInit(0.U.asTypeOf(new Packet(idWidth = idWidth, cpWidth = cpWidth)))
+                 |  val r_routeOut_valid  = RegInit(false.B)
+                 |  router.io.in(1).bits  := r_routeIn
+                 |  router.io.in(1).valid := r_routeIn_valid
+                 |  r_routeOut            := router.io.out(1).bits
+                 |  r_routeOut_valid      := router.io.out(1).valid
                  |
-                 |  // registers for valid and ready
-                 |  val r_valid = RegInit(false.B)
-                 |  val r_ready = RegInit(0.U(2.W))
+                 |  val TopCP = RegInit(0.U(4.W))
+                 |  switch(TopCP) {
+                 |    is(0.U) {
+                 |      TopCP := Mux(io.start, 1.U, 0.U)
+                 |    }
+                 |    is(1.U) {
+                 |      r_routeIn.srcID := 0.U
+                 |      r_routeIn.srcCP := 3.U
+                 |      r_routeIn.dstID := 1.U
+                 |      r_routeIn.dstCP := 3.U
+                 |      r_routeIn_valid := true.B
+                 |      TopCP := 2.U
+                 |    }
+                 |    is(2.U) {
+                 |      r_routeIn_valid := false.B
+                 |      when(r_routeOut_valid) {
+                 |          TopCP := r_routeOut.dstCP
+                 |      }
+                 |    }
+                 |    is(3.U) {
                  |
-                 |  ${if(anvil.config.useIP) instanceDeclST else st""}
-                 |
-                 |  init(this)
-                 |
-                 |}
-                 |
-                 |${(stateMachineST, "")}
-                 |object ${name} {
-                 |  def init(o: ${name}): Unit = {
-                 |    import o._
-                 |    ${if(anvil.config.useIP) instancePortFuncST else st""}
-                 |    ${if(anvil.config.useIP) instancePortCallST else st""}
+                 |    }
                  |  }
                  |}
-                 |${(stateFunctionObjectST, "\n")}
-          """
-
+               """
     }
 
     @pure def procedureST(stateMachineST: ST, stateFunctionObjectST: ST): ST = {
@@ -4700,6 +4568,7 @@ import HwSynthesizer2._
                  |    ${(allArbIOST, "")}
                  |    val routeIn     = Flipped(Valid(new Packet(idWidth, cpWidth)))
                  |    val routeOut    = Valid(new Packet(idWidth, cpWidth))
+                 |    val valid       = Output(Bool())
                  |  })
                  |
                  |  // reg for recording how many rounds needed for the left bytes
@@ -4715,6 +4584,8 @@ import HwSynthesizer2._
                  |  val SP = RegInit(0.U(spWidth.W))
                  |  // reg for display pointer
                  |  val DP = RegInit(0.U(64.W))
+                 |
+                 |  io.valid := Mux(${name}CP === 0.U, 1.U, 0.U) | Mux(${name}CP === 1.U, 2.U, 0.U)
                  |
                  |  val r_srcID      = RegInit(2.U(idWidth.W))
                  |  val r_srcCP      = RegInit(0.U(cpWidth.W))
@@ -4743,7 +4614,7 @@ import HwSynthesizer2._
 
     val basicBlockST = processBasicBlock(name, o.body.asInstanceOf[AST.IR.Body.Basic].blocks, hwLog)
 
-    return procedureST(basicBlockST._1, basicBlockST._2)
+    return (procedureST(basicBlockST._1, basicBlockST._2), topST())
   }
 
   @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], hwLog: HwSynthesizer2.HwLog): (ST, ST) = {
@@ -4758,7 +4629,7 @@ import HwSynthesizer2._
       var stateSTs: ISZ[ST] = ISZ[ST]()
       stateSTs = stateSTs :+
         st"""
-            |is(0.U) {
+            |is(2.U) {
             |  r_routeOut_valid := false.B
             |  when(r_routeIn_valid) {
             |      r_srcCP := r_routeIn.srcCP
