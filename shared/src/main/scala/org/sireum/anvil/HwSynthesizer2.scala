@@ -4441,15 +4441,26 @@ import HwSynthesizer2._
         val moduleName: String = getIpModuleName(e).get
         val instanceName: String = getIpInstanceName(e).get
         val paraStr: String = if(e == ArbBlockMemoryIP()) blockMemoryParaAssignmentStr(e) else ""
+        val numIpsStr: String = if(e == ArbBlockMemoryIP()) "2" else "1"
+        val blockMemConnectionSt: ST =
+          if(e == ArbBlockMemoryIP())
+            st"""
+                |${instanceName}ArbiterModule.io.ipReqs(1).bits := r_mem_req
+                |${instanceName}ArbiterModule.io.ipReqs(1).valid := r_mem_req_valid
+                |r_mem_resp := ${instanceName}ArbiterModule.io.ipResps(1).bits
+                |r_mem_resp_valid := ${instanceName}ArbiterModule.io.ipResps(1).valid
+              """
+          else
+            st""
         allArbiterST = allArbiterST :+
           st"""
               |val ${instanceName}Wrapper = Module(new ${moduleName}Wrapper(dataWidth = dataWidth${paraStr}))
-              |val ${instanceName}ArbiterModule = Module(new ${moduleName}ArbiterModule(numIPs = 1, dataWidth = dataWidth${paraStr}))
+              |val ${instanceName}ArbiterModule = Module(new ${moduleName}ArbiterModule(numIPs = ${numIpsStr}, dataWidth = dataWidth${paraStr}))
               |${instanceName}Wrapper.io.req <> ${instanceName}ArbiterModule.io.ip.req
               |${instanceName}Wrapper.io.resp <> ${instanceName}ArbiterModule.io.ip.resp
               |mod.io.${instanceName}_req <> ${instanceName}ArbiterModule.io.ipReqs(0)
               |mod.io.${instanceName}_resp <> ${instanceName}ArbiterModule.io.ipResps(0)
-            """
+              |${blockMemConnectionSt}"""
       }
 
       return st"""
@@ -4468,6 +4479,10 @@ import HwSynthesizer2._
                  |    val valid = Output(Bool())
                  |  })
                  |
+                 |  val r_mem_req  = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(dataWidth, depth)))
+                 |  val r_mem_req_valid = RegInit(false.B)
+                 |  val r_mem_resp = Reg(new BlockMemoryResponseBundle(dataWidth))
+                 |  val r_mem_resp_valid = RegInit(false.B)
                  |
                  |  val mod = Module(new ${name}(
                  |    addrWidth = addrWidth,
@@ -4478,8 +4493,6 @@ import HwSynthesizer2._
                  |    depth = depth
                  |  ))
                  |
-                 |  io.valid := mod.io.valid
-                 |
                  |  ${(allArbiterST, "")}
                  |
                  |  val router  = Module(new Router(nPorts = 2, idWidth = idWidth, cpWidth = cpWidth))
@@ -4489,32 +4502,94 @@ import HwSynthesizer2._
                  |  val r_routeIn_valid   = RegInit(false.B)
                  |  val r_routeOut        = RegInit(0.U.asTypeOf(new Packet(idWidth = idWidth, cpWidth = cpWidth)))
                  |  val r_routeOut_valid  = RegInit(false.B)
-                 |  router.io.in(1).bits  := r_routeIn
-                 |  router.io.in(1).valid := r_routeIn_valid
-                 |  r_routeOut            := router.io.out(1).bits
-                 |  r_routeOut_valid      := router.io.out(1).valid
+                 |  router.io.in(1).bits  := r_routeOut
+                 |  router.io.in(1).valid := r_routeOut_valid
+                 |  r_routeIn            := router.io.out(1).bits
+                 |  r_routeIn_valid      := router.io.out(1).valid
                  |
                  |  val TopCP = RegInit(0.U(4.W))
+                 |  io.valid := Mux(TopCP === 7.U, true.B, false.B)
                  |  switch(TopCP) {
                  |    is(0.U) {
                  |      TopCP := Mux(io.start, 1.U, 0.U)
                  |    }
                  |    is(1.U) {
-                 |      r_routeIn.srcID := 0.U
-                 |      r_routeIn.srcCP := 3.U
-                 |      r_routeIn.dstID := 1.U
-                 |      r_routeIn.dstCP := 3.U
-                 |      r_routeIn_valid := true.B
-                 |      TopCP := 2.U
-                 |    }
-                 |    is(2.U) {
-                 |      r_routeIn_valid := false.B
-                 |      when(r_routeOut_valid) {
-                 |          TopCP := r_routeOut.dstCP
+                 |      r_mem_req_valid := true.B
+                 |      r_mem_req.mode := 2.U
+                 |      r_mem_req.writeAddr := 0.U
+                 |      r_mem_req.writeOffset := 0.U
+                 |      r_mem_req.writeLen := 8.U
+                 |      r_mem_req.writeData := "hFFFFFFFFFFFFFFFF".U
+                 |      when(r_mem_resp_valid) {
+                 |        r_mem_req.mode := 0.U
+                 |        r_mem_req_valid := false.B
+                 |        TopCP := 2.U
                  |      }
                  |    }
+                 |    is(2.U) {
+                 |      r_routeOut.srcID := 1.U
+                 |      r_routeOut.srcCP := 4.U
+                 |      r_routeOut.dstID := 0.U
+                 |      r_routeOut.dstCP := 3.U
+                 |      r_routeOut_valid := true.B
+                 |      TopCP := 3.U
+                 |    }
                  |    is(3.U) {
-                 |
+                 |      r_routeOut_valid := false.B
+                 |      when(r_routeIn_valid) {
+                 |        TopCP := r_routeIn.dstCP
+                 |      }
+                 |    }
+                 |    is(4.U) {
+                 |      r_mem_req_valid := true.B
+                 |      r_mem_req.mode := 1.U
+                 |      r_mem_req.readAddr := 20.U
+                 |      r_mem_req.readOffset := 0.U
+                 |      r_mem_req.readLen := 8.U
+                 |      when(r_mem_resp_valid) {
+                 |        r_mem_req.mode := 0.U
+                 |        r_mem_req_valid := false.B
+                 |        TopCP := 5.U
+                 |      }
+                 |    }
+                 |    is(5.U) {
+                 |      r_mem_req_valid := true.B
+                 |      r_mem_req.mode := 1.U
+                 |      r_mem_req.readAddr := 28.U
+                 |      r_mem_req.readOffset := 0.U
+                 |      r_mem_req.readLen := 8.U
+                 |      when(r_mem_resp_valid) {
+                 |        r_mem_req.mode := 0.U
+                 |        r_mem_req_valid := false.B
+                 |        TopCP := 6.U
+                 |      }
+                 |    }
+                 |    is(6.U) {
+                 |      r_mem_req_valid := true.B
+                 |      r_mem_req.mode := 1.U
+                 |      r_mem_req.readAddr := 36.U
+                 |      r_mem_req.readOffset := 0.U
+                 |      r_mem_req.readLen := 8.U
+                 |      when(r_mem_resp_valid) {
+                 |        r_mem_req.mode := 0.U
+                 |        r_mem_req_valid := false.B
+                 |        TopCP := 7.U
+                 |      }
+                 |    }
+                 |    is(7.U) {
+                 |      r_mem_req_valid := true.B
+                 |      r_mem_req.mode := 1.U
+                 |      r_mem_req.readAddr := 44.U
+                 |      r_mem_req.readOffset := 0.U
+                 |      r_mem_req.readLen := 8.U
+                 |      when(r_mem_resp_valid) {
+                 |        r_mem_req.mode := 0.U
+                 |        r_mem_req_valid := false.B
+                 |        TopCP := 8.U
+                 |      }
+                 |    }
+                 |    is(8.U) {
+                 |      printf("%x\n", r_mem_resp.data)
                  |    }
                  |  }
                  |}
@@ -4568,7 +4643,6 @@ import HwSynthesizer2._
                  |    ${(allArbIOST, "")}
                  |    val routeIn     = Flipped(Valid(new Packet(idWidth, cpWidth)))
                  |    val routeOut    = Valid(new Packet(idWidth, cpWidth))
-                 |    val valid       = Output(Bool())
                  |  })
                  |
                  |  // reg for recording how many rounds needed for the left bytes
@@ -4584,8 +4658,6 @@ import HwSynthesizer2._
                  |  val SP = RegInit(0.U(spWidth.W))
                  |  // reg for display pointer
                  |  val DP = RegInit(0.U(64.W))
-                 |
-                 |  io.valid := Mux(${name}CP === 0.U, 1.U, 0.U) | Mux(${name}CP === 1.U, 2.U, 0.U)
                  |
                  |  val r_srcID      = RegInit(2.U(idWidth.W))
                  |  val r_srcCP      = RegInit(0.U(cpWidth.W))
@@ -4629,12 +4701,20 @@ import HwSynthesizer2._
       var stateSTs: ISZ[ST] = ISZ[ST]()
       stateSTs = stateSTs :+
         st"""
+            |is(0.U) {
+            |  r_routeOut.srcID := 0.U
+            |  r_routeOut.srcCP := 3.U
+            |  r_routeOut.dstID := r_srcID
+            |  r_routeOut.dstCP := r_srcCP
+            |  r_routeOut_valid := true.B
+            |  ${name}CP := 2.U
+            |}
             |is(2.U) {
             |  r_routeOut_valid := false.B
             |  when(r_routeIn_valid) {
-            |      r_srcCP := r_routeIn.srcCP
-            |      r_srcID := r_routeIn.srcID
-            |      ${name}CP  := r_routeIn.dstCP
+            |    r_srcCP := r_routeIn.srcCP
+            |    r_srcID := r_routeIn.srcID
+            |    ${name}CP  := r_routeIn.dstCP
             |  }
             |}
           """
@@ -5328,7 +5408,7 @@ import HwSynthesizer2._
             case _ => "out"
           }
 
-          return st"r_${instanceName}_resp.${outputName}"
+          return st"r_${instanceName}_resp.out"
         }
 
         exp.op match {
