@@ -3268,14 +3268,14 @@ import HwSynthesizer2._
             |    val clk = Input(Bool())
             |    val ena = Input(Bool())
             |    val wea = Input(Bool())
-            |    val addra = Input(UInt(10.W))
-            |    val dina = Input(UInt(64.W))
-            |    val douta = Output(UInt(64.W))
+            |    val addra = Input(UInt(${log2Up(anvil.config.memory)}.W))
+            |    val dina = Input(UInt(8.W))
+            |    val douta = Output(UInt(8.W))
             |    val enb = Input(Bool())
             |    val web = Input(Bool())
-            |    val addrb = Input(UInt(10.W))
-            |    val dinb = Input(UInt(64.W))
-            |    val doutb = Output(UInt(64.W))
+            |    val addrb = Input(UInt(${log2Up(anvil.config.memory)}.W))
+            |    val dinb = Input(UInt(8.W))
+            |    val doutb = Output(UInt(8.W))
             |  })
             |
             |  addResource("/verilog/XilinxBRAMWrapper.v")
@@ -4160,12 +4160,12 @@ import HwSynthesizer2._
           |    input wire clk,
           |    input wire ena,
           |    input wire wea,
-          |    input wire [9:0] addra,
+          |    input wire [${log2Up(anvil.config.memory) - 1}:0] addra,
           |    input wire [7:0] dina,
           |    output wire [7:0] douta,
           |    input wire enb,
           |    input wire web,
-          |    input wire [9:0] addrb,
+          |    input wire [${log2Up(anvil.config.memory) - 1}:0] addrb,
           |    input wire [7:0] dinb,
           |    output wire [7:0] doutb
           |);
@@ -4174,13 +4174,13 @@ import HwSynthesizer2._
           |    .clka(clk),    // input wire clka
           |    .ena(ena),      // input wire ena
           |    .wea(wea),      // input wire [0 : 0] wea
-          |    .addra(addra),  // input wire [9 : 0] addra
+          |    .addra(addra),  // input wire [${log2Up(anvil.config.memory) - 1} : 0] addra
           |    .dina(dina),    // input wire [7: 0] dina
           |    .douta(douta),  // output wire [7: 0] douta
           |    .clkb(clk),    // input wire clkb
           |    .enb(enb),      // input wire enb
           |    .web(web),      // input wire [0 : 0] web
-          |    .addrb(addrb),  // input wire [9 : 0] addrb
+          |    .addrb(addrb),  // input wire [${log2Up(anvil.config.memory) - 1} : 0] addrb
           |    .dinb(dinb),    // input wire [7: 0] dinb
           |    .doutb(doutb)  // output wire [7: 0] doutb
           |  );
@@ -4508,7 +4508,7 @@ import HwSynthesizer2._
                  |  r_routeIn_valid      := router.io.out(1).valid
                  |
                  |  val TopCP = RegInit(0.U(4.W))
-                 |  io.valid := Mux(TopCP === 7.U, true.B, false.B)
+                 |  io.valid := Mux(TopCP === 12.U, true.B, false.B)
                  |  switch(TopCP) {
                  |    is(0.U) {
                  |      TopCP := Mux(io.start, 1.U, 0.U)
@@ -4589,6 +4589,54 @@ import HwSynthesizer2._
                  |      }
                  |    }
                  |    is(8.U) {
+                 |      r_mem_req_valid := true.B
+                 |      r_mem_req.mode := 1.U
+                 |      r_mem_req.readAddr := 52.U
+                 |      r_mem_req.readOffset := 0.U
+                 |      r_mem_req.readLen := 8.U
+                 |      when(r_mem_resp_valid) {
+                 |        r_mem_req.mode := 0.U
+                 |        r_mem_req_valid := false.B
+                 |        TopCP := 9.U
+                 |      }
+                 |    }
+                 |    is(9.U) {
+                 |      r_mem_req_valid := true.B
+                 |      r_mem_req.mode := 1.U
+                 |      r_mem_req.readAddr := 60.U
+                 |      r_mem_req.readOffset := 0.U
+                 |      r_mem_req.readLen := 8.U
+                 |      when(r_mem_resp_valid) {
+                 |        r_mem_req.mode := 0.U
+                 |        r_mem_req_valid := false.B
+                 |        TopCP := 10.U
+                 |      }
+                 |    }
+                 |    is(10.U) {
+                 |      r_mem_req_valid := true.B
+                 |      r_mem_req.mode := 1.U
+                 |      r_mem_req.readAddr := 68.U
+                 |      r_mem_req.readOffset := 0.U
+                 |      r_mem_req.readLen := 8.U
+                 |      when(r_mem_resp_valid) {
+                 |        r_mem_req.mode := 0.U
+                 |        r_mem_req_valid := false.B
+                 |        TopCP := 11.U
+                 |      }
+                 |    }
+                 |    is(11.U) {
+                 |      r_mem_req_valid := true.B
+                 |      r_mem_req.mode := 1.U
+                 |      r_mem_req.readAddr := 76.U
+                 |      r_mem_req.readOffset := 0.U
+                 |      r_mem_req.readLen := 8.U
+                 |      when(r_mem_resp_valid) {
+                 |        r_mem_req.mode := 0.U
+                 |        r_mem_req_valid := false.B
+                 |        TopCP := 12.U
+                 |      }
+                 |    }
+                 |    is(12.U) {
                  |      printf("%x\n", r_mem_resp.data)
                  |    }
                  |  }
@@ -5384,14 +5432,19 @@ import HwSynthesizer2._
           // add one usage for current binary operation
           ipArbiterUsage = ipArbiterUsage + arbBinIp
 
-          val arbiterID: Z = getArbiterIpId(arbBinIp).get
+          val operandBStr: (String, String) = opType match {
+            case AST.IR.Exp.Binary.Op.Shl => (".asUInt", "UInt")
+            case AST.IR.Exp.Binary.Op.Shr => (".asUInt", "UInt")
+            case AST.IR.Exp.Binary.Op.Ushr => (".asUInt", "UInt")
+            case _ => ("", "SInt")
+          }
           val instanceName: String = getIpInstanceName(arbBinIp).get
 
           var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
           if(isSIntOperation) {
             hashSMap = hashSMap +
               ".a".string ~> (st"${leftST.render}", "SInt".string) +
-              ".b".string ~> (st"${rightST.render}", "SInt".string)
+              ".b".string ~> (st"${rightST.render}${operandBStr._1}", s"${operandBStr._2}".string)
           } else {
             hashSMap = hashSMap +
               ".a".string ~> (st"${leftST.render}", "UInt".string) +
