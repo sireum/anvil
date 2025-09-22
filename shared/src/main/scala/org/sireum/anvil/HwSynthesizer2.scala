@@ -4644,7 +4644,7 @@ import HwSynthesizer2._
                """
     }
 
-    @pure def procedureST(stateMachineST: ST, stateFunctionObjectST: ST): ST = {
+    @pure def procedureST(stateMachineST: ST, stateMachineSTSize:Z, stateFunctionObjectST: ST): ST = {
       //println(stateMachineST.render)
       //println(stateFunctionObjectST.render)
 
@@ -4673,6 +4673,15 @@ import HwSynthesizer2._
               |io.${instName}_req.bits  := r_${instName}_req
               |io.${instName}_req.valid := r_${instName}_req_valid
             """
+      }
+
+      @pure def stateMachineCallST: ST = {
+        val subFunctionSize: Z = stateMachineSTSize / 1024 + (if(stateMachineSTSize % 1024 == 0) 0 else 1)
+        var smST: ISZ[ST] = ISZ[ST]()
+        for(i <- 0 until subFunctionSize) {
+          smST = smST :+ st"StateMachine_${i}.stateMachine(this)"
+        }
+        return st"""${(smST, "\n")}"""
       }
 
       return st"""
@@ -4723,7 +4732,7 @@ import HwSynthesizer2._
                  |
                  |  ${(allArbInstanceST, "\n")}
                  |
-                 |  StateMachine.stateMachine(this)
+                 |  ${stateMachineCallST}
                  |}
                  |
                  |${(stateMachineST, "")}
@@ -4734,10 +4743,10 @@ import HwSynthesizer2._
 
     val basicBlockST = processBasicBlock(name, o.body.asInstanceOf[AST.IR.Body.Basic].blocks, hwLog)
 
-    return (procedureST(basicBlockST._1, basicBlockST._2), topST())
+    return (procedureST(basicBlockST._1, basicBlockST._2, basicBlockST._3), topST())
   }
 
-  @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], hwLog: HwSynthesizer2.HwLog): (ST, ST) = {
+  @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], hwLog: HwSynthesizer2.HwLog): (ST, Z, ST) = {
     for(b <- bs) {
       if(b.label > hwLog.maxNumLabel) {
         hwLog.maxNumLabel = b.label
@@ -4745,7 +4754,7 @@ import HwSynthesizer2._
     }
 
     val ipPortLogic = HwSynthesizer2.IpPortAssign(anvil, ISZ[ST](), ipModules, ArbInputMap.empty, ISZ[ST](), ISZ[ST]())
-    @pure def basicBlockST(grounds: HashSMap[Z, ST], functions: ISZ[ST]): (ST, ST) = {
+    @pure def basicBlockST(grounds: HashSMap[Z, ST], functions: ISZ[ST]): (ST, Z, ST) = {
       var stateSTs: ISZ[ST] = ISZ[ST]()
       stateSTs = stateSTs :+
         st"""
@@ -4757,6 +4766,9 @@ import HwSynthesizer2._
             |  r_routeOut_valid := true.B
             |  ${name}CP := 2.U
             |}
+          """
+      stateSTs = stateSTs :+
+        st"""
             |is(2.U) {
             |  r_routeOut_valid := false.B
             |  when(r_routeIn_valid) {
@@ -4770,20 +4782,36 @@ import HwSynthesizer2._
         stateSTs = stateSTs :+ pair._2
       }
 
-      val fmsST: ST =
-        st"""
-            |object StateMachine {
-            |  def stateMachine(o:${name}): Unit = {
-            |    import o._
-            |    switch(${name}CP) {
-            |      ${(stateSTs, "")}
-            |    }
-            |  }
-            |}
-          """
+      var objectStateMachineST: ISZ[ISZ[ST]] = ISZ[ISZ[ST]]()
+      objectStateMachineST = objectStateMachineST :+ ISZ[ST]()
+      for(i <- 0 until(stateSTs.size)) {
+        val idxStateMachine = i / 1024
+        if(idxStateMachine >= objectStateMachineST.size) {
+          objectStateMachineST = objectStateMachineST :+ ISZ[ST]()
+        }
+
+        val updatedST = objectStateMachineST(idxStateMachine) :+ stateSTs(i)
+        objectStateMachineST = objectStateMachineST(idxStateMachine ~> updatedST)
+      }
+
+      var fmsSTs: ISZ[ST] = ISZ[ST]()
+      for(j <- 0 until(objectStateMachineST.size)) {
+        fmsSTs = fmsSTs :+
+          st"""
+              |object StateMachine_${j} {
+              |  def stateMachine(o:${name}): Unit = {
+              |    import o._
+              |    switch(${name}CP) {
+              |      ${(objectStateMachineST(j), "\n")}
+              |    }
+              |  }
+              |}
+              """
+      }
 
       return (
-        st"""${(fmsST, "\n")}""",
+        st"""${(fmsSTs, "\n")}""",
+        stateSTs.size,
         st"""${(functions, "")}"""
       )
     }
