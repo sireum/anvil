@@ -3203,9 +3203,11 @@ import Anvil._
                   grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T, inc, pos))
                 } else {
                   val dpTemp = fresh.temp()
+                  val dpTempExp = AST.IR.Exp.Temp(dpTemp, dpType, pos)
                   grounds = grounds :+ AST.IR.Stmt.Assign.Temp(dpTemp, AST.IR.Exp.GlobalVarRef(dpName, dpType, pos), pos)
-                  grounds = grounds :+ AST.IR.Stmt.Assign.Global(dpName, dpType,
-                    AST.IR.Exp.Binary(dpType, AST.IR.Exp.Temp(dpTemp, dpType, pos), AST.IR.Exp.Binary.Op.Add, inc, pos), pos)
+                  grounds = grounds :+ AST.IR.Stmt.Assign.Temp(dpTemp,
+                    AST.IR.Exp.Binary(dpType, dpTempExp, AST.IR.Exp.Binary.Op.Add, inc, pos), pos)
+                  grounds = grounds :+ AST.IR.Stmt.Assign.Global(dpName, dpType, dpTempExp, pos)
                 }
             }
 
