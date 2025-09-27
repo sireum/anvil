@@ -4332,7 +4332,7 @@ import HwSynthesizer2._
           |
           |object ${moduleName}VerilogGeneration extends App {
           |  (new ChiselStage).execute(
-          |    Array("--target-dir", "generated_verilog"),
+          |    Array("--target-dir", "../../../generated_verilog/${moduleName}"),
           |    Seq(ChiselGeneratorAnnotation(() => new Top(
           |      addrWidth = 32,
           |      dataWidth = 64,
@@ -4543,7 +4543,7 @@ import HwSynthesizer2._
                  |    is(4.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 20.U
+                 |      r_mem_req.readAddr := ${globalInfoMap.get(Util.displayName).get.loc}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4555,7 +4555,7 @@ import HwSynthesizer2._
                  |    is(5.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 28.U
+                 |      r_mem_req.readAddr := ${globalInfoMap.get(Util.displayName).get.loc + 8}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4567,7 +4567,7 @@ import HwSynthesizer2._
                  |    is(6.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 36.U
+                 |      r_mem_req.readAddr := ${globalInfoMap.get(Util.displayName).get.loc + 16}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4579,7 +4579,7 @@ import HwSynthesizer2._
                  |    is(7.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 44.U
+                 |      r_mem_req.readAddr := ${globalInfoMap.get(Util.displayName).get.loc + 24}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4591,7 +4591,7 @@ import HwSynthesizer2._
                  |    is(8.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 52.U
+                 |      r_mem_req.readAddr := ${globalInfoMap.get(Util.displayName).get.loc + 32}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4603,7 +4603,7 @@ import HwSynthesizer2._
                  |    is(9.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 60.U
+                 |      r_mem_req.readAddr := ${globalInfoMap.get(Util.displayName).get.loc + 48}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4615,7 +4615,7 @@ import HwSynthesizer2._
                  |    is(10.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 68.U
+                 |      r_mem_req.readAddr := ${globalInfoMap.get(Util.displayName).get.loc + 56}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4627,7 +4627,7 @@ import HwSynthesizer2._
                  |    is(11.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 76.U
+                 |      r_mem_req.readAddr := ${globalInfoMap.get(Util.displayName).get.loc + 64}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
