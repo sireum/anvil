@@ -470,26 +470,47 @@ object Util {
               if (minOpt.isEmpty || maxOpt.isEmpty) {
                 return
               }
-              var cond: AST.IR.Exp = AST.IR.Exp.Bool(T, pos)
-              val temp = AST.IR.Exp.Temp(lhs, rhs.tipe, pos)
-              minOpt match {
-                case Some(min) =>
-                  cond = AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Int(rhs.tipe, min, pos), AST.IR.Exp.Binary.Op.Le,
-                    temp, pos)
-                case _ =>
-              }
-              maxOpt match {
-                case Some(max) =>
-                  val c = AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Le,
-                    AST.IR.Exp.Int(rhs.tipe, max, pos), pos)
-                  cond = if (cond.isInstanceOf[AST.IR.Exp.Bool]) c else AST.IR.Exp.Binary(AST.Typed.b, cond,
-                    AST.IR.Exp.Binary.Op.And, c, pos)
-                case _ =>
-              }
-              if (!cond.isInstanceOf[AST.IR.Exp.Bool]) {
-                changed = T
-                stmts = stmts :+ AST.IR.Stmt.Assertume(T, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
-                  st"Out of range ${rhs.tipe} value".render, pos))), pos)
+              if (anvil.config.isFirstGen) {
+                var cond: AST.IR.Exp = AST.IR.Exp.Bool(T, pos)
+                val temp = AST.IR.Exp.Temp(lhs, rhs.tipe, pos)
+                minOpt match {
+                  case Some(min) =>
+                    cond = AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Int(rhs.tipe, min, pos), AST.IR.Exp.Binary.Op.Le,
+                      temp, pos)
+                  case _ =>
+                }
+                maxOpt match {
+                  case Some(max) =>
+                    val c = AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Le,
+                      AST.IR.Exp.Int(rhs.tipe, max, pos), pos)
+                    cond = if (cond.isInstanceOf[AST.IR.Exp.Bool]) c else AST.IR.Exp.Binary(AST.Typed.b, cond,
+                      AST.IR.Exp.Binary.Op.And, c, pos)
+                  case _ =>
+                }
+                if (!cond.isInstanceOf[AST.IR.Exp.Bool]) {
+                  changed = T
+                  stmts = stmts :+ AST.IR.Stmt.Assertume(T, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
+                    st"Out of range ${rhs.tipe} value".render, pos))), pos)
+                }
+              } else {
+                val temp = AST.IR.Exp.Temp(lhs, rhs.tipe, pos)
+                minOpt match {
+                  case Some(min) =>
+                    val cond = AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Int(rhs.tipe, min, pos),
+                      AST.IR.Exp.Binary.Op.Le, temp, pos)
+                    stmts = stmts :+ AST.IR.Stmt.Assertume(T, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
+                      st"Out of low range ${rhs.tipe} value".render, pos))), pos)
+                  case _ =>
+                }
+                maxOpt match {
+                  case Some(max) =>
+                    val cond = AST.IR.Exp.Binary(AST.Typed.b, temp, AST.IR.Exp.Binary.Op.Le,
+                      AST.IR.Exp.Int(rhs.tipe, max, pos), pos)
+                    stmts = stmts :+ AST.IR.Stmt.Assertume(T, cond, Some(AST.IR.ExpBlock(ISZ(), AST.IR.Exp.String(
+                      st"Out of high range ${rhs.tipe} value".render, pos))), pos)
+                  case _ =>
+                }
+
               }
             }
             rhs match {
@@ -1096,6 +1117,7 @@ object Util {
   val memName: ISZ[String] = ISZ("$memory")
   val memTypeName: ISZ[String] = ISZ(typeFieldId)
   val memSizeName: ISZ[String] = ISZ(sizeFieldId)
+  val dpName: ISZ[String] = ISZ("$dp")
   val displayId: String = "$display"
   val displayName: ISZ[String] = ISZ(displayId)
   val displayIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "U"), ISZ())

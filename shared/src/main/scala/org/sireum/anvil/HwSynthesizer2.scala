@@ -4267,6 +4267,189 @@ import HwSynthesizer2._
           """
     }
 
+    @strictpure def verilogTestBenchST: ST = {
+      st"""
+          |`timescale 1ns / 1ns
+          |
+          |module tb(
+          |
+          |    );
+          |
+          |  reg clk;
+          |  reg reset;
+          |  reg start;
+          |  wire valid;
+          |
+          |Top u_Top(
+          |  .clock(clk),
+          |  .reset(reset),
+          |  .io_start(start),
+          |  .io_valid(valid)
+          |);
+          |
+          |  initial clk = 0;
+          |  always #5 clk = ~clk;
+          |
+          |  initial begin
+          |    reset = 1;
+          |    #20;
+          |
+          |    reset = 0;
+          |    start = 1;
+          |
+          |    #400000;
+          |    $$finish;
+          |
+          |  end
+          |
+          |endmodule
+        """
+    }
+
+    @strictpure def testbenchIpGenTclST: ST = {
+      st"""
+          |# add xilinx IPs
+          |create_ip -name div_gen -vendor xilinx.com -library ip -version 5.1 -module_name XilinxDividerSigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.ARESETN {true} $backslash
+          |  CONFIG.FlowControl {Blocking} $backslash
+          |  CONFIG.dividend_and_quotient_width {64} $backslash
+          |  CONFIG.divisor_width {64} $backslash
+          |  CONFIG.fractional_width {64} $backslash
+          |  CONFIG.latency {69} $backslash
+          |] [get_ips XilinxDividerSigned64]
+          |
+          |create_ip -name div_gen -vendor xilinx.com -library ip -version 5.1 -module_name XilinxDividerUnsigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.ARESETN {true} $backslash
+          |  CONFIG.FlowControl {Blocking} $backslash
+          |  CONFIG.dividend_and_quotient_width {64} $backslash
+          |  CONFIG.divisor_width {64} $backslash
+          |  CONFIG.fractional_width {64} $backslash
+          |  CONFIG.latency {67} $backslash
+          |  CONFIG.operand_sign {Unsigned} $backslash
+          |] [get_ips XilinxDividerUnsigned64]
+          |
+          |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxMultiplierUnsigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.ClockEnable {true} $backslash
+          |  CONFIG.Multiplier_Construction {Use_Mults} $backslash
+          |  CONFIG.OutputWidthHigh {63} $backslash
+          |  CONFIG.PipeStages {18} $backslash
+          |  CONFIG.PortAType {Unsigned} $backslash
+          |  CONFIG.PortAWidth {64} $backslash
+          |  CONFIG.PortBType {Unsigned} $backslash
+          |  CONFIG.PortBWidth {64} $backslash
+          |  CONFIG.Use_Custom_Output_Width {true} $backslash
+          |] [get_ips XilinxMultiplierUnsigned64]
+          |
+          |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxMultiplierSigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.ClockEnable {true} $backslash
+          |  CONFIG.Multiplier_Construction {Use_Mults} $backslash
+          |  CONFIG.OutputWidthHigh {63} $backslash
+          |  CONFIG.PipeStages {18} $backslash
+          |  CONFIG.PortAWidth {64} $backslash
+          |  CONFIG.PortBWidth {64} $backslash
+          |  CONFIG.Use_Custom_Output_Width {true} $backslash
+          |] [get_ips XilinxMultiplierSigned64]
+          |
+          |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxAdderSigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.A_Width {64} $backslash
+          |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+          |  CONFIG.B_Width {64} $backslash
+          |  CONFIG.Latency {6} $backslash
+          |  CONFIG.Latency_Configuration {Automatic} $backslash
+          |  CONFIG.Out_Width {64} $backslash
+          |] [get_ips XilinxAdderSigned64]
+          |
+          |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxAdderUnsigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.A_Type {Unsigned} $backslash
+          |  CONFIG.A_Width {64} $backslash
+          |  CONFIG.B_Type {Unsigned} $backslash
+          |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+          |  CONFIG.B_Width {64} $backslash
+          |  CONFIG.Latency {6} $backslash
+          |  CONFIG.Latency_Configuration {Automatic} $backslash
+          |  CONFIG.Out_Width {64} $backslash
+          |] [get_ips XilinxAdderUnsigned64]
+          |
+          |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxSubtractorSigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.A_Width {64} $backslash
+          |  CONFIG.Add_Mode {Subtract} $backslash
+          |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+          |  CONFIG.B_Width {64} $backslash
+          |  CONFIG.Latency {6} $backslash
+          |  CONFIG.Latency_Configuration {Automatic} $backslash
+          |  CONFIG.Out_Width {64} $backslash
+          |] [get_ips XilinxSubtractorSigned64]
+          |
+          |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxSubtractorUnsigned64
+          |set_property -dict [list $backslash
+          |  CONFIG.A_Type {Unsigned} $backslash
+          |  CONFIG.A_Width {64} $backslash
+          |  CONFIG.Add_Mode {Subtract} $backslash
+          |  CONFIG.B_Type {Unsigned} $backslash
+          |  CONFIG.B_Value {0000000000000000000000000000000000000000000000000000000000000000} $backslash
+          |  CONFIG.B_Width {64} $backslash
+          |  CONFIG.Latency {6} $backslash
+          |  CONFIG.Latency_Configuration {Automatic} $backslash
+          |  CONFIG.Out_Width {64} $backslash
+          |] [get_ips XilinxSubtractorUnsigned64]
+          |
+          |${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) bramNativeGenerationST else st""}
+          |
+          |# need to be customzied for different benchmarks
+          |create_ip -name mult_gen -vendor xilinx.com -library ip -version 12.0 -module_name XilinxIndexMultiplier
+          |set_property -dict [list $backslash
+          |  CONFIG.ClockEnable {true} $backslash
+          |  CONFIG.OutputWidthHigh {${anvil.typeBitSize(spType) - 1}} $backslash
+          |  CONFIG.PipeStages {${cyclesXilinxMultiplier(anvil.typeBitSize(spType))}} $backslash
+          |  CONFIG.PortAType {Unsigned} $backslash
+          |  CONFIG.PortAWidth {${anvil.typeBitSize(spType)}} $backslash
+          |  CONFIG.PortBType {Unsigned} $backslash
+          |  CONFIG.PortBWidth {${anvil.typeBitSize(spType)}} $backslash
+          |  CONFIG.Use_Custom_Output_Width {true} $backslash
+          |] [get_ips XilinxIndexMultiplier]
+          |
+          |# need to be customzied for different benchmarks
+          |create_ip -name c_addsub -vendor xilinx.com -library ip -version 12.0 -module_name XilinxIndexAdder
+          |set_property -dict [list $backslash
+          |  CONFIG.A_Type {Unsigned} $backslash
+          |  CONFIG.A_Width {${anvil.typeBitSize(spType)}} $backslash
+          |  CONFIG.B_Type {Unsigned} $backslash
+          |  CONFIG.B_Value {00000000} $backslash
+          |  CONFIG.B_Width {${anvil.typeBitSize(spType)}} $backslash
+          |  CONFIG.Latency {${cyclesXilinxAdder(anvil.typeBitSize(spType))}} $backslash
+          |  CONFIG.Latency_Configuration {Automatic} $backslash
+          |  CONFIG.Out_Width {${anvil.typeBitSize(spType)}} $backslash
+          |] [get_ips XilinxIndexAdder]
+        """
+    }
+
+    @strictpure def testbenchScriptST: ST = {
+      st"""
+          |create_project ${name} ../generated_verilog/${name}/vivado_project -part xczu9eg-ffvb1156-2-e
+          |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
+          |set_property compxlib.modelsim_compiled_library_dir /home/kejun/study/xilinx_modelsim_lib_2024_2 [current_project]
+          |set_property target_simulator ModelSim [current_project]
+          |set_property -name {modelsim.simulate.runtime} -value {400000ns} -objects [get_filesets sim_1]
+          |
+          |set dir ../generated_verilog/${name}
+          |set files [glob -nocomplain -types f [file join $$dir *.v]]
+          |if {[llength $$files]} {
+          |    add_files -norecurse $$files
+          |}
+          |update_compile_order -fileset sources_1
+          |
+          |source ./testbenchIpGeneration.tcl
+          |update_compile_order -fileset sim_1
+        """
+    }
+
     output.add(T, ISZ("config.txt"), configST)
     if(!anvil.config.noXilinxIp) {
       output.add(T, ISZ("chisel/src/main/scala", s"XilinxIpWrapper.scala"), st"${(xilinxIpWrapper, "\n")}")
@@ -4319,6 +4502,9 @@ import HwSynthesizer2._
           """
       }
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxBUFGWrapper.v"), xilinxBUFGWrapperST)
+      output.add(T, ISZ(s"../generated_verilog/${name}", "tb.v"), verilogTestBenchST)
+      output.add(T, ISZ(s"./", "testbenchIpGeneration.tcl"), testbenchIpGenTclST)
+      output.add(T, ISZ(s"./", "testbenchScript.tcl"), testbenchScriptST)
       output.add(T, ISZ("chisel/src/test/scala", s"${name}VerilogGeneration.scala"), verilogGenerationST(name))
     }
 
@@ -4332,7 +4518,7 @@ import HwSynthesizer2._
           |
           |object ${moduleName}VerilogGeneration extends App {
           |  (new ChiselStage).execute(
-          |    Array("--target-dir", "generated_verilog"),
+          |    Array("--target-dir", "../../generated_verilog/${moduleName}"),
           |    Seq(ChiselGeneratorAnnotation(() => new Top(
           |      addrWidth = 32,
           |      dataWidth = 64,
@@ -4463,6 +4649,8 @@ import HwSynthesizer2._
               |${blockMemConnectionSt}"""
       }
 
+      val offset: Z = globalInfoMap.get(Util.displayName).get.loc + anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
+
       return st"""
                  |import chisel3._
                  |import chisel3.util._
@@ -4543,7 +4731,7 @@ import HwSynthesizer2._
                  |    is(4.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 20.U
+                 |      r_mem_req.readAddr := ${offset}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4555,7 +4743,7 @@ import HwSynthesizer2._
                  |    is(5.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 28.U
+                 |      r_mem_req.readAddr := ${offset + 8}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4567,7 +4755,7 @@ import HwSynthesizer2._
                  |    is(6.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 36.U
+                 |      r_mem_req.readAddr := ${offset + 16}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4579,7 +4767,7 @@ import HwSynthesizer2._
                  |    is(7.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 44.U
+                 |      r_mem_req.readAddr := ${offset + 24}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4591,7 +4779,7 @@ import HwSynthesizer2._
                  |    is(8.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 52.U
+                 |      r_mem_req.readAddr := ${offset + 32}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4603,7 +4791,7 @@ import HwSynthesizer2._
                  |    is(9.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 60.U
+                 |      r_mem_req.readAddr := ${offset + 40}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4615,7 +4803,7 @@ import HwSynthesizer2._
                  |    is(10.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 68.U
+                 |      r_mem_req.readAddr := ${offset + 48}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
@@ -4627,7 +4815,7 @@ import HwSynthesizer2._
                  |    is(11.U) {
                  |      r_mem_req_valid := true.B
                  |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := 76.U
+                 |      r_mem_req.readAddr := ${offset + 56}.U
                  |      r_mem_req.readOffset := 0.U
                  |      r_mem_req.readLen := 8.U
                  |      when(r_mem_resp_valid) {
