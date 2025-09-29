@@ -2069,17 +2069,12 @@ object ChiselModule {
                            val widthOfPort: Z,
                            val exp: IpType) extends ChiselModule {
   @strictpure override def signed: B = signedPort
-
   @strictpure override def moduleName: String = moduleDeclarationName
-
   @strictpure override def instanceName: String = moduleInstanceName
-
   @strictpure override def width: Z = widthOfPort
-
   @strictpure override def portList: HashSMap[String, String] = {
     HashSMap.empty[String, String] + "label" ~> "UInt" + "originalCpIndex" ~> "UInt" + "start" ~> "Bool"
   }
-
   @strictpure override def expression: IpType = exp
   @strictpure override def moduleST: ST = {
     st"""
@@ -2317,7 +2312,8 @@ import HwSynthesizer._
     * Slang IR: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/IR.scala
     * Anvil IR Intrinsic: https://github.com/sireum/anvil/blob/master/shared/src/main/scala/org/sireum/anvil/Intrinsic.scala
    */
-  def printProcedure(name: String, o: AST.IR.Procedure, output: Anvil.Output, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): Unit = {
+  def printProcedure(name: String, program: AST.IR.Program, output: Anvil.Output, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): Unit = {
+    val o = program.procedures(0)
     if(anvil.config.useIP) {
       ipAlloc = Util.ipAlloc(anvil, o, anvil.config.ipMax)
     }
