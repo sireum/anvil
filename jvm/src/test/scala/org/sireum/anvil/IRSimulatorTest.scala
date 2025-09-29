@@ -54,24 +54,24 @@ class IRSimulatorTest extends SireumRcSpec {
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
 
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withoutIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withoutIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withoutIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withoutIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withoutIpId})", v)
-
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withIpId})", v)
-
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withoutIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withoutIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withoutIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withoutIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withoutIpId})", v)
+//
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withIpId})", v)
+//
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId}, ${AnvilTest.alignId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId})", v)
+//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId}, ${AnvilTest.alignId})", v)
 
       r
     }) yield pair
@@ -186,7 +186,22 @@ class IRSimulatorTest extends SireumRcSpec {
               if (ir.anvil.config.shouldPrint) {
                 val offset = ir.globalInfoMap.get(Util.displayName).get.loc +
                   ir.anvil.typeShaSize + ir.anvil.typeByteSize(AST.Typed.z)
-                val dp = state.DP.toZ
+                val dp = if (config.isFirstGen) state.DP.toZ else {
+                  val offset = ir.globalInfoMap.get(Util.dpName).get.loc
+                  if (config.alignAxi4) {
+                    state.memory64(offset).toZ
+                  } else {
+                    var r = u64"0"
+                    var mask = u64"0"
+                    val size = ir.anvil.typeByteSize(ir.anvil.dpType)
+                    for (i <- 0 until size) {
+                      val b = conversions.U8.toU64(state.memory(offset + i))
+                      r = r | (b << mask)
+                      mask = mask + u64"8"
+                    }
+                    r.toZ
+                  }
+                }
                 val (lo, hi): (Z, Z) = if (dp < displaySize) (0, dp) else (dp, displaySize + dp - 1)
                 val u8ms = MSZ.create(hi - lo, u8"0")
                 var j: Z = 0

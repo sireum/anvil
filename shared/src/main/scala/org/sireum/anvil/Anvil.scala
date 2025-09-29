@@ -40,6 +40,7 @@ import org.sireum.anvil.Util._
 object Anvil {
 
   @datatype class Config(val nameOpt: Option[String],
+                         val isFirstGen: B,
                          val memory: Z,
                          val defaultBitWidth: Z,
                          val maxStringSize: Z,
@@ -83,6 +84,7 @@ object Anvil {
     @strictpure def empty: Config =
       Config(
         nameOpt = None(),
+        isFirstGen = T,
         memory = 512 * 1024,
         defaultBitWidth = 64,
         maxStringSize = 100,
@@ -395,6 +397,9 @@ import Anvil._
       }
       if (config.shouldPrint) {
         globals = globals :+ AST.IR.Global(displayType, displayName, startPos)
+        if (!config.isFirstGen) {
+          globals = globals :+ AST.IR.Global(dpType, dpName, startPos)
+        }
         for (id <- runtimePrintMethodTypeMap.keys) {
           val info = th.nameMap.get(runtimeName :+ id).get.asInstanceOf[Info.Method]
           procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
@@ -732,6 +737,12 @@ import Anvil._
         pass = pass + 1
       }
 
+      if (!config.isFirstGen) {
+        p = anvil.transformSecondGenSplit(fresh, p)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "second-gen-split"), p.prettyST(anvil.printer))
+        pass = pass + 1
+      }
+
       p = anvil.transformEmptyBlock(p)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "empty-block"), p.prettyST(anvil.printer))
       pass = pass + 1
@@ -983,6 +994,55 @@ import Anvil._
     pass = pass + 1
 
     return r
+  }
+
+  def transformSecondGenSplit(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    if (config.isFirstGen) {
+      return p
+    }
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      val ic = IpCounter(this, HashSMap.empty, HashSMap.empty, 0)
+      ic.transform_langastIRBasicBlock(b)
+      if (ic.ipMap.size > 1) {
+        var groundss = ISZ[ISZ[AST.IR.Stmt.Ground]]()
+        var grounds = ISZ[AST.IR.Stmt.Ground]()
+        var found = F
+        for (g <- b.grounds) {
+          g match {
+            case AST.IR.Stmt.Intrinsic(_: Intrinsic.Decl) => grounds = grounds :+ g
+            case _ =>
+              if (found) {
+                found = F
+                groundss = groundss :+ grounds
+                grounds = ISZ()
+              }
+              grounds = grounds :+ g
+              found = T
+          }
+        }
+        if (grounds.nonEmpty) {
+          groundss = groundss :+ grounds
+        }
+        if (groundss.size <= 1) {
+          blocks = blocks :+ b
+        } else {
+          var label = b.label
+          var next = fresh.label()
+          for (i <- 0 until groundss.size - 1) {
+            val gs = groundss(i)
+            blocks = blocks :+ AST.IR.BasicBlock(label, gs, AST.IR.Jump.Goto(next, gs(gs.size - 1).pos))
+            label = next
+            next = fresh.label()
+          }
+          blocks = blocks :+ AST.IR.BasicBlock(label, groundss(groundss.size - 1), b.jump)
+        }
+      } else {
+        blocks = blocks :+ b
+      }
+    }
+    return p(body = body(blocks = blocks))
   }
 
   def transformEmptyBlock(p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -2934,24 +2994,6 @@ import Anvil._
     return (maxOffset, proc(body = body(blocks = blockMap.values)), callResultIdOffsetMap)
   }
 
-  @pure def printStringLit(s: String, pos: message.Position): ISZ[AST.IR.Stmt.Ground] = {
-    var r = ISZ[AST.IR.Stmt.Ground]()
-    if (config.shouldPrint) {
-      val cis = conversions.String.toCis(s)
-      var i = 0
-      val register = AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos))
-      for (c <- cis) {
-        for (byte <- conversions.String.toU8is(s"$c")) {
-          val lhsOffset = AST.IR.Exp.Binary(dpType, register, AST.IR.Exp.Binary.Op.And, AST.IR.Exp.Int(dpType, dpMask, pos), pos)
-          r = r :+ AST.IR.Stmt.Assign.Index(AST.IR.Exp.GlobalVarRef(displayName, displayType, pos), lhsOffset, AST.IR.Exp.Int(AST.Typed.u8, byte.toZ, pos), pos)
-          r = r :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T, AST.IR.Exp.Int(dpType, 1, pos), pos))
-          i = i + 1
-        }
-      }
-    }
-    return r
-  }
-
   def transformHalt(p: AST.IR.Procedure): AST.IR.Procedure = {
     if (!config.stackTrace) {
       return p
@@ -2981,11 +3023,54 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
+  def dp(pos: message.Position): AST.IR.Exp = {
+    return if (config.isFirstGen) AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos))
+    else AST.IR.Exp.GlobalVarRef(dpName, dpType, pos)
+  }
+
+  @pure def printStringLit(fresh: lang.IRTranslator.Fresh, s: String, pos: message.Position): ISZ[AST.IR.Stmt.Ground] = {
+    var r = ISZ[AST.IR.Stmt.Ground]()
+    if (config.shouldPrint) {
+      val cis = conversions.String.toCis(s)
+      val register = dp(pos)
+      if (config.isFirstGen) {
+        var i = 0
+        for (c <- cis) {
+          for (byte <- conversions.String.toU8is(s"$c")) {
+            val lhsOffset = AST.IR.Exp.Binary(dpType, register, AST.IR.Exp.Binary.Op.And, AST.IR.Exp.Int(dpType, dpMask, pos), pos)
+            r = r :+ AST.IR.Stmt.Assign.Index(AST.IR.Exp.GlobalVarRef(displayName, displayType, pos), lhsOffset, AST.IR.Exp.Int(AST.Typed.u8, byte.toZ, pos), pos)
+            r = r :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T, AST.IR.Exp.Int(dpType, 1, pos), pos))
+            i = i + 1
+          }
+        }
+      } else {
+        var i = 0
+        val dpTemp = fresh.temp()
+        val offsetTemp = fresh.temp()
+        val dpExp = AST.IR.Exp.Temp(dpTemp, dpType, pos)
+        val offsetExp = AST.IR.Exp.Temp(offsetTemp, dpType, pos)
+        r = r :+ AST.IR.Stmt.Assign.Temp(dpTemp, register, pos)
+        for (c <- cis) {
+          for (byte <- conversions.String.toU8is(s"$c")) {
+            val lhsOffset = AST.IR.Exp.Binary(dpType, dpExp, AST.IR.Exp.Binary.Op.And, AST.IR.Exp.Int(dpType, dpMask, pos), pos)
+            r = r :+ AST.IR.Stmt.Assign.Temp(offsetTemp, lhsOffset, pos)
+            r = r :+ AST.IR.Stmt.Assign.Index(AST.IR.Exp.GlobalVarRef(displayName, displayType, pos), offsetExp, AST.IR.Exp.Int(AST.Typed.u8, byte.toZ, pos), pos)
+            r = r :+ AST.IR.Stmt.Assign.Temp(dpTemp, AST.IR.Exp.Binary(dpType, dpExp, AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(dpType, 1, pos), pos), pos)
+            i = i + 1
+          }
+        }
+        r = r :+ AST.IR.Stmt.Assign.Global(dpName, dpType, dpExp, pos)
+      }
+    }
+    return r
+  }
+
   def transformPrint(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
       val nextTemp = nextBlockTemp(b)
+      fresh.setTemp(nextTemp)
       var grounds = ISZ[AST.IR.Stmt.Ground]()
       for (g <- b.grounds) {
         g match {
@@ -2993,7 +3078,7 @@ import Anvil._
             (e.id == "print" || e.id == "eprint" || e.id == "cprint") =>
             e.args(if (e.id == "cprint") 1 else 0) match {
               case arg: AST.IR.Exp.Bool =>
-                grounds = grounds ++ printStringLit(if (arg.value) "T" else "F", arg.pos)
+                grounds = grounds ++ printStringLit(fresh, if (arg.value) "T" else "F", arg.pos)
               case arg: AST.IR.Exp.Int =>
                 if (isBitVector(arg.tipe)) {
                   val n = typeByteSize(arg.tipe) * 2
@@ -3006,7 +3091,7 @@ import Anvil._
                   for (i <- 0 until n) {
                     u8ms(i) = buffer(anvil.Runtime.Ext.z2u(i))
                   }
-                  grounds = grounds ++ printStringLit(conversions.String.fromU8ms(u8ms), arg.pos)
+                  grounds = grounds ++ printStringLit(fresh, conversions.String.fromU8ms(u8ms), arg.pos)
                 } else if (arg.tipe == AST.Typed.c) {
                   val buffer = MS.create[anvil.PrinterIndex.U, U8](4, u8"0")
                   val n = anvil.Runtime.printC(buffer, u"0", anvil.Runtime.Ext.z2u(dpMask),
@@ -3015,7 +3100,7 @@ import Anvil._
                   for (i <- 0 until n) {
                     u8ms(i) = buffer(anvil.Runtime.Ext.z2u(i))
                   }
-                  grounds = grounds ++ printStringLit(conversions.String.fromU8ms(u8ms), arg.pos)
+                  grounds = grounds ++ printStringLit(fresh, conversions.String.fromU8ms(u8ms), arg.pos)
                 } else {
                   val buffer = MS.create[anvil.PrinterIndex.U, U8](20, u8"0")
                   val n: Z =
@@ -3025,7 +3110,7 @@ import Anvil._
                   for (i <- 0 until n) {
                     u8ms(i) = buffer(anvil.Runtime.Ext.z2u(i))
                   }
-                  grounds = grounds ++ printStringLit(conversions.String.fromU8ms(u8ms), arg.pos)
+                  grounds = grounds ++ printStringLit(fresh, conversions.String.fromU8ms(u8ms), arg.pos)
                 }
               case arg: AST.IR.Exp.F32 =>
                 val buffer = MS.create[anvil.PrinterIndex.U, U8](50, u8"0")
@@ -3034,7 +3119,7 @@ import Anvil._
                 for (i <- 0 until n) {
                   u8ms(i) = buffer(anvil.Runtime.Ext.z2u(i))
                 }
-                grounds = grounds ++ printStringLit(conversions.String.fromU8ms(u8ms), arg.pos)
+                grounds = grounds ++ printStringLit(fresh, conversions.String.fromU8ms(u8ms), arg.pos)
               case arg: AST.IR.Exp.F64 =>
                 val buffer = MS.create[anvil.PrinterIndex.U, U8](320, u8"0")
                 val n = anvil.Runtime.printF64_2(buffer, u"0", anvil.Runtime.Ext.z2u(dpMask), arg.value).toZ
@@ -3042,14 +3127,19 @@ import Anvil._
                 for (i <- 0 until n) {
                   u8ms(i) = buffer(anvil.Runtime.Ext.z2u(i))
                 }
-                grounds = grounds ++ printStringLit(conversions.String.fromU8ms(u8ms), arg.pos)
+                grounds = grounds ++ printStringLit(fresh, conversions.String.fromU8ms(u8ms), arg.pos)
               case arg: AST.IR.Exp.R => halt(s"TODO: $arg")
-              case arg: AST.IR.Exp.String => grounds = grounds ++ printStringLit(arg.value, arg.pos)
+              case arg: AST.IR.Exp.String => grounds = grounds ++ printStringLit(fresh, arg.value, arg.pos)
               case arg =>
-                fresh.setTemp(nextTemp)
                 val pos = g.pos
                 val buffer = AST.IR.Exp.GlobalVarRef(displayName, displayType, pos)
-                val index = AST.IR.Exp.Intrinsic(Intrinsic.Register(F, dpType, pos))
+                val index: AST.IR.Exp = if (config.isFirstGen) {
+                  dp(pos)
+                } else {
+                  val dpTemp = fresh.temp()
+                  grounds = grounds :+ AST.IR.Stmt.Assign.Temp(dpTemp, AST.IR.Exp.GlobalVarRef(dpName, dpType, pos), pos)
+                  AST.IR.Exp.Temp(dpTemp, dpType, pos)
+                }
                 val mask = AST.IR.Exp.Int(displayIndexType, dpMask, pos)
                 val printApply: AST.IR.Exp.Apply = arg.tipe match {
                   case AST.Typed.b =>
@@ -3109,7 +3199,16 @@ import Anvil._
                 val temp = fresh.temp()
                 grounds = grounds :+ AST.IR.Stmt.Assign.Temp(temp, printApply, pos)
                 val inc = AST.IR.Exp.Type(F, AST.IR.Exp.Temp(temp, AST.Typed.u64, pos), dpType, pos)
-                grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T, inc, pos))
+                if (config.isFirstGen) {
+                  grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, T, inc, pos))
+                } else {
+                  val dpTemp = fresh.temp()
+                  val dpTempExp = AST.IR.Exp.Temp(dpTemp, dpType, pos)
+                  grounds = grounds :+ AST.IR.Stmt.Assign.Temp(dpTemp, AST.IR.Exp.GlobalVarRef(dpName, dpType, pos), pos)
+                  grounds = grounds :+ AST.IR.Stmt.Assign.Temp(dpTemp,
+                    AST.IR.Exp.Binary(dpType, dpTempExp, AST.IR.Exp.Binary.Op.Add, inc, pos), pos)
+                  grounds = grounds :+ AST.IR.Stmt.Assign.Global(dpName, dpType, dpTempExp, pos)
+                }
             }
 
           case _ => grounds = grounds :+ g
@@ -3151,7 +3250,7 @@ import Anvil._
               else
                 (ISZ(g(rhs = rhs.exp)),
                   AST.IR.Jump.Goto(eLabel, pos),
-                  printStringLit(s"Cannot cast to ${rhs.t}\n", pos),
+                  printStringLit(fresh, s"Cannot cast to ${rhs.t}\n", pos),
                   if (config.runtimeCheck) AST.IR.Jump.Halt(pos)
                   else egoto)
             blocks = blocks :+ AST.IR.BasicBlock(tLabel, tStmts, tJump)
@@ -3283,7 +3382,13 @@ import Anvil._
         AST.IR.Exp.Int(spType, 0, p.pos), st"$sfCallerId = 0", spType, p.pos))
     }
     if (config.shouldPrint) {
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, F, AST.IR.Exp.Int(dpType, 0, p.pos), p.pos))
+      if (config.isFirstGen) {
+        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(F, F, AST.IR.Exp.Int(dpType, 0, p.pos), p.pos))
+      } else {
+        val displayInfo = globalMap.get(dpName).get
+        grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(AST.IR.Exp.Int(spType, displayInfo.loc, p.pos), 0,
+          isSigned(dpType), typeByteSize(dpType), AST.IR.Exp.Int(dpType, 0, p.pos), st"", dpType, p.pos))
+      }
       val displayInfo = globalMap.get(displayName).get
       val sha3t = sha3Type(displayType)
       stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
