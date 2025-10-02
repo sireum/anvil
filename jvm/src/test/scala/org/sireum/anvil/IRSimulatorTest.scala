@@ -49,7 +49,7 @@ class IRSimulatorTest extends SireumRcSpec {
   }
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith(".sc") }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => !p.last.endsWith("dll.sc") }
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
@@ -152,9 +152,10 @@ class IRSimulatorTest extends SireumRcSpec {
             }
           }
           out.removeAll()
-          val config = AnvilTest.getConfig(file, p)
+          val config = AnvilTest.getConfig(F, file, p)
           Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, AnvilOutput(F, "", out), reporter) match {
             case Some(ir) =>
+              if (T) return T
               val state = IRSimulator.State.create(ir.anvil, ir.maxRegisters, ir.globalInfoMap, ir.globalTemps)
               val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.loc
               var locals = ISZ[Intrinsic.Decl.Local]()

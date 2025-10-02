@@ -437,6 +437,24 @@ import Anvil._
           AST.IR.Stmt.Assign.Global(owner, AST.Typed.b, AST.IR.Exp.Bool(T, pos), pos) +: body.block.stmts))
         procedures = procedures :+ objInit(body = body)
       }
+
+      if (!config.isFirstGen) {
+        for (p <- procedures) {
+          val context = p.context.owner :+ p.context.id
+          for (idt <- ops.ISZOps(p.paramNames).zip(p.tipe.args)) {
+            var t = idt._2
+            if (!isScalar(t)) {
+              t = spType
+            }
+            globals = globals :+ AST.IR.Global(t, context :+ idt._1, p.pos)
+          }
+          val rt = p.tipe.ret
+          if (rt != AST.Typed.unit) {
+            globals = globals :+ AST.IR.Global(rt, context :+ resultLocalId, p.pos)
+          }
+        }
+      }
+
       var globalMap = HashSMap.empty[ISZ[String], VarInfo]
       var globalTemps = 0
       var globalSize: Z = config.baseAddress
@@ -617,141 +635,149 @@ import Anvil._
     stage = stage + 1
 
     val main = procedureMap.get(startContext).get
-    program = {
-      val p = transformMainStackFrame(main)(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
-        anvil.mergeProcedures(main, fresh, procedureMap, procedureSizeMap, callResultOffsetMap)))
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, 0, "merged"), p.prettyST(anvil.printer))
-      program(procedures = ISZ(p))
+    if (config.isFirstGen) {
+      program = {
+        val p = transformMainStackFrame(main)(body = main.body.asInstanceOf[AST.IR.Body.Basic](blocks =
+          anvil.mergeProcedures(main, fresh, procedureMap, procedureSizeMap, callResultOffsetMap)))
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, 0, "merged"), p.prettyST(anvil.printer))
+        program(procedures = ISZ(p))
+      }
+      output.add(F, ISZ("ir", s"$stage-merged.sir"), program.prettyST(anvil.printer))
     }
-    output.add(F, ISZ("ir", s"$stage-merged.sir"), program.prettyST(anvil.printer))
 
     stage = stage + 1
 
     program = {
-      var p = program.procedures(0)
-      var pass: Z = 0
+      var procedures = ISZ[AST.IR.Procedure]()
+      for (i <- program.procedures.indices) {
+        var p = program.procedures(i)
+        var pass: Z = 0
 
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "merged"), p.prettyST(anvil.printer))
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "merged"), p.prettyST(anvil.printer))
 
-      @strictpure def isRegisterInc(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
-        case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isInc =>
-          grounds.isEmpty ||
-            ops.ISZOps(grounds).exists((ground: AST.IR.Stmt.Ground) => !ground.isInstanceOf[AST.IR.Stmt.Decl])
-        case _ => F
-      }
-
-      p = anvil.transformSplitTest(F, fresh, p, isRegisterInc _)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "register-inc"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
-      @pure def isCopyStoreLoad(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
-        g match {
-          case AST.IR.Stmt.Intrinsic(_: Intrinsic.Copy) => return T
-          case AST.IR.Stmt.Intrinsic(in: Intrinsic.Store) => return in.bytes > 1 && in.tipe != cpType
-          case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return in.bytes > 1 && in.tipe != cpType
-          case _ => return F
-        }
-      }
-
-      p = anvil.transformSplitTest(F, fresh, p, isCopyStoreLoad _)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-copy-store-load"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
-      p = anvil.transformIndexing(fresh, p)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-indexing"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
-      p = anvil.transformSCreate(fresh, p, programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p))))
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "s-create"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
-      p = anvil.transformGotoLocal(fresh, p, programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p))))
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "goto-local"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
-      val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
-
-      p = anvil.transformIfLoadStoreCopyIntrinsic(fresh, p, maxTemps)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load-store-copy"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
-      config.memoryAccess match {
-        case Anvil.Config.MemoryAccess.Default =>
-          if (config.useIP) {
-            p = anvil.transformCopyDefaultIp(fresh, p, maxTemps)
-            output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy-access"), p.prettyST(anvil.printer))
-            pass = pass + 1
-          }
-
-        case Anvil.Config.MemoryAccess.BramNative =>
-        case Anvil.Config.MemoryAccess.BramAxi4 =>
-        case Anvil.Config.MemoryAccess.Ddr =>
-      }
-
-      p = anvil.transformErase(fresh, p)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "erase"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
-      p = anvil.transformMain(fresh, p, globalSize, globalMap)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "main"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
-      p = anvil.transformAssignTempLoad(fresh, p)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "assign-temp-load"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
-      if (config.tempGlobal && config.ipSubroutine) {
-        @pure def hasBinop(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
-          val bd = BinopDetector(F)
-          bd.transform_langastIRStmtGround(g)
-          return bd.hasBinop
+        @strictpure def isRegisterInc(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
+          case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) if in.isInc =>
+            grounds.isEmpty ||
+              ops.ISZOps(grounds).exists((ground: AST.IR.Stmt.Ground) => !ground.isInstanceOf[AST.IR.Stmt.Decl])
+          case _ => F
         }
 
-        p = anvil.transformSplitTest(T, fresh, p, hasBinop _)
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-ips"), p.prettyST(anvil.printer))
+        p = anvil.transformSplitTest(F, fresh, p, isRegisterInc _)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "register-inc"), p.prettyST(anvil.printer))
         pass = pass + 1
 
-        val pair = anvil.transformIpSubroutines(fresh, p, globalMap)
-        globalTemps = globalTemps + pair._2.size - globalMap.size
-        globalMap = pair._2
-        p = pair._1
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "ip-subroutines"), p.prettyST(anvil.printer))
-        pass = pass + 1
-      }
-
-      if (config.tempGlobal && config.alignAxi4) {
-        @pure def isStoreLoadAlign(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
+        @pure def isCopyStoreLoad(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
           g match {
-            case AST.IR.Stmt.Intrinsic(_: Intrinsic.Store) => return T
-            case AST.IR.Stmt.Intrinsic(_: Intrinsic.TempLoad) => return T
+            case AST.IR.Stmt.Intrinsic(_: Intrinsic.Copy) => return T
+            case AST.IR.Stmt.Intrinsic(in: Intrinsic.Store) => return in.bytes > 1 && in.tipe != cpType
+            case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return in.bytes > 1 && in.tipe != cpType
             case _ => return F
           }
         }
 
-        p = anvil.transformSplitTest(F, fresh, p, isStoreLoadAlign _)
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "align-copy-store-load"), p.prettyST(anvil.printer))
+        p = anvil.transformSplitTest(F, fresh, p, isCopyStoreLoad _)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-copy-store-load"), p.prettyST(anvil.printer))
         pass = pass + 1
 
-        p = anvil.transformReadWriteAlign(fresh, p, procedureMap)
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "rw-align"), p.prettyST(anvil.printer))
+        p = anvil.transformIndexing(fresh, p)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-indexing"), p.prettyST(anvil.printer))
         pass = pass + 1
+
+        p = anvil.transformSCreate(fresh, p, programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p))))
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "s-create"), p.prettyST(anvil.printer))
+        pass = pass + 1
+
+        p = anvil.transformGotoLocal(fresh, p, programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p))))
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "goto-local"), p.prettyST(anvil.printer))
+        pass = pass + 1
+
+        val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
+
+        p = anvil.transformIfLoadStoreCopyIntrinsic(fresh, p, maxTemps)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load-store-copy"), p.prettyST(anvil.printer))
+        pass = pass + 1
+
+        config.memoryAccess match {
+          case Anvil.Config.MemoryAccess.Default =>
+            if (config.useIP) {
+              p = anvil.transformCopyDefaultIp(fresh, p, maxTemps)
+              output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "copy-access"), p.prettyST(anvil.printer))
+              pass = pass + 1
+            }
+
+          case Anvil.Config.MemoryAccess.BramNative =>
+          case Anvil.Config.MemoryAccess.BramAxi4 =>
+          case Anvil.Config.MemoryAccess.Ddr =>
+        }
+
+        p = anvil.transformErase(fresh, p)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "erase"), p.prettyST(anvil.printer))
+        pass = pass + 1
+
+        if (p.context == main) {
+          p = anvil.transformMain(fresh, p, globalSize, globalMap)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "main"), p.prettyST(anvil.printer))
+          pass = pass + 1
+        }
+
+        p = anvil.transformAssignTempLoad(fresh, p)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "assign-temp-load"), p.prettyST(anvil.printer))
+        pass = pass + 1
+
+        if (config.tempGlobal && config.ipSubroutine) {
+          @pure def hasBinop(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
+            val bd = BinopDetector(F)
+            bd.transform_langastIRStmtGround(g)
+            return bd.hasBinop
+          }
+
+          p = anvil.transformSplitTest(T, fresh, p, hasBinop _)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-ips"), p.prettyST(anvil.printer))
+          pass = pass + 1
+
+          val pair = anvil.transformIpSubroutines(fresh, p, globalMap)
+          globalTemps = globalTemps + pair._2.size - globalMap.size
+          globalMap = pair._2
+          p = pair._1
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "ip-subroutines"), p.prettyST(anvil.printer))
+          pass = pass + 1
+        }
+
+        if (config.tempGlobal && config.alignAxi4) {
+          @pure def isStoreLoadAlign(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
+            g match {
+              case AST.IR.Stmt.Intrinsic(_: Intrinsic.Store) => return T
+              case AST.IR.Stmt.Intrinsic(_: Intrinsic.TempLoad) => return T
+              case _ => return F
+            }
+          }
+
+          p = anvil.transformSplitTest(F, fresh, p, isStoreLoadAlign _)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "align-copy-store-load"), p.prettyST(anvil.printer))
+          pass = pass + 1
+
+          p = anvil.transformReadWriteAlign(fresh, p, procedureMap)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "rw-align"), p.prettyST(anvil.printer))
+          pass = pass + 1
+        }
+
+        if (!config.isFirstGen) {
+          p = anvil.transformSecondGenSplit(fresh, p)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "second-gen-split"), p.prettyST(anvil.printer))
+          pass = pass + 1
+        }
+
+        p = anvil.transformEmptyBlock(p)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "empty-block"), p.prettyST(anvil.printer))
+        pass = pass + 1
+
+        p = anvil.transformCP(p)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "cp"), p.prettyST(anvil.printer))
+        pass = pass + 1
+
+        procedures = procedures :+ p
       }
-
-      if (!config.isFirstGen) {
-        p = anvil.transformSecondGenSplit(fresh, p)
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "second-gen-split"), p.prettyST(anvil.printer))
-        pass = pass + 1
-      }
-
-      p = anvil.transformEmptyBlock(p)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "empty-block"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
-      p = anvil.transformCP(p)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "cp"), p.prettyST(anvil.printer))
-      pass = pass + 1
-
-      program(procedures = ISZ(p))
+      program(procedures = procedures)
     }
 
     {
@@ -994,6 +1020,49 @@ import Anvil._
     pass = pass + 1
 
     return r
+  }
+
+  def transformSecondGenCall(p: AST.IR.Procedure, procedureMap: HashSMap[AST.IR.MethodContext, AST.IR.Procedure]): AST.IR.Procedure = {
+    if (config.isFirstGen) {
+      return p
+    }
+    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
+    var blocks = ISZ[AST.IR.BasicBlock]()
+    for (b <- body.blocks) {
+      var grounds = ISZ[AST.IR.Stmt.Ground]()
+      def addParamArgAssigns(e: AST.IR.Exp.Apply): ISZ[String] = {
+        val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
+        val called = procedureMap.get(mc).get
+        val calledContext = e.owner :+ e.id
+        for (pArg <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(called.tipe.args)).zip(e.args)) {
+          val ((id, t), arg) = pArg
+          grounds = grounds :+ AST.IR.Stmt.Assign.Global(calledContext :+ id, if (isScalar(t)) t else spType, arg, arg.pos)
+        }
+        return calledContext
+      }
+      var jump = b.jump
+      for (g <- b.grounds) {
+        g match {
+          case AST.IR.Stmt.Expr(e) =>
+            addParamArgAssigns(e)
+            grounds = grounds :+ AST.IR.Stmt.Expr(e(args = ISZ()))
+          case g@AST.IR.Stmt.Assign.Temp(_, e: AST.IR.Exp.Apply, _) =>
+            val context = addParamArgAssigns(e)
+            grounds = grounds :+ AST.IR.Stmt.Expr(e(args = ISZ()))
+            grounds = grounds :+ g(rhs = AST.IR.Exp.GlobalVarRef(context :+ resultLocalId, e.tipe, g.pos))
+          case _ =>
+            grounds = grounds :+ g
+        }
+      }
+      jump match {
+        case j@AST.IR.Jump.Return(Some(e), _) =>
+          grounds = grounds :+ AST.IR.Stmt.Assign.Global(p.owner :+ p.id :+ resultLocalId, p.tipe.ret, e, j.pos)
+          jump = j(expOpt = None())
+        case _ =>
+      }
+      blocks = blocks :+ b(grounds = grounds, jump = jump)
+    }
+    return p(body = body(blocks = blocks))
   }
 
   def transformSecondGenSplit(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1893,6 +1962,13 @@ import Anvil._
   }
 
   def transformBasicBlock(stage: Z, fresh: lang.IRTranslator.Fresh, program: AST.IR.Program, output: Output): AST.IR.Program = {
+    var procedureMap = HashSMap.empty[AST.IR.MethodContext, AST.IR.Procedure]
+    if (!config.isFirstGen) {
+      for (p <- program.procedures) {
+        procedureMap = procedureMap + p.context ~> p
+      }
+    }
+
     @pure def transform(p: AST.IR.Procedure): AST.IR.Procedure = {
       var r = p
       var pass: Z = 0
@@ -1923,6 +1999,12 @@ import Anvil._
       r = transformPrint(fresh, r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "print"), r.prettyST(printer))
       pass = pass + 1
+
+      if (!config.isFirstGen) {
+        r = transformSecondGenCall(r, procedureMap)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "second-gen-call"), r.prettyST(printer))
+        pass = pass + 1
+      }
 
       r = transformApplyConstructResult(r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "apply-construct-result"), r.prettyST(printer))
@@ -2807,7 +2889,7 @@ import Anvil._
                     grounds = grounds :+ g(rhs = newRhs)
                   } else {
                     val globalOffset = AST.IR.Exp.Int(spType, globalInfo.loc, pos)
-                    if (isScalar(tipe)) {
+                    if (isScalar(tipe) || name(name.size - 1) == resultLocalId) {
                       grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(globalOffset, 0, isSigned(tipe),
                         typeByteSize(tipe), newRhs, g.prettyST(printer), tipe, g.pos))
                     } else {
@@ -3691,7 +3773,7 @@ import Anvil._
 
   @pure def copySize(exp: AST.IR.Exp): AST.IR.Exp = {
     val t = exp.tipe
-    assert(!isScalar(t))
+    assert(!isScalar(t), s"$exp: $t")
     val pos = exp.pos
     if (config.memoryAccess == Config.MemoryAccess.Default && (t == AST.Typed.string || (isSeq(t) && !config.erase))) {
       val (sizeType, sizeOffset) = classSizeFieldOffsets(t.asInstanceOf[AST.Typed.Name])._2.get("size").get
