@@ -1030,6 +1030,13 @@ import Anvil._
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
       var grounds = ISZ[AST.IR.Stmt.Ground]()
+      if (blocks.isEmpty) {
+        val context = p.context.owner :+ p.context.id
+        for (idt <- ops.ISZOps(p.paramNames).zip(p.tipe.args)) {
+          val (id, t) = idt
+          grounds = grounds :+ AST.IR.Stmt.Assign.Local(p.context, id, t, AST.IR.Exp.GlobalVarRef(context :+ id, t, p.pos), p.pos)
+        }
+      }
       def addParamArgAssigns(e: AST.IR.Exp.Apply): ISZ[String] = {
         val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
         val called = procedureMap.get(mc).get
