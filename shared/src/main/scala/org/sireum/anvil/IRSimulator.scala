@@ -48,6 +48,7 @@ object IRSimulator {
   @record @unclonable class State(val globalMap: HashSMap[QName, Anvil.VarInfo],
                                   val globalScalarNameMap: ISZ[QName],
                                   var globalScalars: ISZ[Value],
+                                  var procedureName: ISZ[String],
                                   var CP: Value,
                                   var SP: Value,
                                   var DP: U64,
@@ -64,7 +65,89 @@ object IRSimulator {
                                   val tempsS64: MSZ[S64],
                                   val tempsF32: MSZ[F32],
                                   val tempsF64: MSZ[F64],
-                                  var callFrames: Stack[HashSMap[String, Intrinsic.Decl.Local]]) {
+                                  var callFrames: Stack[HashSMap[String, Intrinsic.Decl.Local]],
+                                  var callStack: Stack[State.CallStackFrame]) {
+
+    def currentStackFrame: State.CallStackFrame = {
+      return State.CallStackFrame(
+        procedureName, CP, temps1.toIS, tempsU8.toIS, tempsU16.toIS, tempsU32.toIS, tempsU64.toIS,
+        tempsS8.toIS, tempsS16.toIS, tempsS32.toIS, tempsS64.toIS, tempsF32.toIS, tempsF64.toIS)
+    }
+
+    def updateCurrent(csf: State.CallStackFrame): Unit = {
+      CP = csf.CP
+      for (i <- temps1.indices) {
+        temps1(i) = csf.temps1(i)
+      }
+      for (i <- tempsU8.indices) {
+        tempsU8(i) = csf.tempsU8(i)
+      }
+      for (i <- tempsU16.indices) {
+        tempsU16(i) = csf.tempsU16(i)
+      }
+      for (i <- tempsU32.indices) {
+        tempsU32(i) = csf.tempsU32(i)
+      }
+      for (i <- tempsU64.indices) {
+        tempsU64(i) = csf.tempsU64(i)
+      }
+      for (i <- tempsS8.indices) {
+        tempsS8(i) = csf.tempsS8(i)
+      }
+      for (i <- tempsS16.indices) {
+        tempsS16(i) = csf.tempsS16(i)
+      }
+      for (i <- tempsS32.indices) {
+        tempsS32(i) = csf.tempsS32(i)
+      }
+      for (i <- tempsS64.indices) {
+        tempsS64(i) = csf.tempsS64(i)
+      }
+      for (i <- tempsF32.indices) {
+        tempsF32(i) = csf.tempsF32(i)
+      }
+      for (i <- tempsF64.indices) {
+        tempsF64(i) = csf.tempsF64(i)
+      }
+    }
+
+    def initCurrentStackFrame(anvil: Anvil): Unit = {
+      CP = Value.fromRawU64(anvil, conversions.Z.toU64(Util.startingLabel), anvil.cpType)
+      for (i <- temps1.indices) {
+        temps1(i) = F
+      }
+      for (i <- tempsU8.indices) {
+        tempsU8(i) = u8"0"
+      }
+      for (i <- tempsU16.indices) {
+        tempsU16(i) = u16"0"
+      }
+      for (i <- tempsU32.indices) {
+        tempsU32(i) = u32"0"
+      }
+      for (i <- tempsU64.indices) {
+        tempsU64(i) = u64"0"
+      }
+      for (i <- tempsS8.indices) {
+        tempsS8(i) = s8"0"
+      }
+      for (i <- tempsS16.indices) {
+        tempsS16(i) = s16"0"
+      }
+      for (i <- tempsS32.indices) {
+        tempsS32(i) = s32"0"
+      }
+      for (i <- tempsS64.indices) {
+        tempsS64(i) = s64"0"
+      }
+      for (i <- tempsF32.indices) {
+        tempsF32(i) = 0f
+      }
+      for (i <- tempsF64.indices) {
+        tempsF64(i) = 0d
+      }
+    }
+
     @pure def prettyST(sim: IRSimulator): ST = {
       val globalSTOpt: Option[ST] = if (DEBUG_GLOBAL) {
         var globalSTs = ISZ[ST]()
@@ -205,6 +288,20 @@ object IRSimulator {
   object State {
     type Undo = Edit
 
+    @datatype class CallStackFrame(val procedureName: ISZ[String],
+                                   val CP: Value,
+                                   val temps1: ISZ[B],
+                                   val tempsU8: ISZ[U8],
+                                   val tempsU16: ISZ[U16],
+                                   val tempsU32: ISZ[U32],
+                                   val tempsU64: ISZ[U64],
+                                   val tempsS8: ISZ[S8],
+                                   val tempsS16: ISZ[S16],
+                                   val tempsS32: ISZ[S32],
+                                   val tempsS64: ISZ[S64],
+                                   val tempsF32: ISZ[F32],
+                                   val tempsF64: ISZ[F64])
+
     @datatype trait Edit {
       @pure def reads: Accesses
       @pure def writes: Accesses
@@ -230,6 +327,34 @@ object IRSimulator {
     }
 
     object Edit {
+
+      @datatype class CallStackFrame(val anvil: Anvil, val procedureNameOpt: Option[ISZ[String]]) extends Edit {
+        @strictpure def reads: Accesses = Accesses.empty
+        @strictpure def writes: Accesses = Accesses.empty
+        def update(state: State): Undo = {
+          procedureNameOpt match {
+            case Some(procedureName) =>
+              if (DEBUG_EDIT) {
+                println(st"* Push a new call frame for ${(procedureName, ".")}".render)
+              }
+              val curr = state.currentStackFrame
+              state.procedureName = procedureName
+              state.callStack = state.callStack.push(curr)
+              state.initCurrentStackFrame(anvil)
+              return CallStackFrame(anvil, None())
+            case _ =>
+              val (csf, newCallStack) = state.callStack.pop.get
+              if (DEBUG_EDIT) {
+                println(st"* Pop ${(state.procedureName, ".")} call frame, and back to ${(csf.procedureName, ".")}".render)
+              }
+              val procedureName = state.procedureName
+              state.procedureName = csf.procedureName
+              state.callStack = newCallStack
+              state.updateCurrent(csf)
+              return CallStackFrame(anvil, Some(procedureName))
+          }
+        }
+      }
 
       @datatype class CallFrame(val isPush: B) extends Edit {
         @strictpure def reads: Accesses = Accesses.empty
@@ -487,6 +612,7 @@ object IRSimulator {
     }
 
     @pure def create(anvil: Anvil,
+                     procedureName: ISZ[String],
                      temps: Util.TempVector,
                      globalMap: HashSMap[QName, Anvil.VarInfo],
                      globalTemps: Z): State = {
@@ -502,6 +628,7 @@ object IRSimulator {
         globalMap,
         globalScalarNameMap.toIS,
         for (entry <- globalMap.entries if entry._2.isScalar) yield Value.fromRawU64(anvil, u64"0", entry._2.tipe),
+        procedureName,
         Value.fromU64(u64"0"),
         Value.fromU64(u64"0"),
         u64"0",
@@ -518,7 +645,8 @@ object IRSimulator {
         MSZ.create(if (anvil.config.splitTempSizes) temps.signedCount(64) else 0, s64"0"),
         MSZ.create(if (anvil.config.splitTempSizes) temps.fp32Count else 0, 0f),
         MSZ.create(if (anvil.config.splitTempSizes) temps.fp64Count else 0, 0d),
-        Stack(ISZ(HashSMap.empty)))
+        Stack(ISZ(HashSMap.empty)),
+        Stack.empty)
     }
 
   }
@@ -1075,7 +1203,16 @@ object IRSimulator {
 
 import IRSimulator._
 
-@datatype class IRSimulator(val anvil: Anvil) {
+@datatype class IRSimulator(val ir: Anvil.IR) {
+  val anvil: Anvil = ir.anvil
+  val blockMap: HashMap[ISZ[String], HashMap[Z, AST.IR.BasicBlock]] = {
+    var r = HashMap.empty[ISZ[String], HashMap[Z, AST.IR.BasicBlock]]
+    for (p <- ir.program.procedures) {
+      val name = p.owner :+ p.id
+      r = r + name ~> (HashMap.empty[Z, AST.IR.BasicBlock] ++ (for (b <- p.body.asInstanceOf[AST.IR.Body.Basic].blocks) yield (b.label, b)))
+    }
+    r
+  }
 
   @pure def evalExp(state: State, exp: AST.IR.Exp): (Value, State.Accesses) = {
     exp match {
@@ -1447,9 +1584,32 @@ import IRSimulator._
       return r
     }
     var r = ISZ[State.Edit]()
-    val n = spIncBlock
-    if (n != 0) {
-      r = r :+ State.Edit.CallFrame(n > 0)
+    b.grounds match {
+      case ISZ(AST.IR.Stmt.Expr(e)) =>
+        val name = e.owner :+ e.id
+        val retCP = b.jump.asInstanceOf[AST.IR.Jump.Goto].label
+        r = r :+ State.Edit.Temp(State.Edit.Temp.Kind.CP, anvil.isFP(anvil.cpType), anvil.isSigned(anvil.cpType),
+          anvil.typeBitSize(anvil.cpType), 0, Value.fromZ(retCP, anvil.typeBitSize(anvil.cpType),
+            anvil.isSigned(anvil.cpType)), State.Accesses.empty)
+        r = r :+ State.Edit.CallStackFrame(anvil, Some(name))
+        return r
+      case _ =>
+        b.jump match {
+          case _: AST.IR.Jump.Return =>
+            if (state.callStack.isEmpty) {
+              r = r :+ State.Edit.Temp(State.Edit.Temp.Kind.CP, anvil.isFP(anvil.cpType), anvil.isSigned(anvil.cpType),
+                anvil.typeBitSize(anvil.cpType), 0, Value.fromZ(0, anvil.typeBitSize(anvil.cpType),
+                  anvil.isSigned(anvil.cpType)), State.Accesses.empty)
+            } else {
+              r = r :+ State.Edit.CallStackFrame(anvil, None())
+            }
+            return r
+          case _ =>
+            val n = spIncBlock
+            if (n != 0) {
+              r = r :+ State.Edit.CallFrame(n > 0)
+            }
+        }
     }
     for (g <- b.grounds) {
       r = r :+ evalStmt(state, g)
@@ -1509,17 +1669,13 @@ import IRSimulator._
         file = ops.StringOps(file).substring(i + 1, file.size)
       }
       println(
-        st"""$title block .${b.label} (approx. cycles = $approxCycles):
+        st"""$title ${(state.procedureName, ".")} block .${b.label} (approx. cycles = $approxCycles):
             |  ${state.prettyST(this)}""".render)
     }
 
-    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-    val blockMap: HashMap[Z, AST.IR.BasicBlock] = HashMap ++
-      (for (b <- body.blocks) yield (b.label, b))
-
     State.Edit.Temp(State.Edit.Temp.Kind.CP, anvil.isFP(anvil.cpType), anvil.isSigned(anvil.cpType),
-      anvil.typeBitSize(anvil.cpType), 0, Value.fromZ(body.blocks(0).label, anvil.typeBitSize(anvil.cpType),
-        anvil.isSigned(anvil.cpType)), State.Accesses.empty).update(state)
+      anvil.typeBitSize(anvil.cpType), 0, Value.fromRawU64(anvil, conversions.Z.toU64(Util.startingLabel), anvil.cpType),
+      State.Accesses.empty).update(state)
     if (DEBUG_EDIT) {
       println()
     }
@@ -1527,7 +1683,7 @@ import IRSimulator._
     val blockCyclesBox = MBox[Z](0)
     val maxMemoryBox = MBox[Z](0)
     while (state.CP.value != 0 && state.CP.value != 1) {
-      val b = blockMap.get(state.CP.value).get
+      val b = blockMap.get(state.procedureName).get.get(state.CP.value).get
       if (DEBUG) {
         log("Evaluating", b)
       }

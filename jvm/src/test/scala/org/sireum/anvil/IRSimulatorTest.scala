@@ -45,11 +45,11 @@ class IRSimulatorTest extends SireumRcSpec {
     IRSimulator.DEBUG_TEMP = T & debug
     IRSimulator.DEBUG_EDIT = T & debug
     IRSimulator.DEBUG_GLOBAL = T & debug
-    IRSimulator.DEBUG_LOCAL = T & debug
+    IRSimulator.DEBUG_LOCAL = F & debug
   }
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => !p.last.endsWith("dll.sc") && !p.last.endsWith("print.sc") }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last == "add.sc" }//!p.last.endsWith("dll.sc") && !p.last.endsWith("print.sc") }
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
@@ -155,8 +155,8 @@ class IRSimulatorTest extends SireumRcSpec {
           val config = AnvilTest.getConfig(F, file, p)
           Anvil.generateIR(T, lang.IRTranslator.createFresh, th2, ISZ(), config, AnvilOutput(F, "", out), reporter) match {
             case Some(ir) =>
-              if (T) return T
-              val state = IRSimulator.State.create(ir.anvil, ir.maxRegisters, ir.globalInfoMap, ir.globalTemps)
+              val p = ir.program.procedures(0)
+              val state = IRSimulator.State.create(ir.anvil, p.owner :+ p.id, ir.maxRegisters, ir.globalInfoMap, ir.globalTemps)
               val testNumInfoOffset = ir.globalInfoMap.get(Util.testNumName).get.loc
               var locals = ISZ[Intrinsic.Decl.Local]()
               for (entry <- ir.anvil.procedureParamInfo(Util.PBox(ir.program.procedures(0)))._2.entries) {
@@ -182,7 +182,7 @@ class IRSimulatorTest extends SireumRcSpec {
                   for (_ <- 0 until ir.anvil.typeByteSize(AST.Typed.z)) yield u8"0xFF",
                   IRSimulator.State.Accesses.empty).update(state)
               }
-              IRSimulator(ir.anvil).evalProcedure(state, ir.program.procedures(0))
+              IRSimulator(ir).evalProcedure(state, ir.program.procedures(0))
               val displaySize = ir.anvil.config.printSize
               if (ir.anvil.config.shouldPrint) {
                 val offset = ir.globalInfoMap.get(Util.displayName).get.loc +

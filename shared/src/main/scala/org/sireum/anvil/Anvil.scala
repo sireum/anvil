@@ -2759,7 +2759,17 @@ import Anvil._
                 grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Decl(g.undecl, g.isAlloc, localTemps, g.pos))
               }
             case _ =>
-              grounds = grounds :+ LocalTempSubstutitor(map).transform_langastIRStmtGround(g).getOrElse(g)
+              val newGround = LocalTempSubstutitor(map).transform_langastIRStmtGround(g).getOrElse(g)
+              grounds = grounds :+ newGround
+              if (!config.isFirstGen) {
+                g match {
+                  case AST.IR.Stmt.Assign.Local(_, _, _, rhs: AST.IR.Exp.GlobalVarRef, _) if !isScalar(rhs.tipe) =>
+                    val temp = newGround.asInstanceOf[AST.IR.Stmt.Assign.Temp].lhs
+                    grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp, AST.IR.Exp.Temp(temp, spType, g.pos), 0,
+                      isSigned(spType), typeByteSize(spType), st"", spType, g.pos))
+                  case _ =>
+                }
+              }
           }
         }
         blockMap = blockMap + b.label ~> b(grounds = grounds,
