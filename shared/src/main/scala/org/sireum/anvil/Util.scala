@@ -1128,6 +1128,7 @@ object Util {
   val memTypeName: ISZ[String] = ISZ(typeFieldId)
   val memSizeName: ISZ[String] = ISZ(sizeFieldId)
   val dpName: ISZ[String] = ISZ("$dp")
+  val spName: ISZ[String] = ISZ("$sp")
   val displayId: String = "$display"
   val displayName: ISZ[String] = ISZ(displayId)
   val displayIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "U"), ISZ())
@@ -1171,7 +1172,7 @@ object Util {
   val runtimePrintMethodTypeMap: HashSMap[String, AST.Typed.Fun] = HashSMap.empty[String, AST.Typed.Fun] +
     //"printB" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.b), AST.Typed.u64) +
     //"printC" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.c), AST.Typed.u64) +
-    //"printS64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.s64), AST.Typed.u64) +
+    "printS64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.s64), AST.Typed.u64) +
     //"printU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.u64), AST.Typed.u64) +
     "printU64Hex" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.u64, AST.Typed.z), AST.Typed.u64) //+
     //"f32Digit" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(f32DigitBufferType, f32DigitIndexType, AST.Typed.f32), AST.Typed.u64) +

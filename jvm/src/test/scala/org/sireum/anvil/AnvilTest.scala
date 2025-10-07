@@ -77,7 +77,7 @@ object AnvilTest {
       }
     } else {
       return HashMap.empty[String, Z] +
-        "add.sc" ~> 152 +
+        "add.sc" ~> 192 +
         "assert.sc" ~> 288 +
         "bubble.sc" ~> 184 +
         "construct.sc" ~> 256 +

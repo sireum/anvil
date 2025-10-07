@@ -1531,40 +1531,40 @@ import IRSimulator._
     }
   }
 
-  @pure def checkRAW(label: Z, edits: ISZ[State.Edit], index: Z): Unit = {
+  @pure def checkRAW(procedureName: ISZ[String], label: Z, edits: ISZ[State.Edit], index: Z): Unit = {
     for (i <- edits.indices if i != index) {
       if (edits(index).writes.temps.keySet.intersect(edits(i).reads.temps.keySet).nonEmpty) {
         halt(
-          st"""Detected temp RAW hazard in block .$label
+          st"""Detected temp RAW hazard in ${(procedureName, ".")} block .$label
               |* Temp Writes = ${(edits(index).writes.temps.keySet.elements, ", ")}
               |* Temp Reads = ${(edits(i).reads.temps.keySet.elements, ", ")}""".render)
       }
       if (edits(index).writes.memory.keySet.intersect(edits(i).reads.memory.keySet).nonEmpty) {
         halt(
-          st"""Detected memory RAW hazard in block .$label
+          st"""Detected memory RAW hazard in ${(procedureName, ".")} block .$label
               |* Memory Writes = ${(edits(index).writes.memory.keySet.elements, ", ")}
               |* Memory Reads =  ${(edits(i).reads.memory.keySet.elements, ", ")}""".render)
       }
     }
   }
 
-  @pure def checkWrites(label: Z, edits: ISZ[State.Edit], index: Z): Unit = {
+  @pure def checkWrites(procedureName: ISZ[String], label: Z, edits: ISZ[State.Edit], index: Z): Unit = {
     for (i <- index + 1 until edits.size) {
       val tempSet = edits(index).writes.temps.keySet.intersect(edits(i).reads.temps.keySet)
       if (tempSet.nonEmpty) {
-        halt(st"Detected same multiple temp writes hazard in block .$label (${(tempSet.elements, ", ")})".render)
+        halt(st"Detected same multiple temp writes hazard in ${(procedureName, ".")} block .$label (${(tempSet.elements, ", ")})".render)
       }
       val memSet = edits(index).writes.memory.keySet.intersect(edits(i).reads.memory.keySet)
       if (memSet.nonEmpty) {
-        halt(st"Detected same multiple memory cell writes hazard in block .$label (${(memSet.elements, ", ")})".render)
+        halt(st"Detected same multiple memory cell writes hazard in ${(procedureName, ".")} block .$label (${(memSet.elements, ", ")})".render)
       }
     }
   }
 
   @pure def checkAccesses(state: State, label: Z, edits: ISZ[State.Edit]): Unit = {
     ops.ISZOps(for (i <- edits.indices) yield i).parMap((i: Z) => {
-      checkRAW(label, edits, i)
-      checkWrites(label, edits, i)
+      checkRAW(state.procedureName, label, edits, i)
+      checkWrites(state.procedureName, label, edits, i)
     })
   }
 
@@ -1605,9 +1605,11 @@ import IRSimulator._
             }
             return r
           case _ =>
-            val n = spIncBlock
-            if (n != 0) {
-              r = r :+ State.Edit.CallFrame(n > 0)
+            if (ir.anvil.config.isFirstGen) {
+              val n = spIncBlock
+              if (n != 0) {
+                r = r :+ State.Edit.CallFrame(n > 0)
+              }
             }
         }
     }
