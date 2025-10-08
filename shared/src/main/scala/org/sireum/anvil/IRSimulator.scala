@@ -1431,8 +1431,8 @@ import IRSimulator._
           case in: Intrinsic.RegisterAssign =>
             val (v, acs) = evalExp(state, in.value)
             if (in.isSP) {
-              val sp: Value = if (in.isInc) Value.fromZ(state.SP.value + v.value, anvil.typeBitSize(anvil.spType),
-                anvil.isSigned(anvil.spType)) else v
+              val sp: Value = if (in.isInc) Value.fromRawU64(anvil, conversions.S64.toU64(conversions.Z.toS64(state.SP.value) +
+                conversions.Z.toS64(v.value)), anvil.spType) else v
               return State.Edit.Temp(State.Edit.Temp.Kind.SP, anvil.isFP(anvil.spType), anvil.isSigned(anvil.spType),
                 anvil.typeBitSize(anvil.spType), 0, sp, acs)
             } else {

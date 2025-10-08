@@ -32,6 +32,7 @@ import org.sireum.lang.symbol.{Info, TypeInfo}
 import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.tipe.{TypeChecker, TypeHierarchy}
 import org.sireum.message.Reporter
+import org.sireum.U64._
 import org.sireum.U32._
 import org.sireum.U8._
 import org.sireum.anvil.PrinterIndex.U._
@@ -1031,7 +1032,7 @@ import Anvil._
     if (config.isFirstGen) {
       return p
     }
-    val spAdd = procedureSizeMap.get(p.context).get
+    val spAdd = pad64(procedureSizeMap.get(p.context).get)
     if (spAdd == 0) {
       return p
     }
@@ -1054,7 +1055,7 @@ import Anvil._
           blocks = blocks :+ AST.IR.BasicBlock(label2, ISZ(g), AST.IR.Jump.Goto(label3, g.pos))
           blocks = blocks :+ AST.IR.BasicBlock(label3, ISZ(
             AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, T, AST.IR.Exp.Int(spType, -spAdd, p.pos), g.pos))
-          ), AST.IR.Jump.Goto(label3, g.pos))
+          ), AST.IR.Jump.Goto(label4, g.pos))
           blocks = blocks :+ AST.IR.BasicBlock(label4, ISZ(assignSpGlobal), b.jump)
         case _ => blocks = blocks :+ b
       }
@@ -3515,12 +3516,6 @@ import Anvil._
     var grounds = ISZ[AST.IR.Stmt.Ground](
       AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, F, AST.IR.Exp.Int(spType, globalSize, p.pos), p.pos))
     )
-    if (!config.isFirstGen) {
-      val spLoc = globalMap.get(spName).get.loc
-      grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-        AST.IR.Exp.Int(spType, spLoc, p.pos), 0, isSigned(spType), typeByteSize(spType),
-        AST.IR.Exp.Int(spType, globalSize, p.pos), st"init SP", spType, p.pos))
-    }
     var stores = ISZ[AST.IR.Stmt.Ground]()
     if (config.stackTrace) {
       val memInfo = globalMap.get(memName).get
@@ -3582,7 +3577,16 @@ import Anvil._
           AST.IR.Exp.Int(spType, info.loc + typeByteSize(spType), p.pos), st"data address of $pid (size = ${typeByteSize(info.tipe)})", spType, p.pos))
       }
     }
-    var blocks = ISZ(AST.IR.BasicBlock(fresh.label(), grounds, AST.IR.Jump.Goto(startingLabel, p.pos)))
+    val label = fresh.label()
+    var blocks = ISZ(AST.IR.BasicBlock(label, grounds, AST.IR.Jump.Goto(startingLabel, p.pos)))
+    if (!config.isFirstGen) {
+      val spLoc = globalMap.get(spName).get.loc
+      blocks = AST.IR.BasicBlock(fresh.label(), ISZ(
+        AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+          AST.IR.Exp.Int(spType, spLoc, p.pos), 0, isSigned(spType), typeByteSize(spType),
+          AST.IR.Exp.Int(spType, globalSize, p.pos), st"init SP", spType, p.pos))
+      ), AST.IR.Jump.Goto(label, p.pos)) +: blocks
+    }
     for (g <- stores) {
       val label = fresh.label()
       val last = blocks.size - 1

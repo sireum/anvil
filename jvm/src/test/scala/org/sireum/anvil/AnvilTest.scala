@@ -79,7 +79,7 @@ object AnvilTest {
       return HashMap.empty[String, Z] +
         "add.sc" ~> 192 +
         "assert.sc" ~> 288 +
-        "bubble.sc" ~> 184 +
+        "bubble.sc" ~> 256 +
         "construct.sc" ~> 256 +
         "divrem.sc" ~> 136 +
         "dll.sc" ~> 848 +
