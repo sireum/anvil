@@ -83,7 +83,7 @@ object AnvilTest {
         "construct.sc" ~> 256 +
         "divrem.sc" ~> 136 +
         "dll.sc" ~> 848 +
-        "factorial.sc" ~> 136 +
+        "factorial.sc" ~> 208 +
         "global.sc" ~> 112 +
         "indexing-obj.sc" ~> 192 +
         "indexing.sc" ~> 144 +
