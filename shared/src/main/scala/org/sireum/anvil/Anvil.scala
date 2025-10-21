@@ -63,6 +63,7 @@ object Anvil {
                          val ipMax: Z,
                          val ipSubroutine: B,
                          val cpMax: Z,
+                         val recursiveDepthMax: Z,
                          val genVerilog: B,
                          val simOpt: Option[Config.Sim]) {
     val shouldPrint: B = printSize > 0
@@ -107,6 +108,7 @@ object Anvil {
         ipMax = 0,
         ipSubroutine = F,
         cpMax = 0,
+        recursiveDepthMax = 8,
         genVerilog = F,
         simOpt = None())
   }
