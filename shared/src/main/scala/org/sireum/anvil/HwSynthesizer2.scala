@@ -2471,7 +2471,7 @@ object ArbInputMap {
 }
 
 import HwSynthesizer2._
-@record class HwSynthesizer2(val anvil: Anvil) {
+@record class HwSynthesizer2(val anvil: Anvil, val recursiveProcedures: HashSSet[QName]) {
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
 

@@ -133,13 +133,14 @@ object Anvil {
                      val globalSize: Z,
                      val globalInfoMap: HashSMap[QName, VarInfo],
                      val globalTemps: Z,
-                     val procDescMap: HashSMap[U32, String])
+                     val procDescMap: HashSMap[U32, String],
+                     val recursiveProcedures: HashSSet[QName])
 
   def synthesize(isTest: B, fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, name: QName, config: Config,
                  output: Output, reporter: Reporter): Option[IR] = {
     val rOpt = generateIR(isTest, fresh, th, name, config, output, reporter)
     rOpt match {
-      case Some(ir) => HwSynthesizer2(ir.anvil).printProcedure(ir.name, ir.program, output, ir.maxRegisters, ir.globalInfoMap)
+      case Some(ir) => HwSynthesizer2(ir.anvil, ir.recursiveProcedures).printProcedure(ir.name, ir.program, output, ir.maxRegisters, ir.globalInfoMap)
       case _ =>
     }
     return rOpt
@@ -184,7 +185,6 @@ import Anvil._
                       val owner: QName,
                       val config: Config,
                       val numOfLocs: Z) {
-
   val printer: AST.IR.Printer = AnvilIRPrinter(this, IpAlloc(HashSMap.empty, HashSMap.empty, 0))
   val typeShaType: AST.Typed.Name = AST.Typed.u32
   val typeShaSize: Z = typeByteSize(typeShaType)
@@ -857,8 +857,12 @@ import Anvil._
     }
 
     WellFormedChecker().transform_langastIRProcedure(program.procedures(0))
+    var recursiveProcedures = HashSSet.empty[QName]
+    if (!config.isFirstGen) {
+      recursiveProcedures = recursiveProcedures ++ (for (ps <- ops.GraphOps(tsr.callGraph).getCycles; p <- ps) yield p.owner :+ p.id)
+    }
 
-    return Some(IR(anvil, name, program, maxRegisters, globalSize, globalMap, globalTemps, procDescMap))
+    return Some(IR(anvil, name, program, maxRegisters, globalSize, globalMap, globalTemps, procDescMap, recursiveProcedures))
   }
 
   def transformReadWriteAlign(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure,
