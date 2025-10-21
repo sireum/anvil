@@ -2835,7 +2835,7 @@ import Anvil._
       work = next
     }
     var r = p(body = body(blocks = blockMap.values))
-    def nonScalarLoad(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
+    @pure def nonScalarLoad(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
       g match {
         case AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp, AST.IR.Exp.Temp(n, _, _), _, _, _, _, _, _)) if temp == n => return T
         case _ => return F
@@ -3594,11 +3594,11 @@ import Anvil._
       ), AST.IR.Jump.Goto(label, p.pos)) +: blocks
     }
     for (g <- stores) {
-      val label = fresh.label()
+      val label2 = fresh.label()
       val last = blocks.size - 1
       val lastBlock = blocks(last)
-      blocks = blocks(last ~> lastBlock(jump = AST.IR.Jump.Goto(label, p.pos)))
-      blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(g), AST.IR.Jump.Goto(startingLabel, p.pos))
+      blocks = blocks(last ~> lastBlock(jump = AST.IR.Jump.Goto(label2, p.pos)))
+      blocks = blocks :+ AST.IR.BasicBlock(label2, ISZ(g), AST.IR.Jump.Goto(startingLabel, p.pos))
     }
     return p(body = body(blocks ++ body.blocks))
   }
