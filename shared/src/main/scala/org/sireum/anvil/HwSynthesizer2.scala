@@ -2490,22 +2490,22 @@ object ArbInputMap {
     st"""
         |class ${moduleName}(
         |  nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int,
-        |  nS1:Int, nS8:Int, nS16:Int, nS32:Int, nS64:Int,
+        |  nS8:Int, nS16:Int, nS32:Int, nS64:Int,
         |  dataWidth:Int, depth:Int,
         |  stackMaxDepth:Int, idWidth: Int, cpWidth: Int
         |) extends Module {
         |
         |  private val totalBits: Int =
         |    nU1*1 + nU8*8 + nU16*16 + nU32*32 + nU64*64 +
-        |    nS1*1 + nS8*8 + nS16*16 + nS32*32 + nS64*64 +
+        |    nS8*8 + nS16*16 + nS32*32 + nS64*64 +
         |    idWidth + cpWidth
         |  private val totalWords: Int = (totalBits + 63) / 64
         |
         |  val io = IO(new Bundle {
         |    val arbMem_req  = Valid(new BlockMemoryRequestBundle(dataWidth, depth))
         |    val arbMem_resp = Flipped(Valid(new BlockMemoryResponseBundle(dataWidth)))
-        |    val req         = Flipped(Valid(new TempSaveRestoreRequestBundle(nU1,nU8,nU16,nU32,nU64,nS1,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth)))
-        |    val resp        = Valid(new TempSaveRestoreResponseBundle(nU1,nU8,nU16,nU32,nU64,nS1,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth))
+        |    val req         = Flipped(Valid(new TempSaveRestoreRequestBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth)))
+        |    val resp        = Valid(new TempSaveRestoreResponseBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth))
         |  })
         |  val r_arbMem_req            = Reg(new BlockMemoryRequestBundle(dataWidth, depth))
         |  val r_arbMem_req_valid      = RegInit(false.B)
@@ -2517,11 +2517,11 @@ object ArbInputMap {
         |  io.arbMem_req.bits  := r_arbMem_req
         |  io.arbMem_req.valid := r_arbMem_req_valid
         |
-        |  val r_req        = RegInit(0.U.asTypeOf(new TempSaveRestoreRequestBundle(nU1,nU8,nU16,nU32,nU64,nS1,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth)))
+        |  val r_req        = RegInit(0.U.asTypeOf(new TempSaveRestoreRequestBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth)))
         |  val r_req_valid  = RegNext(io.req.valid, init = false.B)
         |  r_req            := io.req.bits
         |
-        |  val r_resp       = RegInit(0.U.asTypeOf(new TempSaveRestoreResponseBundle(nU1,nU8,nU16,nU32,nU64,nS1,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth)))
+        |  val r_resp       = RegInit(0.U.asTypeOf(new TempSaveRestoreResponseBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth)))
         |  val r_resp_valid = RegInit(false.B)
         |  io.resp.bits     := r_resp
         |  io.resp.valid    := r_resp_valid
@@ -2531,9 +2531,10 @@ object ArbInputMap {
         |  r_push := Mux(r_req_valid, r_req.op === 1.U, false.B)
         |  r_pop  := Mux(r_req_valid, r_req.op === 2.U, false.B)
         |
-        |  val r_save_state    = RegInit(0.U(2.W))
-        |  val r_restore_state = RegInit(0.U(2.W))
-        |  val r_index         = RegInit(0.U(log2Up(totalWords).W))
+        |  val r_save_state    = RegInit(0.U(3.W))
+        |  val r_restore_state = RegInit(0.U(3.W))
+        |  val r_push_index    = RegInit(0.U(log2Up(totalWords).W))
+        |  val r_pop_index     = RegInit(0.U(log2Up(totalWords).W))
         |  val r_stack_addr    = RegInit(depth.U(log2Up(depth + stackMaxDepth * totalWords * 8).W))
         |
         |  // ========== 组合：把“当前输入寄存器”按顺序拼成 bitstream ==========
@@ -2548,7 +2549,6 @@ object ArbInputMap {
         |  if (nU64 > 0) parts += Cat(r_req.u64.reverse)
         |
         |  // SInt 组（转为 UInt）
-        |  if (nS1  > 0) parts += Cat(r_req.s1.map(_.asUInt).reverse)
         |  if (nS8  > 0) parts += Cat(r_req.s8.map(_.asUInt).reverse)
         |  if (nS16 > 0) parts += Cat(r_req.s16.map(_.asUInt).reverse)
         |  if (nS32 > 0) parts += Cat(r_req.s32.map(_.asUInt).reverse)
@@ -2581,43 +2581,48 @@ object ArbInputMap {
         |  switch(r_save_state) {
         |    is(0.U) {
         |      r_save_state := Mux(r_push, 1.U, 0.U)
-        |      r_index      := 0.U
+        |      r_push_index      := 0.U
         |    }
         |    is(1.U) {
-        |      r_save_state := Mux(r_index < totalWords.U, 2.U, 3.U)
+        |      r_save_state := Mux(r_push_index < totalWords.U, 2.U, 3.U)
         |    }
         |    is(2.U) {
         |      r_arbMem_req.mode := 2.U
         |      r_arbMem_req.writeAddr := r_stack_addr
         |      r_arbMem_req.writeOffset := 0.U
         |      r_arbMem_req.writeLen := 8.U
-        |      r_arbMem_req.writeData := words_w(r_index)
+        |      r_arbMem_req.writeData := words_w(r_push_index)
         |      r_arbMem_req_valid := Mux(r_arbMem_resp_valid, false.B, true.B)
         |
         |      when(r_arbMem_resp_valid) {
         |        r_arbMem_req.mode := 0.U
-        |        r_index := r_index + 1.U
+        |        r_push_index := r_push_index + 1.U
         |        r_stack_addr := r_stack_addr + 8.U
         |        r_save_state := 1.U
         |      }
         |    }
         |    is(3.U) {
-        |      r_save_state := 0.U
+        |      r_save_state := 4.U
+        |    }
+        |    is(4.U) {
+        |      when(!r_push) {
+        |        r_save_state := 0.U
+        |      }
         |    }
         |  }
         |
-        |  // ========== restore：从 restoreWordsIn 合回 bitstream，再按顺序写寄存器 ==========
         |  val r_readMem_valid = RegNext(r_restore_state === 3.U)
         |  val r_readMem_valid_next = RegNext(r_readMem_valid)
-        |  r_resp_valid := RegNext(r_readMem_valid_next)
+        |  r_resp_valid := (r_save_state === 3.U) | RegNext(r_readMem_valid_next)
         |
+        |  // ========== restore：从 restoreWordsIn 合回 bitstream，再按顺序写寄存器 ==========
         |  switch(r_restore_state) {
         |    is(0.U) {
         |      r_restore_state := Mux(r_pop, 1.U, 0.U)
-        |      r_index         := 0.U
+        |      r_pop_index         := 0.U
         |    }
         |    is(1.U) {
-        |      r_restore_state := Mux(r_index < totalWords.U, 2.U, 3.U)
+        |      r_restore_state := Mux(r_pop_index < totalWords.U, 2.U, 3.U)
         |    }
         |    is(2.U) {
         |      r_arbMem_req.mode := 1.U
@@ -2627,15 +2632,20 @@ object ArbInputMap {
         |      r_arbMem_req_valid := Mux(r_arbMem_resp_valid, false.B, true.B)
         |
         |      when(r_arbMem_resp_valid) {
-        |        words_w(r_index) := r_arbMem_resp.data
+        |        words_w(r_pop_index) := r_arbMem_resp.data
         |        r_arbMem_req.mode := 0.U
-        |        r_index := r_index + 1.U
-        |        r_stack_addr := r_stack_addr + 8.U
+        |        r_pop_index := r_pop_index + 1.U
+        |        r_stack_addr := r_stack_addr - 8.U
         |        r_restore_state := 1.U
         |      }
         |    }
         |    is(3.U) {
-        |      r_restore_state := 0.U
+        |      r_restore_state := 4.U
+        |    }
+        |    is(4.U) {
+        |      when(!r_pop) {
+        |        r_restore_state := 0.U
+        |      }
         |    }
         |  }
         |
@@ -2663,7 +2673,6 @@ object ArbInputMap {
         |    for (i <- 0 until nU32) { r_resp.u32(i) := bitstream_r(off + 32-1, off); off += 32 }
         |    for (i <- 0 until nU64) { r_resp.u64(i) := bitstream_r(off + 64-1, off); off += 64 }
         |    // SInt
-        |    for (i <- 0 until nS1 ) { r_resp.s1(i)  := bitstream_r(off).asSInt; off += 1 }
         |    for (i <- 0 until nS8 ) { r_resp.s8(i)  := bitstream_r(off + 8 -1, off).asSInt; off += 8  }
         |    for (i <- 0 until nS16) { r_resp.s16(i) := bitstream_r(off + 16-1, off).asSInt; off += 16 }
         |    for (i <- 0 until nS32) { r_resp.s32(i) := bitstream_r(off + 32-1, off).asSInt; off += 32 }
@@ -2741,7 +2750,7 @@ import HwSynthesizer2._
       case ArbBlockMemoryIP() =>
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) "dataWidth:Int, depth: Int" else "dataWidth:Int, addrWidth: Int, depth: Int"
       case ArbTempSaveRestoreIP() =>
-        "nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int, nS1:Int, nS8:Int, nS16:Int, nS32:Int, nS64:Int, dataWidth:Int, depth:Int, stackMaxDepth:Int, idWidth: Int, cpWidth: Int"
+        "nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int, nS8:Int, nS16:Int, nS32:Int, nS64:Int, dataWidth:Int, depth:Int, stackMaxDepth:Int, idWidth: Int, cpWidth: Int"
       case _ => "dataWidth:Int"
     }
   }
@@ -2749,7 +2758,7 @@ import HwSynthesizer2._
   @strictpure def responseBundleParaTypeStr(ip: ArbIpType): String = {
     ip match {
       case ArbTempSaveRestoreIP() =>
-        "nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int, nS1:Int, nS8:Int, nS16:Int, nS32:Int, nS64:Int, dataWidth:Int, depth:Int, stackMaxDepth:Int, idWidth: Int, cpWidth: Int"
+        "nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int, nS8:Int, nS16:Int, nS32:Int, nS64:Int, dataWidth:Int, depth:Int, stackMaxDepth:Int, idWidth: Int, cpWidth: Int"
       case _ => "dataWidth:Int"
     }
   }
@@ -2880,19 +2889,20 @@ import HwSynthesizer2._
   }
 
   @pure def intParaSTs(maxRegisters: Util.TempVector, isDeclPara: B): ISZ[ST] = {
-    val intWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
+    val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
+    val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
 
     var intParaST: ISZ[ST] = ISZ[ST]()
 
-    for(i <- 0 until intWidth.size) {
-      intParaST = intParaST :+ st"nU${intWidth(i)}${if(isDeclPara) ":Int" else ""} = ${maxRegisters.unsigneds(intWidth(i) - 1)},"
+    for(i <- 0 until uintWidth.size) {
+      intParaST = intParaST :+ st"nU${uintWidth(i)}${if(isDeclPara) ":Int" else ""} = ${maxRegisters.unsigneds(uintWidth(i) - 1)},"
     }
 
-    for(i <- 0 until intWidth.size) {
-      if(!maxRegisters.signeds.get(i).isEmpty) {
-        intParaST = intParaST :+ st"nS${intWidth(i)}${if(isDeclPara) ":Int" else ""} = ${maxRegisters.signeds.get(i).get},"
+    for(i <- 0 until sintWidth.size) {
+      if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
+        intParaST = intParaST :+ st"nS${sintWidth(i)}${if(isDeclPara) ":Int" else ""} = ${maxRegisters.signeds.get(sintWidth(i)).get},"
       } else {
-        intParaST = intParaST :+ st"nS${intWidth(i)}${if(isDeclPara) ":Int" else ""} = 0,"
+        intParaST = intParaST :+ st"nS${sintWidth(i)}${if(isDeclPara) ":Int" else ""} = 0,"
       }
     }
 
@@ -3031,7 +3041,6 @@ import HwSynthesizer2._
               |val u16   = Vec(nU16, UInt(16.W))
               |val u32   = Vec(nU32, UInt(32.W))
               |val u64   = Vec(nU64, UInt(64.W))
-              |val s1    = Vec(nS1 , SInt(1.W))
               |val s8    = Vec(nS8 , SInt(8.W))
               |val s16   = Vec(nS16, SInt(16.W))
               |val s32   = Vec(nS32, SInt(32.W))
@@ -3064,7 +3073,6 @@ import HwSynthesizer2._
                 |val u16   = Vec(nU16, UInt(16.W))
                 |val u32   = Vec(nU32, UInt(32.W))
                 |val u64   = Vec(nU64, UInt(64.W))
-                |val s1    = Vec(nS1 , SInt(1.W))
                 |val s8    = Vec(nS8 , SInt(8.W))
                 |val s16   = Vec(nS16, SInt(16.W))
                 |val s32   = Vec(nS32, SInt(32.W))
@@ -3108,7 +3116,6 @@ import HwSynthesizer2._
               |r_ipResp_bits(i).u16.foreach(_ := 0.U)
               |r_ipResp_bits(i).u32.foreach(_ := 0.U)
               |r_ipResp_bits(i).u64.foreach(_ := 0.U)
-              |r_ipResp_bits(i).s1.foreach(_ := 0.S)
               |r_ipResp_bits(i).s8.foreach(_ := 0.S)
               |r_ipResp_bits(i).s16.foreach(_ := 0.S)
               |r_ipResp_bits(i).s32.foreach(_ := 0.S)
@@ -6135,20 +6142,6 @@ import HwSynthesizer2._
         return st"""${(smST, "\n")}"""
       }
 
-      @strictpure def saveRestoreInstST: ST = {
-        st"""
-            |val r_saveRestoreReqOut          = RegInit(0.U.asTypeOf(new TempSaveRestoreRequestBundle(${intParaSTs(maxRegisters, F)} dataWidth, depth, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth, cpWidth)))
-            |val r_saveRestoreReqOut_valid    = RegInit(false.B)
-            |io.arbTempSaveRestore_req.bits   := r_saveRestoreReqOut
-            |io.arbTempSaveRestore_req.valid  := r_saveRestoreReqOut_valid
-            |
-            |val r_saveRestoreRespIn        = Reg(new TempSaveRestoreResponseBundle(${intParaSTs(maxRegisters, F)} dataWidth, depth, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth, cpWidth))
-            |val r_saveRestoreRespIn_valid  = RegInit(false.B)
-            |r_saveRestoreRespIn            := io.arbTempSaveRestore_resp.bits
-            |r_saveRestoreRespIn_valid      := io.arbTempSaveRestore_resp.valid
-          """
-      }
-
       return st"""
                  |import chisel3._
                  |import chisel3.util._
@@ -6194,8 +6187,6 @@ import HwSynthesizer2._
                  |  r_routeIn_valid   := io.routeIn.valid
                  |  io.routeOut.bits  := r_routeOut
                  |  io.routeOut.valid := r_routeOut_valid
-                 |
-                 |  ${if(recursiveProcedure.contains(o.owner :+ o.id)) saveRestoreInstST else st""}
                  |
                  |  ${(allArbInstanceST, "\n")}
                  |
@@ -6496,15 +6487,62 @@ import HwSynthesizer2._
             """
       }
       case j: AST.IR.Jump.Return => {
-        intrinsicST = intrinsicST :+
-          st"""
-              |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
-              |r_routeOut.srcCP := 3.U
-              |r_routeOut.dstID := r_srcID
-              |r_routeOut.dstCP := r_srcCP
-              |r_routeOut_valid := true.B
-              |${name}CP := 2.U
+        if(isRecursive) {
+          val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
+          val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
+
+          var intAssignST: ISZ[ST] = ISZ[ST]()
+          for(i <- 0 until uintWidth.size) {
+            if(maxRegisters.unsigneds(uintWidth(i) - 1) > 0) {
+              intAssignST = intAssignST :+ st"generalRegFilesU${uintWidth(i)} := r_arbTempSaveRestore_resp.u${uintWidth(i)}"
+            }
+          }
+          for(i <- 0 until sintWidth.size) {
+            if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
+              intAssignST = intAssignST :+ st"generalRegFilesS${sintWidth(i)} := r_arbTempSaveRestore_resp.s${sintWidth(i)}"
+            }
+          }
+
+          intrinsicST = intrinsicST :+
+            st"""
+                |when(r_srcID === ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U) {
+                |  r_arbTempSaveRestore_req.op := 2.U
+                |  r_arbTempSaveRestore_req_valid := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
+                |
+                |  when(r_arbTempSaveRestore_resp_valid) {
+                |    ${(intAssignST, "\n")}
+                |    r_srcID := r_arbTempSaveRestore_resp.srcId
+                |    r_srcCP := r_arbTempSaveRestore_resp.srcCp
+                |
+                |    r_arbTempSaveRestore_req.op := 0.U
+                |
+                |    r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
+                |    r_routeOut.srcCP := 3.U
+                |    r_routeOut.dstID := r_srcID
+                |    r_routeOut.dstCP := r_srcCP
+                |    r_routeOut_valid := true.B
+                |    ${name}CP := 2.U
+                |  }
+                |} .otherwise {
+                |    r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
+                |    r_routeOut.srcCP := 3.U
+                |    r_routeOut.dstID := r_srcID
+                |    r_routeOut.dstCP := r_srcCP
+                |    r_routeOut_valid := true.B
+                |    ${name}CP := 2.U
+                |}
             """
+        } else {
+          intrinsicST = intrinsicST :+
+            st"""
+                |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
+                |r_routeOut.srcCP := 3.U
+                |r_routeOut.dstID := r_srcID
+                |r_routeOut.dstCP := r_srcCP
+                |r_routeOut_valid := true.B
+                |${name}CP := 2.U
+            """
+        }
       }
       case _ => {
         halt(s"processJumpIntrinsic unimplemented")
@@ -7067,15 +7105,41 @@ import HwSynthesizer2._
           globalRouterCount = globalRouterCount + 1
         }
 
-        if(isRecursive) {
-          val intWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
+        if(isRecursive && exp.id == hwLog.curProcedureId) {
+          val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
+          val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
 
           var intAssignST: ISZ[ST] = ISZ[ST]()
-          for(i <- 0 until intWidth.size) {
-            if(maxRegisters.unsigneds(intWidth(i) - 1) > 0) {
-              intAssignST = intAssignST :+ st"r_saveRestoreReqOut.u${intWidth(i)} := generalRegFilesU${intWidth(i)}"
+          for(i <- 0 until uintWidth.size) {
+            if(maxRegisters.unsigneds(uintWidth(i) - 1) > 0) {
+              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req.u${uintWidth(i)} := generalRegFilesU${uintWidth(i)}"
             }
           }
+          for(i <- 0 until sintWidth.size) {
+            if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
+              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req.s${sintWidth(i)} := generalRegFilesS${sintWidth(i)}"
+            }
+          }
+
+          val callST: ST =
+            st"""
+                |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
+                |r_routeOut.dstID := ${ipRouterUsage.get(exp.id).get._1}.U
+                |r_routeOut.dstCP := 3.U
+                |r_routeOut_valid := true.B
+                |
+                |r_arbTempSaveRestore_req.op := 0.U //push
+              """
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbTempSaveRestore_resp_valid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ callST
+          exprST =
+            st"""
+                |${(intAssignST, "\n")}
+                |r_arbTempSaveRestore_req.srcId := r_srcID
+                |r_arbTempSaveRestore_req.srcCp := r_srcCP
+                |r_arbTempSaveRestore_req.op := 1.U //push
+                |r_arbTempSaveRestore_req_valid := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
+              """
         } else {
           exprST =
             st"""
