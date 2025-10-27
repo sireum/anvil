@@ -2781,6 +2781,30 @@ import HwSynthesizer2._
     }
   }
 
+
+  @pure def lengthOfMaxRegisters(maxRegisters: Util.TempVector): Z = {
+    var length: Z =0
+    val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
+    val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
+
+    for(i <- 0 until uintWidth.size) {
+      length = length + (maxRegisters.unsigneds(uintWidth(i) - 1) * uintWidth(i))
+    }
+
+    for(i <- 0 until sintWidth.size) {
+      if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
+        length = length + (maxRegisters.signeds.get(sintWidth(i)).get * sintWidth(i))
+      }
+    }
+
+    if(length % 64 != 0) {
+      val offset: Z = length % 64
+      length = length + (64 - offset)
+    }
+
+    return length / 8
+  }
+
   @strictpure def paraAssignmentSt(ip: ArbIpType, maxRegisters: Util.TempVector): ST = {
     ip match {
       case ArbBlockMemoryIP() =>
@@ -2940,6 +2964,15 @@ import HwSynthesizer2._
       }
     }
 
+    @pure def hasRecursiveInAllfunctions(): B = {
+      var result: B = F
+      for(o <- program.procedures) {
+        if(recursiveProcedure.contains(o.owner :+ o.id)) {
+          result = T
+        }
+      }
+      return result
+    }
 
     @pure def getIpArbiterTemplate(ip: ArbIpType): ST = {
       val mod = findChiselModule(ip).get
@@ -3386,7 +3419,7 @@ import HwSynthesizer2._
             |        ${if(ip == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) blockMemoryAxi4PortST else st""}
             |    })
             |
-            |    val mod = Module(new ${mod.moduleName}(${responseParaStr(ip, maxRegisters)}))
+            |    val mod = Module(new ${mod.moduleName}(${requestParaStr(ip, maxRegisters)}))
             |
             |    ${tempSaveRestoreRegSt}
             |
@@ -3843,7 +3876,7 @@ import HwSynthesizer2._
           |  CONFIG.Operating_Mode_B {NO_CHANGE} $backslash
           |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
           |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
-          |  CONFIG.Write_Depth_A {${anvil.config.memory}} $backslash
+          |  CONFIG.Write_Depth_A {${anvil.config.memory + (if(hasRecursiveInAllfunctions()) lengthOfMaxRegisters(maxRegisters) else 0)}} $backslash
           |  CONFIG.Write_Width_A {8} $backslash
           |] [get_ips XilinxBRAM]
           """
@@ -4062,7 +4095,7 @@ import HwSynthesizer2._
             |  CONFIG.Memory_Type {True_Dual_Port_RAM} $backslash
             |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
             |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
-            |  CONFIG.Write_Depth_A ${anvil.config.memory / 8 + 1} $backslash
+            |  CONFIG.Write_Depth_A ${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) lengthOfMaxRegisters(maxRegisters) else 0)) / 8 + 1} $backslash
             |  CONFIG.Write_Width_A {64} $backslash
             |  CONFIG.use_bram_block {BRAM_Controller} $backslash
             |] [get_bd_cells blk_mem_gen_0]
@@ -6022,7 +6055,7 @@ import HwSynthesizer2._
                |               val C_M_AXI_ADDR_WIDTH: Int = 32,
                |               val C_M_AXI_DATA_WIDTH: Int = 64,
                |               val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = BigInt("00000000", 16),
-               |               val MEMORY_DEPTH: Int = ${anvil.config.memory},
+               |               val MEMORY_DEPTH: Int = ${anvil.config.memory + (if(hasRecursiveFuncCall) lengthOfMaxRegisters(maxRegisters) else 0)},
                |               val cpWidth: Int,
                |               val spWidth: Int,
                |               val idWidth: Int) extends Module {
