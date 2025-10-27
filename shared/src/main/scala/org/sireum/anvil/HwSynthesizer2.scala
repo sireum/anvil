@@ -30,7 +30,7 @@ import org.sireum.anvil._
 import org.sireum.anvil.Anvil.VarInfo
 import org.sireum.anvil.Util.{AnvilIRPrinter, constructLocalId, indexing, isTempGlobal, spType}
 import org.sireum.lang.ast.{IR, Typed}
-import org.sireum.lang.ast.IR.{Exp, Jump}
+import org.sireum.lang.ast.IR.{Exp, Jump, max}
 import org.sireum.lang.{ast => AST}
 import org.sireum.lang.symbol.Resolver.{QName, addBuiltIns, typeParamMap}
 import org.sireum.lang.symbol.TypeInfo
@@ -2476,6 +2476,7 @@ object ArbInputMap {
                                    val moduleDeclarationName: String,
                                    val moduleInstanceName: String,
                                    val widthOfPort: Z,
+                                   val stackStartAddr: Z,
                                    val exp: ArbIpType,
                                    val nonXilinxIP: B,
                                    val arbID: Z) extends ArbIpModule {
@@ -2535,7 +2536,7 @@ object ArbInputMap {
         |  val r_restore_state = RegInit(0.U(3.W))
         |  val r_push_index    = RegInit(0.U(log2Up(totalWords).W))
         |  val r_pop_index     = RegInit(0.U(log2Up(totalWords).W))
-        |  val r_stack_addr    = RegInit(depth.U(log2Up(depth + stackMaxDepth * totalWords * 8).W))
+        |  val r_stack_addr    = RegInit(${stackStartAddr}.U(log2Up(depth).W))
         |
         |  // ========== 组合：把“当前输入寄存器”按顺序拼成 bitstream ==========
         |  // 用一个可变列表收集各段 bit 向量
@@ -2619,10 +2620,12 @@ object ArbInputMap {
         |  switch(r_restore_state) {
         |    is(0.U) {
         |      r_restore_state := Mux(r_pop, 1.U, 0.U)
-        |      r_pop_index         := 0.U
+        |      r_pop_index         := totalWords.U
         |    }
         |    is(1.U) {
-        |      r_restore_state := Mux(r_pop_index < totalWords.U, 2.U, 3.U)
+        |      r_restore_state := Mux(r_pop_index > 0.U, 2.U, 3.U)
+        |      r_stack_addr := Mux(r_pop_index > 0.U, r_stack_addr - 8.U, r_stack_addr)
+        |      r_pop_index := Mux(r_pop_index > 0.U, r_pop_index - 1.U, r_pop_index)
         |    }
         |    is(2.U) {
         |      r_arbMem_req.mode := 1.U
@@ -2634,8 +2637,6 @@ object ArbInputMap {
         |      when(r_arbMem_resp_valid) {
         |        words_w(r_pop_index) := r_arbMem_resp.data
         |        r_arbMem_req.mode := 0.U
-        |        r_pop_index := r_pop_index + 1.U
-        |        r_stack_addr := r_stack_addr - 8.U
         |        r_restore_state := 1.U
         |      }
         |    }
@@ -2650,18 +2651,16 @@ object ArbInputMap {
         |  }
         |
         |  val bitstream_r = WireDefault(0.U(totalBits.W))
-        |  when (r_readMem_valid) {
-        |    val pieces = for (i <- 0 until totalWords) yield {
-        |      val lo = i * 64
-        |      val hi = math.min(lo + 64, totalBits)
-        |      val k  = hi - lo
-        |      val w  = words_w(i)
-        |      if (k == 64) w else w(k - 1, 0)
-        |    }
-        |
-        |    // Chisel Cat() 会自动高位在前；因此如果你之前逻辑是 LSB-first，需要 reverse
-        |    bitstream_r := Cat(pieces.reverse)
+        |  val pieces = for (i <- 0 until totalWords) yield {
+        |    val lo = i * 64
+        |    val hi = math.min(lo + 64, totalBits)
+        |    val k  = hi - lo
+        |    val w  = words_w(i)
+        |    if (k == 64) w else w(k - 1, 0)
         |  }
+        |
+        |  // Chisel Cat() 会自动高位在前；因此如果你之前逻辑是 LSB-first，需要 reverse
+        |  bitstream_r := Cat(pieces.reverse)
         |
         |  when(r_readMem_valid_next) {
         |    // 切回每个寄存器（顺序/位宽与上面一致）
@@ -2733,7 +2732,7 @@ import HwSynthesizer2._
     ArbRemainder(F, "RemainerUnsigned64", "arbRemainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
     ArbRemainder(T, "RemainerSigned64", "arbRemainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
     ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4, 35),
-    ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, ArbTempSaveRestoreIP(), noXilinxIp, 36)
+    ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, anvil.config.memory, ArbTempSaveRestoreIP(), noXilinxIp, 36)
   )
 
   @pure def findChiselModule(ip: ArbIpType): Option[ArbIpModule] = {
@@ -2782,7 +2781,7 @@ import HwSynthesizer2._
   }
 
 
-  @pure def lengthOfMaxRegisters(maxRegisters: Util.TempVector): Z = {
+  @pure def depthOfStack(maxRegisters: Util.TempVector): Z = {
     var length: Z =0
     val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
     val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
@@ -2802,7 +2801,7 @@ import HwSynthesizer2._
       length = length + (64 - offset)
     }
 
-    return length / 8
+    return (length / 8) * anvil.config.recursiveDepthMax
   }
 
   @strictpure def paraAssignmentSt(ip: ArbIpType, maxRegisters: Util.TempVector): ST = {
@@ -3625,12 +3624,12 @@ import HwSynthesizer2._
             |    val clk = Input(Bool())
             |    val ena = Input(Bool())
             |    val wea = Input(Bool())
-            |    val addra = Input(UInt(${log2Up(anvil.config.memory)}.W))
+            |    val addra = Input(UInt(${log2Up(anvil.config.memory) + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}.W))
             |    val dina = Input(UInt(8.W))
             |    val douta = Output(UInt(8.W))
             |    val enb = Input(Bool())
             |    val web = Input(Bool())
-            |    val addrb = Input(UInt(${log2Up(anvil.config.memory)}.W))
+            |    val addrb = Input(UInt(${log2Up(anvil.config.memory) + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}.W))
             |    val dinb = Input(UInt(8.W))
             |    val doutb = Output(UInt(8.W))
             |  })
@@ -3876,7 +3875,7 @@ import HwSynthesizer2._
           |  CONFIG.Operating_Mode_B {NO_CHANGE} $backslash
           |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
           |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
-          |  CONFIG.Write_Depth_A {${anvil.config.memory + (if(hasRecursiveInAllfunctions()) lengthOfMaxRegisters(maxRegisters) else 0)}} $backslash
+          |  CONFIG.Write_Depth_A {${anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}} $backslash
           |  CONFIG.Write_Width_A {8} $backslash
           |] [get_ips XilinxBRAM]
           """
@@ -4095,7 +4094,7 @@ import HwSynthesizer2._
             |  CONFIG.Memory_Type {True_Dual_Port_RAM} $backslash
             |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
             |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
-            |  CONFIG.Write_Depth_A ${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) lengthOfMaxRegisters(maxRegisters) else 0)) / 8 + 1} $backslash
+            |  CONFIG.Write_Depth_A ${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) / 8 + 1} $backslash
             |  CONFIG.Write_Width_A {64} $backslash
             |  CONFIG.use_bram_block {BRAM_Controller} $backslash
             |] [get_bd_cells blk_mem_gen_0]
@@ -4593,12 +4592,12 @@ import HwSynthesizer2._
           |    input wire clk,
           |    input wire ena,
           |    input wire wea,
-          |    input wire [${log2Up(anvil.config.memory) - 1}:0] addra,
+          |    input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1}:0] addra,
           |    input wire [7:0] dina,
           |    output wire [7:0] douta,
           |    input wire enb,
           |    input wire web,
-          |    input wire [${log2Up(anvil.config.memory) - 1}:0] addrb,
+          |    input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1}:0] addrb,
           |    input wire [7:0] dinb,
           |    output wire [7:0] doutb
           |);
@@ -4607,13 +4606,13 @@ import HwSynthesizer2._
           |    .clka(clk),    // input wire clka
           |    .ena(ena),      // input wire ena
           |    .wea(wea),      // input wire [0 : 0] wea
-          |    .addra(addra),  // input wire [${log2Up(anvil.config.memory) - 1} : 0] addra
+          |    .addra(addra),  // input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1} : 0] addra
           |    .dina(dina),    // input wire [7: 0] dina
           |    .douta(douta),  // output wire [7: 0] douta
           |    .clkb(clk),    // input wire clkb
           |    .enb(enb),      // input wire enb
           |    .web(web),      // input wire [0 : 0] web
-          |    .addrb(addrb),  // input wire [${log2Up(anvil.config.memory) - 1} : 0] addrb
+          |    .addrb(addrb),  // input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1} : 0] addrb
           |    .dinb(dinb),    // input wire [7: 0] dinb
           |    .doutb(doutb)  // output wire [7: 0] doutb
           |  );
@@ -6055,7 +6054,7 @@ import HwSynthesizer2._
                |               val C_M_AXI_ADDR_WIDTH: Int = 32,
                |               val C_M_AXI_DATA_WIDTH: Int = 64,
                |               val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = BigInt("00000000", 16),
-               |               val MEMORY_DEPTH: Int = ${anvil.config.memory + (if(hasRecursiveFuncCall) lengthOfMaxRegisters(maxRegisters) else 0)},
+               |               val MEMORY_DEPTH: Int = ${anvil.config.memory + (if(hasRecursiveFuncCall) depthOfStack(maxRegisters) else 0)},
                |               val cpWidth: Int,
                |               val spWidth: Int,
                |               val idWidth: Int) extends Module {
