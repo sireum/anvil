@@ -2543,17 +2543,17 @@ object ArbInputMap {
         |  val parts = Seq.newBuilder[UInt]
         |
         |  // UInt 组
-        |  if (nU1  > 0) parts += Cat(r_req.u1.reverse)
-        |  if (nU8  > 0) parts += Cat(r_req.u8.reverse)
-        |  if (nU16 > 0) parts += Cat(r_req.u16.reverse)
-        |  if (nU32 > 0) parts += Cat(r_req.u32.reverse)
-        |  if (nU64 > 0) parts += Cat(r_req.u64.reverse)
+        |  if (nU1  > 0) parts += Cat(r_req.u1)
+        |  if (nU8  > 0) parts += Cat(r_req.u8)
+        |  if (nU16 > 0) parts += Cat(r_req.u16)
+        |  if (nU32 > 0) parts += Cat(r_req.u32)
+        |  if (nU64 > 0) parts += Cat(r_req.u64)
         |
         |  // SInt 组（转为 UInt）
-        |  if (nS8  > 0) parts += Cat(r_req.s8.map(_.asUInt).reverse)
-        |  if (nS16 > 0) parts += Cat(r_req.s16.map(_.asUInt).reverse)
-        |  if (nS32 > 0) parts += Cat(r_req.s32.map(_.asUInt).reverse)
-        |  if (nS64 > 0) parts += Cat(r_req.s64.map(_.asUInt).reverse)
+        |  if (nS8  > 0) parts += Cat(r_req.s8.map(_.asUInt))
+        |  if (nS16 > 0) parts += Cat(r_req.s16.map(_.asUInt))
+        |  if (nS32 > 0) parts += Cat(r_req.s32.map(_.asUInt))
+        |  if (nS64 > 0) parts += Cat(r_req.s64.map(_.asUInt))
         |
         |  // 其他字段（这些总是存在）
         |  parts += r_req.srcId
@@ -2661,23 +2661,25 @@ object ArbInputMap {
         |
         |  // Chisel Cat() 会自动高位在前；因此如果你之前逻辑是 LSB-first，需要 reverse
         |  bitstream_r := Cat(pieces.reverse)
+        |  //bitstream_r := Cat(pieces)
         |
         |  when(r_readMem_valid_next) {
+        |    printf("low 32 bits: %x, interest bits: %x, idWidth: %x\n", bitstream_r(31, 0), bitstream_r(19, 4), idWidth.asUInt)
         |    // 切回每个寄存器（顺序/位宽与上面一致）
-        |    var off = 0
+        |    var off = totalBits - 1
         |    // UInt
-        |    for (i <- 0 until nU1 ) { r_resp.u1(i)  := bitstream_r(off); off += 1 }
-        |    for (i <- 0 until nU8 ) { r_resp.u8(i)  := bitstream_r(off + 8 -1, off); off += 8  }
-        |    for (i <- 0 until nU16) { r_resp.u16(i) := bitstream_r(off + 16-1, off); off += 16 }
-        |    for (i <- 0 until nU32) { r_resp.u32(i) := bitstream_r(off + 32-1, off); off += 32 }
-        |    for (i <- 0 until nU64) { r_resp.u64(i) := bitstream_r(off + 64-1, off); off += 64 }
+        |    for (i <- 0 until nU1) { r_resp.u1(i)  := bitstream_r(off); off -= 1 }
+        |    for (i <- 0 until nU8) { r_resp.u8(i)  := bitstream_r(off, off - (8-1)); off -= 8  }
+        |    for (i <- 0 until nU16) { r_resp.u16(i) := bitstream_r(off, off - (16-1)); off -= 16 }
+        |    for (i <- 0 until nU32) { r_resp.u32(i) := bitstream_r(off, off - (32-1)); off -= 32 }
+        |    for (i <- 0 until nU64) { r_resp.u64(i) := bitstream_r(off, off - (64-1)); off -= 64 }
         |    // SInt
-        |    for (i <- 0 until nS8 ) { r_resp.s8(i)  := bitstream_r(off + 8 -1, off).asSInt; off += 8  }
-        |    for (i <- 0 until nS16) { r_resp.s16(i) := bitstream_r(off + 16-1, off).asSInt; off += 16 }
-        |    for (i <- 0 until nS32) { r_resp.s32(i) := bitstream_r(off + 32-1, off).asSInt; off += 32 }
-        |    for (i <- 0 until nS64) { r_resp.s64(i) := bitstream_r(off + 64-1, off).asSInt; off += 64 }
-        |    { r_resp.srcId := bitstream_r(off + idWidth-1, off); off += idWidth }
-        |    { r_resp.srcCp := bitstream_r(off + cpWidth-1, off); off += cpWidth }
+        |    for (i <- 0 until nS8) { r_resp.s8(i)  := bitstream_r(off, off - (8-1)).asSInt; off -= 8  }
+        |    for (i <- 0 until nS16) { r_resp.s16(i) := bitstream_r(off, off - (16-1)).asSInt; off -= 16 }
+        |    for (i <- 0 until nS32) { r_resp.s32(i) := bitstream_r(off, off - (32-1)).asSInt; off -= 32 }
+        |    for (i <- 0 until nS64) { r_resp.s64(i) := bitstream_r(off, off - (64-1)).asSInt; off -= 64 }
+        |    { r_resp.srcId := bitstream_r(off, off - (idWidth-1)); printf("off: %d, srcID: %x\n", off.asUInt, bitstream_r(off, off - (idWidth-1))); off -= idWidth }
+        |    { r_resp.srcCp := bitstream_r(off, 0); }
         |  }
         |}
     """
@@ -3077,8 +3079,8 @@ import HwSynthesizer2._
               |val s16   = Vec(nS16, SInt(16.W))
               |val s32   = Vec(nS32, SInt(32.W))
               |val s64   = Vec(nS64, SInt(64.W))
-              |val srcCp = UInt(idWidth.W)
-              |val srcId = UInt(cpWidth.W)
+              |val srcCp = UInt(cpWidth.W)
+              |val srcId = UInt(idWidth.W)
               |val op    = UInt(2.W)
           """
 
@@ -3109,8 +3111,8 @@ import HwSynthesizer2._
                 |val s16   = Vec(nS16, SInt(16.W))
                 |val s32   = Vec(nS32, SInt(32.W))
                 |val s64   = Vec(nS64, SInt(64.W))
-                |val srcCp = UInt(idWidth.W)
-                |val srcId = UInt(cpWidth.W)
+                |val srcCp = UInt(cpWidth.W)
+                |val srcId = UInt(idWidth.W)
             """
         }
 
@@ -6270,7 +6272,10 @@ import HwSynthesizer2._
                      |is(2.U) {
                      |  r_routeOut_valid := false.B
                      |
-                     |  r_arbTempSaveRestore_req.op := Mux(r_routeIn_valid & r_routeIn.isReturn, 2.U, 0.U)
+                     |  when(r_routeIn_valid & r_routeIn.isReturn) {
+                     |    r_arbTempSaveRestore_req.op := 2.U
+                     |  }
+                     |
                      |  when(r_routeIn_valid & r_routeIn.isReturn) {
                      |    r_arbTempSaveRestore_req_valid := true.B
                      |  } .elsewhen(r_arbTempSaveRestore_resp_valid) {
@@ -6283,13 +6288,14 @@ import HwSynthesizer2._
                      |    r_srcCP := r_arbTempSaveRestore_resp.srcCp
                      |
                      |    r_arbTempSaveRestore_req.op := 0.U
-                     |
-                     |    ${name}CP := r_routeIn.dstCP
                      |  }
                      |
                      |  when(r_routeIn_valid & !r_routeIn.isReturn) {
                      |    r_srcCP := r_routeIn.srcCP
                      |    r_srcID := r_routeIn.srcID
+                     |  }
+                     |
+                     |  when(r_arbTempSaveRestore_resp_valid | (r_routeIn_valid & !r_routeIn.isReturn)) {
                      |    ${name}CP  := r_routeIn.dstCP
                      |  }
                      |}
