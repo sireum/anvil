@@ -3753,6 +3753,7 @@ import HwSynthesizer2._
           |  val dstID = UInt(idWidth.W)
           |  val srcCP = UInt(cpWidth.W)
           |  val dstCP = UInt(cpWidth.W)
+          |  val isReturn = Bool()
           |}
           |
           |class RouterIO(val nPorts: Int, val idWidth: Int, val cpWidth: Int) extends Bundle {
@@ -3785,6 +3786,7 @@ import HwSynthesizer2._
           |    r_outputBuffer(i).dstID := 0.U
           |    r_outputBuffer(i).srcCP := 0.U
           |    r_outputBuffer(i).dstCP := 0.U
+          |    r_outputBuffer(i).isReturn := false.B
           |
           |    r_outputBuffer_valid(i) := false.B
           |  }
@@ -5903,6 +5905,7 @@ import HwSynthesizer2._
           |    r_routeOut.srcCP := 4.U
           |    r_routeOut.dstID := ${ipRouterUsage.get("$test").get._1}.U
           |    r_routeOut.dstCP := 3.U
+          |    r_routeOut.isReturn := false.B
           |    r_routeOut_valid := true.B
           |    TopCP := 3.U
           |  }
@@ -6023,6 +6026,7 @@ import HwSynthesizer2._
           |r_routeOut.srcCP := 3.U
           |r_routeOut.dstID := r_control(2)
           |r_routeOut.dstCP := r_control(3)
+          |r_routeOut.isReturn := false.B
           |
           |switch(TopCP) {
           |  is(0.U) {
@@ -6236,7 +6240,7 @@ import HwSynthesizer2._
     return procedureST(basicBlockST._1, basicBlockST._2, basicBlockST._3)
   }
 
-  @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], maxRegiters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): (ST, Z, ST) = {
+  @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], maxRegisters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): (ST, Z, ST) = {
     for(b <- bs) {
       if(b.label > hwLog.maxNumLabel) {
         hwLog.maxNumLabel = b.label
@@ -6245,6 +6249,64 @@ import HwSynthesizer2._
 
     val ipPortLogic = HwSynthesizer2.IpPortAssign(anvil, ISZ[ST](), ipModules, ArbInputMap.empty, ISZ[ST](), ISZ[ST]())
     @pure def basicBlockST(grounds: HashSMap[Z, ST], functions: ISZ[ST]): (ST, Z, ST) = {
+      @pure def state2St: ST = {
+        val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
+        val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
+
+        var intAssignST: ISZ[ST] = ISZ[ST]()
+        for(i <- 0 until uintWidth.size) {
+          if(maxRegisters.unsigneds(uintWidth(i) - 1) > 0) {
+            intAssignST = intAssignST :+ st"generalRegFilesU${uintWidth(i)} := r_arbTempSaveRestore_resp.u${uintWidth(i)}"
+          }
+        }
+        for(i <- 0 until sintWidth.size) {
+          if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
+            intAssignST = intAssignST :+ st"generalRegFilesS${sintWidth(i)} := r_arbTempSaveRestore_resp.s${sintWidth(i)}"
+          }
+        }
+
+        if(isRecursive) {
+          return st"""
+                     |is(2.U) {
+                     |  r_routeOut_valid := false.B
+                     |
+                     |  r_arbTempSaveRestore_req.op := Mux(r_routeIn_valid & r_routeIn.isReturn, 2.U, 0.U)
+                     |  when(r_routeIn_valid & r_routeIn.isReturn) {
+                     |    r_arbTempSaveRestore_req_valid := true.B
+                     |  } .elsewhen(r_arbTempSaveRestore_resp_valid) {
+                     |    r_arbTempSaveRestore_req_valid := false.B
+                     |  }
+                     |
+                     |  when(r_arbTempSaveRestore_resp_valid) {
+                     |    ${(intAssignST, "\n")}
+                     |    r_srcID := r_arbTempSaveRestore_resp.srcId
+                     |    r_srcCP := r_arbTempSaveRestore_resp.srcCp
+                     |
+                     |    r_arbTempSaveRestore_req.op := 0.U
+                     |
+                     |    ${name}CP := r_routeIn.dstCP
+                     |  }
+                     |
+                     |  when(r_routeIn_valid & !r_routeIn.isReturn) {
+                     |    r_srcCP := r_routeIn.srcCP
+                     |    r_srcID := r_routeIn.srcID
+                     |    ${name}CP  := r_routeIn.dstCP
+                     |  }
+                     |}
+                   """
+        } else {
+          return st"""
+                     |is(2.U) {
+                     |  r_routeOut_valid := false.B
+                     |  when(r_routeIn_valid) {
+                     |    r_srcCP := r_routeIn.srcCP
+                     |    r_srcID := r_routeIn.srcID
+                     |    ${name}CP  := r_routeIn.dstCP
+                     |  }
+                     |}
+                   """
+        }
+      }
       var stateSTs: ISZ[ST] = ISZ[ST]()
       stateSTs = stateSTs :+
         st"""
@@ -6255,17 +6317,8 @@ import HwSynthesizer2._
             |  }
             |}
           """
-      stateSTs = stateSTs :+
-        st"""
-            |is(2.U) {
-            |  r_routeOut_valid := false.B
-            |  when(r_routeIn_valid) {
-            |    r_srcCP := r_routeIn.srcCP
-            |    r_srcID := r_routeIn.srcID
-            |    ${name}CP  := r_routeIn.dstCP
-            |  }
-            |}
-          """
+      stateSTs = stateSTs :+ state2St
+
       for(pair <- grounds.entries) {
         stateSTs = stateSTs :+ pair._2
       }
@@ -6314,7 +6367,7 @@ import HwSynthesizer2._
 
       val jumpST: ST = {
         if(hwLog.isIndexerInCurrentBlock() && !hwLog.isMemCpyInCurrentBlock()) {
-          val jST = processJumpIntrinsic(name, hwLog.stateBlock.get, ipPortLogic, maxRegiters, isRecursive, hwLog)
+          val jST = processJumpIntrinsic(name, hwLog.stateBlock.get, ipPortLogic, maxRegisters, isRecursive, hwLog)
           val indexerName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
           st"""
               |when(r_${indexerName}_resp_valid) {
@@ -6372,8 +6425,8 @@ import HwSynthesizer2._
       hwLog.currentLabel = b.label
 
       if(b.label != 0) {
-        val processedGroundST = processGround(name, b.grounds, ipPortLogic, maxRegiters, isRecursive, hwLog)
-        var jump = processJumpIntrinsic(name, b, ipPortLogic, maxRegiters, isRecursive, hwLog)
+        val processedGroundST = processGround(name, b.grounds, ipPortLogic, maxRegisters, isRecursive, hwLog)
+        var jump = processJumpIntrinsic(name, b, ipPortLogic, maxRegisters, isRecursive, hwLog)
         if(ipPortLogic.whenCondST.nonEmpty) {
           jump =
             st"""
@@ -6476,6 +6529,7 @@ import HwSynthesizer2._
         if(anvil.config.cpMax <= 0) {
           if(hwLog.isFunCallInCurrentBlock()) {
             intrinsicST = intrinsicST :+ st"r_routeOut.srcCP := ${j.label}.U"
+            intrinsicST = intrinsicST :+ st"r_routeOut.isReturn := false.B"
             intrinsicST = intrinsicST :+ st"${name}CP := ${if(isRecursive) "2.U" else "0.U"}"
           } else {
             intrinsicST = intrinsicST :+ st"${name}CP := ${j.label}.U"
@@ -6519,62 +6573,16 @@ import HwSynthesizer2._
             """
       }
       case j: AST.IR.Jump.Return => {
-        if(isRecursive) {
-          val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
-          val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
-
-          var intAssignST: ISZ[ST] = ISZ[ST]()
-          for(i <- 0 until uintWidth.size) {
-            if(maxRegisters.unsigneds(uintWidth(i) - 1) > 0) {
-              intAssignST = intAssignST :+ st"generalRegFilesU${uintWidth(i)} := r_arbTempSaveRestore_resp.u${uintWidth(i)}"
-            }
-          }
-          for(i <- 0 until sintWidth.size) {
-            if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
-              intAssignST = intAssignST :+ st"generalRegFilesS${sintWidth(i)} := r_arbTempSaveRestore_resp.s${sintWidth(i)}"
-            }
-          }
-
-          intrinsicST = intrinsicST :+
-            st"""
-                |when(r_srcID === ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U) {
-                |  r_arbTempSaveRestore_req.op := 2.U
-                |  r_arbTempSaveRestore_req_valid := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
-                |
-                |  when(r_arbTempSaveRestore_resp_valid) {
-                |    ${(intAssignST, "\n")}
-                |    r_srcID := r_arbTempSaveRestore_resp.srcId
-                |    r_srcCP := r_arbTempSaveRestore_resp.srcCp
-                |
-                |    r_arbTempSaveRestore_req.op := 0.U
-                |
-                |    r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
-                |    r_routeOut.srcCP := 3.U
-                |    r_routeOut.dstID := r_srcID
-                |    r_routeOut.dstCP := r_srcCP
-                |    r_routeOut_valid := true.B
-                |    ${name}CP := 2.U
-                |  }
-                |} .otherwise {
-                |    r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
-                |    r_routeOut.srcCP := 3.U
-                |    r_routeOut.dstID := r_srcID
-                |    r_routeOut.dstCP := r_srcCP
-                |    r_routeOut_valid := true.B
-                |    ${name}CP := 2.U
-                |}
-            """
-        } else {
-          intrinsicST = intrinsicST :+
-            st"""
-                |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
-                |r_routeOut.srcCP := 3.U
-                |r_routeOut.dstID := r_srcID
-                |r_routeOut.dstCP := r_srcCP
-                |r_routeOut_valid := true.B
-                |${name}CP := 2.U
-            """
-        }
+        intrinsicST = intrinsicST :+
+          st"""
+              |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
+              |r_routeOut.srcCP := 3.U
+              |r_routeOut.dstID := r_srcID
+              |r_routeOut.dstCP := r_srcCP
+              |r_routeOut.isReturn := true.B
+              |r_routeOut_valid := true.B
+              |${name}CP := 2.U
+          """
       }
       case _ => {
         halt(s"processJumpIntrinsic unimplemented")
