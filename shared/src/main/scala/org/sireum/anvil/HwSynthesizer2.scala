@@ -6226,6 +6226,9 @@ import HwSynthesizer2._
                  |  io.routeOut.bits  := r_routeOut
                  |  io.routeOut.valid := r_routeOut_valid
                  |
+                 |  ${if(isRecursive) st"val r_saveDstCP = RegInit(0.U(cpWidth.W))" else st""}
+                 |  ${if(isRecursive) st"when(r_routeIn_valid) {r_saveDstCP := r_routeIn.dstCP}" else st""}
+                 |
                  |  ${(allArbInstanceST, "\n")}
                  |
                  |  ${stateMachineCallST}
@@ -6243,15 +6246,20 @@ import HwSynthesizer2._
   }
 
   @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], maxRegisters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): (ST, Z, ST) = {
-    for(b <- bs) {
-      if(b.label > hwLog.maxNumLabel) {
-        hwLog.maxNumLabel = b.label
+
+    @pure def maxBlockLabel(): Z = {
+      var maxLabel: Z = 0
+      for(b <- bs) {
+        if(b.label > maxLabel) {
+          maxLabel = b.label
+        }
       }
+      return maxLabel + 1
     }
 
     val ipPortLogic = HwSynthesizer2.IpPortAssign(anvil, ISZ[ST](), ipModules, ArbInputMap.empty, ISZ[ST](), ISZ[ST]())
     @pure def basicBlockST(grounds: HashSMap[Z, ST], functions: ISZ[ST]): (ST, Z, ST) = {
-      @pure def state2St: ST = {
+      @pure def popStackSt: ST = {
         val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
         val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
 
@@ -6267,36 +6275,40 @@ import HwSynthesizer2._
           }
         }
 
+        val finalSt: ST =
+          st"""
+              |is(${maxBlockLabel()}.U){
+              |  r_arbTempSaveRestore_req.op := 2.U
+              |  r_arbTempSaveRestore_req_valid := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
+              |
+              |  when(r_arbTempSaveRestore_resp_valid) {
+              |    ${(intAssignST, "\n")}
+              |    r_srcID := r_arbTempSaveRestore_resp.srcId
+              |    r_srcCP := r_arbTempSaveRestore_resp.srcCp
+              |
+              |    r_arbTempSaveRestore_req.op := 0.U
+              |    ${name}CP  := r_saveDstCP
+              |  }
+              |}
+            """
+
+        return finalSt
+      }
+
+      @pure def state2St: ST = {
         if(isRecursive) {
           return st"""
                      |is(2.U) {
                      |  r_routeOut_valid := false.B
                      |
-                     |  when(r_routeIn_valid & r_routeIn.isReturn) {
-                     |    r_arbTempSaveRestore_req.op := 2.U
-                     |  }
-                     |
-                     |  when(r_routeIn_valid & r_routeIn.isReturn) {
-                     |    r_arbTempSaveRestore_req_valid := true.B
-                     |  } .elsewhen(r_arbTempSaveRestore_resp_valid) {
-                     |    r_arbTempSaveRestore_req_valid := false.B
-                     |  }
-                     |
-                     |  when(r_arbTempSaveRestore_resp_valid) {
-                     |    ${(intAssignST, "\n")}
-                     |    r_srcID := r_arbTempSaveRestore_resp.srcId
-                     |    r_srcCP := r_arbTempSaveRestore_resp.srcCp
-                     |
-                     |    r_arbTempSaveRestore_req.op := 0.U
-                     |  }
-                     |
-                     |  when(r_routeIn_valid & !r_routeIn.isReturn) {
-                     |    r_srcCP := r_routeIn.srcCP
-                     |    r_srcID := r_routeIn.srcID
-                     |  }
-                     |
-                     |  when(r_arbTempSaveRestore_resp_valid | (r_routeIn_valid & !r_routeIn.isReturn)) {
-                     |    ${name}CP  := r_routeIn.dstCP
+                     |  when(r_routeIn_valid) {
+                     |    when(r_routeIn.isReturn) {
+                     |      ${name}CP  := ${maxBlockLabel()}.U
+                     |    } .otherwise {
+                     |      r_srcCP := r_routeIn.srcCP
+                     |      r_srcID := r_routeIn.srcID
+                     |      ${name}CP  := r_routeIn.dstCP
+                     |    }
                      |  }
                      |}
                    """
@@ -6324,6 +6336,9 @@ import HwSynthesizer2._
             |}
           """
       stateSTs = stateSTs :+ state2St
+      if(isRecursive) {
+        stateSTs = stateSTs :+ popStackSt
+      }
 
       for(pair <- grounds.entries) {
         stateSTs = stateSTs :+ pair._2
