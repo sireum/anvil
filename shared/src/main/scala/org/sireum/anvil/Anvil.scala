@@ -136,7 +136,7 @@ object Anvil {
                      val globalInfoMap: HashSMap[QName, VarInfo],
                      val globalTemps: Z,
                      val procDescMap: HashSMap[U32, String],
-                     val recursiveProcedures: HashSSet[QName])
+                     val recursiveProcedures: RecursiveProcedures)
 
   def synthesize(isTest: B, fresh: lang.IRTranslator.Fresh, th: TypeHierarchy, name: QName, config: Config,
                  output: Output, reporter: Reporter): Option[IR] = {
@@ -858,13 +858,23 @@ import Anvil._
         id
     }
 
-    WellFormedChecker().transform_langastIRProcedure(program.procedures(0))
-    var recursiveProcedures = HashSSet.empty[QName]
+    WellFormedChecker().transform_langastIRProgram(program)
+    var recursiveProcedureSet = HashSSet.empty[QName]
+    var recursiveProceduresUnionFind = UnionFind.create(for (p <- program.procedures) yield p.owner :+ p.id)
     if (!config.isFirstGen) {
-      recursiveProcedures = recursiveProcedures ++ (for (ps <- ops.GraphOps(tsr.callGraph).getCycles; p <- ps) yield p.owner :+ p.id)
+      val cycles = ops.GraphOps(tsr.callGraph).getCycles
+      recursiveProcedureSet = recursiveProcedureSet ++ (for (ps <- cycles; p <- ps) yield p.owner :+ p.id)
+      for (ps <- cycles if ps.nonEmpty) {
+        val first = ps(0).owner :+ ps(0).id
+        for (i <- 1 until ps.size) {
+          val other = ps(i).owner :+ ps(i).id
+          recursiveProceduresUnionFind = recursiveProceduresUnionFind.merge(first, other)
+        }
+      }
     }
 
-    return Some(IR(anvil, name, program, maxRegisters, globalSize, globalMap, globalTemps, procDescMap, recursiveProcedures))
+    return Some(IR(anvil, name, program, maxRegisters, globalSize, globalMap, globalTemps, procDescMap,
+      RecursiveProcedures(recursiveProcedureSet, recursiveProceduresUnionFind)))
   }
 
   def transformReadWriteAlign(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure,

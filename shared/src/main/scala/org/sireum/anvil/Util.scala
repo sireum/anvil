@@ -1102,6 +1102,14 @@ object Util {
       return MNone()
     }
   }
+
+  @datatype class RecursiveProcedures(val set: HashSSet[QName],
+                                      val unionFind: UnionFind[QName]) {
+    @strictpure def contains(name: QName): B = set.contains(name)
+    @strictpure def isMutuallyRecursive(name1: QName, name2: QName): B = unionFind.inSameSet(name1, name2)
+  }
+
+
   val kind: String = "Anvil"
   val exitLabel: Z = 0
   val errorLabel: Z = 1
