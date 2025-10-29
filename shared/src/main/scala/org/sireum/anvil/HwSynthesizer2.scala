@@ -2478,6 +2478,7 @@ object ArbInputMap {
                                    val widthOfPort: Z,
                                    val stackStartAddr: Z,
                                    val exp: ArbIpType,
+                                   val memoryType: Anvil.Config.MemoryAccess.Type,
                                    val nonXilinxIP: B,
                                    val arbID: Z) extends ArbIpModule {
   @strictpure override def arbIpId: Z = arbID
@@ -2487,12 +2488,21 @@ object ArbInputMap {
   @strictpure override def width: Z = widthOfPort
   @strictpure override def portList: HashSMap[String, (B, String)] = HashSMap.empty
   @strictpure override def expression: ArbIpType = exp
+  @strictpure def addrWidthSt(isParaDecl: B): ST = {
+    if(isParaDecl && memoryType != Anvil.Config.MemoryAccess.BramNative) {
+      return st"addrWidth:Int,"
+    } else if(!isParaDecl && memoryType != Anvil.Config.MemoryAccess.BramNative) {
+      return st"addrWidth,"
+    } else {
+      return st""
+    }
+  }
   @strictpure override def moduleST: ST = {
     st"""
         |class ${moduleName}(
         |  nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int,
         |  nS8:Int, nS16:Int, nS32:Int, nS64:Int,
-        |  dataWidth:Int, depth:Int,
+        |  dataWidth:Int, ${addrWidthSt(T)} depth:Int,
         |  stackMaxDepth:Int, idWidth: Int, cpWidth: Int
         |) extends Module {
         |
@@ -2503,12 +2513,12 @@ object ArbInputMap {
         |  private val totalWords: Int = (totalBits + 63) / 64
         |
         |  val io = IO(new Bundle {
-        |    val arbMem_req  = Valid(new BlockMemoryRequestBundle(dataWidth, depth))
+        |    val arbMem_req  = Valid(new BlockMemoryRequestBundle(dataWidth,${addrWidthSt(F)} depth))
         |    val arbMem_resp = Flipped(Valid(new BlockMemoryResponseBundle(dataWidth)))
-        |    val req         = Flipped(Valid(new TempSaveRestoreRequestBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth)))
-        |    val resp        = Valid(new TempSaveRestoreResponseBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth))
+        |    val req         = Flipped(Valid(new TempSaveRestoreRequestBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,${addrWidthSt(F)}depth,stackMaxDepth,idWidth,cpWidth)))
+        |    val resp        = Valid(new TempSaveRestoreResponseBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,${addrWidthSt(F)}depth,stackMaxDepth,idWidth,cpWidth))
         |  })
-        |  val r_arbMem_req            = Reg(new BlockMemoryRequestBundle(dataWidth, depth))
+        |  val r_arbMem_req            = Reg(new BlockMemoryRequestBundle(dataWidth, ${addrWidthSt(F)} depth))
         |  val r_arbMem_req_valid      = RegInit(false.B)
         |  val r_arbMem_resp           = Reg(new BlockMemoryResponseBundle(dataWidth))
         |  val r_arbMem_resp_valid     = RegInit(false.B)
@@ -2518,11 +2528,11 @@ object ArbInputMap {
         |  io.arbMem_req.bits  := r_arbMem_req
         |  io.arbMem_req.valid := r_arbMem_req_valid
         |
-        |  val r_req        = RegInit(0.U.asTypeOf(new TempSaveRestoreRequestBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth)))
+        |  val r_req        = RegInit(0.U.asTypeOf(new TempSaveRestoreRequestBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,${addrWidthSt(F)}depth,stackMaxDepth,idWidth,cpWidth)))
         |  val r_req_valid  = RegNext(io.req.valid, init = false.B)
         |  r_req            := io.req.bits
         |
-        |  val r_resp       = RegInit(0.U.asTypeOf(new TempSaveRestoreResponseBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,depth,stackMaxDepth,idWidth,cpWidth)))
+        |  val r_resp       = RegInit(0.U.asTypeOf(new TempSaveRestoreResponseBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,${addrWidthSt(F)}depth,stackMaxDepth,idWidth,cpWidth)))
         |  val r_resp_valid = RegInit(false.B)
         |  io.resp.bits     := r_resp
         |  io.resp.valid    := r_resp_valid
@@ -2734,7 +2744,7 @@ import HwSynthesizer2._
     ArbRemainder(F, "RemainerUnsigned64", "arbRemainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
     ArbRemainder(T, "RemainerSigned64", "arbRemainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
     ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4, 35),
-    ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, anvil.config.memory, ArbTempSaveRestoreIP(), noXilinxIp, 36)
+    ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, anvil.config.memory, ArbTempSaveRestoreIP(), anvil.config.memoryAccess, noXilinxIp, 36)
   )
 
   @pure def findChiselModule(ip: ArbIpType): Option[ArbIpModule] = {
@@ -2746,12 +2756,22 @@ import HwSynthesizer2._
     return None()
   }
 
+  @strictpure def addrWidthSt(isParaDecl: B): String = {
+    if(isParaDecl && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) {
+      return "addrWidth:Int,"
+    } else if(!isParaDecl && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) {
+      return "addrWidth,"
+    } else {
+      return ""
+    }
+  }
+
   @strictpure def requestBundleParaTypeStr(ip: ArbIpType): String = {
     ip match {
       case ArbBlockMemoryIP() =>
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) "dataWidth:Int, depth: Int" else "dataWidth:Int, addrWidth: Int, depth: Int"
+        s"dataWidth:Int, ${addrWidthSt(T)} depth: Int"
       case ArbTempSaveRestoreIP() =>
-        "nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int, nS8:Int, nS16:Int, nS32:Int, nS64:Int, dataWidth:Int, depth:Int, stackMaxDepth:Int, idWidth: Int, cpWidth: Int"
+        s"nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int, nS8:Int, nS16:Int, nS32:Int, nS64:Int, dataWidth:Int, ${addrWidthSt(T)} depth:Int, stackMaxDepth:Int, idWidth: Int, cpWidth: Int"
       case _ => "dataWidth:Int"
     }
   }
@@ -2759,7 +2779,7 @@ import HwSynthesizer2._
   @strictpure def responseBundleParaTypeStr(ip: ArbIpType): String = {
     ip match {
       case ArbTempSaveRestoreIP() =>
-        "nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int, nS8:Int, nS16:Int, nS32:Int, nS64:Int, dataWidth:Int, depth:Int, stackMaxDepth:Int, idWidth: Int, cpWidth: Int"
+        s"nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int, nS8:Int, nS16:Int, nS32:Int, nS64:Int, dataWidth:Int, ${addrWidthSt(T)} depth:Int, stackMaxDepth:Int, idWidth: Int, cpWidth: Int"
       case _ => "dataWidth:Int"
     }
   }
@@ -2767,9 +2787,9 @@ import HwSynthesizer2._
   @strictpure def requestParaStr(ip: ArbIpType, maxRegisters: Util.TempVector): ST = {
     ip match {
       case ArbBlockMemoryIP() =>
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) st"dataWidth, depth" else st"dataWidth, addrWidth, depth"
+        st"dataWidth, ${addrWidthSt(F)} depth"
       case ArbTempSaveRestoreIP() =>
-        st"${(intParaSTs(maxRegisters, F), "")} dataWidth, depth, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth, cpWidth"
+        st"${(intParaSTs(maxRegisters, F), "")} dataWidth, ${addrWidthSt(F)} depth, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth, cpWidth"
       case _ => st"dataWidth"
     }
   }
@@ -2777,7 +2797,7 @@ import HwSynthesizer2._
   @strictpure def responseParaStr(ip: ArbIpType, maxRegisters: Util.TempVector): ST = {
     ip match {
       case ArbTempSaveRestoreIP() =>
-        st"${(intParaSTs(maxRegisters, F), "")} dataWidth, depth, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth, cpWidth"
+        st"${(intParaSTs(maxRegisters, F), "")} dataWidth, ${addrWidthSt(F)} depth, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth, cpWidth"
       case _ => st"dataWidth"
     }
   }
@@ -2811,7 +2831,7 @@ import HwSynthesizer2._
       case ArbBlockMemoryIP() =>
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) st", depth = MEMORY_DEPTH" else st", addrWidth = C_M_AXI_ADDR_WIDTH, depth = MEMORY_DEPTH"
       case ArbTempSaveRestoreIP() =>
-        st", ${(intParaSTs(maxRegisters, F), "")} depth = MEMORY_DEPTH, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth = idWidth, cpWidth = cpWidth"
+        st", ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) "addrWidth = C_M_AXI_ADDR_WIDTH," else ""} ${(intParaSTs(maxRegisters, F), "")} depth = MEMORY_DEPTH, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth = idWidth, cpWidth = cpWidth"
       case _ => st""
     }
   }
@@ -3397,13 +3417,13 @@ import HwSynthesizer2._
 
         val tempSaveRestoreWrapperIOSt: ST = if(ip != ArbTempSaveRestoreIP()) st"" else
           st"""
-              |val arbMem_req  = Valid(new BlockMemoryRequestBundle(dataWidth, depth))
+              |val arbMem_req  = Valid(new BlockMemoryRequestBundle(dataWidth, ${addrWidthSt(F)} depth))
               |val arbMem_resp = Flipped(Valid(new BlockMemoryResponseBundle(dataWidth)))
             """
 
         val tempSaveRestoreRegSt: ST = if(ip != ArbTempSaveRestoreIP()) st"" else
           st"""
-              |val r_arbMem_req = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(dataWidth, depth)))
+              |val r_arbMem_req = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(dataWidth, ${addrWidthSt(F)} depth)))
               |val r_arbMem_req_valid = RegInit(false.B)
               |val r_arbMem_resp_data  = RegNext(io.arbMem_resp.bits)
               |val r_arbMem_resp_valid = RegNext(io.arbMem_resp.valid, init = false.B)
