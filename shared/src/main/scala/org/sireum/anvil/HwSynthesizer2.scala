@@ -3908,7 +3908,7 @@ import HwSynthesizer2._
           |set PROJECT_PATH [lindex $$argv 0]
           |set PROJECT_NAME [lindex $$argv 1]
           |set FREQ_HZ [lindex $$argv 2]
-          |set FILE_PATH $${PROJECT_PATH}/chisel/generated_verilog
+          |set FILE_PATH $${PROJECT_PATH}/chisel/generated_verilog/FPGA${name}
           |
           |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP
           |create_project $$PROJECT_NAME $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME -part xczu9eg-ffvb1156-2-e
@@ -4042,8 +4042,8 @@ import HwSynthesizer2._
           |] [get_ips XilinxIndexAdder]
           |
           |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP/IP_dir
-          |ipx::package_project -root_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME//IP_dir -vendor user.org -library user -taxonomy /UserIP -import_files -set_current false
-          |ipx::unload_core $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME//IP_dir/component.xml
+          |ipx::package_project -root_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir -vendor user.org -library user -taxonomy /UserIP -import_files -set_current false
+          |ipx::unload_core $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir/component.xml
           |ipx::edit_ip_in_project -upgrade true -name tmp_edit_project -directory $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir/component.xml
           |
           |update_compile_order -fileset sources_1
@@ -5445,8 +5445,6 @@ import HwSynthesizer2._
           |  (new ChiselStage).execute(
           |    Array("--target-dir", "./generated_verilog/${moduleName}"),
           |    Seq(ChiselGeneratorAnnotation(() => new Top(
-          |      addrWidth = 32,
-          |      dataWidth = 64,
           |      cpWidth = ${anvil.cpTypeByteSize * 8},
           |      spWidth = ${anvil.spTypeByteSize * 8},
           |      idWidth = ${log2Up(globalRouterCount + 1)}
