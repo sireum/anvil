@@ -2707,6 +2707,7 @@ import HwSynthesizer2._
   var ipArbiterUsage: HashSSet[ArbIpType] = HashSSet.empty[ArbIpType]
   var globalRouterCount: Z = 1
   var ipRouterUsage: HashSMap[String, (Z, HashSSet[ArbIpType])] = HashSMap.empty
+  var idToQNameMap: HashSMap[String, QName] = HashSMap.empty
   var ipModules: ISZ[ArbIpModule] = ISZ[ArbIpModule](
     ArbAdder(F, "AdderUnsigned64", "arbAdderUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F), noXilinxIp, 0),
     ArbAdder(T, "AdderSigned64", "arbAdderSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, T), noXilinxIp, 1),
@@ -2962,6 +2963,13 @@ import HwSynthesizer2._
   def printProcedure(name: String, program: AST.IR.Program, output: Anvil.Output, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): Unit = {
     var r = HashSMap.empty[ISZ[String], ST]
     var allFunctionIpST: ISZ[(String, ST)] = ISZ[(String, ST)]()
+    // initialize idToQNameMap
+    for(o <- program.procedures) {
+      if(idToQNameMap.get(o.id).isEmpty) {
+        idToQNameMap = idToQNameMap + (o.id ~> (o.owner :+ o.id))
+      }
+    }
+
     for(o <- program.procedures) {
       hwLog.curProcedureId = replaceChar(replaceChar(o.id, '<', '$'), '>', '_')
       ipArbiterUsage = HashSSet.empty[ArbIpType]
@@ -2971,7 +2979,7 @@ import HwSynthesizer2._
         globalRouterCount = globalRouterCount + 1
       }
 
-      val isRecursive: B = recursiveProcedure.contains(o.owner :+ o.id)
+      val isRecursive: B = recursiveProcedure.contains(idToQNameMap.get(o.id).get)
 
       val procedureST = processProcedure(hwLog.curProcedureId, o, maxRegisters, globalInfoMap, isRecursive)
       allFunctionIpST = allFunctionIpST :+ (hwLog.curProcedureId, procedureST)
@@ -2988,7 +2996,7 @@ import HwSynthesizer2._
     @pure def hasRecursiveInAllfunctions(): B = {
       var result: B = F
       for(o <- program.procedures) {
-        if(recursiveProcedure.contains(o.owner :+ o.id)) {
+        if(recursiveProcedure.contains(idToQNameMap.get(o.id).get)) {
           result = T
         }
       }
@@ -5557,7 +5565,7 @@ import HwSynthesizer2._
     // use this boolean variable to update numOfBlockMemInterface
     var hasRecursiveFuncCall: B = F
     for(o <- ipRouterUsage.entries) {
-      if(recursiveProcedure.contains(ISZ[String]() :+ o._1)) {
+      if(recursiveProcedure.contains(idToQNameMap.get(o._1).get)) {
         hasRecursiveFuncCall = T
       }
     }
@@ -6112,7 +6120,7 @@ import HwSynthesizer2._
                |
                |  ${(allFunctionST, "")}
                |  ${(allArbiterST, "")}
-               |  ${tempSaveRestoreMemSt()}
+               |  ${if(hasRecursiveFuncCall) tempSaveRestoreMemSt() else st""}
                |
                |  ${if(isFpgaTop && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) axi4SlaveBramNativeConnST else st""}
                |
@@ -7184,7 +7192,11 @@ import HwSynthesizer2._
           globalRouterCount = globalRouterCount + 1
         }
 
-        if(isRecursive && exp.id == hwLog.curProcedureId) {
+        // only 2 cases need stack push when encounter function call
+        // case 1), self recursive function call
+        // case 2), mutually function call
+        if((exp.id == hwLog.curProcedureId && isRecursive) ||
+          (exp.id != hwLog.curProcedureId && recursiveProcedure.isMutuallyRecursive(idToQNameMap.get(hwLog.curProcedureId).get, idToQNameMap.get(exp.id).get))) {
           val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
           val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
 
