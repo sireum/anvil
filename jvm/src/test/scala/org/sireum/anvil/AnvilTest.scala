@@ -171,7 +171,13 @@ object AnvilTest {
     "seq.sc" ~> 32 +
     "shiftS64.sc" ~> 64 +
     "shiftU64.sc" ~> 64 +
-    "sum.sc" ~> 8
+    "sum.sc" ~> 8 +
+    "1.example.sc" ~> 8 +
+    "2.example.sc" ~> 8 +
+    "3.example.sc" ~> 8 +
+    "4.example.sc" ~> 8 +
+    "5.example.sc" ~> 8 +
+    "6.example.sc" ~> 8
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add.sc"
   val dontTestFileSet: HashSet[String] = HashSet.empty[String]
