@@ -1388,7 +1388,7 @@ object Util {
   }
 
   val nonTempGlobals: HashSet[QName] = HashSet.empty[QName] + memName + memTypeName + memSizeName + testNumName +
-    testNumNamePad
+    testNumNamePad + dpName
 
   @strictpure def isTempGlobal(anvil: Anvil, tipe: AST.Typed, name: ISZ[String]): B =
     anvil.config.tempGlobal && anvil.isScalar(tipe) && !nonTempGlobals.contains(name)

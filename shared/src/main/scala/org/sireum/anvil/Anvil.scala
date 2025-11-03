@@ -1061,9 +1061,13 @@ import Anvil._
           val label2 = fresh.label()
           val label3 = fresh.label()
           val label4 = fresh.label()
-          val assignSpGlobal = AST.IR.Stmt.Intrinsic(Intrinsic.Store(AST.IR.Exp.Int(spType, spLoc, g.pos),
-            0, isSigned(spType), typeByteSize(spType), AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
-            st"", spType, g.pos))
+          val assignSpGlobal: AST.IR.Stmt.Ground = if (config.tempGlobal) {
+            AST.IR.Stmt.Assign.Global(spName, spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)), g.pos)
+          } else {
+            AST.IR.Stmt.Intrinsic(Intrinsic.Store(AST.IR.Exp.Int(spType, spLoc, g.pos),
+              0, isSigned(spType), typeByteSize(spType), AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
+              st"", spType, g.pos))
+          }
           blocks = blocks :+ AST.IR.BasicBlock(b.label, ISZ(
             AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, T, AST.IR.Exp.Int(spType, spAdd, p.pos), g.pos))
           ), AST.IR.Jump.Goto(label1, g.pos))
@@ -2823,7 +2827,7 @@ import Anvil._
             case _ =>
               val newGround = LocalTempSubstutitor(map).transform_langastIRStmtGround(g).getOrElse(g)
               grounds = grounds :+ newGround
-              if (!config.isFirstGen) {
+              if (!config.isFirstGen && !config.tempGlobal) {
                 g match {
                   case AST.IR.Stmt.Assign.Local(_, _, _, rhs: AST.IR.Exp.GlobalVarRef, _) if !isScalar(rhs.tipe) =>
                     val temp = newGround.asInstanceOf[AST.IR.Stmt.Assign.Temp].lhs
@@ -3596,12 +3600,18 @@ import Anvil._
     val label = fresh.label()
     var blocks = ISZ(AST.IR.BasicBlock(label, grounds, AST.IR.Jump.Goto(startingLabel, p.pos)))
     if (!config.isFirstGen) {
-      val spLoc = globalMap.get(spName).get.loc
-      blocks = AST.IR.BasicBlock(fresh.label(), ISZ(
-        AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-          AST.IR.Exp.Int(spType, spLoc, p.pos), 0, isSigned(spType), typeByteSize(spType),
-          AST.IR.Exp.Int(spType, globalSize, p.pos), st"init SP", spType, p.pos))
-      ), AST.IR.Jump.Goto(label, p.pos)) +: blocks
+      if (config.tempGlobal) {
+        blocks = AST.IR.BasicBlock(fresh.label(), ISZ(
+          AST.IR.Stmt.Assign.Global(spName, spType, AST.IR.Exp.Int(spType, globalSize, p.pos), p.pos)
+        ), AST.IR.Jump.Goto(label, p.pos)) +: blocks
+      } else {
+        val spLoc = globalMap.get(spName).get.loc
+        blocks = AST.IR.BasicBlock(fresh.label(), ISZ(
+          AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+            AST.IR.Exp.Int(spType, spLoc, p.pos), 0, isSigned(spType), typeByteSize(spType),
+            AST.IR.Exp.Int(spType, globalSize, p.pos), st"init SP", spType, p.pos))
+        ), AST.IR.Jump.Goto(label, p.pos)) +: blocks
+      }
     }
     for (g <- stores) {
       val label2 = fresh.label()
