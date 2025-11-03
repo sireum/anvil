@@ -3145,7 +3145,7 @@ import HwSynthesizer2._
         globalRouterCount = globalRouterCount + 1
       }
 
-      val isRecursive: B = recursiveProcedure.contains(idToQNameMap.get(o.id).get)
+      val isRecursive: B = recursiveProcedures.contains(idToQNameMap.get(o.id).get)
 
       val procedureST = processProcedure(hwLog.curProcedureId, o, maxRegisters, globalInfoMap, isRecursive)
       allFunctionIpST = allFunctionIpST :+ (hwLog.curProcedureId, procedureST)
@@ -3162,7 +3162,7 @@ import HwSynthesizer2._
     @pure def hasRecursiveInAllfunctions(): B = {
       var result: B = F
       for(o <- program.procedures) {
-        if(recursiveProcedure.contains(idToQNameMap.get(o.id).get)) {
+        if(recursiveProcedures.contains(idToQNameMap.get(o.id).get)) {
           result = T
         }
       }
@@ -5755,7 +5755,7 @@ import HwSynthesizer2._
     // use this boolean variable to update numOfBlockMemInterface
     var hasRecursiveFuncCall: B = F
     for(o <- ipRouterUsage.entries) {
-      if(recursiveProcedure.contains(idToQNameMap.get(o._1).get)) {
+      if(recursiveProcedures.contains(idToQNameMap.get(o._1).get)) {
         hasRecursiveFuncCall = T
       }
     }
@@ -7387,7 +7387,7 @@ import HwSynthesizer2._
         // case 1), self recursive function call
         // case 2), mutually function call
         if((exp.id == hwLog.curProcedureId && isRecursive) ||
-          (exp.id != hwLog.curProcedureId && recursiveProcedure.isMutuallyRecursive(idToQNameMap.get(hwLog.curProcedureId).get, idToQNameMap.get(exp.id).get))) {
+          (exp.id != hwLog.curProcedureId && recursiveProcedures.isMutuallyRecursive(idToQNameMap.get(hwLog.curProcedureId).get, idToQNameMap.get(exp.id).get))) {
           val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
           val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
 
