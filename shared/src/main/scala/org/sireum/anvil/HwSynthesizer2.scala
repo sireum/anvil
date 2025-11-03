@@ -28,7 +28,7 @@ package org.sireum.anvil
 import org.sireum._
 import org.sireum.anvil._
 import org.sireum.anvil.Anvil.VarInfo
-import org.sireum.anvil.Util.{AnvilIRPrinter, constructLocalId, indexing, isTempGlobal, spType}
+import org.sireum.anvil.Util.{AnvilIRPrinter, callCycles, constructLocalId, indexing, isTempGlobal, spType}
 import org.sireum.lang.ast.{IR, Typed}
 import org.sireum.lang.ast.IR.{Exp, Jump, max}
 import org.sireum.lang.{ast => AST}
@@ -2732,11 +2732,20 @@ object ArbInputMap {
         |    val valid = Output(Bool())
         |  })
         |
-        |  val regVec1  = RegInit(VecInit(Seq.fill(n1)(0.U(1.W))))
-        |  val regVec8  = RegInit(VecInit(Seq.fill(n8)(0.U(8.W))))
-        |  val regVec16 = RegInit(VecInit(Seq.fill(n16)(0.U(16.W))))
-        |  val regVec32 = RegInit(VecInit(Seq.fill(n32)(0.U(32.W))))
-        |  val regVec64 = RegInit(VecInit(Seq.fill(n64)(0.U(64.W))))
+        |  def safeRegVecInit[T <: Data](n: Int, t: T): Vec[T] = {
+        |    if (n > 0) RegInit(VecInit(Seq.fill(n)(0.U.asTypeOf(t))))
+        |    else {
+        |      val v = Wire(Vec(1, t))
+        |      v := DontCare
+        |      v
+        |    }
+        |  }
+        |
+        |  val regVec1  = safeRegVecInit(n1, UInt(1.W))
+        |  val regVec8  = safeRegVecInit(n8, UInt(8.W))
+        |  val regVec16 = safeRegVecInit(n16, UInt(16.W))
+        |  val regVec32 = safeRegVecInit(n32, UInt(32.W))
+        |  val regVec64 = safeRegVecInit(n64, UInt(64.W))
         |
         |  val r_write      = RegNext(io.start & io.op)
         |  val r_write_next = RegNext(r_write)
@@ -2879,20 +2888,54 @@ import HwSynthesizer2._
     var cnt32: Z = 0
     var cnt64: Z = 0
     for(entry <- globalVarMap.entries) {
-      if(entry._2._1 == 1) {
+      if(entry._2._3 == 1) {
         cnt1 = cnt1 + 1
-      } else if(entry._2._1 <= 8) {
+      } else if(entry._2._3 <= 8) {
         cnt8 = cnt8 + 1
-      } else if(entry._2._1 <= 16) {
+      } else if(entry._2._3 <= 16) {
         cnt16 = cnt16 + 1
-      } else if(entry._2._1 <= 32) {
+      } else if(entry._2._3 <= 32) {
         cnt32 = cnt32 + 1
-      } else if(entry._2._1 <= 64) {
+      } else if(entry._2._3 <= 64) {
         cnt64 = cnt64 + 1
       }
     }
 
     return st"n1 = ${cnt1}, n8 = ${cnt8}, n16 = ${cnt16}, n32 = ${cnt32}, n64 = ${cnt64}, maxWidth = 64"
+  }
+
+  @strictpure def globalVarGtype(t: String): ST = {
+    val width: Z = globalVarMap.get(t).get._3
+    val result: ST = width match {
+      case 1 => st"1.U"
+      case 8 => st"2.U"
+      case 16 => st"4.U"
+      case 32 => st"8.U"
+      case 64 => st"16.U"
+      case _ => halt("not support this width of Global Variable")
+    }
+    return result
+  }
+
+  @strictpure def globalVarWidthST(t: String): ST = {
+    val width: Z = globalVarMap.get(t).get._3
+    val result: ST = width match {
+      case 1 => st"(0)"
+      case 8 => st"(7,0)"
+      case 16 => st"(15,0)"
+      case 32 => st"(31,0)"
+      case 64 => st"(63,0)"
+      case _ => halt("not support this width of Global Variable")
+    }
+    return result
+  }
+
+  @strictpure def isGlobalVar(exp: AST.IR.Exp): B = {
+    val result: B = exp match {
+      case exp: AST.IR.Exp.GlobalVarRef => T
+      case _ => F
+    }
+    return result
   }
 
   @strictpure def requestBundleParaTypeStr(ip: ArbIpType): String = {
@@ -2966,13 +3009,12 @@ import HwSynthesizer2._
       case ArbBlockMemoryIP() =>
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) st", depth = MEMORY_DEPTH" else st", addrWidth = C_M_AXI_ADDR_WIDTH, depth = MEMORY_DEPTH"
       case ArbTempSaveRestoreIP() =>
-        st"${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) ", addrWidth = C_M_AXI_ADDR_WIDTH," else ""} ${(intParaSTs(maxRegisters, F), "")} depth = MEMORY_DEPTH, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth = idWidth, cpWidth = cpWidth"
+        st"${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) ", addrWidth = C_M_AXI_ADDR_WIDTH," else ""} , ${(intParaSTs(maxRegisters, F), "")} depth = MEMORY_DEPTH, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth = idWidth, cpWidth = cpWidth"
       case ArbGlobalVarIP() =>
         st"${globalVarParaSt}"
       case _ => st""
     }
   }
-
 
   @pure def insDeclST(ip: ArbIpType): ST = {
     val targetModule: ArbIpModule = findChiselModule(ip).get
@@ -7013,70 +7055,86 @@ import HwSynthesizer2._
             """
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign) => {
+
         val targetReg: String = if(intrinsic.isSP) "SP" else "DP"
 
-        var leftST: ST = st""
-        var rightST: ST = st""
-        var isPlus: B = F
-        val regValueST: ST = processExpr(intrinsic.value, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
-        intrinsic.value match {
-          case AST.IR.Exp.Int(_, v, _) => {
-            if (v < 0) {
-              leftST = st"${targetReg}"
-              isPlus = F
-              rightST = st"${-v}.U"
-            }
-            else {
-              leftST = st"${targetReg}"
-              isPlus = T
-              rightST = st"${v}.U"
-            }
-          }
-          case _ => {
-            if (intrinsic.isInc) {
-              leftST = st"${targetReg}"
-              isPlus = T
-              rightST = regValueST
-            }
-          }
-        }
-
-        if(intrinsic.isInc) {
-          val ipT: ArbIpType = if(isPlus) ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F) else ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
-          ipArbiterUsage = ipArbiterUsage + ipT
-
-          var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-          val instanceName: String = getIpInstanceName(ipT).get
-          hashSMap = hashSMap +
-            ".a" ~> (st"${leftST.render}", "UInt".string) +
-            ".b" ~> (st"${rightST.render}", "UInt".string) +
-            "_valid" ~> (st"Mux(r_${instanceName}_resp_valid, false.B, true.B)", "Bool".string)
-          insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
-          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := r_${instanceName}_resp.out"
-          intrinsicST = st""
-        } else if(isIntrinsicLoad(intrinsic.value)) {
-          ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
-
-          val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
-          val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(intrinsic.value).get._1, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
-          val offsetWidth: Z = log2Up(anvil.config.memory * 8)
-          val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(intrinsic.value).get._2
-          val readOffsetST: ST = if(intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := ${regValueST}"
-
+        if(isGlobalVar(intrinsic.value)){
+          val rhsName: String = processExpr(intrinsic.value, F, ipPortLogic, maxRegisters, isRecursive, hwLog).render
+          val t = globalVarMap.get(rhsName).get
+          val sintConvertST: ST = if(t._2) st".asSInt" else st""
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           intrinsicST =
             st"""
-                |r_${instanceName}_req.mode := 1.U
-                |r_${instanceName}_req.readAddr := ${readAddrST.render}
-                |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
-                |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(intrinsic.value.tipe)}.U"}
-                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req.op := false.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         } else {
-          intrinsicST =
-            st"""
+          var leftST: ST = st""
+          var rightST: ST = st""
+          var isPlus: B = F
+          val regValueST: ST = processExpr(intrinsic.value, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+          intrinsic.value match {
+            case AST.IR.Exp.Int(_, v, _) => {
+              if (v < 0) {
+                leftST = st"${targetReg}"
+                isPlus = F
+                rightST = st"${-v}.U"
+              }
+              else {
+                leftST = st"${targetReg}"
+                isPlus = T
+                rightST = st"${v}.U"
+              }
+            }
+            case _ => {
+              if (intrinsic.isInc) {
+                leftST = st"${targetReg}"
+                isPlus = T
+                rightST = regValueST
+              }
+            }
+          }
+
+          if (intrinsic.isInc) {
+            val ipT: ArbIpType = if (isPlus) ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F) else ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
+            ipArbiterUsage = ipArbiterUsage + ipT
+
+            var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
+            val instanceName: String = getIpInstanceName(ipT).get
+            hashSMap = hashSMap +
+              ".a" ~> (st"${leftST.render}", "UInt".string) +
+              ".b" ~> (st"${rightST.render}", "UInt".string) +
+              "_valid" ~> (st"Mux(r_${instanceName}_resp_valid, false.B, true.B)", "Bool".string)
+            insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
+            ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := r_${instanceName}_resp.out"
+            intrinsicST = st""
+          } else if (isIntrinsicLoad(intrinsic.value)) {
+            ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
+
+            val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
+            val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(intrinsic.value).get._1, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+            val offsetWidth: Z = log2Up(anvil.config.memory * 8)
+            val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(intrinsic.value).get._2
+            val readOffsetST: ST = if (intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := ${regValueST}"
+
+            intrinsicST =
+              st"""
+                  |r_${instanceName}_req.mode := 1.U
+                  |r_${instanceName}_req.readAddr := ${readAddrST.render}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(intrinsic.value.tipe)}.U"}
+                  |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+              """
+          } else {
+            intrinsicST =
+              st"""
                 |${targetReg} := ${regValueST}"""
+          }
         }
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Decl) => {
@@ -7100,74 +7158,121 @@ import HwSynthesizer2._
 
     a match {
       case a: AST.IR.Stmt.Assign.Global => {
-        val lhsST: ST = globalName(a.name)
-        val rhsST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
-        if(isIntrinsicLoad(a.rhs)) {
-          ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
-
-          val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
-          val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
-          val offsetWidth: Z = log2Up(anvil.config.memory * 8)
-          val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
-          val readOffsetST: ST = if(intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
+        val lhsName: String = st"${(a.name, "_")}".render
+        val isLhsGlobal: B = globalVarMap.contains(lhsName)
+        if(isLhsGlobal) {
+          // only lhs is global variable, global variable write operation
+          val t = globalVarMap.get(lhsName).get
+          val padST: ST = if(t._3 < 64) st".pad(64)" else st""
+          val uintConvertST: ST = if(t._2) st".asUInt" else st""
+          val rhsST: ST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
           assignST =
             st"""
-                |r_${instanceName}_req.mode := 1.U
-                |r_${instanceName}_req.readAddr := ${readAddrST.render}
-                |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
-                |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U"}
-                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req.in := ${rhsST}${padST}${uintConvertST}
+                |r_arbGlobalVar_req.op := true.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(lhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
-        } else if(isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {
-          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
-          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ finalST
-          assignST = st""
         } else {
-          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
-          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
-
+          // only rhs is global variable, global variable read operation
+          val rhsName: String = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog).render
+          val t = globalVarMap.get(rhsName).get
+          val sintConvertST: ST = if(t._2) st".asSInt" else st""
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsName} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           assignST =
             st"""
-                |${finalST.render}
+                |r_arbGlobalVar_req.op := false.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         }
+//        val lhsST: ST = globalName(a.name)
+//        val rhsST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+//        if(isIntrinsicLoad(a.rhs)) {
+//          ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
+//
+//          val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
+//          val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+//          val offsetWidth: Z = log2Up(anvil.config.memory * 8)
+//          val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
+//          val readOffsetST: ST = if(intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
+//          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
+//          assignST =
+//            st"""
+//                |r_${instanceName}_req.mode := 1.U
+//                |r_${instanceName}_req.readAddr := ${readAddrST.render}
+//                |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
+//                |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U"}
+//                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+//              """
+//        } else if(isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {
+//          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
+//          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
+//          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ finalST
+//          assignST = st""
+//        } else {
+//          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
+//          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
+//
+//          assignST =
+//            st"""
+//                |${finalST.render}
+//              """
+//        }
       }
       case a: AST.IR.Stmt.Assign.Temp => {
         val regNo = a.lhs
         val lhsST: ST = if(!anvil.config.splitTempSizes)  st"${generalRegName}(${regNo}.U)" else st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
         val rhsST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
-        if(isIntrinsicLoad(a.rhs)) {
-          ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
-
-          val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
-          val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
-          val offsetWidth: Z = log2Up(anvil.config.memory * 8)
-          val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
-          val readOffsetST: ST = if(intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
+        if(isGlobalVar(a.rhs)) {
+          val rhsName: String = rhsST.render
+          val t = globalVarMap.get(rhsName).get
+          val sintConvertST: ST = if(t._2) st".asSInt" else st""
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           assignST =
             st"""
-                |r_${instanceName}_req.mode := 1.U
-                |r_${instanceName}_req.readAddr := ${readAddrST.render}
-                |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
-                |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U"}
-                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req.op := false.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
-        } else if(isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {
-          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
-          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ finalST
-          assignST = st""
         } else {
-          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
-          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
+          if (isIntrinsicLoad(a.rhs)) {
+            ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
 
-          assignST =
-            st"""
+            val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
+            val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+            val offsetWidth: Z = log2Up(anvil.config.memory * 8)
+            val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
+            val readOffsetST: ST = if (intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
+            assignST =
+              st"""
+                  |r_${instanceName}_req.mode := 1.U
+                  |r_${instanceName}_req.readAddr := ${readAddrST.render}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U"}
+                  |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+              """
+          } else if (isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {
+            val lhsContentST: ST = st"${if (isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if (isSignedExp(a.rhs)) ").asUInt" else ""}"
+            val finalST = st"${lhsST} := ${if (!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ finalST
+            assignST = st""
+          } else {
+            val lhsContentST: ST = st"${if (isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if (isSignedExp(a.rhs)) ").asUInt" else ""}"
+            val finalST = st"${lhsST} := ${if (!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
+
+            assignST =
+              st"""
                 |${finalST.render}
               """
+          }
         }
       }
       case _ => {
@@ -7245,7 +7350,7 @@ import HwSynthesizer2._
       }
       case exp: AST.IR.Exp.GlobalVarRef => {
         ipArbiterUsage = ipArbiterUsage + ArbGlobalVarIP()
-        exprST = st""
+        exprST = st"${(exp.name, "_")}"
       }
       case exp: AST.IR.Exp.Type => {
         val splitStr: String = if(anvil.typeBitSize(exp.exp.tipe)== anvil.typeBitSize(exp.t)) "" else s".pad(${anvil.typeBitSize(exp.t)})"
