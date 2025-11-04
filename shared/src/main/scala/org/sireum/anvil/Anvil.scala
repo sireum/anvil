@@ -884,6 +884,9 @@ import Anvil._
       return procedureMap.get(AST.IR.MethodContext(T, intrinsicName, name(name.size - 1), ifType))
         .get.body.asInstanceOf[AST.IR.Body.Basic].blocks
     }
+    @pure def intrinsicFun(name: QName): AST.Typed.Fun = {
+      return procedureMap.get(AST.IR.MethodContext(T, intrinsicName, name(name.size - 1), ifType)).get.tipe
+    }
     val leftShiftBlocks = intrinsicBlocks(leftShiftName)
     val rightShiftBlocks = intrinsicBlocks(rightShiftName)
     val readBlocks = intrinsicBlocks(readName)
@@ -894,15 +897,23 @@ import Anvil._
 
     @pure def updateIntrinsic(b: AST.IR.BasicBlock): ISZ[AST.IR.BasicBlock] = {
       b.jump match {
-        case AST.IR.Jump.Return(Some(e: AST.IR.Exp.GlobalVarRef), _) =>
+        case AST.IR.Jump.Return(Some(e: AST.IR.Exp.GlobalVarRef), _) if config.isFirstGen =>
           return ISZ(b(jump = AST.IR.Jump.Intrinsic(Intrinsic.GotoGlobal(e.name, b.jump.pos))))
         case _ =>
           b.grounds match {
             case ISZ(AST.IR.Stmt.Expr(e)) if e.isInObject && e.owner == intrinsicName =>
               val pos = e.pos
               val intrinsicLabel: Z = e.id match {
-                case `leftShiftId` => leftShiftBlocks(0).label
-                case `rightShiftId` => rightShiftBlocks(0).label
+                case `leftShiftId` =>
+                  if (!config.isFirstGen) {
+                    return ISZ(b)
+                  }
+                  leftShiftBlocks(0).label
+                case `rightShiftId` =>
+                  if (!config.isFirstGen) {
+                    return ISZ(b)
+                  }
+                  rightShiftBlocks(0).label
                 case `readAlignId` => return ISZ(b(grounds = ISZ(AST.IR.Stmt.Intrinsic(Intrinsic.AlignRw(T, pos)))))
                 case `writeAlignId` => return ISZ(b(grounds = ISZ(AST.IR.Stmt.Intrinsic(Intrinsic.AlignRw(F, pos)))))
               }
@@ -928,35 +939,49 @@ import Anvil._
           val pos = in.pos
           val label = fresh.label()
           val label2 = fresh.label()
-          val grounds = ISZ[AST.IR.Stmt.Ground](
+          var grounds = ISZ[AST.IR.Stmt.Ground](
             AST.IR.Stmt.Assign.Global(readBaseAddr, AST.Typed.u64, toU64(in.base), pos),
             AST.IR.Stmt.Assign.Global(readOffset, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, wrapU64(in.offset), pos), pos),
-            AST.IR.Stmt.Assign.Global(readLen, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, in.bytes, pos), pos),
-            AST.IR.Stmt.Assign.Global(readRet, AST.Typed.u64, toU64(AST.IR.Exp.Int(cpType, label2, pos)), pos)
+            AST.IR.Stmt.Assign.Global(readLen, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, in.bytes, pos), pos)
           )
+          if (config.isFirstGen) {
+            grounds = grounds :+ AST.IR.Stmt.Assign.Global(readRet, AST.Typed.u64, toU64(AST.IR.Exp.Int(cpType, label2, pos)), pos)
+          }
           var rhs: AST.IR.Exp = AST.IR.Exp.GlobalVarRef(readRes, AST.Typed.u64, pos)
           if (in.tipe != AST.Typed.u64) {
             rhs = AST.IR.Exp.Type(F, rhs, in.tipe.asInstanceOf[AST.Typed.Name], pos)
           }
+          val callReadBlock: AST.IR.BasicBlock =
+            if (config.isFirstGen) AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(readBlocks(0).label, pos))
+            else AST.IR.BasicBlock(label, ISZ(
+              AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, intrinsicName, readId, ISZ(), intrinsicFun(readName), pos))
+            ), AST.IR.Jump.Goto(label2, pos))
           return ISZ(
             b(grounds = grounds, jump = AST.IR.Jump.Goto(label, pos)),
-            AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(readBlocks(0).label, pos)),
+            callReadBlock,
             AST.IR.BasicBlock(label2, ISZ(AST.IR.Stmt.Assign.Temp(in.temp, rhs, pos)), b.jump)
           )
         case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.Store)) =>
           val pos = in.pos
           val label = fresh.label()
           val label2 = fresh.label()
-          val grounds = ISZ[AST.IR.Stmt.Ground](
+          var grounds = ISZ[AST.IR.Stmt.Ground](
             AST.IR.Stmt.Assign.Global(writeBaseAddr, AST.Typed.u64, toU64(in.base), pos),
             AST.IR.Stmt.Assign.Global(writeOffset, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, wrapU64(in.offset), pos), pos),
             AST.IR.Stmt.Assign.Global(writeLen, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, in.bytes, pos), pos),
-            AST.IR.Stmt.Assign.Global(writeValue, AST.Typed.u64, toU64(in.rhs), pos),
-            AST.IR.Stmt.Assign.Global(writeRet, AST.Typed.u64, toU64(AST.IR.Exp.Int(cpType, label2, pos)), pos)
+            AST.IR.Stmt.Assign.Global(writeValue, AST.Typed.u64, toU64(in.rhs), pos)
           )
+          if (config.isFirstGen) {
+            grounds = grounds :+ AST.IR.Stmt.Assign.Global(writeRet, AST.Typed.u64, toU64(AST.IR.Exp.Int(cpType, label2, pos)), pos)
+          }
+          val callWriteBlock: AST.IR.BasicBlock =
+            if (config.isFirstGen) AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(writeBlocks(0).label, pos))
+            else AST.IR.BasicBlock(label, ISZ(
+              AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, intrinsicName, writeId, ISZ(), intrinsicFun(writeName), pos))
+            ), AST.IR.Jump.Goto(label2, pos))
           return ISZ(
             b(grounds = grounds, jump = AST.IR.Jump.Goto(label, pos)),
-            AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(writeBlocks(0).label, pos)),
+            callWriteBlock,
             AST.IR.BasicBlock(label2, ISZ(), b.jump)
           )
         case _ =>
@@ -968,20 +993,26 @@ import Anvil._
 
     var blocks = ISZ[AST.IR.BasicBlock]()
 
-    for (b <- body.blocks; b2 <- updateRwIntrinsic(b)) {
-      blocks = blocks :+ b2
-    }
-    for (b <- leftShiftBlocks; b2 <- updateIntrinsic(b)) {
-      blocks = blocks :+ b2
-    }
-    for (b <- rightShiftBlocks; b2 <- updateIntrinsic(b)) {
-      blocks = blocks :+ b2
-    }
-    for (b <- readBlocks; b2 <- updateIntrinsic(b)) {
-      blocks = blocks :+ b2
-    }
-    for (b <- writeBlocks; b2 <- updateIntrinsic(b)) {
-      blocks = blocks :+ b2
+    if (config.isFirstGen) {
+      for (b <- body.blocks; b2 <- updateRwIntrinsic(b)) {
+        blocks = blocks :+ b2
+      }
+      for (b <- leftShiftBlocks; b2 <- updateIntrinsic(b)) {
+        blocks = blocks :+ b2
+      }
+      for (b <- rightShiftBlocks; b2 <- updateIntrinsic(b)) {
+        blocks = blocks :+ b2
+      }
+      for (b <- readBlocks; b2 <- updateIntrinsic(b)) {
+        blocks = blocks :+ b2
+      }
+      for (b <- writeBlocks; b2 <- updateIntrinsic(b)) {
+        blocks = blocks :+ b2
+      }
+    } else {
+      for (b <- body.blocks; b2 <- updateIntrinsic(b); b3 <- updateRwIntrinsic(b2)) {
+        blocks = blocks :+ b3
+      }
     }
     return p(body = body(blocks = blocks))
   }
@@ -2181,6 +2212,9 @@ import Anvil._
 
   @pure def countNumOfIncomingJumps(blocks: ISZ[AST.IR.BasicBlock]): HashMap[Z, Z] = {
     var r = HashMap ++ (for (b <- blocks) yield (b.label, z"0"))
+    if (config.alignAxi4 && !config.isFirstGen) {
+      r = r ++ ISZ[(Z, Z)]((0, 0))
+    }
     for (b <- blocks) {
       for (g <- b.grounds) {
         g match {

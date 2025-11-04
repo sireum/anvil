@@ -154,7 +154,12 @@ object IRSimulator {
         for (entry <- globalMap.entries) {
           val (name, info) = entry
           if (info.isScalar) {
-            val v: Value = if (Util.isTempGlobal(sim.anvil, info.tipe, name)) globalScalars(info.loc) else Value.fromRawU64(sim.anvil, sim.load(memory, info.loc, info.size)._1, info.tipe)
+            val v: Value =
+              if (Util.isTempGlobal(sim.anvil, info.tipe, name)) globalScalars(info.loc)
+              else Value.fromRawU64(sim.anvil,
+                if (sim.anvil.config.alignAxi4) sim.loadAlign(memory64, info.loc / 8)._1
+                else sim.load(memory, info.loc, info.size)._1,
+                info.tipe)
             globalSTs = globalSTs :+ st"${(name, ".")}@[${shortenHexString(conversions.Z.toU64(info.loc))} (${info.loc}), ${info.size}] = ${shortenHexString(v.toRawU64)} (${v.value})"
           } else {
             globalSTs = globalSTs :+ st"${(name, ".")}@[${shortenHexString(conversions.Z.toU64(info.loc))} (${info.loc}), ${info.size}] = ..."

@@ -49,7 +49,7 @@ class IRSimulatorTest extends SireumRcSpec {
   }
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last == "factorial.sc" || p.last == "add.sc" || p.last == "bubble.sc" }//!p.last.endsWith("dll.sc") && !p.last.endsWith("print.sc") }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last == "add.sc" || p.last == "factorial.sc" || p.last == "bubble.sc" }//!p.last.endsWith("dll.sc") && !p.last.endsWith("print.sc") }
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
@@ -71,7 +71,7 @@ class IRSimulatorTest extends SireumRcSpec {
 //      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId})", v)
-//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId}, ${AnvilTest.alignId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId}, ${AnvilTest.alignId})", v)
 
       r
     }) yield pair
@@ -190,7 +190,7 @@ class IRSimulatorTest extends SireumRcSpec {
                 val dp = if (config.isFirstGen) state.DP.toZ else {
                   val offset = ir.globalInfoMap.get(Util.dpName).get.loc
                   if (config.alignAxi4) {
-                    state.memory64(offset).toZ
+                    state.memory64(offset / 8).toZ
                   } else {
                     var r = u64"0"
                     var mask = u64"0"
