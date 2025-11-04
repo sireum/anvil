@@ -255,6 +255,7 @@ import Anvil._
       case _: AST.IR.Exp.F64 => F
       case _: AST.IR.Exp.R => F
       case _: AST.IR.Exp.String => F
+      case e: AST.IR.Exp.Apply => config.isFirstGen || e.owner != intrinsicName
       case e: AST.IR.Exp.LocalVarRef => config.tempLocal ___>: !(isScalar(e.tipe) || isParam(e.context, e.id))
       case _ => T
     }
@@ -287,7 +288,7 @@ import Anvil._
           case Some(t) => Some(t)
           case _ => None()
         }
-        val p = (if (m.info.owner == intrinsicName) irtIntrinsic else irt).
+        val p = (if (config.isFirstGen && m.info.owner == intrinsicName) irtIntrinsic else irt).
           translateMethod(F, receiverOpt, m.info.owner, m.info.ast)
         procedures = procedures :+ p
         procedureMod(p.context) match {
