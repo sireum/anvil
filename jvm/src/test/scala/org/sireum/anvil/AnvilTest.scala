@@ -77,33 +77,63 @@ object AnvilTest {
       }
     } else {
       if (tempGlobal) {
-        return HashMap.empty[String, Z] +
-          "add.sc" ~> 104 +
-          "assert.sc" ~> 288 +
-          "bubble.sc" ~> 160 +
-          "construct.sc" ~> 256 +
-          "divrem.sc" ~> 136 +
-          "dll.sc" ~> 848 +
-          "factorial.sc" ~> 120 +
-          "global.sc" ~> 112 +
-          "indexing-obj.sc" ~> 192 +
-          "indexing.sc" ~> 144 +
-          "instanceof.sc" ~> 120 +
-          "local-reuse.sc" ~> 120 +
-          "mult.sc" ~> 168 +
-          "print.sc" ~> 936 +
-          "print-no-float.sc" ~> 344 +
-          "printU64.sc" ~> 168 +
-          "seq.sc" ~> 248 +
-          "shiftS64.sc" ~> 184 +
-          "shiftU64.sc" ~> 176 +
-          "sum.sc" ~> 160 +
-          "1.example.sc" ~> 216 +
-          "2.example.sc" ~> 216 +
-          "3.example.sc" ~> 216 +
-          "4.example.sc" ~> 216 +
-          "5.example.sc" ~> 216 +
-          "6.example.sc" ~> 216
+        if (alignAxi4) {
+          return HashMap.empty[String, Z] +
+            "add.sc" ~> 120 +
+            "assert.sc" ~> 288 +
+            "bubble.sc" ~> 176 +
+            "construct.sc" ~> 256 +
+            "divrem.sc" ~> 136 +
+            "dll.sc" ~> 848 +
+            "factorial.sc" ~> 136 +
+            "global.sc" ~> 112 +
+            "indexing-obj.sc" ~> 192 +
+            "indexing.sc" ~> 144 +
+            "instanceof.sc" ~> 120 +
+            "local-reuse.sc" ~> 120 +
+            "mult.sc" ~> 168 +
+            "print.sc" ~> 936 +
+            "print-no-float.sc" ~> 344 +
+            "printU64.sc" ~> 168 +
+            "seq.sc" ~> 248 +
+            "shiftS64.sc" ~> 184 +
+            "shiftU64.sc" ~> 176 +
+            "sum.sc" ~> 160 +
+            "1.example.sc" ~> 232 +
+            "2.example.sc" ~> 232 +
+            "3.example.sc" ~> 232 +
+            "4.example.sc" ~> 232 +
+            "5.example.sc" ~> 232 +
+            "6.example.sc" ~> 232
+        } else {
+          return HashMap.empty[String, Z] +
+            "add.sc" ~> 104 +
+            "assert.sc" ~> 288 +
+            "bubble.sc" ~> 160 +
+            "construct.sc" ~> 256 +
+            "divrem.sc" ~> 136 +
+            "dll.sc" ~> 848 +
+            "factorial.sc" ~> 120 +
+            "global.sc" ~> 112 +
+            "indexing-obj.sc" ~> 192 +
+            "indexing.sc" ~> 144 +
+            "instanceof.sc" ~> 120 +
+            "local-reuse.sc" ~> 120 +
+            "mult.sc" ~> 168 +
+            "print.sc" ~> 936 +
+            "print-no-float.sc" ~> 344 +
+            "printU64.sc" ~> 168 +
+            "seq.sc" ~> 248 +
+            "shiftS64.sc" ~> 184 +
+            "shiftU64.sc" ~> 176 +
+            "sum.sc" ~> 160 +
+            "1.example.sc" ~> 216 +
+            "2.example.sc" ~> 216 +
+            "3.example.sc" ~> 216 +
+            "4.example.sc" ~> 216 +
+            "5.example.sc" ~> 216 +
+            "6.example.sc" ~> 216
+        }
       } else {
         return HashMap.empty[String, Z] +
           "add.sc" ~> 192 +
@@ -159,13 +189,7 @@ object AnvilTest {
     "seq.sc" ~> 32 +
     "shiftS64.sc" ~> 64 +
     "shiftU64.sc" ~> 64 +
-    "sum.sc" ~> 8 +
-    "1.example.sc" ~> 8 +
-    "2.example.sc" ~> 8 +
-    "3.example.sc" ~> 8 +
-    "4.example.sc" ~> 8 +
-    "5.example.sc" ~> 8 +
-    "6.example.sc" ~> 8
+    "sum.sc" ~> 8
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add.sc"
   val dontTestFileSet: HashSet[String] = HashSet.empty[String]
