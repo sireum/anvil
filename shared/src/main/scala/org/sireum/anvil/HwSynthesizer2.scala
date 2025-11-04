@@ -7202,46 +7202,10 @@ import HwSynthesizer2._
                 |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         }
-//        val lhsST: ST = globalName(a.name)
-//        val rhsST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
-//        if(isIntrinsicLoad(a.rhs)) {
-//          ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
-//
-//          val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
-//          val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
-//          val offsetWidth: Z = log2Up(anvil.config.memory * 8)
-//          val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
-//          val readOffsetST: ST = if(intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
-//          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
-//          assignST =
-//            st"""
-//                |r_${instanceName}_req.mode := 1.U
-//                |r_${instanceName}_req.readAddr := ${readAddrST.render}
-//                |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
-//                |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U"}
-//                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
-//              """
-//        } else if(isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {
-//          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
-//          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
-//          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ finalST
-//          assignST = st""
-//        } else {
-//          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
-//          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
-//
-//          assignST =
-//            st"""
-//                |${finalST.render}
-//              """
-//        }
       }
       case a: AST.IR.Stmt.Assign.Temp => {
         val regNo = a.lhs
         val lhsST: ST = if(!anvil.config.splitTempSizes)  st"${generalRegName}(${regNo}.U)" else st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
-        if(hwLog.currentLabel == 15) {
-          println(hwLog.currentLabel)
-        }
         val rhsST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val temp: AST.IR.Exp = if(isTypeExp(a.rhs)) a.rhs.asInstanceOf[AST.IR.Exp.Type].exp else a.rhs
         if(isGlobalVar(temp)) {
