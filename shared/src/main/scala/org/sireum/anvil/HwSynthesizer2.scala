@@ -2938,6 +2938,14 @@ import HwSynthesizer2._
     return result
   }
 
+  @strictpure def isTypeExp(exp: AST.IR.Exp): B = {
+    val result: B = exp match {
+      case exp: AST.IR.Exp.Type => T
+      case _ => F
+    }
+    return result
+  }
+
   @strictpure def requestBundleParaTypeStr(ip: ArbIpType): String = {
     ip match {
       case ArbBlockMemoryIP() =>
@@ -3133,6 +3141,10 @@ import HwSynthesizer2._
     return intParaST
   }
 
+  @strictpure def replaceFuncName(name: String): String = {
+    return replaceChar(replaceChar(name, '<', '$'), '>', '_')
+  }
+
   /*
     Notes/links:
     * Slang IR: https://github.com/sireum/slang/blob/master/ast/shared/src/main/scala/org/sireum/lang/ast/IR.scala
@@ -3143,8 +3155,8 @@ import HwSynthesizer2._
     var allFunctionIpST: ISZ[(String, ST)] = ISZ[(String, ST)]()
     // initialize idToQNameMap
     for(o <- program.procedures) {
-      if(idToQNameMap.get(o.id).isEmpty) {
-        idToQNameMap = idToQNameMap + (o.id ~> (o.owner :+ o.id))
+      if(idToQNameMap.get(replaceFuncName(o.id)).isEmpty) {
+        idToQNameMap = idToQNameMap + (replaceFuncName(o.id) ~> (o.owner :+ o.id))
       }
     }
 
@@ -3179,7 +3191,7 @@ import HwSynthesizer2._
     }
 
     for(o <- program.procedures) {
-      hwLog.curProcedureId = replaceChar(replaceChar(o.id, '<', '$'), '>', '_')
+      hwLog.curProcedureId = replaceFuncName(o.id)
       ipArbiterUsage = HashSSet.empty[ArbIpType]
 
       if(!ipRouterUsage.contains(hwLog.curProcedureId)) {
@@ -3187,7 +3199,7 @@ import HwSynthesizer2._
         globalRouterCount = globalRouterCount + 1
       }
 
-      val isRecursive: B = recursiveProcedures.contains(idToQNameMap.get(o.id).get)
+      val isRecursive: B = recursiveProcedures.contains(idToQNameMap.get(replaceFuncName(o.id)).get)
 
       val procedureST = processProcedure(hwLog.curProcedureId, o, maxRegisters, globalInfoMap, isRecursive)
       allFunctionIpST = allFunctionIpST :+ (hwLog.curProcedureId, procedureST)
@@ -3204,7 +3216,7 @@ import HwSynthesizer2._
     @pure def hasRecursiveInAllfunctions(): B = {
       var result: B = F
       for(o <- program.procedures) {
-        if(recursiveProcedures.contains(idToQNameMap.get(o.id).get)) {
+        if(recursiveProcedures.contains(idToQNameMap.get(replaceFuncName(o.id)).get)) {
           result = T
         }
       }
@@ -5797,7 +5809,7 @@ import HwSynthesizer2._
     // use this boolean variable to update numOfBlockMemInterface
     var hasRecursiveFuncCall: B = F
     for(o <- ipRouterUsage.entries) {
-      if(recursiveProcedures.contains(idToQNameMap.get(o._1).get)) {
+      if(recursiveProcedures.contains(idToQNameMap.get(replaceFuncName(o._1)).get)) {
         hasRecursiveFuncCall = T
       }
     }
@@ -7227,8 +7239,12 @@ import HwSynthesizer2._
       case a: AST.IR.Stmt.Assign.Temp => {
         val regNo = a.lhs
         val lhsST: ST = if(!anvil.config.splitTempSizes)  st"${generalRegName}(${regNo}.U)" else st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
+        if(hwLog.currentLabel == 15) {
+          println(hwLog.currentLabel)
+        }
         val rhsST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
-        if(isGlobalVar(a.rhs)) {
+        val temp: AST.IR.Exp = if(isTypeExp(a.rhs)) a.rhs.asInstanceOf[AST.IR.Exp.Type].exp else a.rhs
+        if(isGlobalVar(temp)) {
           val rhsName: String = rhsST.render
           val t = globalVarMap.get(rhsName).get
           val sintConvertST: ST = if(t._2) st".asSInt" else st""
@@ -7353,8 +7369,9 @@ import HwSynthesizer2._
         exprST = st"${(exp.name, "_")}"
       }
       case exp: AST.IR.Exp.Type => {
-        val splitStr: String = if(anvil.typeBitSize(exp.exp.tipe)== anvil.typeBitSize(exp.t)) "" else s".pad(${anvil.typeBitSize(exp.t)})"
-        exprST = st"${processExpr(exp.exp, F, ipPortLogic, maxRegisters, isRecursive, hwLog)}${if(anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}${if(!anvil.config.splitTempSizes) "" else splitStr}"
+        val splitStr: String = if (anvil.typeBitSize(exp.exp.tipe) == anvil.typeBitSize(exp.t)) "" else s".pad(${anvil.typeBitSize(exp.t)})"
+        val postfix: ST = if(isGlobalVar(exp.exp)) st"" else st"${if (anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}${if (!anvil.config.splitTempSizes) "" else splitStr}"
+        exprST = st"${processExpr(exp.exp, F, ipPortLogic, maxRegisters, isRecursive, hwLog)}${postfix}"
       }
       case exp: AST.IR.Exp.Unary => {
         val variableST = processExpr(exp.exp, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
@@ -7492,7 +7509,7 @@ import HwSynthesizer2._
         // case 1), self recursive function call
         // case 2), mutually function call
         if((exp.id == hwLog.curProcedureId && isRecursive) ||
-          (exp.id != hwLog.curProcedureId && recursiveProcedures.isMutuallyRecursive(idToQNameMap.get(hwLog.curProcedureId).get, idToQNameMap.get(exp.id).get))) {
+          (exp.id != hwLog.curProcedureId && recursiveProcedures.isMutuallyRecursive(idToQNameMap.get(replaceFuncName(hwLog.curProcedureId)).get, idToQNameMap.get(replaceFuncName(exp.id)).get))) {
           val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
           val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
 
