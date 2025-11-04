@@ -3009,7 +3009,7 @@ import HwSynthesizer2._
       case ArbBlockMemoryIP() =>
         if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) st", depth = MEMORY_DEPTH" else st", addrWidth = C_M_AXI_ADDR_WIDTH, depth = MEMORY_DEPTH"
       case ArbTempSaveRestoreIP() =>
-        st"${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) ", addrWidth = C_M_AXI_ADDR_WIDTH," else ""} , ${(intParaSTs(maxRegisters, F), "")} depth = MEMORY_DEPTH, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth = idWidth, cpWidth = cpWidth"
+        st"${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) ", addrWidth = C_M_AXI_ADDR_WIDTH" else ""} , ${(intParaSTs(maxRegisters, F), "")} depth = MEMORY_DEPTH, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth = idWidth, cpWidth = cpWidth"
       case ArbGlobalVarIP() =>
         st"${globalVarParaSt}"
       case _ => st""
