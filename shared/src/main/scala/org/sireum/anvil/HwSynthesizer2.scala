@@ -2481,6 +2481,7 @@ object ArbInputMap {
                                    val exp: ArbIpType,
                                    val memoryType: Anvil.Config.MemoryAccess.Type,
                                    val nonXilinxIP: B,
+                                   val aligned: B,
                                    val arbID: Z) extends ArbIpModule {
   @strictpure override def arbIpId: Z = arbID
   @strictpure override def signed: B = signedPort
@@ -2601,8 +2602,8 @@ object ArbInputMap {
         |    is(2.U) {
         |      r_arbMem_req.mode := 2.U
         |      r_arbMem_req.writeAddr := r_stack_addr
-        |      r_arbMem_req.writeOffset := 0.U
-        |      r_arbMem_req.writeLen := 8.U
+        |      ${if(!aligned) st"r_arbMem_req.writeOffset := 0.U" else st""}
+        |      ${if(!aligned) st"r_arbMem_req.writeLen := 8.U" else st""}
         |      r_arbMem_req.writeData := words_w(r_push_index)
         |      r_arbMem_req_valid := Mux(r_arbMem_resp_valid, false.B, true.B)
         |
@@ -2641,8 +2642,8 @@ object ArbInputMap {
         |    is(2.U) {
         |      r_arbMem_req.mode := 1.U
         |      r_arbMem_req.readAddr := r_stack_addr
-        |      r_arbMem_req.readOffset := 0.U
-        |      r_arbMem_req.readLen := 8.U
+        |      ${if(!aligned) st"r_arbMem_req.readOffset := 0.U" else st""}
+        |      ${if(!aligned) st"r_arbMem_req.readLen := 8.U" else st""}
         |      r_arbMem_req_valid := Mux(r_arbMem_resp_valid, false.B, true.B)
         |
         |      when(r_arbMem_resp_valid) {
@@ -2821,6 +2822,8 @@ import HwSynthesizer2._
   var idToQNameMap: HashSMap[String, QName] = HashSMap.empty
   // record the globalVar: name -> (index, signed, width)
   var globalVarMap: HashSMap[String, (Z, B, Z)] = HashSMap.empty
+  // record whether using alignAxi4 mini state machine and corresponding string template
+  var alignAxi4MiniStateMachineMap: HashSMap[String, ST] = HashSMap.empty
   var ipModules: ISZ[ArbIpModule] = ISZ[ArbIpModule](
     ArbAdder(F, "AdderUnsigned64", "arbAdderUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F), noXilinxIp, 0),
     ArbAdder(T, "AdderSigned64", "arbAdderSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, T), noXilinxIp, 1),
@@ -2858,7 +2861,7 @@ import HwSynthesizer2._
     ArbRemainder(F, "RemainerUnsigned64", "arbRemainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
     ArbRemainder(T, "RemainerSigned64", "arbRemainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
     ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4, 35),
-    ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, anvil.config.memory, ArbTempSaveRestoreIP(), anvil.config.memoryAccess, noXilinxIp, 36),
+    ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, anvil.config.memory, ArbTempSaveRestoreIP(), anvil.config.memoryAccess, noXilinxIp, anvil.config.alignAxi4, 36),
     ArbGlobalVar(F, "GlobalVar", "arbGlobalVar", 64, ArbGlobalVarIP(), noXilinxIp, 37)
   )
 
@@ -2879,6 +2882,35 @@ import HwSynthesizer2._
     } else {
       return ""
     }
+  }
+
+  @pure def globalVarIndexMax: Z = {
+    var cnt1: Z = 0
+    var cnt8: Z = 0
+    var cnt16: Z = 0
+    var cnt32: Z = 0
+    var cnt64: Z = 0
+    var max: Z = 0
+    for(entry <- globalVarMap.entries) {
+      if(entry._2._3 == 1) {
+        cnt1 = cnt1 + 1
+        max = if(max < cnt1) cnt1 else max
+      } else if(entry._2._3 <= 8) {
+        cnt8 = cnt8 + 1
+        max = if(max < cnt8) cnt8 else max
+      } else if(entry._2._3 <= 16) {
+        cnt16 = cnt16 + 1
+        max = if(max < cnt16) cnt16 else max
+      } else if(entry._2._3 <= 32) {
+        cnt32 = cnt32 + 1
+        max = if(max < cnt32) cnt32 else max
+      } else if(entry._2._3 <= 64) {
+        cnt64 = cnt64 + 1
+        max = if(max < cnt64) cnt64 else max
+      }
+    }
+
+    return max
   }
 
   @pure def globalVarParaSt: ST = {
@@ -3193,6 +3225,7 @@ import HwSynthesizer2._
     for(o <- program.procedures) {
       hwLog.curProcedureId = replaceFuncName(o.id)
       ipArbiterUsage = HashSSet.empty[ArbIpType]
+      alignAxi4MiniStateMachineMap = HashSMap.empty
 
       if(!ipRouterUsage.contains(hwLog.curProcedureId)) {
         ipRouterUsage = ipRouterUsage + hwLog.curProcedureId ~> (globalRouterCount, HashSSet.empty[ArbIpType])
@@ -6442,6 +6475,48 @@ import HwSynthesizer2._
         return st"""${(smST, "\n")}"""
       }
 
+      @pure def alignAxi4ST: ST = {
+        if(alignAxi4MiniStateMachineMap.isEmpty) {
+          return st""
+        } else {
+          var alignSTs: ISZ[ST] = ISZ[ST]()
+          for(entry <- alignAxi4MiniStateMachineMap.entries) {
+            if(entry._1 == "read") {
+              alignSTs = alignSTs :+
+                st"""
+                    |val readMiniStart = RegInit(false.B)
+                    |val readMiniValid = RegInit(false.B)
+                    |val readMiniCP = RegInit(0.U(3.W))
+                    |val readMiniAddr = RegInit(0.U(log2Up(depth).W))
+                    |val readMiniRes = RegInit(0.U(dataWidth.W))
+                    |val readMiniGtype_1 = RegInit(0.U(5.W))
+                    |val readMiniIndex_1 = RegInit(0.U(log2Up(${globalVarIndexMax}).W))
+                    |val readMiniGtype_2 = RegInit(0.U(5.W))
+                    |val readMiniIndex_2 = RegInit(0.U(log2Up(${globalVarIndexMax}).W))
+                    |
+                    |${entry._2}
+                  """
+            } else {
+              alignSTs = alignSTs :+
+                st"""
+                    |val writeMiniStart = RegInit(false.B)
+                    |val writeMiniValid = RegInit(false.B)
+                    |val writeMiniCP = RegInit(0.U(3.W))
+                    |val writeMiniAddr = RegInit(0.U(log2Up(depth).W))
+                    |val writeMiniValue = RegInit(0.U(dataWidth.W))
+                    |val writeMiniGtype_1 = RegInit(0.U(5.W))
+                    |val writeMiniIndex_1 = RegInit(0.U(log2Up(${globalVarIndexMax}).W))
+                    |val writeMiniGtype_2 = RegInit(0.U(5.W))
+                    |val writeMiniIndex_2 = RegInit(0.U(log2Up(${globalVarIndexMax}).W))
+                    |
+                    |${entry._2}
+                  """
+            }
+          }
+          return st"${(alignSTs, "")}"
+        }
+      }
+
       return st"""
                  |import chisel3._
                  |import chisel3.util._
@@ -6491,6 +6566,8 @@ import HwSynthesizer2._
                  |  ${if(isRecursive) st"when(r_routeIn_valid) {r_saveDstCP := r_routeIn.dstCP}" else st""}
                  |
                  |  ${(allArbInstanceST, "\n")}
+                 |
+                 |  ${alignAxi4ST}
                  |
                  |  ${stateMachineCallST}
                  |}
@@ -6947,26 +7024,127 @@ import HwSynthesizer2._
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.AlignRw) => {
         ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
 
-        val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
-        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req.mode := 0.U"
+        val readAlignAddrName: String = st"${(Util.readAlignAddr, "_")}".render
+        val readAlignResName: String = st"${(Util.readAlignRes, "_")}".render
+        val t_readAlignAddr = globalVarMap.get(readAlignAddrName).get
+        val t_readAlignRes = globalVarMap.get(readAlignResName).get
+
+        val writeAlignAddrName: String = st"${(Util.writeAlignAddr, "_")}".render
+        val writeAlignValueName: String = st"${(Util.writeAlignValue, "_")}".render
+        val t_writeAlignAddr = globalVarMap.get(writeAlignAddrName).get
+        val t_writeAlignValue = globalVarMap.get(writeAlignValueName).get
 
         if(intrinsic.isRead) {
-          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${globalName(Util.readAlignRes)} := r_${instanceName}_resp.data"
+          val readST: ST =
+            st"""
+                |switch(readMiniCP) {
+                |  is(0.U) {
+                |    readMiniValid := false.B
+                |    readMiniCP := Mux(readMiniStart, 1.U, 0.U)
+                |  }
+                |  is(1.U) {
+                |    r_arbGlobalVar_req.op := false.B
+                |    r_arbGlobalVar_req.gtype := readMiniGtype_1
+                |    r_arbGlobalVar_req.index := readMiniIndex_1
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    when(r_arbGlobalVar_resp_valid) {
+                |      readMiniAddr := r_arbGlobalVar_resp.out
+                |      readMiniCP := 2.U
+                |    }
+                |  }
+                |  is(2.U) {
+                |    r_arbBlockMemory_req.mode := 1.U
+                |    r_arbBlockMemory_req.readAddr := readMiniAddr
+                |    r_arbBlockMemory_req_valid := Mux(r_arbBlockMemory_resp_valid, false.B, true.B)
+                |    when(r_arbBlockMemory_resp_valid) {
+                |      readMiniRes := r_arbBlockMemory_resp.data
+                |      r_arbBlockMemory_req.mode := 0.U
+                |      readMiniCP := 3.U
+                |    }
+                |  }
+                |  is(3.U) {
+                |    r_arbGlobalVar_req.in := readMiniRes
+                |    r_arbGlobalVar_req.op := true.B
+                |    r_arbGlobalVar_req.gtype := readMiniGtype_2
+                |    r_arbGlobalVar_req.index := readMiniIndex_2
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    when(r_arbGlobalVar_resp_valid) {
+                |      readMiniCP := 4.U
+                |      readMiniValid := true.B
+                |    }
+                |  }
+                |  is(4.U) {
+                |    readMiniCP := 0.U
+                |    readMiniValid := true.B
+                |  }
+                |}
+              """
+          alignAxi4MiniStateMachineMap = alignAxi4MiniStateMachineMap + "read" ~> readST
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"readMiniValid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"readMiniStart := false.B"
           intrinsicST =
             st"""
-                |r_${instanceName}_req.mode := 1.U
-                |r_${instanceName}_req.readAddr := ${globalName(Util.readAlignAddr)}
-                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                |readMiniStart := true.B
+                |readMiniGtype_1 := ${globalVarGtype(readAlignAddrName)}
+                |readMiniIndex_1 := ${t_readAlignAddr._1}.U
+                |readMiniGtype_2 := ${globalVarGtype(readAlignResName)}
+                |readMiniIndex_2 := ${t_readAlignRes._1}.U
               """
         } else {
-          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
+          val writeST: ST =
+            st"""
+                |switch(writeMiniCP) {
+                |  is(0.U) {
+                |    writeMiniValid := false.B
+                |    writeMiniCP := Mux(writeMiniStart, 1.U, 0.U)
+                |  }
+                |  is(1.U) {
+                |    r_arbGlobalVar_req.op := false.B
+                |    r_arbGlobalVar_req.gtype := writeMiniGtype_1
+                |    r_arbGlobalVar_req.index := writeMiniIndex_1
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    when(r_arbGlobalVar_resp_valid) {
+                |      writeMiniAddr := r_arbGlobalVar_resp.out
+                |      writeMiniCP := 2.U
+                |    }
+                |  }
+                |  is(2.U) {
+                |    r_arbGlobalVar_req.op := false.B
+                |    r_arbGlobalVar_req.gtype := writeMiniGtype_2
+                |    r_arbGlobalVar_req.index := writeMiniIndex_2
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    when(r_arbGlobalVar_resp_valid) {
+                |      writeMiniValue := r_arbGlobalVar_resp.out
+                |      writeMiniCP := 3.U
+                |    }
+                |  }
+                |  is(3.U) {
+                |    r_arbBlockMemory_req.mode := 2.U
+                |    r_arbBlockMemory_req.writeAddr := writeMiniAddr
+                |    r_arbBlockMemory_req.writeData := writeMiniValue
+                |    r_arbBlockMemory_req_valid := Mux(r_arbBlockMemory_resp_valid, false.B, true.B)
+                |    when(r_arbBlockMemory_resp_valid) {
+                |      r_arbBlockMemory_req.mode := 0.U
+                |      writeMiniCP := 4.U
+                |      writeMiniValid := true.B
+                |    }
+                |  }
+                |  is(4.U) {
+                |    writeMiniValid := false.B
+                |    writeMiniCP := 0.U
+                |  }
+                |}
+              """
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"writeMiniValid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"writeMiniStart := false.B"
+          alignAxi4MiniStateMachineMap = alignAxi4MiniStateMachineMap + "write" ~> writeST
           intrinsicST =
             st"""
-                |r_${instanceName}_req.mode := 2.U
-                |r_${instanceName}_req.writeAddr := ${globalName(Util.writeAlignAddr)}
-                |r_${instanceName}_req.writeData := ${globalName(Util.writeAlignValue)}
-                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                |writeMiniStart := true.B
+                |writeMiniGtype_1 := ${globalVarGtype(writeAlignAddrName)}
+                |writeMiniIndex_1 := ${t_writeAlignAddr._1}.U
+                |writeMiniGtype_2 := ${globalVarGtype(writeAlignValueName)}
+                |writeMiniIndex_2 := ${t_writeAlignValue._1}.U
               """
         }
       }
@@ -7211,7 +7389,7 @@ import HwSynthesizer2._
         if(isGlobalVar(temp)) {
           val rhsName: String = rhsST.render
           val t = globalVarMap.get(rhsName).get
-          val sintConvertST: ST = if(t._2) st".asSInt" else st""
+          val sintConvertST: ST = if(isSignedExp(a.rhs)) st".asSInt" else st""
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           assignST =
