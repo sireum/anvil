@@ -680,7 +680,16 @@ import Anvil._
             case AST.IR.Stmt.Intrinsic(_: Intrinsic.Copy) => return T
             case AST.IR.Stmt.Intrinsic(in: Intrinsic.Store) => return in.bytes > 1 && in.tipe != cpType
             case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return in.bytes > 1 && in.tipe != cpType
-            case _ => return F
+            case _ =>
+              if (!config.isFirstGen && config.tempGlobal) {
+                g match {
+                  case _: AST.IR.Stmt.Assign.Global => return T
+                  case AST.IR.Stmt.Assign.Temp(_, _: AST.IR.Exp.GlobalVarRef, _) => return T
+                  case AST.IR.Stmt.Assign.Local(_, _, _,_: AST.IR.Exp.GlobalVarRef, _) => return T
+                  case _ =>
+                }
+              }
+              return F
           }
         }
 
