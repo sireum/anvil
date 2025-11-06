@@ -680,16 +680,7 @@ import Anvil._
             case AST.IR.Stmt.Intrinsic(_: Intrinsic.Copy) => return T
             case AST.IR.Stmt.Intrinsic(in: Intrinsic.Store) => return in.bytes > 1 && in.tipe != cpType
             case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return in.bytes > 1 && in.tipe != cpType
-            case _ =>
-              if (!config.isFirstGen && config.tempGlobal) {
-                g match {
-                  case _: AST.IR.Stmt.Assign.Global => return T
-                  case AST.IR.Stmt.Assign.Temp(_, _: AST.IR.Exp.GlobalVarRef, _) => return T
-                  case AST.IR.Stmt.Assign.Local(_, _, _,_: AST.IR.Exp.GlobalVarRef, _) => return T
-                  case _ =>
-                }
-              }
-              return F
+            case _ => return F
           }
         }
 
@@ -1225,7 +1216,17 @@ import Anvil._
         blocks = blocks :+ b
       }
     }
-    return p(body = body(blocks = blocks))
+    @strictpure def accessGlobal(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
+      case _: AST.IR.Stmt.Assign.Global => T
+      case AST.IR.Stmt.Assign.Temp(_, _: AST.IR.Exp.GlobalVarRef, _) => T
+      case AST.IR.Stmt.Assign.Local(_, _, _,_: AST.IR.Exp.GlobalVarRef, _) => T
+      case _ => F
+    }
+    var r = p(body = body(blocks = blocks))
+    if (config.tempGlobal) {
+      r = transformSplitTest(F, fresh, r, accessGlobal _)
+    }
+    return r
   }
 
   def transformEmptyBlock(p: AST.IR.Procedure): AST.IR.Procedure = {
