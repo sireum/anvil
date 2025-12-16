@@ -82,7 +82,7 @@ object AnvilTest {
             "add.sc" ~> 120 +
             "assert.sc" ~> 288 +
             "bubble.sc" ~> 176 +
-            "construct.sc" ~> 256 +
+            "construct.sc" ~> 216 +
             "divrem.sc" ~> 136 +
             "dll.sc" ~> 848 +
             "factorial.sc" ~> 136 +
@@ -104,7 +104,7 @@ object AnvilTest {
             "add.sc" ~> 104 +
             "assert.sc" ~> 288 +
             "bubble.sc" ~> 160 +
-            "construct.sc" ~> 256 +
+            "construct.sc" ~> 200 +
             "divrem.sc" ~> 136 +
             "dll.sc" ~> 848 +
             "factorial.sc" ~> 120 +
@@ -127,7 +127,7 @@ object AnvilTest {
           "add.sc" ~> 192 +
           "assert.sc" ~> 288 +
           "bubble.sc" ~> 256 +
-          "construct.sc" ~> 256 +
+          "construct.sc" ~> 304 +
           "divrem.sc" ~> 136 +
           "dll.sc" ~> 848 +
           "factorial.sc" ~> 208 +

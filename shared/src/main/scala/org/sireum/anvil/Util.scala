@@ -101,9 +101,11 @@ object Util {
     }
   }
 
-  @record class TempExpSubstitutor(val substMap: HashMap[Z, AST.IR.Exp], val haltOnNoMapping: B) extends MAnvilIRTransformer {
+  @record class TempExpSubstitutor(val anvil: Anvil,
+                                   val substMap: HashMap[(B, Z), AST.IR.Exp],
+                                   val haltOnNoMapping: B) extends MAnvilIRTransformer {
     override def post_langastIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
-      substMap.get(o.n) match {
+      substMap.get((anvil.isSigned(o.tipe), o.n)) match {
         case Some(e) => return MSome(e)
         case _ =>
           if (haltOnNoMapping) {

@@ -453,8 +453,11 @@ import Anvil._
             }
             globals = globals :+ AST.IR.Global(t, context :+ idt._1, p.pos)
           }
-          val rt = p.tipe.ret
+          var rt = p.tipe.ret
           if (rt != AST.Typed.unit) {
+            if (!isScalar(rt)) {
+              rt = spType
+            }
             globals = globals :+ AST.IR.Global(rt, context :+ resultLocalId, p.pos)
           }
         }
@@ -1146,17 +1149,23 @@ import Anvil._
           case AST.IR.Stmt.Expr(e) =>
             addParamArgAssigns(e)
             grounds = grounds :+ AST.IR.Stmt.Expr(e(args = ISZ()))
-          case g@AST.IR.Stmt.Assign.Temp(_, e: AST.IR.Exp.Apply, _) =>
+          case g@AST.IR.Stmt.Assign.Temp(temp, e: AST.IR.Exp.Apply, _) =>
             val context = addParamArgAssigns(e)
             grounds = grounds :+ AST.IR.Stmt.Expr(e(args = ISZ()))
             grounds = grounds :+ g(rhs = AST.IR.Exp.GlobalVarRef(context :+ resultLocalId, e.tipe, g.pos))
+            if (!config.tempGlobal && !isScalar(e.tipe)) {
+              grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(
+                temp, AST.IR.Exp.Temp(temp, spType, g.pos), 0, isSigned(spType), typeByteSize(spType), st"", spType, g.pos
+              ))
+            }
           case _ =>
             grounds = grounds :+ g
         }
       }
       jump match {
         case j@AST.IR.Jump.Return(Some(e), _) =>
-          grounds = grounds :+ AST.IR.Stmt.Assign.Global(p.owner :+ p.id :+ resultLocalId, p.tipe.ret, e, j.pos)
+          val rt: AST.Typed = if (isScalar(p.tipe.ret)) p.tipe.ret else spType
+          grounds = grounds :+ AST.IR.Stmt.Assign.Global(p.owner :+ p.id :+ resultLocalId, rt, e, j.pos)
           jump = j(expOpt = None())
         case _ =>
       }
@@ -2115,15 +2124,15 @@ import Anvil._
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "print"), r.prettyST(printer))
       pass = pass + 1
 
-      if (!config.isFirstGen) {
+      if (config.isFirstGen) {
+        r = transformApplyConstructResult(r)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "apply-construct-result"), r.prettyST(printer))
+        pass = pass + 1
+      } else {
         r = transformSecondGenCall(fresh, r, procedureMap)
         output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "second-gen-call"), r.prettyST(printer))
         pass = pass + 1
       }
-
-      r = transformApplyConstructResult(r)
-      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "apply-construct-result"), r.prettyST(printer))
-      pass = pass + 1
 
       r = transformEmptyBlock(r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "empty-block"), r.prettyST(printer))
@@ -2584,10 +2593,10 @@ import Anvil._
   def transformReduceTemp(proc: AST.IR.Procedure): AST.IR.Procedure = {
     var body = proc.body.asInstanceOf[AST.IR.Body.Basic]
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
-    var tempSubstMap = HashMap.empty[Z, ISZ[HashMap[Z, AST.IR.Exp]]] + body.blocks(0).label ~> ISZ(HashMap.empty)
+    var tempSubstMap = HashMap.empty[Z, ISZ[HashMap[(B, Z), AST.IR.Exp]]] + body.blocks(0).label ~> ISZ(HashMap.empty)
     var work = ISZ[AST.IR.BasicBlock](body.blocks(0))
     val incomingMap = countNumOfIncomingJumps(body.blocks)
-    def getSubstMap(label: Z): HashMap[Z, AST.IR.Exp] = {
+    def getSubstMap(label: Z): HashMap[(B, Z), AST.IR.Exp] = {
       val ms = tempSubstMap.get(label).get
       var r = ms(0)
       for (i <- 1 until ms.size) {
@@ -2597,7 +2606,7 @@ import Anvil._
           r.get(k) match {
             case Some(v) =>
               if (v != v2) {
-                r = r + k ~> AST.IR.Exp.Temp(k, v.tipe, v.pos)
+                r = r + k ~> AST.IR.Exp.Temp(k._2, v.tipe, v.pos)
               }
             case _ =>
               r = r + k ~> v2
@@ -2613,41 +2622,42 @@ import Anvil._
         var substMap = getSubstMap(b.label)
         for (g <- b.grounds) {
           def rest(): Unit = {
-            grounds = grounds :+ TempExpSubstitutor(substMap, T).transform_langastIRStmtGround(g).getOrElse(g)
+            grounds = grounds :+ TempExpSubstitutor(this, substMap, T).transform_langastIRStmtGround(g).getOrElse(g)
           }
           g match {
             case g: AST.IR.Stmt.Assign.Temp =>
+              val key = (isSigned(g.rhs.tipe), g.lhs)
               def restAssignTemp(): Unit = {
                 rest()
-                substMap = substMap + g.lhs ~> AST.IR.Exp.Temp(g.lhs, g.rhs.tipe, g.pos)
+                substMap = substMap + key ~> AST.IR.Exp.Temp(g.lhs, g.rhs.tipe, g.pos)
               }
               g.rhs match {
                 case rhs: AST.IR.Exp.Bool =>
-                  substMap = substMap + g.lhs ~> rhs
+                  substMap = substMap + key ~> rhs
                   grounds = grounds :+ g
                 case rhs: AST.IR.Exp.Int =>
-                  substMap = substMap + g.lhs ~> rhs
+                  substMap = substMap + key ~> rhs
                   grounds = grounds :+ g
                 case rhs: AST.IR.Exp.F32 =>
-                  substMap = substMap + g.lhs ~> rhs
+                  substMap = substMap + key ~> rhs
                   grounds = grounds :+ g
                 case rhs: AST.IR.Exp.F64 =>
-                  substMap = substMap + g.lhs ~> rhs
+                  substMap = substMap + key ~> rhs
                   grounds = grounds :+ g
                 case rhs: AST.IR.Exp.R =>
-                  substMap = substMap + g.lhs ~> rhs
+                  substMap = substMap + key ~> rhs
                   grounds = grounds :+ g
                 case rhs: AST.IR.Exp.String =>
-                  substMap = substMap + g.lhs ~> rhs
+                  substMap = substMap + key ~> rhs
                   grounds = grounds :+ g
                 case rhs: AST.IR.Exp.EnumElementRef =>
-                  substMap = substMap + g.lhs ~> rhs
+                  substMap = substMap + key ~> rhs
                   grounds = grounds :+ g
                 case rhs: AST.IR.Exp.Temp =>
-                  substMap = substMap + g.lhs ~> substMap.get(rhs.n).get
+                  substMap = substMap + key ~> substMap.get((isSigned(rhs.tipe), rhs.n)).get
                   grounds = grounds :+ g
                 case rhs: AST.IR.Exp.LocalVarRef if config.tempLocal && isScalar(rhs.tipe) =>
-                  substMap = substMap + g.lhs ~> rhs
+                  substMap = substMap + key ~> rhs
                   grounds = grounds :+ g
                 case _: AST.IR.Exp.Intrinsic => halt("Infeasible")
                 case _: AST.IR.Exp.If => halt("Infeasible")
@@ -2656,7 +2666,7 @@ import Anvil._
             case _ => rest()
           }
         }
-        val jump = TempExpSubstitutor(substMap, T).transform_langastIRJump(b.jump).getOrElse(b.jump)
+        val jump = TempExpSubstitutor(this, substMap, T).transform_langastIRJump(b.jump).getOrElse(b.jump)
         blockMap = blockMap + b.label ~> b(grounds = grounds, jump = jump)
         for (target <- jump.targets) {
           tempSubstMap.get(target) match {
@@ -3174,15 +3184,17 @@ import Anvil._
                 case _ =>
                   grounds = grounds :+ OffsetSubsitutor(this, paramSet, m, globalMap).transform_langastIRStmtGround(g).getOrElse(g)
               }
-              g match {
-                case g: AST.IR.Stmt.Expr if g.exp.methodType.ret != AST.Typed.unit && (config.tempLocal __>: !isScalar(g.exp.methodType.ret)) =>
-                  val id = callResultId(g.exp.id, g.exp.pos)
-                  callResultIdOffsetMap = callResultIdOffsetMap + id ~> m.get(id).get
-                case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Apply] && (config.tempLocal __>: !isScalar(g.rhs.tipe)) =>
-                  val e = g.rhs.asInstanceOf[AST.IR.Exp.Apply]
-                  val id = callResultId(e.id, e.pos)
-                  callResultIdOffsetMap = callResultIdOffsetMap + id ~> m.get(id).get
-                case _ =>
+              if (config.isFirstGen) {
+                g match {
+                  case g: AST.IR.Stmt.Expr if g.exp.methodType.ret != AST.Typed.unit && (config.tempLocal __>: !isScalar(g.exp.methodType.ret)) =>
+                    val id = callResultId(g.exp.id, g.exp.pos)
+                    callResultIdOffsetMap = callResultIdOffsetMap + id ~> m.get(id).get
+                  case g: AST.IR.Stmt.Assign.Temp if g.rhs.isInstanceOf[AST.IR.Exp.Apply] && (config.tempLocal __>: !isScalar(g.rhs.tipe)) =>
+                    val e = g.rhs.asInstanceOf[AST.IR.Exp.Apply]
+                    val id = callResultId(e.id, e.pos)
+                    callResultIdOffsetMap = callResultIdOffsetMap + id ~> m.get(id).get
+                  case _ =>
+                }
               }
           }
         }
