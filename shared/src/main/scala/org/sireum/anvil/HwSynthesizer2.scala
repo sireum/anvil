@@ -4153,24 +4153,54 @@ import HwSynthesizer2._
         """
     }
 
-    val configST: ST =
-      st"""
-          |runtimeCheck = ${if(anvil.config.runtimeCheck) "true" else "false"},
-          |printSize = ${anvil.config.printSize},
-          |memory = ${anvil.config.memory},
-          |erase = ${if(anvil.config.erase) "true" else "false"},
-          |noXilinxIp = ${if(anvil.config.noXilinxIp) "true" else "false"},
-          |splitTempSizes = ${if(anvil.config.splitTempSizes) "true" else  "false"},
-          |tempLocal = ${if(anvil.config.tempLocal) "true" else "false"},
-          |memoryAccess = ${anvil.config.memoryAccess.string},
-          |useIp = ${if(anvil.config.useIP) "true" else "false"},
-          |ipMax = ${anvil.config.ipMax},
-          |cpMax = ${anvil.config.cpMax},
-          |CPsize = ${anvil.typeBitSize(spType)},
-          |SPsize = ${anvil.typeBitSize(anvil.cpType)},
-          |tempGlobal = ${anvil.config.tempGlobal},
-          |alignAxi4 = ${anvil.config.alignAxi4}
-        """
+    @pure def configST: ST = {
+      // String -- the name of corresponding procedure
+      // Z -- the number of blocks in current procedure
+      var procedureHashMap: HashSMap[String, Z] = HashSMap.empty
+      for(p <- program.procedures) {
+        val blocks = p.body.asInstanceOf[AST.IR.Body.Basic].blocks
+        procedureHashMap = procedureHashMap + p.id ~> (blocks.size + 3)
+      }
+
+      var procedureSTs: ISZ[ST] = ISZ[ST]()
+      for(entry <- procedureHashMap.entries) {
+        procedureSTs = procedureSTs :+ st"${entry._1}-->${entry._2}"
+      }
+
+      var totalBlocks: Z = 0
+      for(entry <- procedureHashMap.entries) {
+        totalBlocks = totalBlocks + entry._2
+      }
+
+      var totalGlobals: Z = 0
+      if(anvil.config.tempGlobal) {
+        for (entry <- globalInfoMap.entries) {
+          totalGlobals = totalGlobals + 1
+        }
+      }
+
+      return st"""
+                 |runtimeCheck = ${if(anvil.config.runtimeCheck) "true" else "false"},
+                 |printSize = ${anvil.config.printSize},
+                 |memory = ${anvil.config.memory},
+                 |erase = ${if(anvil.config.erase) "true" else "false"},
+                 |noXilinxIp = ${if(anvil.config.noXilinxIp) "true" else "false"},
+                 |splitTempSizes = ${if(anvil.config.splitTempSizes) "true" else  "false"},
+                 |tempLocal = ${if(anvil.config.tempLocal) "true" else "false"},
+                 |memoryAccess = ${anvil.config.memoryAccess.string},
+                 |useIp = ${if(anvil.config.useIP) "true" else "false"},
+                 |ipMax = ${anvil.config.ipMax},
+                 |cpMax = ${anvil.config.cpMax},
+                 |CPsize = ${anvil.typeBitSize(spType)},
+                 |SPsize = ${anvil.typeBitSize(anvil.cpType)},
+                 |tempGlobal = ${anvil.config.tempGlobal},
+                 |alignAxi4 = ${anvil.config.alignAxi4},
+                 |totalBlocks = ${totalBlocks},
+                 |globalVariables = ${totalGlobals}
+                 |
+                 |${(procedureSTs, "\n")}
+               """
+    }
 
     val backslash = "\\"
 
