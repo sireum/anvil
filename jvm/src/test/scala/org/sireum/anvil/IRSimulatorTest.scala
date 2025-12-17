@@ -40,7 +40,7 @@ import IRSimulatorTest._
 
 class IRSimulatorTest extends SireumRcSpec {
   {
-    val debug = T & Os.env("GITHUB_ACTIONS").isEmpty
+    val debug = F & Os.env("GITHUB_ACTIONS").isEmpty
     IRSimulator.DEBUG = T & debug
     IRSimulator.DEBUG_TEMP = T & debug
     IRSimulator.DEBUG_EDIT = T & debug
@@ -49,7 +49,7 @@ class IRSimulatorTest extends SireumRcSpec {
   }
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last == "add.sc" || p.last == "construct.sc" || p.last == "factorial.sc" || p.last == "bubble.sc" }//!p.last.endsWith("dll.sc") && !p.last.endsWith("print.sc") }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last != "dll.sc" }
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
@@ -69,8 +69,8 @@ class IRSimulatorTest extends SireumRcSpec {
 //      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
 //      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.singleTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
 //      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
-//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
-//      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
+      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId}, ${AnvilTest.alignId})", v)
 
       r

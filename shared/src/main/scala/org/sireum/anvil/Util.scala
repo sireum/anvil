@@ -27,6 +27,8 @@ package org.sireum.anvil
 
 import org.sireum._
 import org.sireum.alir.MonotonicDataflowFramework
+import org.sireum.lang.ast.IR
+import org.sireum.lang.ast.IR.{Exp, Stmt}
 import org.sireum.lang.symbol.Info
 import org.sireum.lang.symbol.Resolver.QName
 import org.sireum.lang.{ast => AST}
@@ -105,7 +107,8 @@ object Util {
                                    val substMap: HashMap[(B, Z), AST.IR.Exp],
                                    val haltOnNoMapping: B) extends MAnvilIRTransformer {
     override def post_langastIRExpTemp(o: AST.IR.Exp.Temp): MOption[AST.IR.Exp] = {
-      substMap.get((anvil.isSigned(o.tipe), o.n)) match {
+      val key: (B, Z) = if (anvil.config.splitTempSizes) (anvil.isSigned(o.tipe), o.n) else (F, o.n)
+      substMap.get(key) match {
         case Some(e) => return MSome(e)
         case _ =>
           if (haltOnNoMapping) {
@@ -1179,19 +1182,48 @@ object Util {
   val callCycles: Z = 20
   val returnCycles: Z = 20
 
+  @record class PrintCollector(val anvil: Anvil, var printIds: HashSSet[String]) extends MAnvilIRTransformer {
+    override def post_langastIRStmtPrint(o: Stmt.Print): MOption[Stmt] = {
+      for (arg <- o.args) {
+        arg.tipe match {
+          case AST.Typed.b => printIds = printIds + "printB"
+          case AST.Typed.c => printIds = printIds + "printC"
+          case AST.Typed.f32 => printIds = printIds + "f32Digit" + "printF32_2"
+          case AST.Typed.f64 => printIds = printIds + "f64Digit" + "printF64_2"
+          case AST.Typed.r => halt("TODO")
+          case AST.Typed.string => printIds = printIds + "load" + "printString"
+          case AST.Typed.z => printIds = printIds + "printS64"
+          case t =>
+            anvil.subZOpt(t) match {
+              case Some(ti) =>
+                if (ti.ast.isBitVector && !ti.ast.isSigned) {
+                  printIds = printIds + "printU64Hex"
+                } else if (ti.ast.isSigned) {
+                  printIds = printIds + "printS64"
+                } else {
+                  printIds = printIds + "printU64"
+                }
+              case _ => halt(s"Unexpected print arg: ${arg.prettyRawST(anvil.printer)}")
+            }
+        }
+      }
+      return MNone()
+    }
+  }
+
   val runtimePrintMethodTypeMap: HashSMap[String, AST.Typed.Fun] = HashSMap.empty[String, AST.Typed.Fun] +
-    //"printB" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.b), AST.Typed.u64) +
-    //"printC" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.c), AST.Typed.u64) +
+    "printB" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.b), AST.Typed.u64) +
+    "printC" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.c), AST.Typed.u64) +
     "printS64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.s64), AST.Typed.u64) +
-    //"printU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.u64), AST.Typed.u64) +
-    "printU64Hex" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.u64, AST.Typed.z), AST.Typed.u64) //+
-    //"f32Digit" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(f32DigitBufferType, f32DigitIndexType, AST.Typed.f32), AST.Typed.u64) +
-    //"f64Digit" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(f64DigitBufferType, f64DigitIndexType, AST.Typed.f64), AST.Typed.u64) +
-    //"printF32_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.f32), AST.Typed.u64) +
-    //"printF64_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.f64), AST.Typed.u64) +
-    //"printString" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.string), AST.Typed.u64) +
-    //"load" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType), displayIndexType) +
-    //"printStackTrace" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, displayIndexType, displayIndexType, displayIndexType), AST.Typed.unit)
+    "printU64" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.u64), AST.Typed.u64) +
+    "printU64Hex" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.u64, AST.Typed.z), AST.Typed.u64) +
+    "f32Digit" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(f32DigitBufferType, f32DigitIndexType, AST.Typed.f32), AST.Typed.u64) +
+    "f64Digit" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(f64DigitBufferType, f64DigitIndexType, AST.Typed.f64), AST.Typed.u64) +
+    "printF32_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.f32), AST.Typed.u64) +
+    "printF64_2" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.f64), AST.Typed.u64) +
+    "printString" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, AST.Typed.string), AST.Typed.u64) +
+    "load" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType), displayIndexType) +
+    "printStackTrace" ~> AST.Typed.Fun(AST.Purity.Impure, F, ISZ(displayType, displayIndexType, displayIndexType, displayIndexType, displayIndexType, displayIndexType), AST.Typed.unit)
 
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
   val syntheticMethodIds: HashSet[String] = HashSet.empty[String] + objInitId + newInitId + testId

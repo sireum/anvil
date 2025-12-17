@@ -405,16 +405,6 @@ import Anvil._
           globals = globals :+ AST.IR.Global(spType, spName, startPos)
           globals = globals :+ AST.IR.Global(dpType, dpName, startPos)
         }
-        for (id <- runtimePrintMethodTypeMap.keys) {
-          val info = th.nameMap.get(runtimeName :+ id).get.asInstanceOf[Info.Method]
-          procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
-        }
-      }
-      if (config.stackTrace && !config.shouldPrint) {
-        for (id <- ISZ("printStackTrace", "load")) {
-          val info = th.nameMap.get(runtimeName :+ id).get.asInstanceOf[Info.Method]
-          procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
-        }
       }
       for (vs <- tsr.objectVars.entries) {
         val (owner, ids) = vs
@@ -441,41 +431,6 @@ import Anvil._
         body = body(block = body.block(stmts =
           AST.IR.Stmt.Assign.Global(owner, AST.Typed.b, AST.IR.Exp.Bool(T, pos), pos) +: body.block.stmts))
         procedures = procedures :+ objInit(body = body)
-      }
-
-      if (!config.isFirstGen) {
-        for (p <- procedures) {
-          val context = p.context.owner :+ p.context.id
-          for (idt <- ops.ISZOps(p.paramNames).zip(p.tipe.args)) {
-            var t = idt._2
-            if (!isScalar(t)) {
-              t = spType
-            }
-            globals = globals :+ AST.IR.Global(t, context :+ idt._1, p.pos)
-          }
-          var rt = p.tipe.ret
-          if (rt != AST.Typed.unit) {
-            if (!isScalar(rt)) {
-              rt = spType
-            }
-            globals = globals :+ AST.IR.Global(rt, context :+ resultLocalId, p.pos)
-          }
-        }
-      }
-
-      var globalMap = HashSMap.empty[ISZ[String], VarInfo]
-      var globalTemps = 0
-      var globalSize: Z = config.baseAddress
-      for (g <- globals) {
-        val size = typeByteSize(g.tipe)
-        val scalar = isScalar(g.tipe)
-        if (isTempGlobal(this, g.tipe, g.name)) {
-          globalMap = globalMap + g.name ~> VarInfo(scalar, globalTemps, size, 0, g.tipe, g.pos)
-          globalTemps = globalTemps + 1
-        } else {
-          globalMap = globalMap + g.name ~> VarInfo(scalar, globalSize, size, 0, g.tipe, g.pos)
-          globalSize = globalSize + size
-        }
       }
 
       def genTraitMethod(method: TypeSpecializer.SMethod): Unit = {
@@ -567,6 +522,56 @@ import Anvil._
 
       for (method <- tsr.traitMethods.elements) {
         genTraitMethod(method)
+      }
+
+      if (config.shouldPrint) {
+        val pc = PrintCollector(this, HashSSet.empty)
+        for (p <- procedures) {
+          pc.transform_langastIRProcedure(p)
+        }
+        if (config.stackTrace) {
+          pc.printIds = pc.printIds ++ ISZ("printS64", "printU64Hex", "load", "printStackTrace")
+        }
+
+        for (id <- pc.printIds.elements) {
+          val info = th.nameMap.get(runtimeName :+ id).get.asInstanceOf[Info.Method]
+          procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
+        }
+      }
+
+      if (!config.isFirstGen) {
+        for (p <- procedures) {
+          val context = p.context.owner :+ p.context.id
+          for (idt <- ops.ISZOps(p.paramNames).zip(p.tipe.args)) {
+            var t = idt._2
+            if (!isScalar(t)) {
+              t = spType
+            }
+            globals = globals :+ AST.IR.Global(t, context :+ idt._1, p.pos)
+          }
+          var rt = p.tipe.ret
+          if (rt != AST.Typed.unit) {
+            if (!isScalar(rt)) {
+              rt = spType
+            }
+            globals = globals :+ AST.IR.Global(rt, context :+ resultLocalId, p.pos)
+          }
+        }
+      }
+
+      var globalMap = HashSMap.empty[ISZ[String], VarInfo]
+      var globalTemps = 0
+      var globalSize: Z = config.baseAddress
+      for (g <- globals) {
+        val size = typeByteSize(g.tipe)
+        val scalar = isScalar(g.tipe)
+        if (isTempGlobal(this, g.tipe, g.name)) {
+          globalMap = globalMap + g.name ~> VarInfo(scalar, globalTemps, size, 0, g.tipe, g.pos)
+          globalTemps = globalTemps + 1
+        } else {
+          globalMap = globalMap + g.name ~> VarInfo(scalar, globalSize, size, 0, g.tipe, g.pos)
+          globalSize = globalSize + size
+        }
       }
 
       globalSize = pad64(globalSize)
@@ -1122,6 +1127,11 @@ import Anvil._
     if (config.isFirstGen) {
       return p
     }
+    @strictpure def shouldProcess(e: AST.IR.Exp.Apply): B = e.owner match {
+      case AST.Typed.mszName => F
+      case AST.Typed.iszName => F
+      case _ => T
+    }
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
     for (b <- body.blocks) {
@@ -1135,6 +1145,7 @@ import Anvil._
       }
       def addParamArgAssigns(e: AST.IR.Exp.Apply): ISZ[String] = {
         val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
+        assert(procedureMap.contains(mc), s"${e.prettyRawST(printer).render}")
         val called = procedureMap.get(mc).get
         val calledContext = e.owner :+ e.id
         for (pArg <- ops.ISZOps(ops.ISZOps(called.paramNames).zip(called.tipe.args)).zip(e.args)) {
@@ -1146,12 +1157,14 @@ import Anvil._
       var jump = b.jump
       for (g <- b.grounds) {
         g match {
-          case AST.IR.Stmt.Expr(e) =>
+          case AST.IR.Stmt.Expr(e) if shouldProcess(e) =>
             addParamArgAssigns(e)
-            grounds = grounds :+ AST.IR.Stmt.Expr(e(args = ISZ()))
-          case g@AST.IR.Stmt.Assign.Temp(temp, e: AST.IR.Exp.Apply, _) =>
+            val args: ISZ[AST.IR.Exp] = if (e.isInObject) ISZ() else ISZ(e.args(0))
+            grounds = grounds :+ AST.IR.Stmt.Expr(e(args = args))
+          case g@AST.IR.Stmt.Assign.Temp(temp, e: AST.IR.Exp.Apply, _) if shouldProcess(e) =>
             val context = addParamArgAssigns(e)
-            grounds = grounds :+ AST.IR.Stmt.Expr(e(args = ISZ()))
+            val args: ISZ[AST.IR.Exp] = if (e.isInObject) ISZ() else ISZ(e.args(0))
+            grounds = grounds :+ AST.IR.Stmt.Expr(e(args = args))
             grounds = grounds :+ g(rhs = AST.IR.Exp.GlobalVarRef(context :+ resultLocalId, e.tipe, g.pos))
             if (!config.tempGlobal && !isScalar(e.tipe)) {
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(
@@ -2590,7 +2603,132 @@ import Anvil._
       AST.IR.BasicBlock(errorLabel, ISZ(), AST.IR.Jump.Return(None(), main.pos))
   }
 
+  def transformReduceTempSingle(proc: AST.IR.Procedure): AST.IR.Procedure = {
+    var body = proc.body.asInstanceOf[AST.IR.Body.Basic]
+    var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
+    var tempSubstMap = HashMap.empty[Z, ISZ[HashMap[(B, Z), AST.IR.Exp]]] + body.blocks(0).label ~> ISZ(HashMap.empty)
+    var work = ISZ[AST.IR.BasicBlock](body.blocks(0))
+    val incomingMap = countNumOfIncomingJumps(body.blocks)
+    def getSubstMap(label: Z): HashMap[(B, Z), AST.IR.Exp] = {
+      val ms = tempSubstMap.get(label).get
+      var r = ms(0)
+      for (i <- 1 until ms.size) {
+        val m = ms(i)
+        for (entry <- m.entries) {
+          val (k, v2) = entry
+          r.get(k) match {
+            case Some(v) =>
+              if (v != v2) {
+                r = r + k ~> AST.IR.Exp.Temp(k._2, v.tipe, v.pos)
+              }
+            case _ =>
+              r = r + k ~> v2
+          }
+        }
+      }
+      return r
+    }
+    while (work.nonEmpty) {
+      var next = ISZ[AST.IR.BasicBlock]()
+      for (b <- work) {
+        var grounds = ISZ[AST.IR.Stmt.Ground]()
+        var substMap = getSubstMap(b.label)
+        for (g <- b.grounds) {
+          def rest(): Unit = {
+            grounds = grounds :+ TempExpSubstitutor(this, substMap, T).transform_langastIRStmtGround(g).getOrElse(g)
+          }
+          g match {
+            case g: AST.IR.Stmt.Assign.Temp =>
+              val key = (F, g.lhs)
+              def restAssignTemp(): Unit = {
+                rest()
+                substMap = substMap + key ~> AST.IR.Exp.Temp(g.lhs, g.rhs.tipe, g.pos)
+              }
+              g.rhs match {
+                case rhs: AST.IR.Exp.Bool =>
+                  substMap = substMap + key ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.Int =>
+                  substMap = substMap + key ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.F32 =>
+                  substMap = substMap + key ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.F64 =>
+                  substMap = substMap + key ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.R =>
+                  substMap = substMap + key ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.String =>
+                  substMap = substMap + key ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.EnumElementRef =>
+                  substMap = substMap + key ~> rhs
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.Temp =>
+                  substMap = substMap + key ~> substMap.get((F, rhs.n)).get
+                  grounds = grounds :+ g
+                case rhs: AST.IR.Exp.LocalVarRef if config.tempLocal && isScalar(rhs.tipe) =>
+                  substMap = substMap + key ~> rhs
+                  grounds = grounds :+ g
+                case _: AST.IR.Exp.Intrinsic => halt("Infeasible")
+                case _: AST.IR.Exp.If => halt("Infeasible")
+                case _ => restAssignTemp()
+              }
+            case _ => rest()
+          }
+        }
+        val jump = TempExpSubstitutor(this, substMap, T).transform_langastIRJump(b.jump).getOrElse(b.jump)
+        blockMap = blockMap + b.label ~> b(grounds = grounds, jump = jump)
+        for (target <- jump.targets) {
+          tempSubstMap.get(target) match {
+            case Some(ms) => tempSubstMap = tempSubstMap + target ~> (ms :+ substMap)
+            case _ =>
+              tempSubstMap = tempSubstMap + target ~> ISZ(substMap)
+          }
+          if (tempSubstMap.get(target).get.size == incomingMap.get(target).get) {
+            next = next :+ blockMap.get(target).get
+          }
+        }
+      }
+      work = next
+    }
+    body = body(blocks = blockMap.values)
+    var changed = T
+    while (changed) {
+      changed = F
+      val lv = TempScalarOrSpLV(this, ControlFlowGraph.buildBasic(body))
+      val entrySet = MBox(HashSMap.empty[Z, ISZ[HashSSet[(Z, AST.Typed)]]])
+      val exitSet = MBox(entrySet.value)
+      def exitSetContains(label: Z, i: Z, temp: Z): B = {
+        for (pair <- exitSet.value.get(label).get(i).elements if pair._1 == temp) {
+          return T
+        }
+        return F
+      }
+      lv.compute(body, entrySet, exitSet)
+      var blocks = ISZ[AST.IR.BasicBlock]()
+      for (b <- body.blocks) {
+        var grounds = ISZ[AST.IR.Stmt.Ground]()
+        for (i <- b.grounds.indices) {
+          val g = b.grounds(i)
+          g match {
+            case g: AST.IR.Stmt.Assign.Temp if !exitSetContains(b.label, i, g.lhs) => changed = T
+            case _ => grounds = grounds :+ g
+          }
+        }
+        blocks = blocks :+ b(grounds = grounds)
+      }
+      body = body(blocks = blocks)
+    }
+    return proc(body = body)
+  }
+
   def transformReduceTemp(proc: AST.IR.Procedure): AST.IR.Procedure = {
+    if (!config.splitTempSizes) {
+      return transformReduceTempSingle(proc)
+    }
     var body = proc.body.asInstanceOf[AST.IR.Body.Basic]
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
     var tempSubstMap = HashMap.empty[Z, ISZ[HashMap[(B, Z), AST.IR.Exp]]] + body.blocks(0).label ~> ISZ(HashMap.empty)
