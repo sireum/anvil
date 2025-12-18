@@ -424,6 +424,7 @@ import Anvil._
           stmts = stmts :+ AST.Stmt.Assign(AST.Exp.Ident(v.ast.id, AST.ResolvedAttr(v.posOpt, v.resOpt, v.typedOpt)),
             v.ast.initOpt.get, AST.Attr(v.posOpt))
         }
+        stmts = stmts :+ AST.Stmt.Return(None(), AST.TypedAttr(objPosOpt, AST.Typed.unitOpt))
         val pos = objPosOpt.get
         val objInit = irt.translateMethodH(F, None(), owner, objInitId, ISZ(), ISZ(),
           AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), pos, Some(AST.Body(stmts, ISZ())))
@@ -1159,12 +1160,10 @@ import Anvil._
         g match {
           case AST.IR.Stmt.Expr(e) if shouldProcess(e) =>
             addParamArgAssigns(e)
-            val args: ISZ[AST.IR.Exp] = if (e.isInObject) ISZ() else ISZ(e.args(0))
-            grounds = grounds :+ AST.IR.Stmt.Expr(e(args = args))
+            grounds = grounds :+ AST.IR.Stmt.Expr(e(args = ISZ()))
           case g@AST.IR.Stmt.Assign.Temp(temp, e: AST.IR.Exp.Apply, _) if shouldProcess(e) =>
             val context = addParamArgAssigns(e)
-            val args: ISZ[AST.IR.Exp] = if (e.isInObject) ISZ() else ISZ(e.args(0))
-            grounds = grounds :+ AST.IR.Stmt.Expr(e(args = args))
+            grounds = grounds :+ AST.IR.Stmt.Expr(e(args = ISZ()))
             grounds = grounds :+ g(rhs = AST.IR.Exp.GlobalVarRef(context :+ resultLocalId, e.tipe, g.pos))
             if (!config.tempGlobal && !isScalar(e.tipe)) {
               grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(
@@ -2141,10 +2140,6 @@ import Anvil._
         r = transformApplyConstructResult(r)
         output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "apply-construct-result"), r.prettyST(printer))
         pass = pass + 1
-      } else {
-        r = transformSecondGenCall(fresh, r, procedureMap)
-        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "second-gen-call"), r.prettyST(printer))
-        pass = pass + 1
       }
 
       r = transformEmptyBlock(r)
@@ -2222,6 +2217,12 @@ import Anvil._
         case _ => F
       }
 
+      if (!config.isFirstGen) {
+        r = transformSecondGenCall(fresh, r, procedureMap)
+        output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "second-gen-call"), r.prettyST(printer))
+        pass = pass + 1
+      }
+
       r = transformSplitTest(T, fresh, r, isInvoke _)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-invoke"), r.prettyST(printer))
       pass = pass + 1
@@ -2245,9 +2246,7 @@ import Anvil._
 
   @pure def countNumOfIncomingJumps(blocks: ISZ[AST.IR.BasicBlock]): HashMap[Z, Z] = {
     var r = HashMap ++ (for (b <- blocks) yield (b.label, z"0"))
-    if (config.alignAxi4 && !config.isFirstGen) {
-      r = r ++ ISZ[(Z, Z)]((0, 0))
-    }
+    r = r ++ ISZ[(Z, Z)]((0, 0), (1, 0))
     for (b <- blocks) {
       for (g <- b.grounds) {
         g match {
@@ -4171,6 +4170,7 @@ import Anvil._
             case _ =>
           }
         }
+        r = r :+ AST.Stmt.Return(None(), AST.TypedAttr(info.ast.posOpt, AST.Typed.unitOpt))
       case _ =>
     }
     return r

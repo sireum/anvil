@@ -80,11 +80,11 @@ object AnvilTest {
         if (alignAxi4) {
           return HashMap.empty[String, Z] +
             "add.sc" ~> 120 +
-            "assert.sc" ~> 288 +
+            "assert.sc" ~> 176 +
             "bubble.sc" ~> 176 +
-            "construct.sc" ~> 304 +
-            "divrem.sc" ~> 144 +
-            "dll.sc" ~> 848 +
+            "construct.sc" ~> 216 +
+            "divrem.sc" ~> 72 +
+            "dll.sc" ~> 736 +
             "factorial.sc" ~> 136 +
             "global.sc" ~> 112 +
             "indexing-obj.sc" ~> 224 +
@@ -92,76 +92,58 @@ object AnvilTest {
             "instanceof.sc" ~> 128 +
             "local-reuse.sc" ~> 120 +
             "mult.sc" ~> 168 +
-            "print.sc" ~> 936 +
-            "print-no-float.sc" ~> 344 +
+            "print.sc" ~> 904 +
+            "print-no-float.sc" ~> 336 +
             "printU64.sc" ~> 168 +
             "seq.sc" ~> 264 +
             "shiftS64.sc" ~> 176 +
             "shiftU64.sc" ~> 168 +
-            "sum.sc" ~> 160 +
-            "1.example.sc" ~> 232 +
-            "2.example.sc" ~> 232 +
-            "3.example.sc" ~> 232 +
-            "4.example.sc" ~> 232 +
-            "5.example.sc" ~> 232 +
-            "6.example.sc" ~> 232
+            "sum.sc" ~> 160
         } else {
           return HashMap.empty[String, Z] +
-            "add.sc" ~> 112 +
-            "assert.sc" ~> 288 +
-            "bubble.sc" ~> 176 +
-            "construct.sc" ~> 312 +
-            "divrem.sc" ~> 144 +
-            "dll.sc" ~> 848 +
-            "factorial.sc" ~> 128 +
-            "global.sc" ~> 112 +
-            "indexing-obj.sc" ~> 224 +
-            "indexing.sc" ~> 152 +
-            "instanceof.sc" ~> 128 +
-            "local-reuse.sc" ~> 120 +
-            "mult.sc" ~> 160 +
-            "print.sc" ~> 936 +
-            "print-no-float.sc" ~> 344 +
-            "printU64.sc" ~> 160 +
-            "seq.sc" ~> 256 +
-            "shiftS64.sc" ~> 176 +
-            "shiftU64.sc" ~> 160 +
-            "sum.sc" ~> 160 +
-            "1.example.sc" ~> 216 +
-            "2.example.sc" ~> 216 +
-            "3.example.sc" ~> 216 +
-            "4.example.sc" ~> 216 +
-            "5.example.sc" ~> 216 +
-            "6.example.sc" ~> 216
+            "add.sc" ~> 104 +
+            "assert.sc" ~> 152 +
+            "bubble.sc" ~> 160 +
+            "construct.sc" ~> 200 +
+            "divrem.sc" ~> 64 +
+            "dll.sc" ~> 664 +
+            "factorial.sc" ~> 120 +
+            "global.sc" ~> 104 +
+            "indexing-obj.sc" ~> 184 +
+            "indexing.sc" ~> 136 +
+            "instanceof.sc" ~> 112 +
+            "local-reuse.sc" ~> 104 +
+            "mult.sc" ~> 152 +
+            "print.sc" ~> 888 +
+            "print-no-float.sc" ~> 336 +
+            "printU64.sc" ~> 152 +
+            "seq.sc" ~> 240 +
+            "shiftS64.sc" ~> 160 +
+            "shiftU64.sc" ~> 152 +
+            "sum.sc" ~> 144
         }
       } else {
         return HashMap.empty[String, Z] +
-          "add.sc" ~> 112 +
-          "assert.sc" ~> 288 +
-          "bubble.sc" ~> 176 +
-          "construct.sc" ~> 312 +
-          "divrem.sc" ~> 144 +
-          "dll.sc" ~> 848 +
-          "factorial.sc" ~> 128 +
-          "global.sc" ~> 112 +
-          "indexing-obj.sc" ~> 224 +
-          "indexing.sc" ~> 152 +
-          "instanceof.sc" ~> 128 +
-          "local-reuse.sc" ~> 120 +
-          "mult.sc" ~> 160 +
-          "print.sc" ~> 936 +
-          "print-no-float.sc" ~> 344 +
-          "printU64.sc" ~> 160 +
-          "seq.sc" ~> 256 +
-          "shiftS64.sc" ~> 176 +
-          "shiftU64.sc" ~> 160 +
-          "sum.sc" ~> 160 +
-          "1.example.sc" ~> 312 +
-          "2.example.sc" ~> 312 +
-          "3.example.sc" ~> 312 +
-          "4.example.sc" ~> 312 +
-          "5.example.sc" ~> 312 +
-          "6.example.sc" ~> 312
+          "add.sc" ~> 160 +
+          "assert.sc" ~> 320 +
+          "bubble.sc" ~> 304 +
+          "construct.sc" ~> 352 +
+          "divrem.sc" ~> 248 +
+          "dll.sc" ~> 760 +
+          "factorial.sc" ~> 176 +
+          "global.sc" ~> 152 +
+          "indexing-obj.sc" ~> 240 +
+          "indexing.sc" ~> 208 +
+          "instanceof.sc" ~> 160 +
+          "local-reuse.sc" ~> 144 +
+          "mult.sc" ~> 224 +
+          "print.sc" ~> 1096 +
+          "print-no-float.sc" ~> 456 +
+          "printU64.sc" ~> 208 +
+          "seq.sc" ~> 288 +
+          "shiftS64.sc" ~> 224 +
+          "shiftU64.sc" ~> 224 +
+          "sum.sc" ~> 208
       }
     }
   }

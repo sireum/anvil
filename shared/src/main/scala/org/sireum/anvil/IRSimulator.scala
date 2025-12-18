@@ -476,7 +476,7 @@ object IRSimulator {
                     r
                   case z"16" =>
                     val r = Value.fromU16(state.tempsU16(temp))
-                    assert(value.kind == Value.Kind.U16)
+                    assert(value.kind == Value.Kind.U16, value.kind.string)
                     state.tempsU16(temp) = value.toU16
                     r
                   case z"32" =>
