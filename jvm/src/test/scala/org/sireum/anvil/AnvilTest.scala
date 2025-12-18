@@ -83,8 +83,8 @@ object AnvilTest {
             "assert.sc" ~> 176 +
             "bubble.sc" ~> 176 +
             "construct.sc" ~> 216 +
-            "divrem.sc" ~> 144 +
-            "dll.sc" ~> 848 +
+            "divrem.sc" ~> 72 +
+            "dll.sc" ~> 736 +
             "factorial.sc" ~> 136 +
             "global.sc" ~> 112 +
             "indexing-obj.sc" ~> 224 +
@@ -105,8 +105,8 @@ object AnvilTest {
             "assert.sc" ~> 152 +
             "bubble.sc" ~> 160 +
             "construct.sc" ~> 200 +
-            "divrem.sc" ~> 128 +
-            "dll.sc" ~> 848 +
+            "divrem.sc" ~> 64 +
+            "dll.sc" ~> 664 +
             "factorial.sc" ~> 120 +
             "global.sc" ~> 104 +
             "indexing-obj.sc" ~> 184 +
@@ -129,7 +129,7 @@ object AnvilTest {
           "bubble.sc" ~> 304 +
           "construct.sc" ~> 352 +
           "divrem.sc" ~> 248 +
-          "dll.sc" ~> 848 +
+          "dll.sc" ~> 760 +
           "factorial.sc" ~> 176 +
           "global.sc" ~> 152 +
           "indexing-obj.sc" ~> 240 +

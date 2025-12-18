@@ -40,7 +40,7 @@ import IRSimulatorTest._
 
 class IRSimulatorTest extends SireumRcSpec {
   {
-    val debug = F & Os.env("GITHUB_ACTIONS").isEmpty
+    val debug = T & Os.env("GITHUB_ACTIONS").isEmpty
     IRSimulator.DEBUG = T & debug
     IRSimulator.DEBUG_TEMP = T & debug
     IRSimulator.DEBUG_EDIT = T & debug
@@ -49,7 +49,7 @@ class IRSimulatorTest extends SireumRcSpec {
   }
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last != "dll.sc" }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last != "assert.sc" }
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
