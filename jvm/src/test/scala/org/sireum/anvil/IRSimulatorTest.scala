@@ -49,7 +49,7 @@ class IRSimulatorTest extends SireumRcSpec {
   }
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last != "assert.sc" }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => T }
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
@@ -71,41 +71,32 @@ class IRSimulatorTest extends SireumRcSpec {
 //      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.memLocalId}, ${AnvilTest.withMemIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.withMemIpId})", v)
       r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId})", v)
-      r = r :+ (k.dropRight(1) :+ s"${k.last} (${AnvilTest.splitTempId}, ${AnvilTest.tempLocalId}, ${AnvilTest.tempGlobalId}, ${AnvilTest.withMemIpId}, ${AnvilTest.alignId})", v)
 
       r
     }) yield pair
   }
 
   def redirectConsole[T](output: Os.Path, f: () => T): T = {
+    output.removeAll()
+    output.up.mkdirAll()
     val oldOut = System.out
     val oldErr = System.err
+    val file = new java.io.File(output.toString)
     val bout = new java.io.ByteArrayOutputStream() {
       override def write(b: Int): Unit = {
-        super.write(b)
-        oldOut.write(b)
-        oldOut.flush()
+        halt("Unsupported")
       }
 
       override def write(b: Array[Byte], off: Int, len: Int): Unit = {
-        super.write(b, off, len)
+        val fout = new java.io.FileOutputStream(file, true)
+        fout.write(b, off, len)
+        fout.flush()
+        fout.close()
         oldOut.write(b, off, len)
         oldOut.flush()
       }
     }
-    val berr = if (errAsOut) bout else new java.io.ByteArrayOutputStream() {
-      override def write(b: Int): Unit = {
-        super.write(b)
-        oldErr.write(b)
-        oldErr.flush()
-      }
-
-      override def write(b: Array[Byte], off: Int, len: Int): Unit = {
-        super.write(b, off, len)
-        oldErr.write(b, off, len)
-        oldErr.flush()
-      }
-    }
+    val berr = bout
     val out = new java.io.PrintStream(bout)
     val err = new java.io.PrintStream(berr)
     try {
@@ -114,7 +105,6 @@ class IRSimulatorTest extends SireumRcSpec {
       val r = f()
       System.out.flush()
       System.err.flush()
-      output.up.mkdirAll()
       return r
     } catch {
       case t: Throwable =>
@@ -126,10 +116,6 @@ class IRSimulatorTest extends SireumRcSpec {
         System.err.flush()
         throw t
     } finally {
-      output.writeOver(bout.toString("UTF-8"))
-      if (!errAsOut) {
-        output.writeAppend(berr.toString("UTF-8"))
-      }
       System.setErr(oldErr)
       System.setOut(oldOut)
     }

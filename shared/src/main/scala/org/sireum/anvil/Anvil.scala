@@ -543,6 +543,9 @@ import Anvil._
       if (!config.isFirstGen) {
         for (p <- procedures) {
           val context = p.context.owner :+ p.context.id
+          if (config.stackTrace) {
+            globals = globals :+ AST.IR.Global(spType, context :+ sfCallerId, p.pos)
+          }
           for (idt <- ops.ISZOps(p.paramNames).zip(p.tipe.args)) {
             var t = idt._2
             if (!isScalar(t)) {
@@ -635,7 +638,7 @@ import Anvil._
         output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "offset"), proc.prettyST(anvil.printer))
         pass = pass + 1
 
-        proc = anvil.transformStackTraceDesc(fresh, proc)
+        proc = anvil.transformStackTraceDesc(fresh, proc, globalMap)
         output.add(F, irProcedurePath(proc.id, proc.tipe, stage, pass, "stack-frame-desc"), proc.prettyST(anvil.printer))
         pass = pass + 1
 
@@ -780,8 +783,12 @@ import Anvil._
         }
 
         if (!config.isFirstGen) {
-          p = anvil.transformSecondGenSplit(fresh, p)
+          p = anvil.transformSecondGenSplit(fresh, p, globalMap, procedureMap, procedureSizeMap)
           output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "second-gen-split"), p.prettyST(anvil.printer))
+          pass = pass + 1
+
+          p = anvil.transformSecondGenSplitGlobalAccess(fresh, p)
+          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "second-gen-split-global"), p.prettyST(anvil.printer))
           pass = pass + 1
         }
 
@@ -1101,13 +1108,12 @@ import Anvil._
           val label1 = fresh.label()
           val label2 = fresh.label()
           val label3 = fresh.label()
-          val label4 = fresh.label()
           val assignSpGlobal: AST.IR.Stmt.Ground = if (config.tempGlobal) {
             AST.IR.Stmt.Assign.Global(spName, spType, AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)), g.pos)
           } else {
             AST.IR.Stmt.Intrinsic(Intrinsic.Store(AST.IR.Exp.Int(spType, spLoc, g.pos),
               0, isSigned(spType), typeByteSize(spType), AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, g.pos)),
-              st"", spType, g.pos))
+              st"$spName = SP", spType, g.pos))
           }
           blocks = blocks :+ AST.IR.BasicBlock(b.label, ISZ(
             AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, T, AST.IR.Exp.Int(spType, spAdd, p.pos), g.pos))
@@ -1116,8 +1122,7 @@ import Anvil._
           blocks = blocks :+ AST.IR.BasicBlock(label2, ISZ(g), AST.IR.Jump.Goto(label3, g.pos))
           blocks = blocks :+ AST.IR.BasicBlock(label3, ISZ(
             AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, T, AST.IR.Exp.Int(spType, -spAdd, p.pos), g.pos))
-          ), AST.IR.Jump.Goto(label4, g.pos))
-          blocks = blocks :+ AST.IR.BasicBlock(label4, ISZ(assignSpGlobal), b.jump)
+          ), b.jump)
         case _ => blocks = blocks :+ b
       }
     }
@@ -1191,12 +1196,31 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformSecondGenSplit(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+  def transformSecondGenSplit(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure,
+                              globalMap: HashSMap[ISZ[String], VarInfo],
+                              procedureMap: HashSMap[AST.IR.MethodContext, AST.IR.Procedure],
+                              procedureSizeMap: HashMap[AST.IR.MethodContext, Z]): AST.IR.Procedure = {
     if (config.isFirstGen) {
       return p
     }
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blocks = ISZ[AST.IR.BasicBlock]()
+    if (config.stackTrace) {
+      val paramInfo = procedureParamInfo(PBox(p))._2
+      val sfCallerInfo = paramInfo.get(sfCallerId).get
+      val sfLocInfo = paramInfo.get(sfLocId).get
+      val sfDescInfo = paramInfo.get(sfDescId).get
+      val sfCurrentInfo = paramInfo.get(sfCurrentId).get
+      var locals = ISZ[Intrinsic.Decl.Local]()
+      locals = locals :+ Intrinsic.Decl.Local(sfCallerInfo.loc, sfCallerInfo.totalSize, sfCallerId, sfCallerInfo.tipe)
+      locals = locals :+ Intrinsic.Decl.Local(sfLocInfo.loc, sfLocInfo.totalSize, sfLocId, sfLocInfo.tipe)
+      locals = locals :+ Intrinsic.Decl.Local(sfDescInfo.loc, sfDescInfo.totalSize, sfDescId, sfDescInfo.tipe)
+      locals = locals :+ Intrinsic.Decl.Local(sfCurrentInfo.loc, sfCurrentInfo.totalSize, sfCurrentId, sfCurrentInfo.tipe)
+      blocks = blocks :+ AST.IR.BasicBlock(fresh.label(),
+        ISZ(AST.IR.Stmt.Intrinsic(Intrinsic.Decl(F, F, locals, p.pos))),
+        AST.IR.Jump.Goto(body.blocks(0).label, p.pos)
+      )
+    }
     for (b <- body.blocks) {
       val ic = IpCounter(this, HashSMap.empty, HashSMap.empty, 0)
       ic.transform_langastIRBasicBlock(b)
@@ -1237,17 +1261,80 @@ import Anvil._
         blocks = blocks :+ b
       }
     }
+
+    if (config.stackTrace) {
+      var blocks2 = ISZ[AST.IR.BasicBlock]()
+      def assignSfCurrentId(b: AST.IR.BasicBlock, e: AST.IR.Exp.Apply, n: AST.IR.Exp.Int): Unit = {
+        val mc = AST.IR.MethodContext(e.isInObject, e.owner, e.id, e.methodType)
+        val paramInfo = procedureParamInfo(PBox(procedureMap.get(mc).get))._2
+        val sfCallerInfoLoc = paramInfo.get(sfCallerId).get.loc
+        val sfCallerIdGlobalName = mc.owner :+ mc.id :+ sfCallerId
+        assert(sfCallerInfoLoc == 0)
+        val rhs = AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, e.pos))
+        val assign: AST.IR.Stmt.Ground = if (config.tempGlobal) {
+          AST.IR.Stmt.Assign.Global(sfCallerIdGlobalName, spType, rhs, e.pos)
+        } else {
+          val loc = globalMap.get(sfCallerIdGlobalName).get.loc
+          AST.IR.Stmt.Intrinsic(Intrinsic.Store(AST.IR.Exp.Int(spType, loc, e.pos), 0, isSigned(spType),
+            typeByteSize(spType), rhs, st"${(sfCallerIdGlobalName, ".")} = &$sfCallerId", spType, e.pos))
+        }
+        if (sfCallerInfoLoc == 0) {
+          val label = fresh.label()
+          blocks2 = blocks2 :+ AST.IR.BasicBlock(b.label, ISZ(assign), AST.IR.Jump.Goto(label, e.pos))
+          blocks2 = blocks2 :+ b(label = label)
+        } else {
+          val label = fresh.label()
+          val label2 = fresh.label()
+          blocks2 = blocks2 :+ AST.IR.BasicBlock(b.label, ISZ(
+            AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, T, AST.IR.Exp.Int(spType, sfCallerInfoLoc, e.pos), e.pos))
+          ), AST.IR.Jump.Goto(label2, e.pos))
+          blocks2 = blocks2 :+ AST.IR.BasicBlock(label, ISZ(assign), AST.IR.Jump.Goto(label2, e.pos))
+          blocks2 = blocks2 :+ AST.IR.BasicBlock(label2, ISZ(
+            AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, T,
+              AST.IR.Exp.Int(spType, -sfCallerInfoLoc + n.value, e.pos), e.pos))), b.jump)
+        }
+      }
+      for (i <- blocks.indices) {
+        val b = blocks(i)
+        b.grounds match {
+          case ISZ(AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, T, n: AST.IR.Exp.Int, _))) if n.value > 0 =>
+            var found = F
+            for (j <- i + 1 until blocks.size if !found) {
+              val b2 = blocks(j)
+              b2.grounds match {
+                case ISZ(g: AST.IR.Stmt.Expr) =>
+                  found = T
+                  assignSfCurrentId(b, g.exp, n)
+                case ISZ(AST.IR.Stmt.Assign.Temp(_, e: AST.IR.Exp.Apply, _)) =>
+                  found = T
+                  assignSfCurrentId(b, e, n)
+                case _ =>
+              }
+            }
+            if (!found) {
+              blocks2 = blocks2 :+ b
+            }
+          case _ =>
+            blocks2 = blocks2 :+ b
+        }
+      }
+      blocks = blocks2
+    }
+
+    return p(body = body(blocks = blocks))
+  }
+
+  def transformSecondGenSplitGlobalAccess(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+    if (config.isFirstGen || !config.tempGlobal) {
+      return p
+    }
     @strictpure def accessGlobal(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = g match {
       case _: AST.IR.Stmt.Assign.Global => T
       case AST.IR.Stmt.Assign.Temp(_, _: AST.IR.Exp.GlobalVarRef, _) => T
       case AST.IR.Stmt.Assign.Local(_, _, _,_: AST.IR.Exp.GlobalVarRef, _) => T
       case _ => F
     }
-    var r = p(body = body(blocks = blocks))
-    if (config.tempGlobal) {
-      r = transformSplitTest(F, fresh, r, accessGlobal _)
-    }
-    return r
+    return transformSplitTest(T, fresh, p, accessGlobal _)
   }
 
   def transformEmptyBlock(p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1295,7 +1382,7 @@ import Anvil._
       }
       blockMap = blockMap + b.label ~> b(jump = jump)
     }
-    val delBlockLabels: ISZ[Z] = (for (labelIncomings <- countNumOfIncomingJumps(blockMap.values).entries
+    val delBlockLabels: ISZ[Z] = (for (labelIncomings <- countNumOfIncomingJumps(p, blockMap.values).entries
                                        if labelIncomings._2 == 0) yield labelIncomings._1) -- ISZ(0, 1, body.blocks(0).label)
     blockMap = blockMap -- delBlockLabels
     return p(body = body(blocks = blockMap.values))
@@ -1432,7 +1519,7 @@ import Anvil._
   def transformMergeDecl(p: AST.IR.Procedure): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
     var blockMap = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
-    val m = countNumOfIncomingJumps(body.blocks)
+    val m = countNumOfIncomingJumps(p, body.blocks)
     for (b <- body.blocks) {
       b.jump match {
         case j: AST.IR.Jump.Goto if m.get(j.label) == Some(1) && ops.ISZOps(b.grounds).
@@ -1707,7 +1794,7 @@ import Anvil._
     return p(body = body(blocks = blocks))
   }
 
-  def transformStackTraceDesc(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
+  def transformStackTraceDesc(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, globalMap: HashSMap[ISZ[String], VarInfo]): AST.IR.Procedure = {
     if (!config.stackTrace || p.owner == intrinsicName) {
       return p
     }
@@ -1722,7 +1809,41 @@ import Anvil._
       st"$sfDescId = 0x$sfDescType ($desc)", typeShaType, p.pos))
     val label = fresh.label()
     val first = body.blocks(0)
-    return p(body = body(blocks = AST.IR.BasicBlock(first.label, grounds, AST.IR.Jump.Goto(label, p.pos)) +: body.blocks(0 ~> first(label = label))))
+    if (config.isFirstGen) {
+      return p(body = body(blocks = AST.IR.BasicBlock(first.label, grounds, AST.IR.Jump.Goto(label, p.pos)) +: body.blocks(0 ~> first(label = label))))
+    } else {
+      val label2 = fresh.label()
+      val label3 = fresh.label()
+      val label4 = fresh.label()
+      //val label5 = fresh.label()
+      val sfCallerGlobalName = p.context.owner :+ p.context.id :+ sfCallerId
+      val sfCallerAssign: AST.IR.Stmt.Ground = if (config.tempGlobal) {
+        AST.IR.Stmt.Assign.Temp(0, AST.IR.Exp.GlobalVarRef(sfCallerGlobalName, spType, p.pos), p.pos)
+      } else {
+        val loc = globalMap.get(sfCallerGlobalName).get.loc
+        AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(0, AST.IR.Exp.Int(spType, loc, p.pos), 0, isSigned(spType),
+          typeByteSize(spType), st"${tempST(this, spType, 0)} = ${(sfCallerGlobalName, ".")}", spType, p.pos))
+      }
+      val paramInfo = procedureParamInfo(PBox(p))._2
+      val sfCallerInfoLoc = paramInfo.get(sfCallerId).get.loc
+      val sfCurrentInfoLoc = paramInfo.get(sfCurrentId).get.loc
+      assert(sfCallerInfoLoc == 0)
+      return p(body = body(blocks = ISZ(
+        first(jump = AST.IR.Jump.Goto(label, first.jump.pos)),
+        AST.IR.BasicBlock(label, grounds, AST.IR.Jump.Goto(label2, first.jump.pos)),
+        AST.IR.BasicBlock(label2, ISZ(sfCallerAssign), AST.IR.Jump.Goto(label3, first.jump.pos)),
+        AST.IR.BasicBlock(label3, ISZ(
+          AST.IR.Stmt.Intrinsic(Intrinsic.Store(AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)),
+            sfCallerInfoLoc, isSigned(spType), typeByteSize(spType), AST.IR.Exp.Temp(0, spType, p.pos),
+            st"$sfCallerId = ${tempST(this, spType, 0)}", spType, p.pos))
+        ), AST.IR.Jump.Goto(label4, first.jump.pos)),
+        AST.IR.BasicBlock(label4, ISZ(
+          AST.IR.Stmt.Intrinsic(Intrinsic.Store(AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)),
+            sfCurrentInfoLoc, isSigned(spType), typeByteSize(spType),
+            AST.IR.Exp.Intrinsic(Intrinsic.Register(T, spType, p.pos)), st"$sfCurrentId = SP", spType, p.pos))
+        ), first.jump)
+      ) ++ ops.ISZOps(body.blocks).drop(1)))
+    }
   }
 
   def transformErase(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -2244,7 +2365,7 @@ import Anvil._
     return s"$constructLocalId@[${pos.beginLine},${pos.beginColumn}].${sha3(pos.string)}"
   }
 
-  @pure def countNumOfIncomingJumps(blocks: ISZ[AST.IR.BasicBlock]): HashMap[Z, Z] = {
+  @pure def countNumOfIncomingJumps(p: AST.IR.Procedure, blocks: ISZ[AST.IR.BasicBlock]): HashMap[Z, Z] = {
     var r = HashMap ++ (for (b <- blocks) yield (b.label, z"0"))
     r = r ++ ISZ[(Z, Z)]((0, 0), (1, 0))
     for (b <- blocks) {
@@ -2268,6 +2389,7 @@ import Anvil._
         }
       }
       for (target <- b.jump.targets) {
+        assert(r.contains(target), st"${p.context}@${b.label}: $target".render)
         r = r + target ~> (r.get(target).get + 1)
       }
     }
@@ -2607,7 +2729,7 @@ import Anvil._
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
     var tempSubstMap = HashMap.empty[Z, ISZ[HashMap[(B, Z), AST.IR.Exp]]] + body.blocks(0).label ~> ISZ(HashMap.empty)
     var work = ISZ[AST.IR.BasicBlock](body.blocks(0))
-    val incomingMap = countNumOfIncomingJumps(body.blocks)
+    val incomingMap = countNumOfIncomingJumps(proc, body.blocks)
     def getSubstMap(label: Z): HashMap[(B, Z), AST.IR.Exp] = {
       val ms = tempSubstMap.get(label).get
       var r = ms(0)
@@ -2732,7 +2854,7 @@ import Anvil._
     var blockMap: HashSMap[Z, AST.IR.BasicBlock] = HashSMap ++ (for (b <- body.blocks) yield (b.label, b))
     var tempSubstMap = HashMap.empty[Z, ISZ[HashMap[(B, Z), AST.IR.Exp]]] + body.blocks(0).label ~> ISZ(HashMap.empty)
     var work = ISZ[AST.IR.BasicBlock](body.blocks(0))
-    val incomingMap = countNumOfIncomingJumps(body.blocks)
+    val incomingMap = countNumOfIncomingJumps(proc, body.blocks)
     def getSubstMap(label: Z): HashMap[(B, Z), AST.IR.Exp] = {
       val ms = tempSubstMap.get(label).get
       var r = ms(0)
@@ -3024,7 +3146,7 @@ import Anvil._
                   case AST.IR.Stmt.Assign.Local(_, _, _, rhs: AST.IR.Exp.GlobalVarRef, _) if !isScalar(rhs.tipe) =>
                     val temp = newGround.asInstanceOf[AST.IR.Stmt.Assign.Temp].lhs
                     grounds = grounds :+ AST.IR.Stmt.Intrinsic(Intrinsic.TempLoad(temp, AST.IR.Exp.Temp(temp, spType, g.pos), 0,
-                      isSigned(spType), typeByteSize(spType), st"", spType, g.pos))
+                      isSigned(spType), typeByteSize(spType), st"load ${tempST(this, spType, temp)}", spType, g.pos))
                   case _ =>
                 }
               }
@@ -3094,13 +3216,12 @@ import Anvil._
           ), b.jump)
         case _ =>
           b.jump match {
-            case j: AST.IR.Jump.If if shouldSplit(j.cond) =>
+            case j: AST.IR.Jump.If if shouldSplit(j.cond) || j.cond.isInstanceOf[AST.IR.Exp.GlobalVarRef] =>
               val label = fresh.label()
               val pos = j.cond.pos
-              blocks = blocks :+ b(grounds = ISZ(
-                AST.IR.Stmt.Assign.Temp(tempB, j.cond, pos)
-              ), jump = AST.IR.Jump.Goto(label, pos))
-              blocks = blocks :+ AST.IR.BasicBlock(label, b.grounds, j(cond = AST.IR.Exp.Temp(tempB, AST.Typed.b, pos)))
+              blocks = blocks :+ b(grounds = b.grounds :+ AST.IR.Stmt.Assign.Temp(tempB, j.cond, pos),
+                jump = AST.IR.Jump.Goto(label, pos))
+              blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), j(cond = AST.IR.Exp.Temp(tempB, AST.Typed.b, pos)))
             case _ =>
               blocks = blocks :+ b
           }
@@ -3117,7 +3238,7 @@ import Anvil._
     var callResultIdOffsetMap = HashMap.empty[String, Z]
     val offsetParamInfo = procedureParamInfo(PBox(proc))
     var maxOffset = offsetParamInfo._1
-    val incomingMap = countNumOfIncomingJumps(body.blocks)
+    val incomingMap = countNumOfIncomingJumps(proc, body.blocks)
     val paramSet = HashSet ++ proc.paramNames
     blockLocalOffsetMap = blockLocalOffsetMap + body.blocks(0).label ~> (maxOffset, 0, LocalOffsetInfo(
       HashMap.empty[String, Z] ++ (for (entry <- offsetParamInfo._2.entries) yield (entry._1, entry._2.loc)), ISZ()))
@@ -3745,10 +3866,12 @@ import Anvil._
       stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
         AST.IR.Exp.Int(spType, memSizeInfo.loc, p.pos), 0, isSigned(AST.Typed.z), typeByteSize(AST.Typed.z),
         AST.IR.Exp.Int(AST.Typed.z, config.memory, p.pos), st"memory $sizeFieldId", AST.Typed.z, p.pos))
-      val sfCallerInfo = procedureParamInfo(PBox(p))._2.get(sfCallerId).get
-      stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
-        AST.IR.Exp.Int(spType, globalSize + sfCallerInfo.loc, p.pos), 0, isSigned(spType), typeByteSize(spType),
-        AST.IR.Exp.Int(spType, 0, p.pos), st"$sfCallerId = 0", spType, p.pos))
+      if (config.isFirstGen) {
+        val sfCallerInfo = procedureParamInfo(PBox(p))._2.get(sfCallerId).get
+        stores = stores :+ AST.IR.Stmt.Intrinsic(Intrinsic.Store(
+          AST.IR.Exp.Int(spType, globalSize + sfCallerInfo.loc, p.pos), 0, isSigned(spType), typeByteSize(spType),
+          AST.IR.Exp.Int(spType, 0, p.pos), st"$sfCallerId = 0", spType, p.pos))
+      }
     }
     if (config.shouldPrint) {
       if (config.isFirstGen) {
