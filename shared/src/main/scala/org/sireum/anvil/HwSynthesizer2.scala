@@ -7667,21 +7667,22 @@ import HwSynthesizer2._
         }
       }
       case exp: AST.IR.Exp.Apply => {
+        val funName = replaceFuncName(exp.id)
         hwLog.funcCallInCurrentBlock = T
         if(isRecursive) {
           ipArbiterUsage = ipArbiterUsage + ArbTempSaveRestoreIP()
         }
 
-        if(!ipRouterUsage.contains(exp.id)) {
-          ipRouterUsage = ipRouterUsage + exp.id ~> (globalRouterCount, HashSSet.empty[ArbIpType])
+        if(!ipRouterUsage.contains(funName)) {
+          ipRouterUsage = ipRouterUsage + funName ~> (globalRouterCount, HashSSet.empty[ArbIpType])
           globalRouterCount = globalRouterCount + 1
         }
 
         // only 2 cases need stack push when encounter function call
         // case 1), self recursive function call
         // case 2), mutually function call
-        if((exp.id == hwLog.curProcedureId && isRecursive) ||
-          (exp.id != hwLog.curProcedureId && recursiveProcedures.isMutuallyRecursive(idToQNameMap.get(replaceFuncName(hwLog.curProcedureId)).get, idToQNameMap.get(replaceFuncName(exp.id)).get))) {
+        if((funName == hwLog.curProcedureId && isRecursive) ||
+          (funName != hwLog.curProcedureId && recursiveProcedures.isMutuallyRecursive(idToQNameMap.get(replaceFuncName(hwLog.curProcedureId)).get, idToQNameMap.get(funName).get))) {
           val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
           val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
 
@@ -7700,7 +7701,7 @@ import HwSynthesizer2._
           val callST: ST =
             st"""
                 |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
-                |r_routeOut.dstID := ${ipRouterUsage.get(exp.id).get._1}.U
+                |r_routeOut.dstID := ${ipRouterUsage.get(funName).get._1}.U
                 |r_routeOut.dstCP := 3.U
                 |r_routeOut_valid := true.B
                 |
@@ -7720,7 +7721,7 @@ import HwSynthesizer2._
           exprST =
             st"""
                 |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
-                |r_routeOut.dstID := ${ipRouterUsage.get(exp.id).get._1}.U
+                |r_routeOut.dstID := ${ipRouterUsage.get(funName).get._1}.U
                 |r_routeOut.dstCP := 3.U
                 |r_routeOut_valid := true.B
             """
