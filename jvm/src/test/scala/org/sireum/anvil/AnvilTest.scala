@@ -80,32 +80,32 @@ object AnvilTest {
         if (alignAxi4) {
           return HashMap.empty[String, Z] +
             "add.sc" ~> 120 +
-            "assert.sc" ~> 176 +
-            "bubble.sc" ~> 176 +
+            "assert.sc" ~> 960 +
+            "bubble.sc" ~> 248 +
             "construct.sc" ~> 216 +
             "divrem.sc" ~> 72 +
-            "dll.sc" ~> 736 +
+            "dll.sc" ~> 1088 +
             "factorial.sc" ~> 136 +
             "global.sc" ~> 112 +
-            "indexing-obj.sc" ~> 224 +
-            "indexing.sc" ~> 160 +
-            "instanceof.sc" ~> 128 +
+            "indexing-obj.sc" ~> 560 +
+            "indexing.sc" ~> 208 +
+            "instanceof.sc" ~> 144 +
             "local-reuse.sc" ~> 120 +
             "mult.sc" ~> 168 +
-            "print.sc" ~> 904 +
-            "print-no-float.sc" ~> 336 +
+            "print.sc" ~> 1648 +
+            "print-no-float.sc" ~> 592 +
             "printU64.sc" ~> 168 +
-            "seq.sc" ~> 264 +
+            "seq.sc" ~> 208 +
             "shiftS64.sc" ~> 176 +
             "shiftU64.sc" ~> 168 +
-            "sum.sc" ~> 160
+            "sum.sc" ~> 520
         } else {
           return HashMap.empty[String, Z] +
             "add.sc" ~> 104 +
-            "assert.sc" ~> 152 +
-            "bubble.sc" ~> 160 +
+            "assert.sc" ~> 240 +
+            "bubble.sc" ~> 200 +
             "construct.sc" ~> 200 +
-            "divrem.sc" ~> 64 +
+            "divrem.sc" ~> 128 +
             "dll.sc" ~> 664 +
             "factorial.sc" ~> 120 +
             "global.sc" ~> 104 +
@@ -120,13 +120,13 @@ object AnvilTest {
             "seq.sc" ~> 240 +
             "shiftS64.sc" ~> 160 +
             "shiftU64.sc" ~> 152 +
-            "sum.sc" ~> 144
+            "sum.sc" ~> 216
         }
       } else {
         return HashMap.empty[String, Z] +
           "add.sc" ~> 160 +
-          "assert.sc" ~> 320 +
-          "bubble.sc" ~> 304 +
+          "assert.sc" ~> 416 +
+          "bubble.sc" ~> 344 +
           "construct.sc" ~> 352 +
           "divrem.sc" ~> 248 +
           "dll.sc" ~> 760 +
@@ -143,7 +143,7 @@ object AnvilTest {
           "seq.sc" ~> 288 +
           "shiftS64.sc" ~> 224 +
           "shiftU64.sc" ~> 224 +
-          "sum.sc" ~> 208
+          "sum.sc" ~> 280
       }
     }
   }

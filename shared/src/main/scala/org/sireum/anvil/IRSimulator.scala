@@ -632,7 +632,7 @@ object IRSimulator {
       return State(
         globalMap,
         globalScalarNameMap.toIS,
-        for (entry <- globalMap.entries if entry._2.isScalar) yield Value.fromRawU64(anvil, u64"0", entry._2.tipe),
+        (for (name <- globalScalarNameMap) yield Value.fromRawU64(anvil, u64"0", globalMap.get(name).get.tipe)).toIS,
         procedureName,
         Value.fromU64(u64"0"),
         Value.fromU64(u64"0"),
