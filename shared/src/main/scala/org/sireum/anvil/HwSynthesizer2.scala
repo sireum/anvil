@@ -2813,13 +2813,12 @@ import HwSynthesizer2._
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
 
-  val hwLog: HwSynthesizer2.HwLog = HwSynthesizer2.HwLog(0, MNone(), F, F, 0, 0, "", F)
+  val hwLog: HwSynthesizer2.HwLog = HwSynthesizer2.HwLog(0, MNone(), F, F, 0, 0, "", ISZ[String](), F)
 
   val noXilinxIp: B = anvil.config.noXilinxIp
   var ipArbiterUsage: HashSSet[ArbIpType] = HashSSet.empty[ArbIpType]
   var globalRouterCount: Z = 1
-  var ipRouterUsage: HashSMap[String, (Z, HashSSet[ArbIpType])] = HashSMap.empty
-  var idToQNameMap: HashSMap[String, QName] = HashSMap.empty
+  var ipRouterUsage: HashSMap[String, (Z, HashSSet[ArbIpType], QName)] = HashSMap.empty
   // record the globalVar: name -> (index, signed, width)
   var globalVarMap: HashSMap[String, (Z, B, Z)] = HashSMap.empty
   // record whether using alignAxi4 mini state machine and corresponding string template
@@ -3173,8 +3172,12 @@ import HwSynthesizer2._
     return intParaST
   }
 
-  @strictpure def replaceFuncName(name: String): String = {
-    return replaceChar(replaceChar(name, '<', '$'), '>', '_')
+  @strictpure def replaceFuncName(isInObject: B, owner: ISZ[org.sireum.String], id: org.sireum.String): (QName, String) = {
+    val funcName: org.sireum.String = replaceChar(replaceChar(id, '<', '$'), '>', '_')
+    val ownerList: ISZ[org.sireum.String] = for(e <- owner) yield replaceChar(replaceChar(e, '<', '$'), '>', '_')
+    val finalList: ISZ[org.sireum.String] = if(isInObject) ownerList :+ funcName :+ "object" else ownerList :+ funcName
+
+    return (owner :+ id, st"${(finalList, "_")}".render)
   }
 
   /*
@@ -3185,12 +3188,6 @@ import HwSynthesizer2._
   def printProcedure(name: String, program: AST.IR.Program, output: Anvil.Output, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): Unit = {
     var r = HashSMap.empty[ISZ[String], ST]
     var allFunctionIpST: ISZ[(String, ST)] = ISZ[(String, ST)]()
-    // initialize idToQNameMap
-    for(o <- program.procedures) {
-      if(idToQNameMap.get(replaceFuncName(o.id)).isEmpty) {
-        idToQNameMap = idToQNameMap + (replaceFuncName(o.id) ~> (o.owner :+ o.id))
-      }
-    }
 
     // initialize globalVarMap
     var cnt1: Z = 0
@@ -3223,25 +3220,27 @@ import HwSynthesizer2._
     }
 
     for(o <- program.procedures) {
-      hwLog.curProcedureId = replaceFuncName(o.id)
+      val procTuple: (QName, String) = replaceFuncName(o.isInObject, o.owner, o.id)
+      hwLog.curProcedureQName = procTuple._1
+      hwLog.curProcedureId = procTuple._2
       ipArbiterUsage = HashSSet.empty[ArbIpType]
       alignAxi4MiniStateMachineMap = HashSMap.empty
 
       if(!ipRouterUsage.contains(hwLog.curProcedureId)) {
-        ipRouterUsage = ipRouterUsage + hwLog.curProcedureId ~> (globalRouterCount, HashSSet.empty[ArbIpType])
+        ipRouterUsage = ipRouterUsage + hwLog.curProcedureId ~> (globalRouterCount, HashSSet.empty[ArbIpType], hwLog.curProcedureQName)
         globalRouterCount = globalRouterCount + 1
       }
 
-      val isRecursive: B = recursiveProcedures.contains(idToQNameMap.get(replaceFuncName(o.id)).get)
+      val isRecursive: B = recursiveProcedures.contains(hwLog.curProcedureQName)
 
       val procedureST = processProcedure(hwLog.curProcedureId, o, maxRegisters, globalInfoMap, isRecursive)
       allFunctionIpST = allFunctionIpST :+ (hwLog.curProcedureId, procedureST)
       r = r + ISZ(name) ~> o.prettyST(anvil.printer)
 
       ipRouterUsage.get(hwLog.curProcedureId) match {
-        case Some((cnt, _)) => ipRouterUsage = ipRouterUsage + hwLog.curProcedureId ~> (cnt, ipArbiterUsage)
+        case Some((cnt, _, qname)) => ipRouterUsage = ipRouterUsage + hwLog.curProcedureId ~> (cnt, ipArbiterUsage, qname)
         case _ =>
-          ipRouterUsage = ipRouterUsage + hwLog.curProcedureId ~> (globalRouterCount, ipArbiterUsage)
+          ipRouterUsage = ipRouterUsage + hwLog.curProcedureId ~> (globalRouterCount, ipArbiterUsage, hwLog.curProcedureQName)
           globalRouterCount = globalRouterCount + 1
       }
     }
@@ -3249,7 +3248,8 @@ import HwSynthesizer2._
     @pure def hasRecursiveInAllfunctions(): B = {
       var result: B = F
       for(o <- program.procedures) {
-        if(recursiveProcedures.contains(idToQNameMap.get(replaceFuncName(o.id)).get)) {
+        val procTuple: (QName, String) = replaceFuncName(o.isInObject, o.owner, o.id)
+        if(recursiveProcedures.contains(procTuple._1)) {
           result = T
         }
       }
@@ -5872,7 +5872,7 @@ import HwSynthesizer2._
     // use this boolean variable to update numOfBlockMemInterface
     var hasRecursiveFuncCall: B = F
     for(o <- ipRouterUsage.entries) {
-      if(recursiveProcedures.contains(idToQNameMap.get(replaceFuncName(o._1)).get)) {
+      if(recursiveProcedures.contains(o._2._3)) {
         hasRecursiveFuncCall = T
       }
     }
@@ -6243,7 +6243,7 @@ import HwSynthesizer2._
           |  is(2.U) {
           |    r_routeOut.srcID := 0.U
           |    r_routeOut.srcCP := 4.U
-          |    r_routeOut.dstID := ${ipRouterUsage.get("$test").get._1}.U
+          |    r_routeOut.dstID := ${ipRouterUsage.get("$test_object").get._1}.U
           |    r_routeOut.dstCP := 3.U
           |    r_routeOut.isReturn := false.B
           |    r_routeOut_valid := true.B
@@ -7667,22 +7667,24 @@ import HwSynthesizer2._
         }
       }
       case exp: AST.IR.Exp.Apply => {
-        val funName = replaceFuncName(exp.id)
+        val procTuple: (QName, String) = replaceFuncName(exp.isInObject, exp.owner, exp.id)
+        val procQName: QName = procTuple._1
+        val procString: String = procTuple._2
         hwLog.funcCallInCurrentBlock = T
         if(isRecursive) {
           ipArbiterUsage = ipArbiterUsage + ArbTempSaveRestoreIP()
         }
 
-        if(!ipRouterUsage.contains(funName)) {
-          ipRouterUsage = ipRouterUsage + funName ~> (globalRouterCount, HashSSet.empty[ArbIpType])
+        if(!ipRouterUsage.contains(procString)) {
+          ipRouterUsage = ipRouterUsage + procString ~> (globalRouterCount, HashSSet.empty[ArbIpType], procQName)
           globalRouterCount = globalRouterCount + 1
         }
 
         // only 2 cases need stack push when encounter function call
         // case 1), self recursive function call
         // case 2), mutually function call
-        if((funName == hwLog.curProcedureId && isRecursive) ||
-          (funName != hwLog.curProcedureId && recursiveProcedures.isMutuallyRecursive(idToQNameMap.get(replaceFuncName(hwLog.curProcedureId)).get, idToQNameMap.get(funName).get))) {
+        if((procString == hwLog.curProcedureId && isRecursive) ||
+          (procString != hwLog.curProcedureId && recursiveProcedures.isMutuallyRecursive(hwLog.curProcedureQName, procQName))) {
           val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
           val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
 
@@ -7701,7 +7703,7 @@ import HwSynthesizer2._
           val callST: ST =
             st"""
                 |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
-                |r_routeOut.dstID := ${ipRouterUsage.get(funName).get._1}.U
+                |r_routeOut.dstID := ${ipRouterUsage.get(procString).get._1}.U
                 |r_routeOut.dstCP := 3.U
                 |r_routeOut_valid := true.B
                 |
@@ -7721,7 +7723,7 @@ import HwSynthesizer2._
           exprST =
             st"""
                 |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
-                |r_routeOut.dstID := ${ipRouterUsage.get(funName).get._1}.U
+                |r_routeOut.dstID := ${ipRouterUsage.get(procString).get._1}.U
                 |r_routeOut.dstCP := 3.U
                 |r_routeOut_valid := true.B
             """
@@ -7752,6 +7754,7 @@ object HwSynthesizer2 {
                                   var currentLabel: Z,
                                   var maxNumLabel: Z,
                                   var curProcedureId: String,
+                                  var curProcedureQName: QName,
                                   var funcCallInCurrentBlock: B) extends MAnvilIRTransformer{
 
     @pure def isMemCpyInCurrentBlock(): B = {
