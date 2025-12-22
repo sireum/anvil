@@ -5683,7 +5683,45 @@ import HwSynthesizer2._
           |update_compile_order -fileset sources_1
           |
           |source ./testbenchIpGeneration.tcl
+          |
+          |# create block design
+          |create_bd_design "design_1"
+          |
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 blk_mem_gen_0
+          |set_property -dict [list \
+          |  CONFIG.Write_Width_A {64} \
+          |  CONFIG.use_bram_block {Stand_Alone} \
+          |] [get_bd_cells blk_mem_gen_0]
+          |
+          |set_property CONFIG.use_bram_block {BRAM_Controller} [get_bd_cells blk_mem_gen_0]
+          |
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_0
+          |set_property -dict [list \
+          |  CONFIG.DATA_WIDTH {64} \
+          |  CONFIG.SINGLE_PORT_BRAM {1} \
+          |] [get_bd_cells axi_bram_ctrl_0]
+          |
+          |connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
+          |
+          |make_bd_intf_pins_external  [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
+          |make_bd_pins_external  [get_bd_pins axi_bram_ctrl_0/s_axi_aclk]
+          |make_bd_pins_external  [get_bd_pins axi_bram_ctrl_0/s_axi_aresetn]
+          |
+          |save_bd_design
+          |
+          |make_wrapper -files [get_files ./vivado_project/Test.srcs/sources_1/bd/design_1/design_1.bd] -top
+          |add_files -norecurse ./vivado_project/Test.gen/sources_1/bd/design_1/hdl/design_1_wrapper.v
+          |
+          |update_compile_order -fileset sources_1
           |update_compile_order -fileset sim_1
+          |
+          |set bd_files [get_files -all -quiet -filter {NAME =~ "*.bd"}]
+          |generate_target simulation $$bd_files
+          |export_ip_user_files -of_objects $$bd_files -no_script -sync -force -quiet
+          |
+          |set xci_top [get_files -all -quiet -filter {NAME =~ "*.xci" && NAME !~ "*/bd/*"}]
+          |generate_target simulation $$xci_top
+          |export_ip_user_files -of_objects $$xci_top -no_script -sync -force -quiet
         """
     }
 
