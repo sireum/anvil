@@ -1908,9 +1908,11 @@ object ArbInputMap {
           |  val r_dma_dst_len      = RegInit(0.U(log2Up(C_M_AXI_DATA_WIDTH / 8 + 1).W))
           |
           |  // read, write, dma request
-          |  val r_read_req      = RegNext((io.mode === 1.U) || r_dma_req_read, init = false.B)
-          |  val r_write_req     = RegNext((io.mode === 2.U) || r_dma_req_write, init = false.B)
-          |  val r_dma_req       = RegNext(io.mode === 3.U, init = false.B)
+          |  val r_read_req       = RegNext((io.mode === 1.U) || r_dma_req_read, init = false.B)
+          |  val r_write_req      = RegNext((io.mode === 2.U) || r_dma_req_write, init = false.B)
+          |  val r_dma_req        = RegNext(io.mode === 3.U, init = false.B)
+          |  val r_read_only_req  = RegNext(io.mode === 1.U, init = false.B)
+          |  val r_write_only_req = RegNext(io.mode === 2.U, init = false.B)
           |
           |  // read logic
           |  val r_read_buffer   = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
@@ -1947,7 +1949,7 @@ object ArbInputMap {
           |                                  7.U -> Cat(0.U(C_M_AXI_DATA_WIDTH.W), r_buffer_shift7)
           |                              ))
           |
-          |  io.readValid        := RegNext(RegNext(r_read_req & r_r_valid))
+          |  io.readValid        := RegNext(RegNext(r_read_only_req & r_r_valid))
           |  io.readData         := r_final_buffer
           |
           |  r_m_axi_arlen     := 1.U
@@ -1974,7 +1976,7 @@ object ArbInputMap {
           |  }
           |
           |  // write logic
-          |  io.writeValid           := RegNext(r_write_req & r_b_valid, init = false.B)
+          |  io.writeValid           := RegNext(r_write_only_req & r_b_valid, init = false.B)
           |  val r_write_buffer      = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
           |  val r_write_padding     = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
           |  val r_write_masking     = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
