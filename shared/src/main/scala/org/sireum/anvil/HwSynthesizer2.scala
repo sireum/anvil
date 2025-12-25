@@ -2563,8 +2563,8 @@ object ArbInputMap {
         |
         |  val r_save_state    = RegInit(0.U(3.W))
         |  val r_restore_state = RegInit(0.U(3.W))
-        |  val r_push_index    = RegInit(0.U(log2Up(totalWords).W))
-        |  val r_pop_index     = RegInit(0.U(log2Up(totalWords).W))
+        |  val r_push_index    = RegInit(0.U(log2Up(totalWords + 1).W))
+        |  val r_pop_index     = RegInit(0.U(log2Up(totalWords + 1).W))
         |  val r_stack_addr    = RegInit(${stackStartAddr}.U(log2Up(depth).W))
         |
         |  // ========== 组合：把“当前输入寄存器”按顺序拼成 bitstream ==========
