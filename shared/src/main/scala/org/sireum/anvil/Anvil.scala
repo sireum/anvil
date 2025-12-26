@@ -3218,10 +3218,11 @@ import Anvil._
           b.jump match {
             case j: AST.IR.Jump.If if shouldSplit(j.cond) || j.cond.isInstanceOf[AST.IR.Exp.GlobalVarRef] =>
               val label = fresh.label()
+              val label2 = fresh.label()
               val pos = j.cond.pos
-              blocks = blocks :+ b(grounds = b.grounds :+ AST.IR.Stmt.Assign.Temp(tempB, j.cond, pos),
-                jump = AST.IR.Jump.Goto(label, pos))
-              blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(), j(cond = AST.IR.Exp.Temp(tempB, AST.Typed.b, pos)))
+              blocks = blocks :+ b(grounds = b.grounds, jump = AST.IR.Jump.Goto(label, pos))
+              blocks = blocks :+ AST.IR.BasicBlock(label, ISZ(AST.IR.Stmt.Assign.Temp(tempB, j.cond, pos)), AST.IR.Jump.Goto(label2, pos))
+              blocks = blocks :+ AST.IR.BasicBlock(label2, ISZ(), j(cond = AST.IR.Exp.Temp(tempB, AST.Typed.b, pos)))
             case _ =>
               blocks = blocks :+ b
           }
