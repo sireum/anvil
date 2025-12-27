@@ -7596,8 +7596,11 @@ import HwSynthesizer2._
         exprST = st"${(exp.name, "_")}"
       }
       case exp: AST.IR.Exp.Type => {
+        if(hwLog.curProcedureId == "org_sireum_anvil_Runtime_load_object" && hwLog.currentLabel == 27) {
+          println("hehe")
+        }
         val splitStr: String = if (anvil.typeBitSize(exp.exp.tipe) == anvil.typeBitSize(exp.t)) "" else s".pad(${anvil.typeBitSize(exp.t)})"
-        val postfix: ST = if(isGlobalVar(exp.exp)) st"" else st"${if (anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}${if (!anvil.config.splitTempSizes) "" else splitStr}"
+        val postfix: ST = if(isGlobalVar(exp.exp)) st"" else st"${if (!anvil.config.splitTempSizes) "" else splitStr}${if (anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}"
         exprST = st"${processExpr(exp.exp, F, ipPortLogic, maxRegisters, isRecursive, hwLog)}${postfix}"
       }
       case exp: AST.IR.Exp.Unary => {
