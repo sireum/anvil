@@ -6281,9 +6281,13 @@ import HwSynthesizer2._
           |r_valid := Mux(TopCP === 12.U, true.B, false.B)
           |switch(TopCP) {
           |  is(0.U) {
-          |    TopCP := Mux(r_start, 1.U, 0.U)
+          |    TopCP := Mux(r_start, 13.U, 0.U)
+          |    r_mem_total_length := MEMORY_DEPTH.U
+          |    r_mem_clear_addr := 0.U
+          |    r_mem_clear_length := 8.U
           |  }
           |  is(1.U) {
+          |    r_control(0) := 0.U
           |    r_mem_req_valid := true.B
           |    r_mem_req.mode := 2.U
           |    r_mem_req.writeAddr := 0.U
@@ -6408,7 +6412,27 @@ import HwSynthesizer2._
           |    }
           |  }
           |  is(12.U) {
+          |    TopCP := Mux(r_start, 1.U, TopCP)
           |    printf("%x\n", r_mem_resp.data)
+          |  }
+          |  is(13.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 2.U
+          |    r_mem_req.writeAddr := r_mem_clear_addr
+          |    r_mem_req.writeOffset := 0.U
+          |    r_mem_req.writeLen := r_mem_clear_length
+          |    r_mem_req.writeData := 0.U
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 14.U
+          |    }
+          |  }
+          |  is(14.U) {
+          |    r_mem_total_length := Mux(r_mem_total_length > 8.U, r_mem_total_length - 8.U, 0.U)
+          |    r_mem_clear_addr := r_mem_clear_addr + 8.U
+          |    r_mem_clear_length := Mux(r_mem_total_length > 8.U, 8.U, r_mem_total_length)
+          |    TopCP := Mux(r_mem_total_length === 0.U, 1.U, 13.U)
           |  }
           |}
         """
@@ -6429,6 +6453,7 @@ import HwSynthesizer2._
           |    TopCP := Mux(r_start, 1.U, 0.U)
           |  }
           |  is(1.U) {
+          |    r_control(0) := 0.U
           |    when(r_control(4)(0).asBool) {
           |      r_routeOut_valid := true.B
           |      TopCP := 2.U
@@ -6439,6 +6464,29 @@ import HwSynthesizer2._
           |    when(r_routeIn_valid) {
           |      TopCP := r_routeIn.dstCP
           |    }
+          |  }
+          |  // we do not use state 3.U
+          |  is(4.U) {
+          |    TopCP := Mux(r_start, 1.U, TopCP)
+          |  }
+          |  is(5.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 2.U
+          |    r_mem_req.writeAddr := r_mem_clear_addr
+          |    r_mem_req.writeOffset := 0.U
+          |    r_mem_req.writeLen := r_mem_clear_length
+          |    r_mem_req.writeData := 0.U
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 6.U
+          |    }
+          |  }
+          |  is(6.U) {
+          |    r_mem_total_length := Mux(r_mem_total_length > 8.U, r_mem_total_length - 8.U, 0.U)
+          |    r_mem_clear_addr := r_mem_clear_addr + 8.U
+          |    r_mem_clear_length := Mux(r_mem_total_length > 8.U, 8.U, r_mem_total_length)
+          |    TopCP := Mux(r_mem_total_length === 0.U, 1.U, 5.U)
           |  }
           |}
         """
@@ -6462,6 +6510,11 @@ import HwSynthesizer2._
                |    ${axi4SlaveInterfaceST}
                |    ${axi4MasterInterfaceST}
                |  })
+               |
+               |  // the registers for cleaning memory contents
+               |  val r_mem_total_length = RegInit((MEMORY_DEPTH).U(log2Up(MEMORY_DEPTH + 8).W))
+               |  val r_mem_clear_addr   = RegInit(0.U(log2Up(MEMORY_DEPTH + 8).W))
+               |  val r_mem_clear_length = RegInit(8.U(4.W))
                |
                |  ${axi4SlaveBodyST}
                |
