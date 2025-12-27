@@ -5505,7 +5505,7 @@ import HwSynthesizer2._
           |    #10;
           |
           |    // dstID
-          |    io_S_AXI_AWADDR  = 8;
+          |    io_S_AXI_AWADDR  = 16;
           |    io_S_AXI_AWVALID = 1;
           |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
           |    io_S_AXI_WVALID  = 1;
@@ -5520,7 +5520,7 @@ import HwSynthesizer2._
           |    #10;
           |
           |    // dstCP
-          |    io_S_AXI_AWADDR  = 12;
+          |    io_S_AXI_AWADDR  = 24;
           |    io_S_AXI_AWVALID = 1;
           |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h3;
           |    io_S_AXI_WVALID  = 1;
@@ -5535,7 +5535,7 @@ import HwSynthesizer2._
           |    #10;
           |
           |    // route_valid
-          |    io_S_AXI_AWADDR  = 16;
+          |    io_S_AXI_AWADDR  = 32;
           |    io_S_AXI_AWVALID = 1;
           |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h3;
           |    io_S_AXI_WVALID  = 1;
@@ -5684,7 +5684,7 @@ import HwSynthesizer2._
         """
     }
 
-    @strictpure def testbenchScriptST: ST = {
+    @strictpure def testbenchScriptST(isFpgaTestBench: B): ST = {
       st"""
           |create_project ${name} ./vivado_project -part xczu9eg-ffvb1156-2-e
           |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
@@ -5692,7 +5692,7 @@ import HwSynthesizer2._
           |set_property target_simulator ModelSim [current_project]
           |set_property -name {modelsim.simulate.runtime} -value {400000ns} -objects [get_filesets sim_1]
           |
-          |set dir ./chisel/generated_verilog/${name}
+          |set dir ./chisel/generated_verilog/${if(isFpgaTestBench) "FPGA" else ""}${name}
           |set files [glob -nocomplain -types f [file join $$dir *.v]]
           |if {[llength $$files]} {
           |    add_files -norecurse $$files
@@ -5796,9 +5796,10 @@ import HwSynthesizer2._
       }
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxBUFGWrapper.v"), xilinxBUFGWrapperST)
       output.add(T, ISZ(s"chisel/generated_verilog/${name}", "tb.v"), verilogTestBenchST(isFpgaTestBench = F))
-      output.add(T, ISZ(s"chisel/generated_verilog", "fpgaTb.v"), verilogTestBenchST(isFpgaTestBench = T))
+      output.add(T, ISZ(s"chisel/generated_verilog/FPGA${name}", "fpgaTb.v"), verilogTestBenchST(isFpgaTestBench = T))
       output.add(T, ISZ(s"./", "testbenchIpGeneration.tcl"), testbenchIpGenTclST)
-      output.add(T, ISZ(s"./", "testbenchScript.tcl"), testbenchScriptST)
+      output.add(T, ISZ(s"./", "testbenchScript.tcl"), testbenchScriptST(isFpgaTestBench = F))
+      output.add(T, ISZ(s"./", "fpgaTestbenchScript.tcl"), testbenchScriptST(isFpgaTestBench = T))
       output.add(T, ISZ("chisel/src/test/scala", s"${name}VerilogGeneration.scala"), verilogGenerationST(name))
       output.add(T, ISZ("chisel/src/test/scala", s"FPGA${name}VerilogGeneration.scala"), fpgaVerilogGenerationST(name))
     }
