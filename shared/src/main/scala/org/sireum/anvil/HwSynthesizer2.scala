@@ -6416,9 +6416,9 @@ import HwSynthesizer2._
       st"""
           |val TopCP = RegInit(0.U(4.W))
           |
-          |r_valid          := TopCP === 3.U
+          |r_valid          := TopCP === 4.U
           |r_routeOut.srcID := 0.U
-          |r_routeOut.srcCP := 3.U
+          |r_routeOut.srcCP := 4.U
           |r_routeOut.dstID := r_control(2)
           |r_routeOut.dstCP := r_control(3)
           |r_routeOut.isReturn := false.B
@@ -6756,6 +6756,16 @@ import HwSynthesizer2._
             |  when(r_routeIn_valid) {
             |    ${name}CP  := r_routeIn.dstCP
             |  }
+            |}
+            |
+            |is(1.U) {
+            |  r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
+            |  r_routeOut.srcCP := ${name}CP
+            |  r_routeOut.dstID := 0.U
+            |  r_routeOut.dstCP := 4.U
+            |  r_routeOut.isReturn := true.B
+            |  r_routeOut_valid := true.B
+            |  ${name}CP := 1.U
             |}
           """
       stateSTs = stateSTs :+ state2St
