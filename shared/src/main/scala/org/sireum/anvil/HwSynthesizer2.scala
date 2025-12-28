@@ -5996,8 +5996,8 @@ import HwSynthesizer2._
 
       val declST: ST =
         st"""
-            |val ${instanceName}Wrapper = Module(new ${moduleName}Wrapper(${dataWidthST}${paraStr}))
-            |val ${instanceName}ArbiterModule = Module(new ${moduleName}ArbiterModule(numIPs = ${numIpsStr}, ${dataWidthST}${paraStr}))
+            |val ${instanceName}Wrapper = ${if(arb != ArbBlockMemoryIP()) "withReset(myRst) {" else ""} Module(new ${moduleName}Wrapper(${dataWidthST}${paraStr})) ${if(arb != ArbBlockMemoryIP()) "}" else ""}
+            |val ${instanceName}ArbiterModule = ${if(arb != ArbBlockMemoryIP()) "withReset(myRst) {" else ""} Module(new ${moduleName}ArbiterModule(numIPs = ${numIpsStr}, ${dataWidthST}${paraStr})) ${if(arb != ArbBlockMemoryIP()) "}" else ""}
             |${instanceName}Wrapper.io.req <> ${instanceName}ArbiterModule.io.ip.req
             |${instanceName}Wrapper.io.resp <> ${instanceName}ArbiterModule.io.ip.resp
             |${axi4ConnST}
@@ -6036,14 +6036,16 @@ import HwSynthesizer2._
     for(f <- ipRouterUsage.entries) {
       allFunctionST = allFunctionST :+
         st"""
-            |val mod_${f._1} = Module(new ${f._1}(
-            |  addrWidth = C_M_AXI_ADDR_WIDTH,
-            |  dataWidth = C_M_AXI_DATA_WIDTH,
-            |  cpWidth = cpWidth,
-            |  spWidth = spWidth,
-            |  idWidth = idWidth,
-            |  depth = MEMORY_DEPTH
-            |))
+            |val mod_${f._1} = withReset(myRst) {
+            |  Module(new ${f._1}(
+            |    addrWidth = C_M_AXI_ADDR_WIDTH,
+            |    dataWidth = C_M_AXI_DATA_WIDTH,
+            |    cpWidth = cpWidth,
+            |    spWidth = spWidth,
+            |    idWidth = idWidth,
+            |    depth = MEMORY_DEPTH
+            |  ))
+            |}
             |router.io.out(${f._2._1}) <> mod_${f._1}.io.routeIn
             |router.io.in(${f._2._1})  <> mod_${f._1}.io.routeOut
           """
@@ -6287,7 +6289,6 @@ import HwSynthesizer2._
           |    r_mem_clear_length := 8.U
           |  }
           |  is(1.U) {
-          |    r_control(0) := 0.U
           |    r_mem_req_valid := true.B
           |    r_mem_req.mode := 2.U
           |    r_mem_req.writeAddr := 0.U
@@ -6412,7 +6413,7 @@ import HwSynthesizer2._
           |    }
           |  }
           |  is(12.U) {
-          |    TopCP := Mux(r_start, 1.U, TopCP)
+          |    TopCP := Mux(r_start, 0.U, TopCP)
           |    printf("%x\n", r_mem_resp.data)
           |  }
           |  is(13.U) {
@@ -6432,7 +6433,11 @@ import HwSynthesizer2._
           |    r_mem_total_length := Mux(r_mem_total_length > 8.U, r_mem_total_length - 8.U, 0.U)
           |    r_mem_clear_addr := r_mem_clear_addr + 8.U
           |    r_mem_clear_length := Mux(r_mem_total_length > 8.U, 8.U, r_mem_total_length)
-          |    TopCP := Mux(r_mem_total_length === 0.U, 1.U, 13.U)
+          |    TopCP := Mux(r_mem_total_length === 0.U, 15.U, 13.U)
+          |  }
+          |  is(15.U) {
+          |    r_control(0) := 0.U
+          |    TopCP := 1.U
           |  }
           |}
         """
@@ -6450,10 +6455,9 @@ import HwSynthesizer2._
           |
           |switch(TopCP) {
           |  is(0.U) {
-          |    TopCP := Mux(r_start, 1.U, 0.U)
+          |    TopCP := Mux(r_start, 5.U, 0.U)
           |  }
           |  is(1.U) {
-          |    r_control(0) := 0.U
           |    when(r_control(4)(0).asBool) {
           |      r_routeOut_valid := true.B
           |      TopCP := 2.U
@@ -6467,7 +6471,7 @@ import HwSynthesizer2._
           |  }
           |  // we do not use state 3.U
           |  is(4.U) {
-          |    TopCP := Mux(r_start, 1.U, TopCP)
+          |    TopCP := Mux(r_start, 0.U, TopCP)
           |  }
           |  is(5.U) {
           |    r_mem_req_valid := true.B
@@ -6486,7 +6490,11 @@ import HwSynthesizer2._
           |    r_mem_total_length := Mux(r_mem_total_length > 8.U, r_mem_total_length - 8.U, 0.U)
           |    r_mem_clear_addr := r_mem_clear_addr + 8.U
           |    r_mem_clear_length := Mux(r_mem_total_length > 8.U, 8.U, r_mem_total_length)
-          |    TopCP := Mux(r_mem_total_length === 0.U, 1.U, 5.U)
+          |    TopCP := Mux(r_mem_total_length === 0.U, 7.U, 5.U)
+          |  }
+          |  is(7.U) {
+          |    r_control(0) := 0.U
+          |    TopCP := 1.U
           |  }
           |}
         """
@@ -6522,6 +6530,8 @@ import HwSynthesizer2._
                |  val r_valid = RegInit(false.B)
                |  r_start := r_control(0)(0)
                |  r_control(1) := r_valid.asUInt
+               |
+               |  val myRst: Reset = r_start
                |
                |  val r_mem_req  = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(C_M_AXI_DATA_WIDTH, ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) "C_M_AXI_ADDR_WIDTH, " else ""} MEMORY_DEPTH)))
                |  val r_mem_req_valid = RegInit(false.B)
