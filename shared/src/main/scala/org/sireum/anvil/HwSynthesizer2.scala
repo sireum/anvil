@@ -5801,6 +5801,7 @@ import HwSynthesizer2._
           |if {[llength $$files]} {
           |    add_files -norecurse $$files
           |}
+          |${if(isFpgaTestBench) s"add_files $$dir/../fpgaTb.v" else ""}
           |update_compile_order -fileset sources_1
           |
           |source ./testbenchIpGeneration.tcl
@@ -5870,7 +5871,7 @@ import HwSynthesizer2._
       }
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxBUFGWrapper.v"), xilinxBUFGWrapperST)
       output.add(T, ISZ(s"chisel/generated_verilog/${name}", "tb.v"), verilogTestBenchST(isFpgaTestBench = F))
-      output.add(T, ISZ(s"chisel/generated_verilog/FPGA${name}", "fpgaTb.v"), verilogTestBenchST(isFpgaTestBench = T))
+      output.add(T, ISZ(s"chisel/generated_verilog", "fpgaTb.v"), verilogTestBenchST(isFpgaTestBench = T))
       output.add(T, ISZ(s"./", "testbenchIpGeneration.tcl"), testbenchIpGenTclST)
       output.add(T, ISZ(s"./", "testbenchScript.tcl"), testbenchScriptST(isFpgaTestBench = F))
       output.add(T, ISZ(s"./", "fpgaTestbenchScript.tcl"), testbenchScriptST(isFpgaTestBench = T))
@@ -6530,6 +6531,9 @@ import HwSynthesizer2._
           |switch(TopCP) {
           |  is(0.U) {
           |    TopCP := Mux(r_start, 5.U, 0.U)
+          |    r_mem_total_length := MEMORY_DEPTH.U
+          |    r_mem_clear_addr := 0.U
+          |    r_mem_clear_length := 8.U
           |  }
           |  is(1.U) {
           |    when(r_control(4)(0).asBool) {
@@ -7744,9 +7748,6 @@ import HwSynthesizer2._
         exprST = st"${(exp.name, "_")}"
       }
       case exp: AST.IR.Exp.Type => {
-        if(hwLog.curProcedureId == "org_sireum_anvil_Runtime_load_object" && hwLog.currentLabel == 27) {
-          println("hehe")
-        }
         val splitStr: String = if (anvil.typeBitSize(exp.exp.tipe) == anvil.typeBitSize(exp.t)) "" else s".pad(${anvil.typeBitSize(exp.t)})"
         val postfix: ST = if(isGlobalVar(exp.exp)) st"" else st"${if (!anvil.config.splitTempSizes) "" else splitStr}${if (anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}"
         exprST = st"${processExpr(exp.exp, F, ipPortLogic, maxRegisters, isRecursive, hwLog)}${postfix}"
