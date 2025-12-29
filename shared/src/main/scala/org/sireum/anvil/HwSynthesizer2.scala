@@ -5551,6 +5551,68 @@ import HwSynthesizer2._
           |
           |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#400000"};
           |
+          |    // valid
+          |    io_S_AXI_AWADDR  = 0;
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    // dstID
+          |    io_S_AXI_AWADDR  = 16;
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    // dstCP
+          |    io_S_AXI_AWADDR  = 24;
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h3;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    // route_valid
+          |    io_S_AXI_AWADDR  = 32;
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h3;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#400000"};
+          |
           |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchAccessResult else st""}
           |    $$finish;
           |
@@ -5732,7 +5794,7 @@ import HwSynthesizer2._
           |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
           |set_property compxlib.modelsim_compiled_library_dir /home/kejun/study/xilinx_modelsim_lib_2024_2 [current_project]
           |set_property target_simulator ModelSim [current_project]
-          |set_property -name {modelsim.simulate.runtime} -value {400000ns} -objects [get_filesets sim_1]
+          |set_property -name {modelsim.simulate.runtime} -value {800000ns} -objects [get_filesets sim_1]
           |
           |set dir ./chisel/generated_verilog/${if(isFpgaTestBench) "FPGA" else ""}${name}
           |set files [glob -nocomplain -types f [file join $$dir *.v]]
