@@ -5684,23 +5684,8 @@ import HwSynthesizer2._
         """
     }
 
-    @strictpure def testbenchScriptST(isFpgaTestBench: B): ST = {
+    @strictpure def simDesignWrapperST: ST = {
       st"""
-          |create_project ${name} ./vivado_project -part xczu9eg-ffvb1156-2-e
-          |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
-          |set_property compxlib.modelsim_compiled_library_dir /home/kejun/study/xilinx_modelsim_lib_2024_2 [current_project]
-          |set_property target_simulator ModelSim [current_project]
-          |set_property -name {modelsim.simulate.runtime} -value {400000ns} -objects [get_filesets sim_1]
-          |
-          |set dir ./chisel/generated_verilog/${if(isFpgaTestBench) "FPGA" else ""}${name}
-          |set files [glob -nocomplain -types f [file join $$dir *.v]]
-          |if {[llength $$files]} {
-          |    add_files -norecurse $$files
-          |}
-          |update_compile_order -fileset sources_1
-          |
-          |source ./testbenchIpGeneration.tcl
-          |
           |# create block design
           |create_bd_design "design_1"
           |
@@ -5730,11 +5715,38 @@ import HwSynthesizer2._
           |add_files -norecurse ./vivado_project/${name}.gen/sources_1/bd/design_1/hdl/design_1_wrapper.v
           |
           |update_compile_order -fileset sources_1
-          |update_compile_order -fileset sim_1
-          |
+        """
+    }
+
+    @strictpure def bdScriptST: ST = {
+      st"""
           |set bd_files [get_files -all -quiet -filter {NAME =~ "*.bd"}]
           |generate_target simulation $$bd_files
           |export_ip_user_files -of_objects $$bd_files -no_script -sync -force -quiet
+        """
+    }
+
+    @strictpure def testbenchScriptST(isFpgaTestBench: B): ST = {
+      st"""
+          |create_project ${name} ./vivado_project -part xczu9eg-ffvb1156-2-e
+          |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
+          |set_property compxlib.modelsim_compiled_library_dir /home/kejun/study/xilinx_modelsim_lib_2024_2 [current_project]
+          |set_property target_simulator ModelSim [current_project]
+          |set_property -name {modelsim.simulate.runtime} -value {400000ns} -objects [get_filesets sim_1]
+          |
+          |set dir ./chisel/generated_verilog/${if(isFpgaTestBench) "FPGA" else ""}${name}
+          |set files [glob -nocomplain -types f [file join $$dir *.v]]
+          |if {[llength $$files]} {
+          |    add_files -norecurse $$files
+          |}
+          |update_compile_order -fileset sources_1
+          |
+          |source ./testbenchIpGeneration.tcl
+          |
+          |${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) simDesignWrapperST else st""}
+          |update_compile_order -fileset sim_1
+          |
+          |${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) bdScriptST else st""}
           |
           |set xci_top [get_files -all -quiet -filter {NAME =~ "*.xci" && NAME !~ "*/bd/*"}]
           |generate_target simulation $$xci_top
