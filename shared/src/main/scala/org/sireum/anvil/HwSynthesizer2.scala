@@ -4649,6 +4649,15 @@ import HwSynthesizer2._
             |
             |  printf("benchmark ${name}\n");
             |
+            |  // write to port valid (generated IP)
+            |  Xil_Out32(START_ADDR, 0x1);
+            |
+            |  // test init_done
+            |  uint32_t init_done = Xil_In32(VALID_ADDR) & 0x2;
+            |  while(init_done != 0x2) {
+            |    init_done = Xil_In32(VALID_ADDR) & 0x2;
+            |  }
+            |
             |  // write testNum
             |  Xil_Out32(MEM_WRITE_ADDR, ${globalInfoMap.get(Util.testNumName).get.loc});
             |  Xil_Out32(MEM_WRITE_OFFSET, 0);
@@ -4664,9 +4673,6 @@ import HwSynthesizer2._
             |  Xil_Out32(MEM_WRITE_VALID, 0x1);
             |  while(Xil_In32(MEM_WRITE_VALID) != 0);
             |
-            |  // write to port valid (generated IP)
-            |  Xil_Out32(START_ADDR, 0x1);
-            |
             |  // write to dstID
             |  Xil_Out32(DST_ID_ADDR, 0x1);
             |  // write to dstCP
@@ -4675,9 +4681,9 @@ import HwSynthesizer2._
             |  Xil_Out32(ROUTE_VALID_ADDR, 0x1);
             |
             |  // read from port ready (generated IP)
-            |  uint32_t valid = Xil_In32(VALID_ADDR);
+            |  uint32_t valid = Xil_In32(VALID_ADDR) & 0x1;
             |  while(valid != 0x1) {
-            |  	 valid = Xil_In32(VALID_ADDR);
+            |  	 valid = Xil_In32(VALID_ADDR) & 0x1;
             |  }
             |
             |  Xil_Out32(MEM_READ_ADDR, DP_ADDR);
@@ -4758,16 +4764,21 @@ import HwSynthesizer2._
             |  //Xil_DCacheDisable();
             |  printf("benchmark ${name}\n");
             |
-            |  // write FFFFFFFFFFFFFFFF to testNum
-            |  Xil_Out64(${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"} + ${globalInfoMap.get(Util.testNumName).get.loc}, 0xFFFFFFFFFFFFFFFF);
-            |  // using memory barrier when disable DCache
-            |  //__asm__ volatile("dsb sy");
-            |
-            |  // using flush when enable DCache
-            |  ${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) s"Xil_DCacheFlushRange(XPAR_PSU_DDR_0_S_AXI_BASEADDR + ${globalInfoMap.get(Util.testNumName).get.loc}, sizeof(uint64_t));" else ""}
-            |
             |  // write to port valid (generated IP)
             |  Xil_Out64(START_ADDR, 0x1);
+            |
+            |  uint64_t init_done = Xil_In64(VALID_ADDR) & 0x2;
+            |  while(init_done != 0x2) {
+            |    init_done = Xil_In64(VALID_ADDR) & 0x2;
+            |  }
+            |
+            |  // write FFFFFFFFFFFFFFFF to testNum
+            |  Xil_Out64(${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"} + ${globalInfoMap.get(Util.testNumName).get.loc}, 0xFFFFFFFFFFFFFFFF);
+            |
+            |  // using memory barrier when disable DCache
+            |  //__asm__ volatile("dsb sy");
+            |  // using flush when enable DCache
+            |  ${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) s"Xil_DCacheFlushRange(XPAR_PSU_DDR_0_S_AXI_BASEADDR + ${globalInfoMap.get(Util.testNumName).get.loc}, sizeof(uint64_t));" else ""}
             |
             |  // write to dstID
             |  Xil_Out64(DST_ID_ADDR, 0x1);
@@ -4777,9 +4788,9 @@ import HwSynthesizer2._
             |  Xil_Out64(ROUTE_VALID_ADDR, 0x1);
             |
             |  // read from port valid (generated IP)
-            |  uint64_t valid = Xil_In64(VALID_ADDR);
+            |  uint64_t valid = Xil_In64(VALID_ADDR) & 0x1;
             |  while(valid != 0x1) {
-            |    valid = Xil_In64(VALID_ADDR);
+            |    valid = Xil_In64(VALID_ADDR) & 0x1;
             |  }
             |
             |  uint64_t displaySize = ${anvil.config.printSize};
@@ -6534,6 +6545,7 @@ import HwSynthesizer2._
           |    r_mem_total_length := MEMORY_DEPTH.U
           |    r_mem_clear_addr := 0.U
           |    r_mem_clear_length := 8.U
+          |    r_init_done := false.B
           |  }
           |  is(1.U) {
           |    when(r_control(4)(0).asBool) {
@@ -6573,6 +6585,7 @@ import HwSynthesizer2._
           |  is(7.U) {
           |    r_control(0) := 0.U
           |    TopCP := 1.U
+          |    r_init_done  := true.B
           |  }
           |}
         """
@@ -6606,8 +6619,9 @@ import HwSynthesizer2._
                |
                |  val r_start = RegInit(false.B)
                |  val r_valid = RegInit(false.B)
+               |  val r_init_done = RegInit(false.B)
                |  r_start := r_control(0)(0)
-               |  r_control(1) := r_valid.asUInt
+               |  r_control(1) := Cat(r_init_done, r_valid).asUInt
                |
                |  val myRst: Reset = r_start
                |
