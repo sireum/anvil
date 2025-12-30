@@ -5498,8 +5498,6 @@ import HwSynthesizer2._
           |    reset = 0;
           |    #10;
           |
-          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchBramNativeConn else st""}
-          |
           |    // valid
           |    io_S_AXI_AWADDR  = 0;
           |    io_S_AXI_AWVALID = 1;
@@ -5515,8 +5513,12 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
+          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) "#10000" else ""}
+          |
+          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchBramNativeConn else st""}
+          |
           |    // dstID
-          |    io_S_AXI_AWADDR  = 16;
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 8 else 16};
           |    io_S_AXI_AWVALID = 1;
           |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
           |    io_S_AXI_WVALID  = 1;
@@ -5531,7 +5533,7 @@ import HwSynthesizer2._
           |    #10;
           |
           |    // dstCP
-          |    io_S_AXI_AWADDR  = 24;
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 12 else 24};
           |    io_S_AXI_AWVALID = 1;
           |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h3;
           |    io_S_AXI_WVALID  = 1;
@@ -5546,9 +5548,9 @@ import HwSynthesizer2._
           |    #10;
           |
           |    // route_valid
-          |    io_S_AXI_AWADDR  = 32;
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 16 else 32};
           |    io_S_AXI_AWVALID = 1;
-          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h3;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
           |    io_S_AXI_WVALID  = 1;
           |    #10;
           |
@@ -5577,8 +5579,12 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
+          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) "#10000" else ""}
+          |
+          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchBramNativeConn else st""}
+          |
           |    // dstID
-          |    io_S_AXI_AWADDR  = 16;
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 8 else 16};
           |    io_S_AXI_AWVALID = 1;
           |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
           |    io_S_AXI_WVALID  = 1;
@@ -5593,7 +5599,7 @@ import HwSynthesizer2._
           |    #10;
           |
           |    // dstCP
-          |    io_S_AXI_AWADDR  = 24;
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 12 else 24};
           |    io_S_AXI_AWVALID = 1;
           |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h3;
           |    io_S_AXI_WVALID  = 1;
@@ -5608,9 +5614,9 @@ import HwSynthesizer2._
           |    #10;
           |
           |    // route_valid
-          |    io_S_AXI_AWADDR  = 32;
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 16 else 32};
           |    io_S_AXI_AWVALID = 1;
-          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h3;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
           |    io_S_AXI_WVALID  = 1;
           |    #10;
           |
@@ -6546,6 +6552,7 @@ import HwSynthesizer2._
           |    r_mem_clear_addr := 0.U
           |    r_mem_clear_length := 8.U
           |    r_init_done := false.B
+          |    r_control(4) := 0.U
           |  }
           |  is(1.U) {
           |    when(r_control(4)(0).asBool) {
