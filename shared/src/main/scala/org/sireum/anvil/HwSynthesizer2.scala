@@ -3214,23 +3214,23 @@ import HwSynthesizer2._
     var cnt64: Z = 0
     for(entry <- globalInfoMap.entries) {
       if(isTempGlobal(anvil, entry._2.tipe, entry._1)) {
-        val name: String = st"${(entry._1, "_")}".render
+        val globalVarName: String = st"${(entry._1, "_")}".render
         val signed: B = anvil.isSigned(entry._2.tipe)
         val bitWidth: Z = anvil.typeBitSize(entry._2.tipe)
         if(bitWidth == 1) {
-          globalVarMap = globalVarMap + name ~> (cnt1, signed, bitWidth)
+          globalVarMap = globalVarMap + globalVarName ~> (cnt1, signed, bitWidth)
           cnt1 = cnt1 + 1
         } else if(bitWidth <= 8) {
-          globalVarMap = globalVarMap + name ~> (cnt8, signed, bitWidth)
+          globalVarMap = globalVarMap + globalVarName ~> (cnt8, signed, bitWidth)
           cnt8 = cnt8 + 1
         } else if(bitWidth <= 16) {
-          globalVarMap = globalVarMap + name ~> (cnt16, signed, bitWidth)
+          globalVarMap = globalVarMap + globalVarName ~> (cnt16, signed, bitWidth)
           cnt16 = cnt16 + 1
         } else if(bitWidth <= 32) {
-          globalVarMap = globalVarMap + name ~> (cnt32, signed, bitWidth)
+          globalVarMap = globalVarMap + globalVarName ~> (cnt32, signed, bitWidth)
           cnt32 = cnt32 + 1
         } else if(bitWidth <= 64) {
-          globalVarMap = globalVarMap + name ~> (cnt64, signed, bitWidth)
+          globalVarMap = globalVarMap + globalVarName ~> (cnt64, signed, bitWidth)
           cnt64 = cnt64 + 1
         }
       }
