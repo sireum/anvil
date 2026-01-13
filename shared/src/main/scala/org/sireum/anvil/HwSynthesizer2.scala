@@ -5207,7 +5207,7 @@ import HwSynthesizer2._
         """
     }
 
-    @strictpure def verilogTestBenchST(isFpgaTestBench: B): ST = {
+    @pure def verilogTestBenchST(isFpgaTestBench: B): ST = {
       val testBenchBramNativeConn:ST =
         st"""
             |// r_control(6)  -- writeAddr
@@ -5433,7 +5433,7 @@ import HwSynthesizer2._
         return st"${(resAcc, "")}"
       }
 
-      st"""
+      return st"""
           |`timescale 1ns / 1ns
           |
           |module tb(
