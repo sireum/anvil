@@ -2983,7 +2983,7 @@ import HwSynthesizer2._
       case exp: AST.IR.Exp.GlobalVarRef => T
       case _ => F
     }
-    return result
+    result
   }
 
   @strictpure def isTypeExp(exp: AST.IR.Exp): B = {
@@ -2991,7 +2991,7 @@ import HwSynthesizer2._
       case exp: AST.IR.Exp.Type => T
       case _ => F
     }
-    return result
+    result
   }
 
   @strictpure def requestBundleParaTypeStr(ip: ArbIpType): String = {
@@ -3194,7 +3194,7 @@ import HwSynthesizer2._
     val ownerList: ISZ[org.sireum.String] = for(e <- owner) yield replaceChar(replaceChar(e, '<', '$'), '>', '_')
     val finalList: ISZ[org.sireum.String] = if(isInObject) ownerList :+ funcName :+ "object" else ownerList :+ funcName
 
-    return (owner :+ id, st"${(finalList, "_")}".render)
+    (owner :+ id, st"${(finalList, "_")}".render)
   }
 
   /*
