@@ -5787,17 +5787,17 @@ import HwSynthesizer2._
           |create_bd_design "design_1"
           |
           |create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 blk_mem_gen_0
-          |set_property -dict [list \
-          |  CONFIG.Write_Width_A {64} \
-          |  CONFIG.use_bram_block {Stand_Alone} \
+          |set_property -dict [list ${backslash}
+          |  CONFIG.Write_Width_A {64} ${backslash}
+          |  CONFIG.use_bram_block {Stand_Alone} ${backslash}
           |] [get_bd_cells blk_mem_gen_0]
           |
           |set_property CONFIG.use_bram_block {BRAM_Controller} [get_bd_cells blk_mem_gen_0]
           |
           |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_0
-          |set_property -dict [list \
-          |  CONFIG.DATA_WIDTH {64} \
-          |  CONFIG.SINGLE_PORT_BRAM {1} \
+          |set_property -dict [list ${backslash}
+          |  CONFIG.DATA_WIDTH {64} ${backslash}
+          |  CONFIG.SINGLE_PORT_BRAM {1} ${backslash}
           |] [get_bd_cells axi_bram_ctrl_0]
           |
           |connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
@@ -7154,9 +7154,9 @@ import HwSynthesizer2._
       }
       case AST.IR.Jump.Intrinsic(intrinsic: Intrinsic.GotoGlobal) => {
         if(anvil.config.cpMax <= 0) {
-          val name: String = st"${(intrinsic.name, "_")}".render
-          val index: Z = globalVarMap.get(name).get._1
-          val gtype: B = globalVarMap.get(name).get._2
+          val funName: String = st"${(intrinsic.name, "_")}".render
+          val index: Z = globalVarMap.get(funName).get._1
+          val gtype: B = globalVarMap.get(funName).get._2
           intrinsicST = intrinsicST :+
             st"""
                 |r_arbGlobalVar_req.op := false.B
@@ -7164,7 +7164,7 @@ import HwSynthesizer2._
                 |r_arbGlobalVar_req.index := ${index}
                 |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |when(r_arbGlobalVar_req_valid) {
-                |  ${name}CP := r_arbGlobalVar_resp.out
+                |  ${funName}CP := r_arbGlobalVar_resp.out
                 |}
               """
         }
