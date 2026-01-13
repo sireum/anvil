@@ -2952,7 +2952,7 @@ import HwSynthesizer2._
     return st"n1 = ${cnt1}, n8 = ${cnt8}, n16 = ${cnt16}, n32 = ${cnt32}, n64 = ${cnt64}, maxWidth = 64"
   }
 
-  @strictpure def globalVarGtype(t: String): ST = {
+  @pure def globalVarGtype(t: String): ST = {
     val width: Z = globalVarMap.get(t).get._3
     val result: ST = width match {
       case 1 => st"1.U"
