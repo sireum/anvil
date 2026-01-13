@@ -28,9 +28,9 @@ package org.sireum.anvil
 import org.sireum._
 import org.sireum.anvil._
 import org.sireum.anvil.Anvil.VarInfo
-import org.sireum.anvil.Util.{AnvilIRPrinter, constructLocalId, indexing, isTempGlobal, spType}
+import org.sireum.anvil.Util.{AnvilIRPrinter, callCycles, constructLocalId, indexing, isTempGlobal, spType}
 import org.sireum.lang.ast.{IR, Typed}
-import org.sireum.lang.ast.IR.{Exp, Jump}
+import org.sireum.lang.ast.IR.{Exp, Jump, max}
 import org.sireum.lang.{ast => AST}
 import org.sireum.lang.symbol.Resolver.{QName, addBuiltIns, typeParamMap}
 import org.sireum.lang.symbol.TypeInfo
@@ -41,6 +41,8 @@ import org.sireum.message.Position
 @datatype class ArbBinaryIP(t: AST.IR.Exp.Binary.Op.Type, signed: B) extends ArbIpType
 @datatype class ArbIntrinsicIP(t: AST.IR.Exp.Intrinsic.Type) extends ArbIpType
 @datatype class ArbBlockMemoryIP() extends ArbIpType
+@datatype class ArbTempSaveRestoreIP() extends ArbIpType
+@datatype class ArbGlobalVarIP() extends ArbIpType
 
 @datatype trait ArbIpModule {
   @strictpure def arbIpId: Z
@@ -100,7 +102,8 @@ object ArbInputMap {
     ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T) ~> HashSMap.empty,
     ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F) ~> HashSMap.empty,
     ArbIntrinsicIP(HwSynthesizer.defaultIndexing) ~> HashSMap.empty,
-    ArbBlockMemoryIP() ~> HashSMap.empty
+    ArbBlockMemoryIP() ~> HashSMap.empty,
+    ArbTempSaveRestoreIP() ~> HashSMap.empty
   ))
 }
 
@@ -1893,9 +1896,23 @@ object ArbInputMap {
           |  val r_m_axi_rready  = RegInit(false.B)
           |  val r_r_valid       = RegInit(false.B)
           |
-          |  val r_read_req      = RegNext(io.mode === 1.U, init = false.B)
-          |  val r_write_req     = RegNext(io.mode === 2.U, init = false.B)
-          |  val r_dma_req       = RegNext(io.mode === 3.U, init = false.B)
+          |  // dma field register
+          |  val r_dma_req_read     = RegInit(false.B)
+          |  val r_dma_req_write    = RegInit(false.B)
+          |  val r_dmaSrc_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_dmaSrc_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_dmaDst_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val r_dmaDst_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val r_dma_read_data    = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  // the write length used in unaligned write
+          |  val r_dma_dst_len      = RegInit(0.U(log2Up(C_M_AXI_DATA_WIDTH / 8 + 1).W))
+          |
+          |  // read, write, dma request
+          |  val r_read_req       = RegNext((io.mode === 1.U) || r_dma_req_read, init = false.B)
+          |  val r_write_req      = RegNext((io.mode === 2.U) || r_dma_req_write, init = false.B)
+          |  val r_dma_req        = RegNext(io.mode === 3.U, init = false.B)
+          |  val r_read_only_req  = RegNext(io.mode === 1.U, init = false.B)
+          |  val r_write_only_req = RegNext(io.mode === 2.U, init = false.B)
           |
           |  // read logic
           |  val r_read_buffer   = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
@@ -1908,7 +1925,7 @@ object ArbInputMap {
           |  val r_buffer_shift6 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
           |  val r_buffer_shift7 = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
           |  val r_final_buffer  = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
-          |  val r_read_addr     = RegNext(io.readAddr + io.readOffset, init = 0.U)
+          |  val r_read_addr     = RegNext(Mux(r_dma_req_read, r_dmaSrc_addr, io.readAddr + io.readOffset), init = 0.U)
           |  val r_read_offset   = RegNext(r_read_addr(2,0), init = 0.U)
           |  val r_read_req_next = RegNext(r_read_req, init = false.B)
           |
@@ -1932,10 +1949,10 @@ object ArbInputMap {
           |                                  7.U -> Cat(0.U(C_M_AXI_DATA_WIDTH.W), r_buffer_shift7)
           |                              ))
           |
-          |  io.readValid        := RegNext(RegNext(r_read_req & r_r_valid))
+          |  io.readValid        := RegNext(RegNext(r_read_only_req & r_r_valid))
           |  io.readData         := r_final_buffer
           |
-          |  r_m_axi_arlen     := Mux(r_dma_req, 0.U, 1.U)
+          |  r_m_axi_arlen     := 1.U
           |
           |  when(r_read_req & ~r_read_req_next) {
           |    r_m_axi_arvalid := true.B
@@ -1959,7 +1976,7 @@ object ArbInputMap {
           |  }
           |
           |  // write logic
-          |  io.writeValid           := RegNext(r_write_req & r_b_valid, init = false.B)
+          |  io.writeValid           := RegNext(r_write_only_req & r_b_valid, init = false.B)
           |  val r_write_buffer      = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
           |  val r_write_padding     = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
           |  val r_write_masking     = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
@@ -1968,7 +1985,8 @@ object ArbInputMap {
           |  val r_write_data_shift  = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
           |  val r_write_data_1      = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
           |  val r_write_data_2      = RegInit(0.U((2 * C_M_AXI_DATA_WIDTH).W))
-          |  val r_write_addr        = RegNext(io.writeAddr + io.writeOffset, init = 0.U)
+          |  val r_write_addr        = RegNext(Mux(r_dma_req_write, r_dmaDst_addr, io.writeAddr + io.writeOffset), init = 0.U)
+          |  val r_write_len         = RegInit(0.U(log2Up(C_M_AXI_DATA_WIDTH / 8 + 1).W))
           |  val r_write_req_next    = RegNext(r_write_req, init = false.B)
           |  val r_write_running     = RegInit(false.B)
           |  val r_write_offset      = RegInit(0.U(3.W))
@@ -1976,10 +1994,11 @@ object ArbInputMap {
           |  val r_first_write_valid = RegInit(false.B)
           |  val w_m_axi_wlast       = io.M_AXI_WVALID & io.M_AXI_WREADY
           |
-          |  r_m_axi_awlen     := Mux(r_dma_req, 0.U, 1.U)
+          |  r_m_axi_awlen     := 1.U
           |
+          |  r_write_len       := Mux(r_dma_req_write, r_dma_dst_len, io.writeLen)
           |  r_write_offset    := r_write_addr(2, 0)
-          |  r_write_padding   := MuxLookup(io.writeLen, 1.U,
+          |  r_write_padding   := MuxLookup(r_write_len, 1.U,
           |                                  Seq(
           |                                      1.U -> "hFF".U,
           |                                      2.U -> "hFFFF".U,
@@ -2003,7 +2022,7 @@ object ArbInputMap {
           |                                  ))
           |  r_write_reversing := ~r_write_masking
           |
-          |  r_write_data      := Cat(0.U(C_M_AXI_DATA_WIDTH.W), io.writeData)
+          |  r_write_data      := Mux(r_dma_req_write, Cat(0.U(C_M_AXI_DATA_WIDTH.W), r_dma_read_data & r_write_padding), Cat(0.U(C_M_AXI_DATA_WIDTH.W), io.writeData & r_write_padding))
           |  r_write_data_shift:= MuxLookup(r_write_offset, 0.U,
           |                                  Seq(
           |                                      0.U -> r_write_data,
@@ -2078,75 +2097,76 @@ object ArbInputMap {
           |
           |  // dma logic
           |  val r_dma_req_next     = RegNext(r_dma_req)
-          |  val r_dmaSrc_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
-          |  val r_dmaSrc_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
-          |  val r_dmaDst_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
-          |  val r_dmaDst_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
-          |  val r_dma_read_data    = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
-          |  val r_dma_status       = RegInit(0.U(2.W)) // 0.U - Idle, 1.U - read, 2.U - write
-          |  val r_dmaSrc_finish    = RegNext(r_dmaSrc_len === 0.U, init = false.B)
-          |  val r_dmaDst_finish    = RegNext(r_dmaDst_len === 0.U, init = false.B)
+          |  val r_dmaSrc_finish    = RegInit(false.B)
+          |  val r_dmaDst_finish    = RegInit(false.B)
           |  val r_dmaErase_enable  = RegInit(false.B)
-          |  val r_dmaRead_running  = RegInit(false.B)
-          |  val r_dmaWrite_running = RegInit(false.B)
           |
-          |  io.dmaValid := RegNext(r_dma_req & (r_dma_status === 3.U), init = false.B)
+          |  // data from read port
+          |  io.dmaValid := RegNext(r_dmaDst_finish & r_b_valid, init = false.B)
           |
+          |  // initialize all registers
           |  when(r_dma_req & ~r_dma_req_next) {
           |    r_dmaSrc_addr      := io.dmaSrcAddr
           |    r_dmaDst_addr      := io.dmaDstAddr + io.dmaDstOffset
           |    r_dmaSrc_len       := io.dmaSrcLen
           |    r_dmaDst_len       := io.dmaDstLen
-          |    // r_dmaSrc_finish    := false.B
-          |    // r_dmaDst_finish    := false.B
-          |
-          |    r_dmaRead_running  := false.B
-          |    r_dmaWrite_running := false.B
           |
           |    r_dmaErase_enable  := io.dmaSrcLen === 0.U
           |
-          |    r_dma_status       := Mux(io.dmaSrcLen === 0.U, 2.U, 1.U)
-          |  } .elsewhen(r_dma_req & r_r_valid) {
-          |    r_dma_status       := 2.U
-          |    r_dmaSrc_len       := Mux(r_dmaSrc_len =/= 0.U, r_dmaSrc_len - 8.U, r_dmaSrc_len)
-          |  } .elsewhen(r_dma_req & r_b_valid) {
-          |    r_dma_status       := Mux(!r_dmaSrc_finish, 1.U, Mux(r_dmaDst_finish, 3.U, 2.U))
+          |    r_dma_req_read     := true.B
+          |    r_dmaSrc_finish    := io.dmaSrcLen <= 8.U
+          |    r_dmaDst_finish    := io.dmaDstLen <= 8.U
+          |    r_dma_dst_len      := Mux(io.dmaDstLen > 8.U, 8.U, io.dmaDstLen)
+          |  }
           |
-          |    r_dmaRead_running  := false.B
-          |    r_dmaWrite_running := false.B
+          |  val unalignRead_finish = RegNext(RegNext(r_r_valid))
           |
+          |  // read transaction
+          |  when((r_dmaSrc_finish & unalignRead_finish) || r_dmaErase_enable) {
+          |    r_dma_req_read     := false.B
+          |
+          |    r_dmaSrc_len       := 0.U
+          |    r_dma_req_write    := true.B
+          |  } .elsewhen(r_dma_req_read & unalignRead_finish) {
+          |    r_dma_req_read     := false.B
+          |    r_dmaSrc_len       := Mux(r_dmaSrc_len > 8.U, r_dmaSrc_len - 8.U, r_dmaSrc_len)
           |    r_dmaSrc_addr      := r_dmaSrc_addr + 8.U
-          |    r_dmaDst_addr      := r_dmaDst_addr + 8.U
+          |    r_dmaSrc_finish    := r_dmaSrc_len <= 8.U
+          |
+          |    r_dma_req_write    := true.B
+          |    r_dma_dst_len      := Mux(r_dmaDst_len > 8.U, 8.U, r_dmaDst_len)
           |  }
           |
-          |  when(r_dma_req & io.M_AXI_AWVALID & io.M_AXI_AWREADY) {
-          |    r_dmaDst_len       := Mux(r_dmaDst_len =/= 0.U, r_dmaDst_len - 8.U, r_dmaDst_len)
+          |  // save read data
+          |  when((r_dma_req & unalignRead_finish) || r_dmaErase_enable) {
+          |    r_dma_read_data  := MuxLookup(r_dmaSrc_len, r_final_buffer,
+          |                                    Seq(
+          |                                        0.U -> 0.U,
+          |                                        1.U -> r_final_buffer(7,0),
+          |                                        2.U -> r_final_buffer(15,0),
+          |                                        3.U -> r_final_buffer(23,0),
+          |                                        4.U -> r_final_buffer(31,0),
+          |                                        5.U -> r_final_buffer(39,0),
+          |                                        6.U -> r_final_buffer(47,0),
+          |                                        7.U -> r_final_buffer(55,0)
+          |                                    ))
           |  }
           |
-          |  when(r_dma_status === 3.U) {
-          |    r_dma_status       := 0.U
+          |  // write transaction
+          |  when(r_dmaDst_finish & r_b_valid) {
+          |    r_dma_req_write    := false.B
+          |
           |    r_dmaErase_enable  := false.B
-          |  }
           |
-          |  when(r_dma_status === 1.U & ~r_dmaRead_running) {
-          |    r_dmaRead_running  := true.B
+          |    r_dmaSrc_finish    := false.B
+          |    r_dmaDst_finish    := false.B
+          |  } .elsewhen(r_dma_req_write & r_b_valid) {
+          |    r_dma_req_write    := false.B
+          |    r_dmaDst_len       := Mux(r_dmaDst_len > 8.U, r_dmaDst_len - 8.U, r_dmaDst_len)
+          |    r_dmaDst_addr      := r_dmaDst_addr + 8.U
+          |    r_dmaDst_finish    := r_dmaDst_len <= 8.U
           |
-          |    r_m_axi_arvalid    := true.B
-          |    r_m_axi_araddr     := r_dmaSrc_addr + C_M_TARGET_SLAVE_BASE_ADDR.U
-          |  }
-          |
-          |  when(io.M_AXI_RVALID & io.M_AXI_RREADY & io.M_AXI_RLAST) {
-          |    r_dma_read_data    := io.M_AXI_RDATA
-          |  }
-          |
-          |  when(r_dma_status === 2.U & ~r_dmaWrite_running) {
-          |    r_dmaWrite_running := true.B
-          |
-          |    r_m_axi_awvalid    := true.B
-          |    r_m_axi_awaddr     := r_dmaDst_addr + C_M_TARGET_SLAVE_BASE_ADDR.U
-          |    r_m_axi_wvalid     := true.B
-          |    r_m_axi_wdata      := Mux((r_dmaSrc_finish & !r_dmaDst_finish) | r_dmaErase_enable, 0.U, r_dma_read_data)
-          |    r_m_axi_wstrb      := "hFF".U
+          |    r_dma_req_read     := true.B
           |  }
           |
           |  // AXI4 Full port connection
@@ -2470,15 +2490,356 @@ object ArbInputMap {
   }
 }
 
+@datatype class ArbTempSaveRestore(val signedPort: B,
+                                   val moduleDeclarationName: String,
+                                   val moduleInstanceName: String,
+                                   val widthOfPort: Z,
+                                   val stackStartAddr: Z,
+                                   val exp: ArbIpType,
+                                   val memoryType: Anvil.Config.MemoryAccess.Type,
+                                   val nonXilinxIP: B,
+                                   val aligned: B,
+                                   val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  @strictpure override def portList: HashSMap[String, (B, String)] = HashSMap.empty
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure def addrWidthSt(isParaDecl: B): ST = {
+    if(isParaDecl && memoryType != Anvil.Config.MemoryAccess.BramNative) {
+      st"addrWidth:Int,"
+    } else if(!isParaDecl && memoryType != Anvil.Config.MemoryAccess.BramNative) {
+      st"addrWidth,"
+    } else {
+      st""
+    }
+  }
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class ${moduleName}(
+        |  nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int,
+        |  nS8:Int, nS16:Int, nS32:Int, nS64:Int,
+        |  dataWidth:Int, ${addrWidthSt(T)} depth:Int,
+        |  stackMaxDepth:Int, idWidth: Int, cpWidth: Int
+        |) extends Module {
+        |
+        |  private val totalBits: Int =
+        |    nU1*1 + nU8*8 + nU16*16 + nU32*32 + nU64*64 +
+        |    nS8*8 + nS16*16 + nS32*32 + nS64*64 +
+        |    idWidth + cpWidth
+        |  private val totalWords: Int = (totalBits + 63) / 64
+        |
+        |  val io = IO(new Bundle {
+        |    val arbMem_req  = Valid(new BlockMemoryRequestBundle(dataWidth,${addrWidthSt(F)} depth))
+        |    val arbMem_resp = Flipped(Valid(new BlockMemoryResponseBundle(dataWidth)))
+        |    val req         = Flipped(Valid(new TempSaveRestoreRequestBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,${addrWidthSt(F)}depth,stackMaxDepth,idWidth,cpWidth)))
+        |    val resp        = Valid(new TempSaveRestoreResponseBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,${addrWidthSt(F)}depth,stackMaxDepth,idWidth,cpWidth))
+        |  })
+        |  val r_arbMem_req            = Reg(new BlockMemoryRequestBundle(dataWidth, ${addrWidthSt(F)} depth))
+        |  val r_arbMem_req_valid      = RegInit(false.B)
+        |  val r_arbMem_resp           = Reg(new BlockMemoryResponseBundle(dataWidth))
+        |  val r_arbMem_resp_valid     = RegInit(false.B)
+        |
+        |  r_arbMem_resp       := io.arbMem_resp.bits
+        |  r_arbMem_resp_valid := io.arbMem_resp.valid
+        |  io.arbMem_req.bits  := r_arbMem_req
+        |  io.arbMem_req.valid := r_arbMem_req_valid
+        |
+        |  val r_req        = RegInit(0.U.asTypeOf(new TempSaveRestoreRequestBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,${addrWidthSt(F)}depth,stackMaxDepth,idWidth,cpWidth)))
+        |  val r_req_valid  = RegNext(io.req.valid, init = false.B)
+        |  r_req            := io.req.bits
+        |
+        |  val r_resp       = RegInit(0.U.asTypeOf(new TempSaveRestoreResponseBundle(nU1,nU8,nU16,nU32,nU64,nS8,nS16,nS32,nS64,dataWidth,${addrWidthSt(F)}depth,stackMaxDepth,idWidth,cpWidth)))
+        |  val r_resp_valid = RegInit(false.B)
+        |  io.resp.bits     := r_resp
+        |  io.resp.valid    := r_resp_valid
+        |
+        |  val r_push = RegInit(false.B)
+        |  val r_pop  = RegInit(false.B)
+        |  r_push := Mux(r_req_valid, r_req.op === 1.U, false.B)
+        |  r_pop  := Mux(r_req_valid, r_req.op === 2.U, false.B)
+        |
+        |  val r_save_state    = RegInit(0.U(3.W))
+        |  val r_restore_state = RegInit(0.U(3.W))
+        |  val r_push_index    = RegInit(0.U(log2Up(totalWords + 1).W))
+        |  val r_pop_index     = RegInit(0.U(log2Up(totalWords + 1).W))
+        |  val r_stack_addr    = RegInit(${stackStartAddr}.U(log2Up(depth).W))
+        |
+        |  // ========== 组合：把“当前输入寄存器”按顺序拼成 bitstream ==========
+        |  // 用一个可变列表收集各段 bit 向量
+        |  val parts = Seq.newBuilder[UInt]
+        |
+        |  // UInt 组
+        |  if (nU1  > 0) parts += Cat(r_req.u1)
+        |  if (nU8  > 0) parts += Cat(r_req.u8)
+        |  if (nU16 > 0) parts += Cat(r_req.u16)
+        |  if (nU32 > 0) parts += Cat(r_req.u32)
+        |  if (nU64 > 0) parts += Cat(r_req.u64)
+        |
+        |  // SInt 组（转为 UInt）
+        |  if (nS8  > 0) parts += Cat(r_req.s8.map(_.asUInt))
+        |  if (nS16 > 0) parts += Cat(r_req.s16.map(_.asUInt))
+        |  if (nS32 > 0) parts += Cat(r_req.s32.map(_.asUInt))
+        |  if (nS64 > 0) parts += Cat(r_req.s64.map(_.asUInt))
+        |
+        |  // 其他字段（这些总是存在）
+        |  parts += r_req.srcId
+        |  parts += r_req.srcCp
+        |
+        |  // 获取 Seq
+        |  val partSeq = parts.result()
+        |
+        |  // 最终拼接
+        |  val bitstream_w =
+        |    if (partSeq.nonEmpty) partSeq.reduce(Cat(_, _))
+        |    else 0.U
+        |
+        |  // 把 bitstream 切成 64b 词（末词高位补 0）
+        |  val words_w = Reg(Vec(totalWords, UInt(64.W)))
+        |  when(r_push) {
+        |    for (i <- 0 until totalWords) {
+        |      val lo = i * 64
+        |      val hi = math.min(lo + 64, totalBits)
+        |      val k  = hi - lo
+        |      val slice = bitstream_w(hi - 1, lo)
+        |      words_w(i) := (if (k == 64) slice else Cat(0.U((64 - k).W), slice))
+        |    }
+        |  }
+        |
+        |  switch(r_save_state) {
+        |    is(0.U) {
+        |      r_save_state := Mux(r_push, 1.U, 0.U)
+        |      r_push_index      := 0.U
+        |    }
+        |    is(1.U) {
+        |      r_save_state := Mux(r_push_index < totalWords.U, 2.U, 3.U)
+        |    }
+        |    is(2.U) {
+        |      r_arbMem_req.mode := 2.U
+        |      r_arbMem_req.writeAddr := r_stack_addr
+        |      ${if(!aligned) st"r_arbMem_req.writeOffset := 0.U" else st""}
+        |      ${if(!aligned) st"r_arbMem_req.writeLen := 8.U" else st""}
+        |      r_arbMem_req.writeData := words_w(r_push_index)
+        |      r_arbMem_req_valid := Mux(r_arbMem_resp_valid, false.B, true.B)
+        |
+        |      when(r_arbMem_resp_valid) {
+        |        r_arbMem_req.mode := 0.U
+        |        r_push_index := r_push_index + 1.U
+        |        r_stack_addr := r_stack_addr + 8.U
+        |        r_save_state := 1.U
+        |      }
+        |    }
+        |    is(3.U) {
+        |      r_save_state := 4.U
+        |    }
+        |    is(4.U) {
+        |      when(!r_push) {
+        |        r_save_state := 0.U
+        |      }
+        |    }
+        |  }
+        |
+        |  val r_readMem_valid = RegNext(r_restore_state === 3.U)
+        |  val r_readMem_valid_next = RegNext(r_readMem_valid)
+        |  r_resp_valid := (r_save_state === 3.U) | RegNext(r_readMem_valid_next)
+        |
+        |  // ========== restore：从 restoreWordsIn 合回 bitstream，再按顺序写寄存器 ==========
+        |  switch(r_restore_state) {
+        |    is(0.U) {
+        |      r_restore_state := Mux(r_pop, 1.U, 0.U)
+        |      r_pop_index         := totalWords.U
+        |    }
+        |    is(1.U) {
+        |      r_restore_state := Mux(r_pop_index > 0.U, 2.U, 3.U)
+        |      r_stack_addr := Mux(r_pop_index > 0.U, r_stack_addr - 8.U, r_stack_addr)
+        |      r_pop_index := Mux(r_pop_index > 0.U, r_pop_index - 1.U, r_pop_index)
+        |    }
+        |    is(2.U) {
+        |      r_arbMem_req.mode := 1.U
+        |      r_arbMem_req.readAddr := r_stack_addr
+        |      ${if(!aligned) st"r_arbMem_req.readOffset := 0.U" else st""}
+        |      ${if(!aligned) st"r_arbMem_req.readLen := 8.U" else st""}
+        |      r_arbMem_req_valid := Mux(r_arbMem_resp_valid, false.B, true.B)
+        |
+        |      when(r_arbMem_resp_valid) {
+        |        words_w(r_pop_index) := r_arbMem_resp.data
+        |        r_arbMem_req.mode := 0.U
+        |        r_restore_state := 1.U
+        |      }
+        |    }
+        |    is(3.U) {
+        |      r_restore_state := 4.U
+        |    }
+        |    is(4.U) {
+        |      when(!r_pop) {
+        |        r_restore_state := 0.U
+        |      }
+        |    }
+        |  }
+        |
+        |  val bitstream_r = WireDefault(0.U(totalBits.W))
+        |  val pieces = for (i <- 0 until totalWords) yield {
+        |    val lo = i * 64
+        |    val hi = math.min(lo + 64, totalBits)
+        |    val k  = hi - lo
+        |    val w  = words_w(i)
+        |    if (k == 64) w else w(k - 1, 0)
+        |  }
+        |
+        |  // Chisel Cat() 会自动高位在前；因此如果你之前逻辑是 LSB-first，需要 reverse
+        |  bitstream_r := Cat(pieces.reverse)
+        |  //bitstream_r := Cat(pieces)
+        |
+        |  when(r_readMem_valid_next) {
+        |    printf("low 32 bits: %x, interest bits: %x, idWidth: %x\n", bitstream_r(31, 0), bitstream_r(19, 4), idWidth.asUInt)
+        |    // 切回每个寄存器（顺序/位宽与上面一致）
+        |    var off = totalBits - 1
+        |    // UInt
+        |    for (i <- 0 until nU1) { r_resp.u1(i)  := bitstream_r(off); off -= 1 }
+        |    for (i <- 0 until nU8) { r_resp.u8(i)  := bitstream_r(off, off - (8-1)); off -= 8  }
+        |    for (i <- 0 until nU16) { r_resp.u16(i) := bitstream_r(off, off - (16-1)); off -= 16 }
+        |    for (i <- 0 until nU32) { r_resp.u32(i) := bitstream_r(off, off - (32-1)); off -= 32 }
+        |    for (i <- 0 until nU64) { r_resp.u64(i) := bitstream_r(off, off - (64-1)); off -= 64 }
+        |    // SInt
+        |    for (i <- 0 until nS8) { r_resp.s8(i)  := bitstream_r(off, off - (8-1)).asSInt; off -= 8  }
+        |    for (i <- 0 until nS16) { r_resp.s16(i) := bitstream_r(off, off - (16-1)).asSInt; off -= 16 }
+        |    for (i <- 0 until nS32) { r_resp.s32(i) := bitstream_r(off, off - (32-1)).asSInt; off -= 32 }
+        |    for (i <- 0 until nS64) { r_resp.s64(i) := bitstream_r(off, off - (64-1)).asSInt; off -= 64 }
+        |    { r_resp.srcId := bitstream_r(off, off - (idWidth-1)); printf("off: %d, srcID: %x\n", off.asUInt, bitstream_r(off, off - (idWidth-1))); off -= idWidth }
+        |    { r_resp.srcCp := bitstream_r(off, 0); }
+        |  }
+        |}
+    """
+  }
+}
+
+@datatype class ArbGlobalVar(val signedPort: B,
+                             val moduleDeclarationName: String,
+                             val moduleInstanceName: String,
+                             val widthOfPort: Z,
+                             val exp: ArbIpType,
+                             val nonXilinxIP: B,
+                             val arbID: Z) extends ArbIpModule {
+  @strictpure override def arbIpId: Z = arbID
+  @strictpure override def signed: B = signedPort
+  @strictpure override def moduleName: String = moduleDeclarationName
+  @strictpure override def instanceName: String = moduleInstanceName
+  @strictpure override def width: Z = widthOfPort
+  val portType: String = if(signedPort) "SInt" else "UInt"
+  @strictpure override def portList: HashSMap[String, (B, String)] = {
+    HashSMap.empty[String, (B, String)] +
+      "a" ~> (F, s"${portType}".string) +
+      "b" ~> (F, s"${portType}".string) +
+      "start" ~> (T, "Bool".string)
+  }
+  @strictpure override def expression: ArbIpType = exp
+  @strictpure override def moduleST: ST = {
+    st"""
+        |class GlobalVar(n1:Int, n8:Int, n16:Int, n32:Int, n64:Int, maxWidth: Int) extends Module {
+        |  private val maxLen: Int = Seq(n1, n8, n16, n32, n64).max
+        |
+        |  val io = IO(new Bundle{
+        |    val start = Input(Bool())
+        |    val in    = Input(UInt(maxWidth.W))
+        |    val gtype = Input(UInt(5.W))
+        |    val op    = Input(Bool()) // false.B -- read, true.B -- write
+        |    val index = Input(UInt((log2Up(maxLen)).W))
+        |    val out   = Output(UInt(maxWidth.W))
+        |    val valid = Output(Bool())
+        |  })
+        |
+        |  def safeRegVecInit[T <: Data](n: Int, t: T): Vec[T] = {
+        |    if (n > 0) RegInit(VecInit(Seq.fill(n)(0.U.asTypeOf(t))))
+        |    else {
+        |      val v = Wire(Vec(1, t))
+        |      v := DontCare
+        |      v
+        |    }
+        |  }
+        |
+        |  val regVec1  = safeRegVecInit(n1, UInt(1.W))
+        |  val regVec8  = safeRegVecInit(n8, UInt(8.W))
+        |  val regVec16 = safeRegVecInit(n16, UInt(16.W))
+        |  val regVec32 = safeRegVecInit(n32, UInt(32.W))
+        |  val regVec64 = safeRegVecInit(n64, UInt(64.W))
+        |
+        |  val r_write      = RegNext(io.start & io.op)
+        |  val r_write_next = RegNext(r_write)
+        |  val r_read       = RegNext(io.start & ~io.op)
+        |  val r_read_next  = RegNext(r_read)
+        |  val r_in         = RegNext(io.in)
+        |  val r_index      = RegNext(io.index)
+        |  val r_valid      = RegInit(false.B)
+        |  val r_out        = RegInit(0.U(maxWidth.W))
+        |
+        |  val r_1_enable   = RegNext(io.gtype === 1.U )
+        |  val r_8_enable   = RegNext(io.gtype === 2.U )
+        |  val r_16_enable  = RegNext(io.gtype === 4.U )
+        |  val r_32_enable  = RegNext(io.gtype === 8.U )
+        |  val r_64_enable  = RegNext(io.gtype === 16.U)
+        |
+        |  r_valid := (r_read_next & ~RegNext(r_read_next)) | (r_write & ~r_write_next)
+        |
+        |  when(r_write) {
+        |    when(r_1_enable) {
+        |      regVec1(r_index) := r_in(0)
+        |    }
+        |    when(r_8_enable) {
+        |      regVec8(r_index) := r_in(7, 0)
+        |    }
+        |    when(r_16_enable) {
+        |      regVec16(r_index) := r_in(15, 0)
+        |    }
+        |    when(r_32_enable) {
+        |      regVec32(r_index) := r_in(31, 0)
+        |    }
+        |    when(r_64_enable) {
+        |      regVec64(r_index) := r_in
+        |    }
+        |  }
+        |
+        |  when(r_read) {
+        |    when(r_1_enable) {
+        |      r_out := Cat(0.U, regVec1(r_index))
+        |    }
+        |    when(r_8_enable) {
+        |      r_out := Cat(0.U, regVec8(r_index))
+        |    }
+        |    when(r_16_enable) {
+        |      r_out := Cat(0.U, regVec16(r_index))
+        |    }
+        |    when(r_32_enable) {
+        |      r_out := Cat(0.U, regVec32(r_index))
+        |    }
+        |    when(r_64_enable) {
+        |      r_out := regVec64(r_index)
+        |    }
+        |  }
+        |
+        |  io.valid := r_valid
+        |  io.out   := r_out
+        |}
+      """
+  }
+}
+
 import HwSynthesizer2._
 @record class HwSynthesizer2(val anvil: Anvil, val recursiveProcedures: Util.RecursiveProcedures) {
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
 
-  val hwLog: HwSynthesizer2.HwLog = HwSynthesizer2.HwLog(0, MNone(), F, F, 0, 0)
+  val hwLog: HwSynthesizer2.HwLog = HwSynthesizer2.HwLog(0, MNone(), F, F, 0, 0, "", ISZ[String](), F)
 
   val noXilinxIp: B = anvil.config.noXilinxIp
   var ipArbiterUsage: HashSSet[ArbIpType] = HashSSet.empty[ArbIpType]
+  var globalRouterCount: Z = 1
+  var ipRouterUsage: HashSMap[String, (Z, HashSSet[ArbIpType], QName)] = HashSMap.empty
+  // record the globalVar: name -> (index, signed, width)
+  var globalVarMap: HashSMap[String, (Z, B, Z)] = HashSMap.empty
+  // record whether using alignAxi4 mini state machine and corresponding string template
+  var alignAxi4MiniStateMachineMap: HashSMap[String, ST] = HashSMap.empty
   var ipModules: ISZ[ArbIpModule] = ISZ[ArbIpModule](
     ArbAdder(F, "AdderUnsigned64", "arbAdderUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F), noXilinxIp, 0),
     ArbAdder(T, "AdderSigned64", "arbAdderSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, T), noXilinxIp, 1),
@@ -2515,7 +2876,9 @@ import HwSynthesizer2._
     ArbDivision(T, "DivisionSigned64", "arbDivisionSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T), noXilinxIp, 32),
     ArbRemainder(F, "RemainerUnsigned64", "arbRemainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
     ArbRemainder(T, "RemainerSigned64", "arbRemainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
-    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4, 35)
+    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4, 35),
+    ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, anvil.config.memory, ArbTempSaveRestoreIP(), anvil.config.memoryAccess, noXilinxIp, anvil.config.alignAxi4, 36),
+    ArbGlobalVar(F, "GlobalVar", "arbGlobalVar", 64, ArbGlobalVarIP(), noXilinxIp, 37)
   )
 
   @pure def findChiselModule(ip: ArbIpType): Option[ArbIpModule] = {
@@ -2527,475 +2890,200 @@ import HwSynthesizer2._
     return None()
   }
 
-  @strictpure def blockMemoryParaTypeStr(ip: ArbIpType): String = {
-    ip match {
-      case ArbBlockMemoryIP() =>
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) ", depth: Int" else ", addrWidth: Int, depth: Int"
-      case _ => ""
+  @strictpure def addrWidthSt(isParaDecl: B): String = {
+    if(isParaDecl && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) {
+      "addrWidth:Int,"
+    } else if(!isParaDecl && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) {
+      "addrWidth,"
+    } else {
+      ""
     }
   }
 
-  @strictpure def blockMemoryParaStr(ip: ArbIpType): String = {
+  @pure def globalVarIndexMax: Z = {
+    var cnt1: Z = 0
+    var cnt8: Z = 0
+    var cnt16: Z = 0
+    var cnt32: Z = 0
+    var cnt64: Z = 0
+    var max: Z = 0
+    for(entry <- globalVarMap.entries) {
+      if(entry._2._3 == 1) {
+        cnt1 = cnt1 + 1
+        max = if(max < cnt1) cnt1 else max
+      } else if(entry._2._3 <= 8) {
+        cnt8 = cnt8 + 1
+        max = if(max < cnt8) cnt8 else max
+      } else if(entry._2._3 <= 16) {
+        cnt16 = cnt16 + 1
+        max = if(max < cnt16) cnt16 else max
+      } else if(entry._2._3 <= 32) {
+        cnt32 = cnt32 + 1
+        max = if(max < cnt32) cnt32 else max
+      } else if(entry._2._3 <= 64) {
+        cnt64 = cnt64 + 1
+        max = if(max < cnt64) cnt64 else max
+      }
+    }
+
+    return max
+  }
+
+  @pure def globalVarParaSt: ST = {
+    var cnt1: Z = 0
+    var cnt8: Z = 0
+    var cnt16: Z = 0
+    var cnt32: Z = 0
+    var cnt64: Z = 0
+    for(entry <- globalVarMap.entries) {
+      if(entry._2._3 == 1) {
+        cnt1 = cnt1 + 1
+      } else if(entry._2._3 <= 8) {
+        cnt8 = cnt8 + 1
+      } else if(entry._2._3 <= 16) {
+        cnt16 = cnt16 + 1
+      } else if(entry._2._3 <= 32) {
+        cnt32 = cnt32 + 1
+      } else if(entry._2._3 <= 64) {
+        cnt64 = cnt64 + 1
+      }
+    }
+
+    return st"n1 = ${cnt1}, n8 = ${cnt8}, n16 = ${cnt16}, n32 = ${cnt32}, n64 = ${cnt64}, maxWidth = 64"
+  }
+
+  @pure def globalVarGtype(t: String): ST = {
+    val width: Z = globalVarMap.get(t).get._3
+    val result: ST = width match {
+      case 1 => st"1.U"
+      case 8 => st"2.U"
+      case 16 => st"4.U"
+      case 32 => st"8.U"
+      case 64 => st"16.U"
+      case _ => halt("not support this width of Global Variable")
+    }
+    return result
+  }
+
+  @pure def globalVarWidthST(t: String): ST = {
+    val width: Z = globalVarMap.get(t).get._3
+    val result: ST = width match {
+      case 1 => st"(0)"
+      case 8 => st"(7,0)"
+      case 16 => st"(15,0)"
+      case 32 => st"(31,0)"
+      case 64 => st"(63,0)"
+      case _ => halt("not support this width of Global Variable")
+    }
+    return result
+  }
+
+  @strictpure def isGlobalVar(exp: AST.IR.Exp): B = {
+    val result: B = exp match {
+      case exp: AST.IR.Exp.GlobalVarRef => T
+      case _ => F
+    }
+    result
+  }
+
+  @strictpure def isTypeExp(exp: AST.IR.Exp): B = {
+    val result: B = exp match {
+      case exp: AST.IR.Exp.Type => T
+      case _ => F
+    }
+    result
+  }
+
+  @strictpure def requestBundleParaTypeStr(ip: ArbIpType): String = {
     ip match {
       case ArbBlockMemoryIP() =>
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) ", depth" else ", addrWidth, depth"
-      case _ => ""
+        s"dataWidth:Int, ${addrWidthSt(T)} depth: Int"
+      case ArbTempSaveRestoreIP() =>
+        s"nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int, nS8:Int, nS16:Int, nS32:Int, nS64:Int, dataWidth:Int, ${addrWidthSt(T)} depth:Int, stackMaxDepth:Int, idWidth: Int, cpWidth: Int"
+      case ArbGlobalVarIP() =>
+        s"n1:Int, n8:Int, n16:Int, n32:Int, n64:Int, maxWidth:Int"
+      case _ => "dataWidth:Int"
     }
   }
 
-  @strictpure def blockMemoryParaAssignmentStr(ip: ArbIpType): String = {
+  @strictpure def responseBundleParaTypeStr(ip: ArbIpType): String = {
     ip match {
-      case ArbBlockMemoryIP() =>
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) ", depth = depth" else ", addrWidth = addrWidth, depth = depth"
-      case _ => ""
+      case ArbTempSaveRestoreIP() =>
+        s"nU1:Int, nU8:Int, nU16:Int, nU32:Int, nU64:Int, nS8:Int, nS16:Int, nS32:Int, nS64:Int, dataWidth:Int, ${addrWidthSt(T)} depth:Int, stackMaxDepth:Int, idWidth: Int, cpWidth: Int"
+      case ArbGlobalVarIP() => s"maxWidth:Int"
+      case _ => "dataWidth:Int"
     }
   }
 
-  @pure def getIpArbiterTemplate(ip: ArbIpType): ST = {
-    val mod = findChiselModule(ip).get
-    val outputNameStr: String = ip match {
-      case ArbBinaryIP(_, _) => "out"
-      case ArbIntrinsicIP(_) => "out"
-      case ArbBlockMemoryIP() => "data"
+  @strictpure def requestParaStr(ip: ArbIpType, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): ST = {
+    ip match {
+      case ArbBlockMemoryIP() =>
+        st"dataWidth, ${addrWidthSt(F)} depth"
+      case ArbTempSaveRestoreIP() =>
+        st"${(intParaSTs(maxRegisters, F), "")} dataWidth, ${addrWidthSt(F)} depth, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth, cpWidth"
+      case ArbGlobalVarIP()=>
+        st"${globalVarParaSt}"
+      case _ => st"dataWidth"
+    }
+  }
+
+  @strictpure def responseParaStr(ip: ArbIpType, maxRegisters: Util.TempVector): ST = {
+    ip match {
+      case ArbTempSaveRestoreIP() =>
+        st"${(intParaSTs(maxRegisters, F), "")} dataWidth, ${addrWidthSt(F)} depth, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth, cpWidth"
+      case ArbGlobalVarIP() => st"maxWidth = 64"
+      case _ => st"dataWidth"
+    }
+  }
+
+
+  @pure def depthOfStack(maxRegisters: Util.TempVector): Z = {
+    var length: Z =0
+    val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
+    val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
+
+    for(i <- 0 until uintWidth.size) {
+      length = length + (maxRegisters.unsigneds(uintWidth(i) - 1) * uintWidth(i))
     }
 
-    val outputTypeStr: String = ip match {
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, _) => "Bool()"
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, _) => "Bool()"
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, _) => "Bool()"
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, _) => "Bool()"
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, _) => "Bool()"
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, _) => "Bool()"
-      case ArbBinaryIP(_, _) => if (mod.signed) "SInt(dataWidth.W)" else "UInt(dataWidth.W)"
-      case ArbIntrinsicIP(_) => "UInt(dataWidth.W)"
-      case ArbBlockMemoryIP() => "UInt(dataWidth.W)"
-    }
-
-    val outputDefaultStr: String = ip match {
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, _) => "false.B"
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, _) => "false.B"
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, _) => "false.B"
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, _) => "false.B"
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, _) => "false.B"
-      case ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, _) => "false.B"
-      case ArbBinaryIP(_, _) => if (mod.signed) "0.S" else "0.U"
-      case ArbIntrinsicIP(_) => "0.U"
-      case ArbBlockMemoryIP() => "0.U"
-    }
-
-
-    @pure def requestBundleST: ST = {
-      var portST: ISZ[ST] = ISZ[ST]()
-
-      for(i <- mod.portList.entries) {
-        // check whether the current signal is a control signal
-        // we do not instantiate control signal in Request bundle
-        if(!i._2._1) {
-          portST = portST :+ st"val ${i._1} = ${i._2._2}(dataWidth.W)"
-        }
+    for(i <- 0 until sintWidth.size) {
+      if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
+        length = length + (maxRegisters.signeds.get(sintWidth(i)).get * sintWidth(i))
       }
-
-      val blockMemoryPortST: ST = anvil.config.memoryAccess match {
-          case Anvil.Config.MemoryAccess.BramNative =>
-            st"""
-                |val mode         = UInt(2.W)
-                |val readAddr     = UInt(log2Up(depth).W)
-                |val readOffset   = UInt(log2Up(depth).W)
-                |val readLen      = UInt(4.W)
-                |val writeAddr    = UInt(log2Up(depth).W)
-                |val writeOffset  = UInt(log2Up(depth).W)
-                |val writeLen     = UInt(4.W)
-                |val writeData    = UInt(dataWidth.W)
-                |val dmaSrcAddr   = UInt(log2Up(depth).W)
-                |val dmaDstAddr   = UInt(log2Up(depth).W)
-                |val dmaDstOffset = UInt(log2Up(depth).W)
-                |val dmaSrcLen    = UInt(log2Up(depth).W)
-                |val dmaDstLen    = UInt(log2Up(depth).W)
-              """
-          case _ =>
-            if(anvil.config.alignAxi4)
-              st"""
-                  |val mode       = UInt(2.W)
-                  |val readAddr   = UInt(addrWidth.W)
-                  |val writeAddr  = UInt(addrWidth.W)
-                  |val writeData  = UInt(dataWidth.W)
-                  |val dmaSrcAddr = UInt(addrWidth.W)
-                  |val dmaDstAddr = UInt(addrWidth.W)
-                  |val dmaSrcLen  = UInt(log2Up(depth).W)
-                  |val dmaDstLen  = UInt(log2Up(depth).W)
-                """
-            else
-              st"""
-                  |val mode         = UInt(2.W)
-                  |val readAddr     = UInt(addrWidth.W)
-                  |val readOffset   = UInt(addrWidth.W)
-                  |val readLen      = UInt(4.W)
-                  |val writeAddr    = UInt(addrWidth.W)
-                  |val writeOffset  = UInt(addrWidth.W)
-                  |val writeLen     = UInt(4.W)
-                  |val writeData    = UInt(dataWidth.W)
-                  |val dmaSrcAddr   = UInt(addrWidth.W)
-                  |val dmaDstAddr   = UInt(addrWidth.W)
-                  |val dmaDstOffset = UInt(addrWidth.W)
-                  |val dmaSrcLen    = UInt(log2Up(depth).W)
-                  |val dmaDstLen    = UInt(log2Up(depth).W)
-                """
-      }
-
-      val finalPortST: ST = if(ip == ArbBlockMemoryIP()) blockMemoryPortST else st"${(portST, "\n")}"
-
-      return st"""
-                 |class ${mod.moduleName}RequestBundle(dataWidth: Int${blockMemoryParaTypeStr(ip)}) extends Bundle {
-                 |  ${finalPortST}
-                 |}
-               """
     }
 
-    @pure def responseBundleST: ST = {
-      var portST: ISZ[ST] = ISZ[ST]()
-      portST = portST :+ st"val ${outputNameStr} = ${outputTypeStr}"
-
-      return st"""
-                 |class ${mod.moduleName}ResponseBundle(dataWidth: Int) extends Bundle {
-                 |  ${(portST, "")}
-                 |}
-               """
+    if(length % 64 != 0) {
+      val offset: Z = length % 64
+      length = length + (64 - offset)
     }
 
-    @strictpure def IpIOST: ST = {
-      st"""
-          |class ${mod.moduleName}IO(dataWidth: Int${blockMemoryParaTypeStr(ip)}) extends Bundle {
-          |  val req = Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)}))
-          |  val resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
-          |}
-        """
+    return (length / 8) * anvil.config.recursiveDepthMax
+  }
+
+  @strictpure def paraAssignmentSt(ip: ArbIpType, maxRegisters: Util.TempVector): ST = {
+    ip match {
+      case ArbBlockMemoryIP() =>
+        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) st", depth = MEMORY_DEPTH" else st", addrWidth = C_M_AXI_ADDR_WIDTH, depth = MEMORY_DEPTH"
+      case ArbTempSaveRestoreIP() =>
+        st"${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) ", addrWidth = C_M_AXI_ADDR_WIDTH" else ""} , ${(intParaSTs(maxRegisters, F), "")} depth = MEMORY_DEPTH, stackMaxDepth = ${anvil.config.recursiveDepthMax}, idWidth = idWidth, cpWidth = cpWidth"
+      case ArbGlobalVarIP() =>
+        st"${globalVarParaSt}"
+      case _ => st""
     }
-
-    @strictpure def IpArbiterIOST: ST = {
-      st"""
-          |class ${mod.moduleName}ArbiterIO(numIPs: Int, dataWidth: Int${blockMemoryParaTypeStr(ip)}) extends Bundle {
-          |  val ipReqs  = Flipped(Vec(numIPs, Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)}))))
-          |  val ipResps = Vec(numIPs, Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
-          |  val ip      = new ${mod.moduleName}IO(dataWidth${blockMemoryParaStr(ip)})
-          |}
-        """
-    }
-
-    @strictpure def arbiterModuleST: ST = {
-      st"""
-          |class ${mod.moduleName}ArbiterModule(numIPs: Int, dataWidth: Int${blockMemoryParaTypeStr(ip)}) extends Module {
-          |  val io = IO(new ${mod.moduleName}ArbiterIO(numIPs, dataWidth${blockMemoryParaStr(ip)}))
-          |
-          |  // ------------------ Stage 0: Input Cache ------------------
-          |  val r_ipReq_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-          |  val r_ipReq_valid_next = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-          |  val r_ipReq_enable = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-          |  val r_ipReq_bits = RegInit(VecInit(Seq.fill(numIPs)(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)})))))
-          |
-          |  for (i <- 0 until numIPs) {
-          |    r_ipReq_valid(i) := io.ipReqs(i).valid
-          |    r_ipReq_valid_next(i) := r_ipReq_valid(i)
-          |    when(r_ipReq_valid(i) & ~r_ipReq_valid_next(i)) {
-          |      r_ipReq_enable(i) := true.B
-          |      r_ipReq_bits(i) := io.ipReqs(i).bits
-          |    } .otherwise {
-          |      r_ipReq_enable(i) := false.B
-          |    }
-          |  }
-          |
-          |  // ------------------ Stage 1: Arbitration Decision Pipeline ------------------
-          |  val r_foundReq = RegInit(false.B)
-          |  val r_reqBits  = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)})))
-          |  val r_chosen   = RegInit(0.U(log2Up(numIPs).W))
-          |
-          |  r_foundReq := r_ipReq_enable.reduce(_ || _)
-          |  for (i <- 0 until numIPs) {
-          |    when(r_ipReq_enable(i)) {
-          |      r_reqBits := r_ipReq_bits(i)
-          |      r_chosen  := i.U
-          |    }
-          |  }
-          |
-          |  io.ip.req.valid := r_foundReq
-          |  io.ip.req.bits  := r_reqBits
-          |
-          |  // ------------------ Stage 2: memory.resp handling ------------------
-          |  val r_mem_resp_valid = RegNext(io.ip.resp.valid, init = false.B)
-          |  val r_mem_resp_bits  = RegNext(io.ip.resp.bits)
-          |  val r_mem_resp_id    = RegNext(r_chosen, init = 0.U)
-          |
-          |  val r_ipResp_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-          |  val r_ipResp_bits  = RegInit(VecInit(Seq.fill(numIPs)(0.U.asTypeOf(new ${mod.moduleName}ResponseBundle(dataWidth)))))
-          |
-          |  for (i <- 0 until numIPs) {
-          |    r_ipResp_valid(i)    := false.B
-          |    r_ipResp_bits(i).${outputNameStr} := ${outputDefaultStr}
-          |  }
-          |
-          |  when(r_mem_resp_valid) {
-          |    r_ipResp_valid(r_mem_resp_id) := true.B
-          |    r_ipResp_bits(r_mem_resp_id)  := r_mem_resp_bits
-          |  } .otherwise {
-          |    r_ipResp_valid(r_mem_resp_id) := false.B
-          |  }
-          |
-          |  for (i <- 0 until numIPs) {
-          |    io.ipResps(i).valid := r_ipResp_valid(i)
-          |    io.ipResps(i).bits  := r_ipResp_bits(i)
-          |  }
-          |}
-        """
-    }
-
-    @pure def interfaceLogicST: ST = {
-      var sts: ISZ[ST] = ISZ[ST]()
-      val h: HashSMap[String, (B, String)] = mod.portList
-      for(entry <- h.entries) {
-        // it is control signal
-        if(entry._2._1) {
-          if(ip == ArbBlockMemoryIP()) {
-            sts = sts :+ st"mod.io.${entry._1} := r_mode"
-          } else {
-            sts = sts :+ st"mod.io.${entry._1} := r_mod_start"
-          }
-        } else {
-          sts = sts :+ st"mod.io.${entry._1} := r_req.${entry._1}"
-        }
-      }
-      sts = sts :+ st"io.resp.bits.${outputNameStr} := r_resp_data"
-
-      return st"${(sts, "\n")}"
-    }
-
-    @strictpure def testFunctionST: ST = {
-      st"""
-          |class ${mod.moduleName}FunctionModule(dataWidth: Int${blockMemoryParaTypeStr(ip)}) extends Module{
-          |  val io = IO(new Bundle{
-          |    val arb_req  = Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)}))
-          |    val arb_resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
-          |  })
-          |
-          |  val r_arb_req          = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)})))
-          |  val r_arb_req_valid    = RegInit(false.B)
-          |  val r_arb_resp         = RegInit(0.U.asTypeOf(new ${mod.moduleName}ResponseBundle(dataWidth)))
-          |  val r_arb_resp_valid   = RegInit(false.B)
-          |  r_arb_resp       := io.arb_resp.bits
-          |  r_arb_resp_valid := io.arb_resp.valid
-          |  io.arb_req.bits  := r_arb_req
-          |  io.arb_req.valid := r_arb_req_valid
-          |
-          |  val ${mod.moduleName}CP            = RegInit(0.U(4.W))
-          |  val r_res            = Reg(${outputTypeStr})
-          |
-          |  switch(${mod.moduleName}CP) {
-          |    is(0.U) {
-          |      r_arb_req_valid := true.B
-          |      //r_arb_req.a     := 1.S
-          |      //r_arb_req.b     := (-2).S
-          |      when(r_arb_resp_valid) {
-          |          //r_res                := r_arb_resp.out
-          |          r_arb_req_valid := false.B
-          |          ${mod.moduleName}CP := 1.U
-          |      }
-          |    }
-          |    is(1.U) {
-          |      printf("result:%d\n", r_res)
-          |    }
-          |  }
-          |}
-        """
-    }
-
-    @strictpure def modWrapperST: ST = {
-      val respDataStr: String = ip match {
-        case ArbBlockMemoryIP() => "readData"
-        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, _) => "quotient"
-        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, _) => "remainder"
-        case _ => "out"
-      }
-
-      val reqValidST: ST =
-        if(ip == ArbBlockMemoryIP())
-          st"""
-              |val r_mode = RegInit(0.U(2.W))
-              |when(memory_valid) {
-              |  r_mode := 0.U
-              |} .elsewhen(r_req_valid) {
-              |  r_mode := r_req.mode
-              |}
-            """
-        else
-          st"""
-              |val r_mod_start = RegInit(false.B)
-              |when(r_req_valid) {
-              |    r_mod_start := true.B
-              |} .elsewhen(r_resp_valid) {
-              |    r_mod_start := false.B
-              |}
-            """
-
-      val blockMemoryAxi4PortST: ST =
-        st"""
-            |// master write address channel
-            |val M_AXI_AWID    = Output(UInt(1.W))
-            |val M_AXI_AWADDR  = Output(UInt(addrWidth.W))
-            |val M_AXI_AWLEN   = Output(UInt(8.W))
-            |val M_AXI_AWSIZE  = Output(UInt(3.W))
-            |val M_AXI_AWBURST = Output(UInt(2.W))
-            |val M_AXI_AWLOCK  = Output(Bool())
-            |val M_AXI_AWCACHE = Output(UInt(4.W))
-            |val M_AXI_AWPROT  = Output(UInt(3.W))
-            |val M_AXI_AWQOS   = Output(UInt(4.W))
-            |val M_AXI_AWUSER  = Output(UInt(1.W))
-            |val M_AXI_AWVALID = Output(Bool())
-            |val M_AXI_AWREADY = Input(Bool())
-            |
-            |// master write data channel
-            |val M_AXI_WDATA  = Output(UInt(dataWidth.W))
-            |val M_AXI_WSTRB  = Output(UInt((dataWidth/8).W))
-            |val M_AXI_WLAST  = Output(Bool())
-            |val M_AXI_WUSER  = Output(UInt(1.W))
-            |val M_AXI_WVALID = Output(Bool())
-            |val M_AXI_WREADY = Input(Bool())
-            |
-            |// master write response channel
-            |val M_AXI_BID    = Input(UInt(1.W))
-            |val M_AXI_BRESP  = Input(UInt(2.W))
-            |val M_AXI_BUSER  = Input(UInt(1.W))
-            |val M_AXI_BVALID = Input(Bool())
-            |val M_AXI_BREADY = Output(Bool())
-            |
-            |// master read address channel
-            |val M_AXI_ARID    = Output(UInt(1.W))
-            |val M_AXI_ARADDR  = Output(UInt(addrWidth.W))
-            |val M_AXI_ARLEN   = Output(UInt(8.W))
-            |val M_AXI_ARSIZE  = Output(UInt(3.W))
-            |val M_AXI_ARBURST = Output(UInt(2.W))
-            |val M_AXI_ARLOCK  = Output(Bool())
-            |val M_AXI_ARCACHE = Output(UInt(4.W))
-            |val M_AXI_ARPROT  = Output(UInt(3.W))
-            |val M_AXI_ARQOS   = Output(UInt(4.W))
-            |val M_AXI_ARUSER  = Output(UInt(1.W))
-            |val M_AXI_ARVALID = Output(Bool())
-            |val M_AXI_ARREADY = Input(Bool())
-            |
-            |// master read data channel
-            |val M_AXI_RID    = Input(UInt(1.W))
-            |val M_AXI_RDATA  = Input(UInt(dataWidth.W))
-            |val M_AXI_RRESP  = Input(UInt(2.W))
-            |val M_AXI_RLAST  = Input(Bool())
-            |val M_AXI_RUSER  = Input(UInt(1.W))
-            |val M_AXI_RVALID = Input(Bool())
-            |val M_AXI_RREADY = Output(Bool())
-          """
-
-      val blockMemoryAxi4PortAssignST: ST = {
-        st"""
-            |io.M_AXI_AWID        := mod.io.M_AXI_AWID
-            |io.M_AXI_AWADDR      := mod.io.M_AXI_AWADDR
-            |io.M_AXI_AWLEN       := mod.io.M_AXI_AWLEN
-            |io.M_AXI_AWSIZE      := mod.io.M_AXI_AWSIZE
-            |io.M_AXI_AWBURST     := mod.io.M_AXI_AWBURST
-            |io.M_AXI_AWLOCK      := mod.io.M_AXI_AWLOCK
-            |io.M_AXI_AWCACHE     := mod.io.M_AXI_AWCACHE
-            |io.M_AXI_AWPROT      := mod.io.M_AXI_AWPROT
-            |io.M_AXI_AWQOS       := mod.io.M_AXI_AWQOS
-            |io.M_AXI_AWUSER      := mod.io.M_AXI_AWUSER
-            |io.M_AXI_AWVALID     := mod.io.M_AXI_AWVALID
-            |mod.io.M_AXI_AWREADY := io.M_AXI_AWREADY
-            |
-            |io.M_AXI_WDATA      := mod.io.M_AXI_WDATA
-            |io.M_AXI_WSTRB      := mod.io.M_AXI_WSTRB
-            |io.M_AXI_WLAST      := mod.io.M_AXI_WLAST
-            |io.M_AXI_WUSER      := mod.io.M_AXI_WUSER
-            |io.M_AXI_WVALID     := mod.io.M_AXI_WVALID
-            |mod.io.M_AXI_WREADY := io.M_AXI_WREADY
-            |
-            |mod.io.M_AXI_BID    := io.M_AXI_BID
-            |mod.io.M_AXI_BRESP  := io.M_AXI_BRESP
-            |mod.io.M_AXI_BUSER  := io.M_AXI_BUSER
-            |mod.io.M_AXI_BVALID := io.M_AXI_BVALID
-            |io.M_AXI_BREADY     := mod.io.M_AXI_BREADY
-            |
-            |io.M_AXI_ARID        := mod.io.M_AXI_ARID
-            |io.M_AXI_ARADDR      := mod.io.M_AXI_ARADDR
-            |io.M_AXI_ARLEN       := mod.io.M_AXI_ARLEN
-            |io.M_AXI_ARSIZE      := mod.io.M_AXI_ARSIZE
-            |io.M_AXI_ARBURST     := mod.io.M_AXI_ARBURST
-            |io.M_AXI_ARLOCK      := mod.io.M_AXI_ARLOCK
-            |io.M_AXI_ARCACHE     := mod.io.M_AXI_ARCACHE
-            |io.M_AXI_ARPROT      := mod.io.M_AXI_ARPROT
-            |io.M_AXI_ARQOS       := mod.io.M_AXI_ARQOS
-            |io.M_AXI_ARUSER      := mod.io.M_AXI_ARUSER
-            |io.M_AXI_ARVALID     := mod.io.M_AXI_ARVALID
-            |mod.io.M_AXI_ARREADY := io.M_AXI_ARREADY
-            |
-            |mod.io.M_AXI_RID    := io.M_AXI_RID
-            |mod.io.M_AXI_RDATA  := io.M_AXI_RDATA
-            |mod.io.M_AXI_RRESP  := io.M_AXI_RRESP
-            |mod.io.M_AXI_RLAST  := io.M_AXI_RLAST
-            |mod.io.M_AXI_RUSER  := io.M_AXI_RUSER
-            |mod.io.M_AXI_RVALID := io.M_AXI_RVALID
-            |io.M_AXI_RREADY     := mod.io.M_AXI_RREADY
-          """
-      }
-
-      val isAxi4Port: B = anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr
-
-      st"""
-          |class ${mod.moduleName}Wrapper(val dataWidth: Int ${blockMemoryParaTypeStr(ip)}) extends Module {
-          |    val io = IO(new Bundle{
-          |        val req = Input(Valid(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)})))
-          |        val resp = Output(Valid(new ${mod.moduleName}ResponseBundle(dataWidth)))
-          |        ${if(ip == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) blockMemoryAxi4PortST else st""}
-          |    })
-          |
-          |    val mod = Module(new ${mod.moduleName}(dataWidth${blockMemoryParaStr(ip)}))
-          |
-          |    val r_req            = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(dataWidth${blockMemoryParaStr(ip)})))
-          |    val r_req_valid      = RegNext(io.req.valid, init = false.B)
-          |    ${if(ip == ArbBlockMemoryIP()) "val r_req_valid_next = RegNext(r_req_valid, init = false.B)" else ""}
-          |
-          |    ${if(ip == ArbBlockMemoryIP()) "val memory_valid = mod.io.readValid | mod.io.writeValid | mod.io.dmaValid" else ""}
-          |    val r_resp_data  = RegNext(mod.io.${respDataStr})
-          |    val r_resp_valid = RegNext(${if(ip == ArbBlockMemoryIP()) "memory_valid" else "mod.io.valid"}, init = false.B)
-          |
-          |    ${reqValidST}
-          |
-          |    r_req := io.req.bits
-          |
-          |
-          |    ${interfaceLogicST}
-          |    io.resp.valid    := r_resp_valid
-          |
-          |    ${if(ip == ArbBlockMemoryIP() && isAxi4Port) blockMemoryAxi4PortAssignST else st""}
-          |}
-        """
-    }
-
-    return st"""
-               |${requestBundleST}
-               |${responseBundleST}
-               |${IpIOST}
-               |${IpArbiterIOST}
-               |${arbiterModuleST}
-               |${modWrapperST}
-               |${testFunctionST}
-             """
   }
 
   @pure def insDeclST(ip: ArbIpType): ST = {
     val targetModule: ArbIpModule = findChiselModule(ip).get
     val moduleInstances: ST = if(targetModule.expression == ArbBlockMemoryIP()) {
-        if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
-          st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${targetModule.asInstanceOf[BlockMemory].depth}, ${targetModule.width}))"""
-        else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
-          st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(C_M_AXI_DATA_WIDTH = C_M_AXI_DATA_WIDTH, C_M_AXI_ADDR_WIDTH = C_M_AXI_ADDR_WIDTH, C_M_TARGET_SLAVE_BASE_ADDR = C_M_TARGET_SLAVE_BASE_ADDR, MEMORY_DEPTH = MEMORY_DEPTH))"""
-        else
-          st""
-      } else {
-          st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${targetModule.width}))"""
-      }
+      if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
+        st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${targetModule.asInstanceOf[BlockMemory].depth}, ${targetModule.width}))"""
+      else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
+        st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(C_M_AXI_DATA_WIDTH = C_M_AXI_DATA_WIDTH, C_M_AXI_ADDR_WIDTH = C_M_AXI_ADDR_WIDTH, C_M_TARGET_SLAVE_BASE_ADDR = C_M_TARGET_SLAVE_BASE_ADDR, MEMORY_DEPTH = MEMORY_DEPTH))"""
+      else
+        st""
+    } else {
+      st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${targetModule.width}))"""
+    }
     return moduleInstances
   }
 
@@ -3066,15 +3154,6 @@ import HwSynthesizer2._
     return None()
   }
 
-  @pure def getArbiterIpId(ip: ArbIpType): Option[Z] = {
-    for(i <- 0 until ipModules.size) {
-      if(ipModules(i).expression == ip) {
-        return Some(ipModules(i).arbIpId)
-      }
-    }
-    return None()
-  }
-
   @pure def populateInputs(label: Z, hashSMap: HashSMap[String, (ST, String)]) : HashSMap[String, ArbIpModule.Input] = {
     var inputList: HashSMap[String, ArbIpModule.Input] = HashSMap.empty
     for(entry <- hashSMap.entries) {
@@ -3084,6 +3163,39 @@ import HwSynthesizer2._
     return inputList
   }
 
+  @pure def replaceChar(s: String, from: C, to: C): String = {
+    val o = ops.StringOps(s)
+    return o.replaceAllChars(from, to)
+  }
+
+  @pure def intParaSTs(maxRegisters: Util.TempVector, isDeclPara: B): ISZ[ST] = {
+    val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
+    val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
+
+    var intParaST: ISZ[ST] = ISZ[ST]()
+
+    for(i <- 0 until uintWidth.size) {
+      intParaST = intParaST :+ st"nU${uintWidth(i)}${if(isDeclPara) ":Int" else ""} = ${maxRegisters.unsigneds(uintWidth(i) - 1)},"
+    }
+
+    for(i <- 0 until sintWidth.size) {
+      if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
+        intParaST = intParaST :+ st"nS${sintWidth(i)}${if(isDeclPara) ":Int" else ""} = ${maxRegisters.signeds.get(sintWidth(i)).get},"
+      } else {
+        intParaST = intParaST :+ st"nS${sintWidth(i)}${if(isDeclPara) ":Int" else ""} = 0,"
+      }
+    }
+
+    return intParaST
+  }
+
+  @strictpure def replaceFuncName(isInObject: B, owner: ISZ[org.sireum.String], id: org.sireum.String): (QName, String) = {
+    val funcName: org.sireum.String = replaceChar(replaceChar(id, '<', '$'), '>', '_')
+    val ownerList: ISZ[org.sireum.String] = for(e <- owner) yield replaceChar(replaceChar(e, '<', '$'), '>', '_')
+    val finalList: ISZ[org.sireum.String] = if(isInObject) ownerList :+ funcName :+ "object" else ownerList :+ funcName
+
+    (owner :+ id, st"${(finalList, "_")}".render)
+  }
 
   /*
     Notes/links:
@@ -3091,10 +3203,578 @@ import HwSynthesizer2._
     * Anvil IR Intrinsic: https://github.com/sireum/anvil/blob/master/shared/src/main/scala/org/sireum/anvil/Intrinsic.scala
    */
   def printProcedure(name: String, program: AST.IR.Program, output: Anvil.Output, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): Unit = {
-    val o = program.procedures(0)
     var r = HashSMap.empty[ISZ[String], ST]
-    val (processedProcedureST, topST) = processProcedure(name, o, maxRegisters, globalInfoMap)
-    r = r + ISZ(name) ~> o.prettyST(anvil.printer)
+    var allFunctionIpST: ISZ[(String, ST)] = ISZ[(String, ST)]()
+
+    // initialize globalVarMap
+    var cnt1: Z = 0
+    var cnt8: Z = 0
+    var cnt16: Z = 0
+    var cnt32: Z = 0
+    var cnt64: Z = 0
+    for(entry <- globalInfoMap.entries) {
+      if(isTempGlobal(anvil, entry._2.tipe, entry._1)) {
+        val globalVarName: String = st"${(entry._1, "_")}".render
+        val signed: B = anvil.isSigned(entry._2.tipe)
+        val bitWidth: Z = anvil.typeBitSize(entry._2.tipe)
+        if(bitWidth == 1) {
+          globalVarMap = globalVarMap + globalVarName ~> (cnt1, signed, bitWidth)
+          cnt1 = cnt1 + 1
+        } else if(bitWidth <= 8) {
+          globalVarMap = globalVarMap + globalVarName ~> (cnt8, signed, bitWidth)
+          cnt8 = cnt8 + 1
+        } else if(bitWidth <= 16) {
+          globalVarMap = globalVarMap + globalVarName ~> (cnt16, signed, bitWidth)
+          cnt16 = cnt16 + 1
+        } else if(bitWidth <= 32) {
+          globalVarMap = globalVarMap + globalVarName ~> (cnt32, signed, bitWidth)
+          cnt32 = cnt32 + 1
+        } else if(bitWidth <= 64) {
+          globalVarMap = globalVarMap + globalVarName ~> (cnt64, signed, bitWidth)
+          cnt64 = cnt64 + 1
+        }
+      }
+    }
+
+    for(o <- program.procedures) {
+      val procTuple: (QName, String) = replaceFuncName(o.isInObject, o.owner, o.id)
+      hwLog.curProcedureQName = procTuple._1
+      hwLog.curProcedureId = procTuple._2
+      ipArbiterUsage = HashSSet.empty[ArbIpType]
+      alignAxi4MiniStateMachineMap = HashSMap.empty
+
+      if(!ipRouterUsage.contains(hwLog.curProcedureId)) {
+        ipRouterUsage = ipRouterUsage + hwLog.curProcedureId ~> (globalRouterCount, HashSSet.empty[ArbIpType], hwLog.curProcedureQName)
+        globalRouterCount = globalRouterCount + 1
+      }
+
+      val isRecursive: B = recursiveProcedures.contains(hwLog.curProcedureQName)
+
+      val procedureST = processProcedure(hwLog.curProcedureId, o, maxRegisters, globalInfoMap, isRecursive)
+      allFunctionIpST = allFunctionIpST :+ (hwLog.curProcedureId, procedureST)
+      r = r + ISZ(name) ~> o.prettyST(anvil.printer)
+
+      ipRouterUsage.get(hwLog.curProcedureId) match {
+        case Some((cnt, _, qname)) => ipRouterUsage = ipRouterUsage + hwLog.curProcedureId ~> (cnt, ipArbiterUsage, qname)
+        case _ =>
+          ipRouterUsage = ipRouterUsage + hwLog.curProcedureId ~> (globalRouterCount, ipArbiterUsage, hwLog.curProcedureQName)
+          globalRouterCount = globalRouterCount + 1
+      }
+    }
+
+    @pure def hasRecursiveInAllfunctions(): B = {
+      var result: B = F
+      for(o <- program.procedures) {
+        val procTuple: (QName, String) = replaceFuncName(o.isInObject, o.owner, o.id)
+        if(recursiveProcedures.contains(procTuple._1)) {
+          result = T
+        }
+      }
+      return result
+    }
+
+    @pure def getIpArbiterTemplate(ip: ArbIpType): ST = {
+      val mod = findChiselModule(ip).get
+      val outputNameStr: String = ip match {
+        case ArbBinaryIP(_, _) => "out"
+        case ArbIntrinsicIP(_) => "out"
+        case ArbBlockMemoryIP() => "data"
+        case ArbTempSaveRestoreIP() => ""
+        case ArbGlobalVarIP() => "out"
+      }
+
+      val outputTypeStr: String = ip match {
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, _) => "Bool()"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, _) => "Bool()"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, _) => "Bool()"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, _) => "Bool()"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, _) => "Bool()"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, _) => "Bool()"
+        case ArbBinaryIP(_, _) => if (mod.signed) "SInt(dataWidth.W)" else "UInt(dataWidth.W)"
+        case ArbIntrinsicIP(_) => "UInt(dataWidth.W)"
+        case ArbBlockMemoryIP() => "UInt(dataWidth.W)"
+        case ArbTempSaveRestoreIP() => ""
+        case ArbGlobalVarIP() => "UInt(maxWidth.W)"
+      }
+
+      val outputDefaultStr: String = ip match {
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Eq, _) => "false.B"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ne, _) => "false.B"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Gt, _) => "false.B"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Ge, _) => "false.B"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Lt, _) => "false.B"
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Le, _) => "false.B"
+        case ArbBinaryIP(_, _) => if (mod.signed) "0.S" else "0.U"
+        case ArbIntrinsicIP(_) => "0.U"
+        case ArbBlockMemoryIP() => "0.U"
+        case ArbTempSaveRestoreIP() => ""
+        case ArbGlobalVarIP() => "0.U"
+      }
+
+      @pure def requestBundleST: ST = {
+        var portST: ISZ[ST] = ISZ[ST]()
+
+        for(i <- mod.portList.entries) {
+          // check whether the current signal is a control signal
+          // we do not instantiate control signal in Request bundle
+          if (!i._2._1) {
+            portST = portST :+ st"val ${i._1} = ${i._2._2}(dataWidth.W)"
+          }
+        }
+
+        val blockMemoryPortST: ST = anvil.config.memoryAccess match {
+          case Anvil.Config.MemoryAccess.BramNative =>
+            st"""
+                |val mode         = UInt(2.W)
+                |val readAddr     = UInt(log2Up(depth).W)
+                |val readOffset   = UInt(log2Up(depth).W)
+                |val readLen      = UInt(4.W)
+                |val writeAddr    = UInt(log2Up(depth).W)
+                |val writeOffset  = UInt(log2Up(depth).W)
+                |val writeLen     = UInt(4.W)
+                |val writeData    = UInt(dataWidth.W)
+                |val dmaSrcAddr   = UInt(log2Up(depth).W)
+                |val dmaDstAddr   = UInt(log2Up(depth).W)
+                |val dmaDstOffset = UInt(log2Up(depth).W)
+                |val dmaSrcLen    = UInt(log2Up(depth).W)
+                |val dmaDstLen    = UInt(log2Up(depth).W)
+              """
+          case _ =>
+            if(anvil.config.alignAxi4)
+              st"""
+                  |val mode       = UInt(2.W)
+                  |val readAddr   = UInt(addrWidth.W)
+                  |val writeAddr  = UInt(addrWidth.W)
+                  |val writeData  = UInt(dataWidth.W)
+                  |val dmaSrcAddr = UInt(addrWidth.W)
+                  |val dmaDstAddr = UInt(addrWidth.W)
+                  |val dmaSrcLen  = UInt(log2Up(depth).W)
+                  |val dmaDstLen  = UInt(log2Up(depth).W)
+                """
+            else
+              st"""
+                  |val mode         = UInt(2.W)
+                  |val readAddr     = UInt(addrWidth.W)
+                  |val readOffset   = UInt(addrWidth.W)
+                  |val readLen      = UInt(4.W)
+                  |val writeAddr    = UInt(addrWidth.W)
+                  |val writeOffset  = UInt(addrWidth.W)
+                  |val writeLen     = UInt(4.W)
+                  |val writeData    = UInt(dataWidth.W)
+                  |val dmaSrcAddr   = UInt(addrWidth.W)
+                  |val dmaDstAddr   = UInt(addrWidth.W)
+                  |val dmaDstOffset = UInt(addrWidth.W)
+                  |val dmaSrcLen    = UInt(log2Up(depth).W)
+                  |val dmaDstLen    = UInt(log2Up(depth).W)
+                """
+        }
+
+        val tempSaveRestorePortST: ST =
+          st"""
+              |val u1    = Vec(nU1 , UInt(1.W))
+              |val u8    = Vec(nU8 , UInt(8.W))
+              |val u16   = Vec(nU16, UInt(16.W))
+              |val u32   = Vec(nU32, UInt(32.W))
+              |val u64   = Vec(nU64, UInt(64.W))
+              |val s8    = Vec(nS8 , SInt(8.W))
+              |val s16   = Vec(nS16, SInt(16.W))
+              |val s32   = Vec(nS32, SInt(32.W))
+              |val s64   = Vec(nS64, SInt(64.W))
+              |val srcCp = UInt(cpWidth.W)
+              |val srcId = UInt(idWidth.W)
+              |val op    = UInt(2.W)
+          """
+
+        val globalVarPortST: ST =
+          st"""
+              |private val maxLen: Int = Seq(n1, n8, n16, n32, n64).max
+              |val in    = UInt(maxWidth.W)
+              |val op    = Bool()
+              |val gtype = UInt(5.W)
+              |val index = UInt(log2Up(maxLen).W)
+            """
+
+        val finalPortST: ST = if(ip == ArbBlockMemoryIP()) blockMemoryPortST
+        else if(ip == ArbTempSaveRestoreIP()) tempSaveRestorePortST
+        else if(ip == ArbGlobalVarIP()) globalVarPortST
+        else st"${(portST, "\n")}"
+
+        return st"""
+                   |class ${mod.moduleName}RequestBundle(${requestBundleParaTypeStr(ip)}) extends Bundle {
+                   |  ${finalPortST}
+                   |}
+               """
+      }
+
+      @pure def responseBundleST: ST = {
+        var portST: ISZ[ST] = ISZ[ST]()
+        if(ip != ArbTempSaveRestoreIP()) {
+          portST = portST :+ st"val ${outputNameStr} = ${outputTypeStr}"
+        } else {
+          portST = portST :+
+            st"""
+                |val u1    = Vec(nU1 , UInt(1.W))
+                |val u8    = Vec(nU8 , UInt(8.W))
+                |val u16   = Vec(nU16, UInt(16.W))
+                |val u32   = Vec(nU32, UInt(32.W))
+                |val u64   = Vec(nU64, UInt(64.W))
+                |val s8    = Vec(nS8 , SInt(8.W))
+                |val s16   = Vec(nS16, SInt(16.W))
+                |val s32   = Vec(nS32, SInt(32.W))
+                |val s64   = Vec(nS64, SInt(64.W))
+                |val srcCp = UInt(cpWidth.W)
+                |val srcId = UInt(idWidth.W)
+            """
+        }
+
+        return st"""
+                   |class ${mod.moduleName}ResponseBundle(${if(ip == ArbTempSaveRestoreIP()) s"${responseBundleParaTypeStr(ip)}" else if(ip == ArbGlobalVarIP()) s"maxWidth: Int" else "dataWidth: Int"}) extends Bundle {
+                   |  ${(portST, "")}
+                   |}
+               """
+      }
+
+      @strictpure def IpIOST: ST = {
+        st"""
+            |class ${mod.moduleName}IO(${requestBundleParaTypeStr(ip)}) extends Bundle {
+            |  val req = Valid(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)}))
+            |  val resp = Flipped(Valid(new ${mod.moduleName}ResponseBundle(${responseParaStr(ip, maxRegisters)})))
+            |}
+        """
+      }
+
+      @strictpure def IpArbiterIOST: ST = {
+        st"""
+            |class ${mod.moduleName}ArbiterIO(numIPs: Int, ${requestBundleParaTypeStr(ip)}) extends Bundle {
+            |  val ipReqs  = Flipped(Vec(numIPs, Valid(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)}))))
+            |  val ipResps = Vec(numIPs, Valid(new ${mod.moduleName}ResponseBundle(${responseParaStr(ip, maxRegisters)})))
+            |  val ip      = new ${mod.moduleName}IO(${requestParaStr(ip, maxRegisters, globalInfoMap)})
+            |}
+        """
+      }
+
+      @strictpure def arbiterModST: ST = {
+        val tempSaveRestoreStr: ST =
+          st"""
+              |r_ipResp_bits(i).u1.foreach(_ := 0.U)
+              |r_ipResp_bits(i).u8.foreach(_ := 0.U)
+              |r_ipResp_bits(i).u16.foreach(_ := 0.U)
+              |r_ipResp_bits(i).u32.foreach(_ := 0.U)
+              |r_ipResp_bits(i).u64.foreach(_ := 0.U)
+              |r_ipResp_bits(i).s8.foreach(_ := 0.S)
+              |r_ipResp_bits(i).s16.foreach(_ := 0.S)
+              |r_ipResp_bits(i).s32.foreach(_ := 0.S)
+              |r_ipResp_bits(i).s64.foreach(_ := 0.S)
+              |r_ipResp_bits(i).srcId := 0.U
+              |r_ipResp_bits(i).srcCp := 0.U
+          """
+
+        st"""
+            |class ${mod.moduleName}ArbiterModule(numIPs: Int, ${requestBundleParaTypeStr(ip)}) extends Module {
+            |  val io = IO(new ${mod.moduleName}ArbiterIO(numIPs, ${requestParaStr(ip, maxRegisters, globalInfoMap)}))
+            |
+            |  // ------------------ Stage 0: Input Cache ------------------
+            |  val r_ipReq_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+            |  val r_ipReq_valid_next = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+            |  val r_ipReq_enable = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+            |  val r_ipReq_bits = RegInit(VecInit(Seq.fill(numIPs)(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))))
+            |
+            |  for (i <- 0 until numIPs) {
+            |    r_ipReq_valid(i) := io.ipReqs(i).valid
+            |    r_ipReq_valid_next(i) := r_ipReq_valid(i)
+            |    when(r_ipReq_valid(i) & ~r_ipReq_valid_next(i)) {
+            |      r_ipReq_enable(i) := true.B
+            |      r_ipReq_bits(i) := io.ipReqs(i).bits
+            |    } .otherwise {
+            |      r_ipReq_enable(i) := false.B
+            |    }
+            |  }
+            |
+            |  // ------------------ Stage 1: Arbitration Decision Pipeline ------------------
+            |  val r_foundReq = RegInit(false.B)
+            |  val r_reqBits  = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))
+            |  val r_chosen   = RegInit(0.U(log2Up(numIPs).W))
+            |
+            |  r_foundReq := r_ipReq_enable.reduce(_ || _)
+            |  for (i <- 0 until numIPs) {
+            |    when(r_ipReq_enable(i)) {
+            |      r_reqBits := r_ipReq_bits(i)
+            |      r_chosen  := i.U
+            |    }
+            |  }
+            |
+            |  io.ip.req.valid := r_foundReq
+            |  io.ip.req.bits  := r_reqBits
+            |
+            |  // ------------------ Stage 2: memory.resp handling ------------------
+            |  val r_mem_resp_valid = RegNext(io.ip.resp.valid, init = false.B)
+            |  val r_mem_resp_bits  = RegNext(io.ip.resp.bits)
+            |  val r_mem_resp_id    = RegNext(r_chosen, init = 0.U)
+            |
+            |  val r_ipResp_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
+            |  val r_ipResp_bits  = RegInit(VecInit(Seq.fill(numIPs)(0.U.asTypeOf(new ${mod.moduleName}ResponseBundle(${responseParaStr(ip, maxRegisters)})))))
+            |
+            |  for (i <- 0 until numIPs) {
+            |    r_ipResp_valid(i)    := false.B
+            |    ${if(ip != ArbTempSaveRestoreIP()) s"r_ipResp_bits(i).${outputNameStr} := ${outputDefaultStr}" else tempSaveRestoreStr.render}
+            |  }
+            |
+            |  when(r_mem_resp_valid) {
+            |    r_ipResp_valid(r_mem_resp_id) := true.B
+            |    r_ipResp_bits(r_mem_resp_id)  := r_mem_resp_bits
+            |  } .otherwise {
+            |    r_ipResp_valid(r_mem_resp_id) := false.B
+            |  }
+            |
+            |  for (i <- 0 until numIPs) {
+            |    io.ipResps(i).valid := r_ipResp_valid(i)
+            |    io.ipResps(i).bits  := r_ipResp_bits(i)
+            |  }
+            |}
+        """
+      }
+
+      @pure def interfaceLogicST: ST = {
+        var sts: ISZ[ST] = ISZ[ST]()
+        if(ip == ArbTempSaveRestoreIP()) {
+          sts = sts :+
+            st"""
+                |mod.io.req.bits  := r_req
+                |mod.io.req.valid := r_mod_start
+                |io.resp.bits     := r_resp_data
+                |io.resp.valid    := r_resp_valid
+                |
+                |io.arbMem_req.bits       := r_arbMem_req
+                |io.arbMem_req.valid      := r_arbMem_req_valid
+                |mod.io.arbMem_resp.bits  := r_arbMem_resp_data
+                |mod.io.arbMem_resp.valid := r_arbMem_resp_valid
+            """
+        } else if(ip == ArbGlobalVarIP()) {
+          sts = sts :+
+            st"""
+                |mod.io.in := r_req.in
+                |mod.io.op := r_req.op
+                |mod.io.gtype := r_req.gtype
+                |mod.io.index := r_req.index
+                |mod.io.start := r_mod_start
+                |io.resp.bits.out := r_resp_data
+                |io.resp.valid    := r_resp_valid
+              """
+        } else {
+          val h: HashSMap[String, (B, String)] = mod.portList
+          for (entry <- h.entries) {
+            // it is control signal
+            if (entry._2._1) {
+              if (ip == ArbBlockMemoryIP()) {
+                sts = sts :+ st"mod.io.${entry._1} := r_mode"
+              } else {
+                sts = sts :+ st"mod.io.${entry._1} := r_mod_start"
+              }
+            } else {
+              sts = sts :+ st"mod.io.${entry._1} := r_req.${entry._1}"
+            }
+          }
+          sts = sts :+ st"io.resp.bits.${outputNameStr} := r_resp_data"
+        }
+
+        return st"${(sts, "\n")}"
+      }
+
+      @strictpure def modWrapperST: ST = {
+        val respDataStr: String = ip match {
+          case ArbBlockMemoryIP() => "readData"
+          case ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, _) => "quotient"
+          case ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, _) => "remainder"
+          case ArbTempSaveRestoreIP() => "resp.bits"
+          case _ => "out"
+        }
+
+        val reqValidST: ST =
+          if(ip == ArbBlockMemoryIP())
+            st"""
+                |val r_mode = RegInit(0.U(2.W))
+                |when(memory_valid) {
+                |  r_mode := 0.U
+                |} .elsewhen(r_req_valid) {
+                |  r_mode := r_req.mode
+                |}
+            """
+          else
+            st"""
+                |val r_mod_start = RegInit(false.B)
+                |when(r_req_valid) {
+                |    r_mod_start := true.B
+                |} .elsewhen(r_resp_valid) {
+                |    r_mod_start := false.B
+                |}
+            """
+
+        val blockMemoryAxi4PortST: ST =
+          st"""
+              |// master write address channel
+              |val M_AXI_AWID    = Output(UInt(1.W))
+              |val M_AXI_AWADDR  = Output(UInt(addrWidth.W))
+              |val M_AXI_AWLEN   = Output(UInt(8.W))
+              |val M_AXI_AWSIZE  = Output(UInt(3.W))
+              |val M_AXI_AWBURST = Output(UInt(2.W))
+              |val M_AXI_AWLOCK  = Output(Bool())
+              |val M_AXI_AWCACHE = Output(UInt(4.W))
+              |val M_AXI_AWPROT  = Output(UInt(3.W))
+              |val M_AXI_AWQOS   = Output(UInt(4.W))
+              |val M_AXI_AWUSER  = Output(UInt(1.W))
+              |val M_AXI_AWVALID = Output(Bool())
+              |val M_AXI_AWREADY = Input(Bool())
+              |
+              |// master write data channel
+              |val M_AXI_WDATA  = Output(UInt(dataWidth.W))
+              |val M_AXI_WSTRB  = Output(UInt((dataWidth/8).W))
+              |val M_AXI_WLAST  = Output(Bool())
+              |val M_AXI_WUSER  = Output(UInt(1.W))
+              |val M_AXI_WVALID = Output(Bool())
+              |val M_AXI_WREADY = Input(Bool())
+              |
+              |// master write response channel
+              |val M_AXI_BID    = Input(UInt(1.W))
+              |val M_AXI_BRESP  = Input(UInt(2.W))
+              |val M_AXI_BUSER  = Input(UInt(1.W))
+              |val M_AXI_BVALID = Input(Bool())
+              |val M_AXI_BREADY = Output(Bool())
+              |
+              |// master read address channel
+              |val M_AXI_ARID    = Output(UInt(1.W))
+              |val M_AXI_ARADDR  = Output(UInt(addrWidth.W))
+              |val M_AXI_ARLEN   = Output(UInt(8.W))
+              |val M_AXI_ARSIZE  = Output(UInt(3.W))
+              |val M_AXI_ARBURST = Output(UInt(2.W))
+              |val M_AXI_ARLOCK  = Output(Bool())
+              |val M_AXI_ARCACHE = Output(UInt(4.W))
+              |val M_AXI_ARPROT  = Output(UInt(3.W))
+              |val M_AXI_ARQOS   = Output(UInt(4.W))
+              |val M_AXI_ARUSER  = Output(UInt(1.W))
+              |val M_AXI_ARVALID = Output(Bool())
+              |val M_AXI_ARREADY = Input(Bool())
+              |
+              |// master read data channel
+              |val M_AXI_RID    = Input(UInt(1.W))
+              |val M_AXI_RDATA  = Input(UInt(dataWidth.W))
+              |val M_AXI_RRESP  = Input(UInt(2.W))
+              |val M_AXI_RLAST  = Input(Bool())
+              |val M_AXI_RUSER  = Input(UInt(1.W))
+              |val M_AXI_RVALID = Input(Bool())
+              |val M_AXI_RREADY = Output(Bool())
+          """
+
+        val blockMemoryAxi4PortAssignST: ST = {
+          st"""
+              |io.M_AXI_AWID        := mod.io.M_AXI_AWID
+              |io.M_AXI_AWADDR      := mod.io.M_AXI_AWADDR
+              |io.M_AXI_AWLEN       := mod.io.M_AXI_AWLEN
+              |io.M_AXI_AWSIZE      := mod.io.M_AXI_AWSIZE
+              |io.M_AXI_AWBURST     := mod.io.M_AXI_AWBURST
+              |io.M_AXI_AWLOCK      := mod.io.M_AXI_AWLOCK
+              |io.M_AXI_AWCACHE     := mod.io.M_AXI_AWCACHE
+              |io.M_AXI_AWPROT      := mod.io.M_AXI_AWPROT
+              |io.M_AXI_AWQOS       := mod.io.M_AXI_AWQOS
+              |io.M_AXI_AWUSER      := mod.io.M_AXI_AWUSER
+              |io.M_AXI_AWVALID     := mod.io.M_AXI_AWVALID
+              |mod.io.M_AXI_AWREADY := io.M_AXI_AWREADY
+              |
+              |io.M_AXI_WDATA      := mod.io.M_AXI_WDATA
+              |io.M_AXI_WSTRB      := mod.io.M_AXI_WSTRB
+              |io.M_AXI_WLAST      := mod.io.M_AXI_WLAST
+              |io.M_AXI_WUSER      := mod.io.M_AXI_WUSER
+              |io.M_AXI_WVALID     := mod.io.M_AXI_WVALID
+              |mod.io.M_AXI_WREADY := io.M_AXI_WREADY
+              |
+              |mod.io.M_AXI_BID    := io.M_AXI_BID
+              |mod.io.M_AXI_BRESP  := io.M_AXI_BRESP
+              |mod.io.M_AXI_BUSER  := io.M_AXI_BUSER
+              |mod.io.M_AXI_BVALID := io.M_AXI_BVALID
+              |io.M_AXI_BREADY     := mod.io.M_AXI_BREADY
+              |
+              |io.M_AXI_ARID        := mod.io.M_AXI_ARID
+              |io.M_AXI_ARADDR      := mod.io.M_AXI_ARADDR
+              |io.M_AXI_ARLEN       := mod.io.M_AXI_ARLEN
+              |io.M_AXI_ARSIZE      := mod.io.M_AXI_ARSIZE
+              |io.M_AXI_ARBURST     := mod.io.M_AXI_ARBURST
+              |io.M_AXI_ARLOCK      := mod.io.M_AXI_ARLOCK
+              |io.M_AXI_ARCACHE     := mod.io.M_AXI_ARCACHE
+              |io.M_AXI_ARPROT      := mod.io.M_AXI_ARPROT
+              |io.M_AXI_ARQOS       := mod.io.M_AXI_ARQOS
+              |io.M_AXI_ARUSER      := mod.io.M_AXI_ARUSER
+              |io.M_AXI_ARVALID     := mod.io.M_AXI_ARVALID
+              |mod.io.M_AXI_ARREADY := io.M_AXI_ARREADY
+              |
+              |mod.io.M_AXI_RID    := io.M_AXI_RID
+              |mod.io.M_AXI_RDATA  := io.M_AXI_RDATA
+              |mod.io.M_AXI_RRESP  := io.M_AXI_RRESP
+              |mod.io.M_AXI_RLAST  := io.M_AXI_RLAST
+              |mod.io.M_AXI_RUSER  := io.M_AXI_RUSER
+              |mod.io.M_AXI_RVALID := io.M_AXI_RVALID
+              |io.M_AXI_RREADY     := mod.io.M_AXI_RREADY
+          """
+        }
+
+        val isAxi4Port: B = anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr
+
+        val tempSaveRestoreWrapperIOSt: ST = if(ip != ArbTempSaveRestoreIP()) st"" else
+          st"""
+              |val arbMem_req  = Valid(new BlockMemoryRequestBundle(dataWidth, ${addrWidthSt(F)} depth))
+              |val arbMem_resp = Flipped(Valid(new BlockMemoryResponseBundle(dataWidth)))
+            """
+
+        val tempSaveRestoreRegSt: ST = if(ip != ArbTempSaveRestoreIP()) st"" else
+          st"""
+              |val r_arbMem_req = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(dataWidth, ${addrWidthSt(F)} depth)))
+              |val r_arbMem_req_valid = RegInit(false.B)
+              |val r_arbMem_resp_data  = RegNext(io.arbMem_resp.bits)
+              |val r_arbMem_resp_valid = RegNext(io.arbMem_resp.valid, init = false.B)
+              |r_arbMem_req := mod.io.arbMem_req.bits
+              |r_arbMem_req_valid := mod.io.arbMem_req.valid
+            """
+
+        st"""
+            |class ${mod.moduleName}Wrapper(${requestBundleParaTypeStr(ip)}) extends Module {
+            |    val io = IO(new Bundle{
+            |        val req = Flipped(Valid(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))
+            |        val resp = Valid(new ${mod.moduleName}ResponseBundle(${responseParaStr(ip, maxRegisters)}))
+            |        ${tempSaveRestoreWrapperIOSt}
+            |        ${if(ip == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) blockMemoryAxi4PortST else st""}
+            |    })
+            |
+            |    val mod = Module(new ${mod.moduleName}(${requestParaStr(ip, maxRegisters, globalInfoMap)}))
+            |
+            |    ${tempSaveRestoreRegSt}
+            |
+            |    val r_req            = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))
+            |    val r_req_valid      = RegNext(io.req.valid, init = false.B)
+            |    ${if(ip == ArbBlockMemoryIP()) "val r_req_valid_next = RegNext(r_req_valid, init = false.B)" else ""}
+            |
+            |    ${if(ip == ArbBlockMemoryIP()) "val memory_valid = mod.io.readValid | mod.io.writeValid | mod.io.dmaValid" else ""}
+            |    val r_resp_data  = RegNext(mod.io.${respDataStr})
+            |    val r_resp_valid = RegNext(${if(ip == ArbBlockMemoryIP()) "memory_valid" else if(ip == ArbTempSaveRestoreIP()) "mod.io.resp.valid" else "mod.io.valid"}, init = false.B)
+            |
+            |    ${reqValidST}
+            |
+            |    r_req := io.req.bits
+            |
+            |    ${interfaceLogicST}
+            |    io.resp.valid    := r_resp_valid
+            |
+            |    ${if(ip == ArbBlockMemoryIP() && isAxi4Port) blockMemoryAxi4PortAssignST else st""}
+            |}
+        """
+      }
+
+      return st"""
+                 |${requestBundleST}
+                 |${responseBundleST}
+                 |${IpIOST}
+                 |${IpArbiterIOST}
+                 |${arbiterModST}
+                 |${modWrapperST}
+             """
+    }
 
     @strictpure def cyclesXilinxAdder(width: Z): Z = {
       width match {
@@ -3268,12 +3948,12 @@ import HwSynthesizer2._
             |    val clk = Input(Bool())
             |    val ena = Input(Bool())
             |    val wea = Input(Bool())
-            |    val addra = Input(UInt(${log2Up(anvil.config.memory)}.W))
+            |    val addra = Input(UInt(${log2Up(anvil.config.memory) + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}.W))
             |    val dina = Input(UInt(8.W))
             |    val douta = Output(UInt(8.W))
             |    val enb = Input(Bool())
             |    val web = Input(Bool())
-            |    val addrb = Input(UInt(${log2Up(anvil.config.memory)}.W))
+            |    val addrb = Input(UInt(${log2Up(anvil.config.memory) + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}.W))
             |    val dinb = Input(UInt(8.W))
             |    val doutb = Output(UInt(8.W))
             |  })
@@ -3397,6 +4077,7 @@ import HwSynthesizer2._
           |  val dstID = UInt(idWidth.W)
           |  val srcCP = UInt(cpWidth.W)
           |  val dstCP = UInt(cpWidth.W)
+          |  val isReturn = Bool()
           |}
           |
           |class RouterIO(val nPorts: Int, val idWidth: Int, val cpWidth: Int) extends Bundle {
@@ -3429,6 +4110,7 @@ import HwSynthesizer2._
           |    r_outputBuffer(i).dstID := 0.U
           |    r_outputBuffer(i).srcCP := 0.U
           |    r_outputBuffer(i).dstCP := 0.U
+          |    r_outputBuffer(i).isReturn := false.B
           |
           |    r_outputBuffer_valid(i) := false.B
           |  }
@@ -3488,24 +4170,54 @@ import HwSynthesizer2._
         """
     }
 
-    val configST: ST =
-      st"""
-          |runtimeCheck = ${if(anvil.config.runtimeCheck) "true" else "false"},
-          |printSize = ${anvil.config.printSize},
-          |memory = ${anvil.config.memory},
-          |erase = ${if(anvil.config.erase) "true" else "false"},
-          |noXilinxIp = ${if(anvil.config.noXilinxIp) "true" else "false"},
-          |splitTempSizes = ${if(anvil.config.splitTempSizes) "true" else  "false"},
-          |tempLocal = ${if(anvil.config.tempLocal) "true" else "false"},
-          |memoryAccess = ${anvil.config.memoryAccess.string},
-          |useIp = ${if(anvil.config.useIP) "true" else "false"},
-          |ipMax = ${anvil.config.ipMax},
-          |cpMax = ${anvil.config.cpMax},
-          |CPsize = ${anvil.typeBitSize(spType)},
-          |SPsize = ${anvil.typeBitSize(anvil.cpType)},
-          |tempGlobal = ${anvil.config.tempGlobal},
-          |alignAxi4 = ${anvil.config.alignAxi4}
-        """
+    @pure def configST: ST = {
+      // String -- the name of corresponding procedure
+      // Z -- the number of blocks in current procedure
+      var procedureHashMap: HashSMap[String, Z] = HashSMap.empty
+      for(p <- program.procedures) {
+        val blocks = p.body.asInstanceOf[AST.IR.Body.Basic].blocks
+        procedureHashMap = procedureHashMap + p.id ~> (blocks.size + 3)
+      }
+
+      var procedureSTs: ISZ[ST] = ISZ[ST]()
+      for(entry <- procedureHashMap.entries) {
+        procedureSTs = procedureSTs :+ st"${entry._1}-->${entry._2}"
+      }
+
+      var totalBlocks: Z = 0
+      for(entry <- procedureHashMap.entries) {
+        totalBlocks = totalBlocks + entry._2
+      }
+
+      var totalGlobals: Z = 0
+      if(anvil.config.tempGlobal) {
+        for (entry <- globalInfoMap.entries) {
+          totalGlobals = totalGlobals + 1
+        }
+      }
+
+      return st"""
+                 |runtimeCheck = ${if(anvil.config.runtimeCheck) "true" else "false"},
+                 |printSize = ${anvil.config.printSize},
+                 |memory = ${anvil.config.memory},
+                 |erase = ${if(anvil.config.erase) "true" else "false"},
+                 |noXilinxIp = ${if(anvil.config.noXilinxIp) "true" else "false"},
+                 |splitTempSizes = ${if(anvil.config.splitTempSizes) "true" else  "false"},
+                 |tempLocal = ${if(anvil.config.tempLocal) "true" else "false"},
+                 |memoryAccess = ${anvil.config.memoryAccess.string},
+                 |useIp = ${if(anvil.config.useIP) "true" else "false"},
+                 |ipMax = ${anvil.config.ipMax},
+                 |cpMax = ${anvil.config.cpMax},
+                 |CPsize = ${anvil.typeBitSize(spType)},
+                 |SPsize = ${anvil.typeBitSize(anvil.cpType)},
+                 |tempGlobal = ${anvil.config.tempGlobal},
+                 |alignAxi4 = ${anvil.config.alignAxi4},
+                 |totalBlocks = ${totalBlocks},
+                 |globalVariables = ${totalGlobals}
+                 |
+                 |${(procedureSTs, "\n")}
+               """
+    }
 
     val backslash = "\\"
 
@@ -3519,7 +4231,7 @@ import HwSynthesizer2._
           |  CONFIG.Operating_Mode_B {NO_CHANGE} $backslash
           |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
           |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
-          |  CONFIG.Write_Depth_A {${anvil.config.memory}} $backslash
+          |  CONFIG.Write_Depth_A {${anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}} $backslash
           |  CONFIG.Write_Width_A {8} $backslash
           |] [get_ips XilinxBRAM]
           """
@@ -3528,7 +4240,7 @@ import HwSynthesizer2._
           |set PROJECT_PATH [lindex $$argv 0]
           |set PROJECT_NAME [lindex $$argv 1]
           |set FREQ_HZ [lindex $$argv 2]
-          |set FILE_PATH $${PROJECT_PATH}/chisel/generated_verilog
+          |set FILE_PATH $${PROJECT_PATH}/chisel/generated_verilog/FPGA${name}
           |
           |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP
           |create_project $$PROJECT_NAME $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME -part xczu9eg-ffvb1156-2-e
@@ -3662,8 +4374,8 @@ import HwSynthesizer2._
           |] [get_ips XilinxIndexAdder]
           |
           |# /home/kejun/development/HLS_slang/zcu102/InsertSortIP/IP_dir
-          |ipx::package_project -root_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME//IP_dir -vendor user.org -library user -taxonomy /UserIP -import_files -set_current false
-          |ipx::unload_core $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME//IP_dir/component.xml
+          |ipx::package_project -root_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir -vendor user.org -library user -taxonomy /UserIP -import_files -set_current false
+          |ipx::unload_core $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir/component.xml
           |ipx::edit_ip_in_project -upgrade true -name tmp_edit_project -directory $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir $$PROJECT_PATH/$$FREQ_HZ/$$PROJECT_NAME/IP_dir/component.xml
           |
           |update_compile_order -fileset sources_1
@@ -3738,7 +4450,7 @@ import HwSynthesizer2._
             |  CONFIG.Memory_Type {True_Dual_Port_RAM} $backslash
             |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
             |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
-            |  CONFIG.Write_Depth_A ${anvil.config.memory / 8 + 1} $backslash
+            |  CONFIG.Write_Depth_A ${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) / 8 + 1} $backslash
             |  CONFIG.Write_Width_A {64} $backslash
             |  CONFIG.use_bram_block {BRAM_Controller} $backslash
             |] [get_bd_cells blk_mem_gen_0]
@@ -3819,6 +4531,24 @@ import HwSynthesizer2._
           |
           |set_property target_language Verilog [current_project]
           |
+          |# Synthesis strategy
+          |#set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
+          |# Implementation strategy
+          |#set_property strategy Performance_Explore     [get_runs impl_1]
+          |
+          |# opt_design directive
+          |#set_property STEPS.OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
+          |
+          |# place_design directive
+          |#set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
+          |
+          |# phys_opt_design directive (post-place)
+          |# If your Vivado step name differs, use: report_property [get_runs impl_1] to check
+          |#set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+          |
+          |# route_design directive (+ optional tns_cleanup)
+          |#set_property STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+          |
           |create_bd_design "design_1"
           |update_compile_order -fileset sources_1
           |
@@ -3835,6 +4565,8 @@ import HwSynthesizer2._
           |# instantiate the generated IP
           |create_bd_cell -type ip -vlnv user.org:user:$$IP_NAME:1.0 GeneratedIP
           |${blockDesignST}
+          |
+          |assign_bd_address
           |
           |save_bd_design
           |
@@ -3880,8 +4612,8 @@ import HwSynthesizer2._
           |
           |log_file="time_log.txt"
           |
-          |start_bound=100
-          |end_bound=150
+          |start_bound=350
+          |end_bound=475
           |step=25
           |
           |bound=$$start_bound
@@ -3910,39 +4642,97 @@ import HwSynthesizer2._
             |#include "xil_io.h"
             |#include "xparameters.h"
             |
-            |#define VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + ${anvil.config.memory})
-            |#define READY_ADDR (XPAR_GENERATEDIP_BASEADDR + ${anvil.config.memory})
-            |#define ARRAY_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x0)
+            |#define START_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x0)
+            |#define VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x4)
+            |#define DST_ID_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x8)
+            |#define DST_CP_ADDR (XPAR_GENERATEDIP_BASEADDR + 0xC)
+            |#define ROUTE_VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x10)
+            |#define MEM_WRITE_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x18)
+            |#define MEM_WRITE_OFFSET (XPAR_GENERATEDIP_BASEADDR + 0x1C)
+            |#define MEM_WRITE_LEN (XPAR_GENERATEDIP_BASEADDR + 0x20)
+            |#define MEM_WRITE_DATA (XPAR_GENERATEDIP_BASEADDR + 0x24)
+            |#define MEM_WRITE_VALID (XPAR_GENERATEDIP_BASEADDR + 0x28)
+            |#define MEM_READ_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x2C)
+            |#define MEM_READ_OFFSET (XPAR_GENERATEDIP_BASEADDR + 0x30)
+            |#define MEM_READ_LEN (XPAR_GENERATEDIP_BASEADDR + 0x34)
+            |#define MEM_READ_DATA (XPAR_GENERATEDIP_BASEADDR + 0x38)
+            |#define MEM_READ_VALID (XPAR_GENERATEDIP_BASEADDR + 0x3C)
+            |
+            |#define ARRAY_ADDR (${globalInfoMap.get(Util.displayName).get.loc + anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)})
+            |#define DP_ADDR (${globalInfoMap.get(Util.dpName).get.loc})
             |
             |int main()
             |{
-            |    init_platform();
+            |  init_platform();
             |
-            |    printf("benchmark ${name}\n");
+            |  printf("benchmark ${name}\n");
             |
-            |    Xil_Out32(ARRAY_ADDR, 0xFFFFFFFF);
-            |    Xil_Out32(ARRAY_ADDR+4, 0xFFFFFFFF);
+            |  // write to port valid (generated IP)
+            |  Xil_Out32(START_ADDR, 0x1);
             |
-            |	   // write to port valid (generated IP)
-            |	   Xil_Out32(VALID_ADDR, 0x1);
+            |  // test init_done
+            |  uint32_t init_done = Xil_In32(VALID_ADDR) & 0x2;
+            |  while(init_done != 0x2) {
+            |    init_done = Xil_In32(VALID_ADDR) & 0x2;
+            |  }
             |
-            |	   // read from port ready (generated IP)
-            |	   uint32_t ready = Xil_In32(READY_ADDR);
-            |	   while(ready != 0x1) {
-            |	   	ready = Xil_In32(READY_ADDR);
-            |	   }
+            |  // write testNum
+            |  Xil_Out32(MEM_WRITE_ADDR, ${globalInfoMap.get(Util.testNumName).get.loc});
+            |  Xil_Out32(MEM_WRITE_OFFSET, 0);
+            |  Xil_Out32(MEM_WRITE_LEN, 4);
+            |  Xil_Out32(MEM_WRITE_DATA, 0xFFFFFFFF);
+            |  Xil_Out32(MEM_WRITE_VALID, 0x1);
+            |  while(Xil_In32(MEM_WRITE_VALID) != 0);
             |
-            |	   // read the elements form the array
-            |	   for(int i = 0; i < 3; i++) {
-            |	   	uint32_t c = Xil_In32(ARRAY_ADDR + 20 + i*4);
-            |	   	printf("%x\n", c);
-            |	   }
+            |  Xil_Out32(MEM_WRITE_ADDR, ${globalInfoMap.get(Util.testNumName).get.loc} + 4);
+            |  Xil_Out32(MEM_WRITE_OFFSET, 0);
+            |  Xil_Out32(MEM_WRITE_LEN, 4);
+            |  Xil_Out32(MEM_WRITE_DATA, 0xFFFFFFFF);
+            |  Xil_Out32(MEM_WRITE_VALID, 0x1);
+            |  while(Xil_In32(MEM_WRITE_VALID) != 0);
             |
-            |	   printf("\n");
-            |    print("Successfully ran application");
+            |  // write to dstID
+            |  Xil_Out32(DST_ID_ADDR, 0x1);
+            |  // write to dstCP
+            |  Xil_Out32(DST_CP_ADDR, 0x3);
+            |  // write to route valid
+            |  Xil_Out32(ROUTE_VALID_ADDR, 0x1);
             |
-            |    cleanup_platform();
-            |    return 0;
+            |  // read from port ready (generated IP)
+            |  uint32_t valid = Xil_In32(VALID_ADDR) & 0x1;
+            |  while(valid != 0x1) {
+            |  	 valid = Xil_In32(VALID_ADDR) & 0x1;
+            |  }
+            |
+            |  Xil_Out32(MEM_READ_ADDR, DP_ADDR);
+            |  Xil_Out32(MEM_READ_OFFSET, 0);
+            |  Xil_Out32(MEM_READ_LEN, 4);
+            |  Xil_Out32(MEM_READ_VALID, 0x1);
+            |  while(Xil_In32(MEM_READ_VALID) != 0);
+            |  uint32_t DP = Xil_In32(MEM_READ_DATA);
+            |  uint32_t times = (DP % 4 == 0) ? (DP / 4) : (DP / 4) + 1;
+            |  printf("result:\n");
+            |
+            |  uint32_t c;
+            |  // read the elements form the array
+            |  for(int i = 0; i < times; i++) {
+            |    Xil_Out32(MEM_READ_ADDR, ARRAY_ADDR + i * 4);
+            |    Xil_Out32(MEM_READ_OFFSET, 0);
+            |    Xil_Out32(MEM_READ_LEN, 4);
+            |    Xil_Out32(MEM_READ_VALID, 0x1);
+            |    while(Xil_In32(MEM_READ_VALID) != 0);
+            |  	 c = Xil_In32(MEM_READ_DATA);
+            |    printf("%c", (char)((c >> 0)  & 0xFF));
+            |    printf("%c", (char)((c >> 8)  & 0xFF));
+            |    printf("%c", (char)((c >> 16)  & 0xFF));
+            |    printf("%c", (char)((c >> 24)  & 0xFF));
+            |  }
+            |
+            |  printf("\n");
+            |  print("Successfully ran application");
+            |
+            |  cleanup_platform();
+            |  return 0;
             |}
             """
       else if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
@@ -3955,13 +4745,16 @@ import HwSynthesizer2._
             |#include "xil_cache.h"
             |#include "xparameters.h"
             |
-            |#define VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x0)
-            |#define READY_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x8)
-            |#define DP_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x10)
-            |#define ARRAY_ADDR ${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"}
+            |#define START_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x0)
+            |#define VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x8)
+            |#define DST_ID_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x10)
+            |#define DST_CP_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x18)
+            |#define ROUTE_VALID_ADDR (XPAR_GENERATEDIP_BASEADDR + 0x20)
+            |#define DP_ADDR (${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"} + ${globalInfoMap.get(Util.dpName).get.loc})
+            |#define ARRAY_ADDR (${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"} + ${globalInfoMap.get(Util.displayName).get.loc + anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)})
             |
             |uint8_t load_u8(uint32_t offset) {
-            |  uint32_t buffer_addr = ARRAY_ADDR + 20;
+            |  uint32_t buffer_addr = ARRAY_ADDR;
             |  uint32_t char_addr = buffer_addr + offset;
             |  uint32_t abs_addr = char_addr & 0xFFFFFFF8;
             |  uint32_t abs_offset = char_addr & 0x00000007;
@@ -3971,6 +4764,17 @@ import HwSynthesizer2._
             |  return (c >> (abs_offset * 8)) & 0xFF;
             |}
             |
+            |uint64_t mmio_read_u64_unaligned_fast(uint64_t addr) {
+            |    uint64_t aligned = addr & ~((uint64_t)0x7);
+            |    uint32_t off    = (uint32_t)(addr & 0x7) * 8;
+            |
+            |    uint64_t lo = Xil_In64(aligned);
+            |    if (off == 0) return lo;
+            |
+            |    uint64_t hi = Xil_In64(aligned + 8);
+            |    return (lo >> off) | (hi << (64 - off));
+            |}
+            |
             |int main()
             |{
             |  init_platform();
@@ -3978,25 +4782,38 @@ import HwSynthesizer2._
             |  //Xil_DCacheDisable();
             |  printf("benchmark ${name}\n");
             |
+            |  // write to port valid (generated IP)
+            |  Xil_Out64(START_ADDR, 0x1);
+            |
+            |  uint64_t init_done = Xil_In64(VALID_ADDR) & 0x2;
+            |  while(init_done != 0x2) {
+            |    init_done = Xil_In64(VALID_ADDR) & 0x2;
+            |  }
+            |
             |  // write FFFFFFFFFFFFFFFF to testNum
-            |  Xil_Out64(${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"}, 0xFFFFFFFFFFFFFFFF);
+            |  Xil_Out64(${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "XPAR_PSU_DDR_0_S_AXI_BASEADDR" else "XPAR_AXI_BRAM_CTRL_1_S_AXI_BASEADDR"} + ${globalInfoMap.get(Util.testNumName).get.loc}, 0xFFFFFFFFFFFFFFFF);
+            |
             |  // using memory barrier when disable DCache
             |  //__asm__ volatile("dsb sy");
-            |
             |  // using flush when enable DCache
-            |  ${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) "Xil_DCacheFlushRange(XPAR_PSU_DDR_0_S_AXI_BASEADDR, sizeof(uint64_t));" else ""}
+            |  ${if (anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr) s"Xil_DCacheFlushRange(XPAR_PSU_DDR_0_S_AXI_BASEADDR + ${globalInfoMap.get(Util.testNumName).get.loc}, sizeof(uint64_t));" else ""}
             |
-            |  // write to port valid (generated IP)
-            |  Xil_Out64(VALID_ADDR, 0x1);
+            |  // write to dstID
+            |  Xil_Out64(DST_ID_ADDR, 0x1);
+            |  // write to dstCP
+            |  Xil_Out64(DST_CP_ADDR, 0x3);
+            |  // write to route valid
+            |  Xil_Out64(ROUTE_VALID_ADDR, 0x1);
             |
-            |  // read from port ready (generated IP)
-            |  uint64_t ready = Xil_In64(READY_ADDR);
-            |  while(ready != 0x1) {
-            |    ready = Xil_In64(READY_ADDR);
+            |  // read from port valid (generated IP)
+            |  uint64_t valid = Xil_In64(VALID_ADDR) & 0x1;
+            |  while(valid != 0x1) {
+            |    valid = Xil_In64(VALID_ADDR) & 0x1;
             |  }
             |
             |  uint64_t displaySize = ${anvil.config.printSize};
-            |  uint64_t DP = Xil_In64(DP_ADDR);
+            |  uint64_t mask = (1 << ${anvil.dpTypeByteSize * 8}) - 1;
+            |  uint64_t DP = mmio_read_u64_unaligned_fast(DP_ADDR) & mask;
             |  int lo = (DP < displaySize) ? 0 : DP;
             |  int hi = (DP < displaySize) ? DP : displaySize + DP - 1;
             |  char output[displaySize + 1];
@@ -4160,12 +4977,12 @@ import HwSynthesizer2._
           |    input wire clk,
           |    input wire ena,
           |    input wire wea,
-          |    input wire [${log2Up(anvil.config.memory) - 1}:0] addra,
+          |    input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1}:0] addra,
           |    input wire [7:0] dina,
           |    output wire [7:0] douta,
           |    input wire enb,
           |    input wire web,
-          |    input wire [${log2Up(anvil.config.memory) - 1}:0] addrb,
+          |    input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1}:0] addrb,
           |    input wire [7:0] dinb,
           |    output wire [7:0] doutb
           |);
@@ -4174,13 +4991,13 @@ import HwSynthesizer2._
           |    .clka(clk),    // input wire clka
           |    .ena(ena),      // input wire ena
           |    .wea(wea),      // input wire [0 : 0] wea
-          |    .addra(addra),  // input wire [${log2Up(anvil.config.memory) - 1} : 0] addra
+          |    .addra(addra),  // input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1} : 0] addra
           |    .dina(dina),    // input wire [7: 0] dina
           |    .douta(douta),  // output wire [7: 0] douta
           |    .clkb(clk),    // input wire clkb
           |    .enb(enb),      // input wire enb
           |    .web(web),      // input wire [0 : 0] web
-          |    .addrb(addrb),  // input wire [${log2Up(anvil.config.memory) - 1} : 0] addrb
+          |    .addrb(addrb),  // input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1} : 0] addrb
           |    .dinb(dinb),    // input wire [7: 0] dinb
           |    .doutb(doutb)  // output wire [7: 0] doutb
           |  );
@@ -4267,8 +5084,356 @@ import HwSynthesizer2._
           """
     }
 
-    @strictpure def verilogTestBenchST: ST = {
+    @strictpure def designWrapperST: ST = {
       st"""
+          |design_1_wrapper u_design(
+          |    .S_AXI_0_araddr   (S_AXI_0_araddr ),
+          |    .S_AXI_0_arburst  (S_AXI_0_arburst),
+          |    .S_AXI_0_arcache  (S_AXI_0_arcache),
+          |    .S_AXI_0_arlen    (S_AXI_0_arlen  ),
+          |    .S_AXI_0_arlock   (S_AXI_0_arlock ),
+          |    .S_AXI_0_arprot   (S_AXI_0_arprot ),
+          |    .S_AXI_0_arready  (S_AXI_0_arready),
+          |    .S_AXI_0_arsize   (S_AXI_0_arsize ),
+          |    .S_AXI_0_arvalid  (S_AXI_0_arvalid),
+          |    .S_AXI_0_awaddr   (S_AXI_0_awaddr ),
+          |    .S_AXI_0_awburst  (S_AXI_0_awburst),
+          |    .S_AXI_0_awcache  (S_AXI_0_awcache),
+          |    .S_AXI_0_awlen    (S_AXI_0_awlen  ),
+          |    .S_AXI_0_awlock   (S_AXI_0_awlock ),
+          |    .S_AXI_0_awprot   (S_AXI_0_awprot ),
+          |    .S_AXI_0_awready  (S_AXI_0_awready),
+          |    .S_AXI_0_awsize   (S_AXI_0_awsize ),
+          |    .S_AXI_0_awvalid  (S_AXI_0_awvalid),
+          |    .S_AXI_0_bready   (S_AXI_0_bready ),
+          |    .S_AXI_0_bresp    (S_AXI_0_bresp  ),
+          |    .S_AXI_0_bvalid   (S_AXI_0_bvalid ),
+          |    .S_AXI_0_rdata    (S_AXI_0_rdata  ),
+          |    .S_AXI_0_rlast    (S_AXI_0_rlast  ),
+          |    .S_AXI_0_rready   (S_AXI_0_rready ),
+          |    .S_AXI_0_rresp    (S_AXI_0_rresp  ),
+          |    .S_AXI_0_rvalid   (S_AXI_0_rvalid ),
+          |    .S_AXI_0_wdata    (S_AXI_0_wdata  ),
+          |    .S_AXI_0_wlast    (S_AXI_0_wlast  ),
+          |    .S_AXI_0_wready   (S_AXI_0_wready ),
+          |    .S_AXI_0_wstrb    (S_AXI_0_wstrb  ),
+          |    .S_AXI_0_wvalid   (S_AXI_0_wvalid ),
+          |    .s_axi_aclk_0     (clk   ),
+          |    .s_axi_aresetn_0  (~reset   )
+          |);
+        """
+    }
+
+    @strictpure def axi4MasterTestBenchDeclST: ST = {
+      st"""
+          |  wire [31:0]    S_AXI_0_araddr;
+          |  wire [1:0]     S_AXI_0_arburst;
+          |  wire [3:0]     S_AXI_0_arcache;
+          |  wire [7:0]     S_AXI_0_arlen;
+          |  wire           S_AXI_0_arlock;
+          |  wire [2:0]     S_AXI_0_arprot;
+          |  wire           S_AXI_0_arready;
+          |  wire [2:0]     S_AXI_0_arsize;
+          |  wire           S_AXI_0_arvalid;
+          |  wire [31:0]    S_AXI_0_awaddr;
+          |  wire [1:0]     S_AXI_0_awburst;
+          |  wire [3:0]     S_AXI_0_awcache;
+          |  wire [7:0]     S_AXI_0_awlen;
+          |  wire           S_AXI_0_awlock;
+          |  wire [2:0]     S_AXI_0_awprot;
+          |  wire           S_AXI_0_awready;
+          |  wire [2:0]     S_AXI_0_awsize;
+          |  wire           S_AXI_0_awvalid;
+          |  wire           S_AXI_0_bready;
+          |  wire  [1:0]    S_AXI_0_bresp;
+          |  wire           S_AXI_0_bvalid;
+          |  wire  [63:0]   S_AXI_0_rdata;
+          |  wire           S_AXI_0_rlast;
+          |  wire           S_AXI_0_rready;
+          |  wire  [1:0]    S_AXI_0_rresp;
+          |  wire           S_AXI_0_rvalid;
+          |  wire [63:0]    S_AXI_0_wdata;
+          |  wire           S_AXI_0_wlast;
+          |  wire           S_AXI_0_wready;
+          |  wire [7:0]     S_AXI_0_wstrb;
+          |  wire           S_AXI_0_wvalid;
+        """
+    }
+
+    @strictpure def axi4MasterTestBenchConnST: ST = {
+      st"""
+          |.io_M_AXI_AWID      (),
+          |.io_M_AXI_AWADDR    (S_AXI_0_awaddr),
+          |.io_M_AXI_AWLEN     (S_AXI_0_awlen),
+          |.io_M_AXI_AWSIZE    (S_AXI_0_awsize),
+          |.io_M_AXI_AWBURST   (S_AXI_0_awburst),
+          |.io_M_AXI_AWLOCK    (S_AXI_0_awlock),
+          |.io_M_AXI_AWCACHE   (S_AXI_0_awcache),
+          |.io_M_AXI_AWPROT    (S_AXI_0_awprot),
+          |.io_M_AXI_AWQOS     (),
+          |.io_M_AXI_AWUSER    (),
+          |.io_M_AXI_AWVALID   (S_AXI_0_awvalid),
+          |.io_M_AXI_AWREADY   (S_AXI_0_awready),
+          |.io_M_AXI_WDATA     (S_AXI_0_wdata),
+          |.io_M_AXI_WSTRB     (S_AXI_0_wstrb),
+          |.io_M_AXI_WLAST     (S_AXI_0_wlast),
+          |.io_M_AXI_WUSER     (),
+          |.io_M_AXI_WVALID    (S_AXI_0_wvalid),
+          |.io_M_AXI_WREADY    (S_AXI_0_wready),
+          |.io_M_AXI_BID       (),
+          |.io_M_AXI_BRESP     (S_AXI_0_bresp),
+          |.io_M_AXI_BUSER     (),
+          |.io_M_AXI_BVALID    (S_AXI_0_bvalid),
+          |.io_M_AXI_BREADY    (S_AXI_0_bready),
+          |.io_M_AXI_ARID      (),
+          |.io_M_AXI_ARADDR    (S_AXI_0_araddr),
+          |.io_M_AXI_ARLEN     (S_AXI_0_arlen),
+          |.io_M_AXI_ARSIZE    (S_AXI_0_arsize),
+          |.io_M_AXI_ARBURST   (S_AXI_0_arburst),
+          |.io_M_AXI_ARLOCK    (S_AXI_0_arlock),
+          |.io_M_AXI_ARCACHE   (S_AXI_0_arcache),
+          |.io_M_AXI_ARPROT    (S_AXI_0_arprot),
+          |.io_M_AXI_ARQOS     (),
+          |.io_M_AXI_ARUSER    (),
+          |.io_M_AXI_ARVALID   (S_AXI_0_arvalid),
+          |.io_M_AXI_ARREADY   (S_AXI_0_arready),
+          |.io_M_AXI_RID       (),
+          |.io_M_AXI_RDATA     (S_AXI_0_rdata),
+          |.io_M_AXI_RRESP     (S_AXI_0_rresp),
+          |.io_M_AXI_RLAST     (S_AXI_0_rlast),
+          |.io_M_AXI_RUSER     (),
+          |.io_M_AXI_RVALID    (S_AXI_0_rvalid),
+          |.io_M_AXI_RREADY    (S_AXI_0_rready),
+        """
+    }
+
+    @pure def verilogTestBenchST(isFpgaTestBench: B): ST = {
+      val testBenchBramNativeConn:ST =
+        st"""
+            |// r_control(6)  -- writeAddr
+            |io_S_AXI_AWADDR  = 24;
+            |io_S_AXI_AWVALID = 1;
+            |io_S_AXI_WDATA   = 32'h0;
+            |io_S_AXI_WVALID  = 1;
+            |#10;
+            |
+            |io_S_AXI_AWVALID = 0;
+            |io_S_AXI_WVALID  = 0;
+            |io_S_AXI_BREADY  = 1;
+            |#20;
+            |
+            |io_S_AXI_BREADY  = 0;
+            |#10;
+            |
+            |// r_control(7)  -- writeOffset
+            |io_S_AXI_AWADDR  = 28;
+            |io_S_AXI_AWVALID = 1;
+            |io_S_AXI_WDATA   = 32'h0;
+            |io_S_AXI_WVALID  = 1;
+            |#10;
+            |
+            |io_S_AXI_AWVALID = 0;
+            |io_S_AXI_WVALID  = 0;
+            |io_S_AXI_BREADY  = 1;
+            |#20;
+            |
+            |io_S_AXI_BREADY  = 0;
+            |#10;
+            |
+            |// r_control(8)  -- writeLen
+            |io_S_AXI_AWADDR  = 32;
+            |io_S_AXI_AWVALID = 1;
+            |io_S_AXI_WDATA   = 32'h4;
+            |io_S_AXI_WVALID  = 1;
+            |#10;
+            |
+            |io_S_AXI_AWVALID = 0;
+            |io_S_AXI_WVALID  = 0;
+            |io_S_AXI_BREADY  = 1;
+            |#20;
+            |
+            |io_S_AXI_BREADY  = 0;
+            |#10;
+            |
+            |// r_control(9)  -- writeData
+            |io_S_AXI_AWADDR  = 36;
+            |io_S_AXI_AWVALID = 1;
+            |io_S_AXI_WDATA   = 32'hFFFFFFFF;
+            |io_S_AXI_WVALID  = 1;
+            |#10;
+            |
+            |io_S_AXI_AWVALID = 0;
+            |io_S_AXI_WVALID  = 0;
+            |io_S_AXI_BREADY  = 1;
+            |#20;
+            |
+            |io_S_AXI_BREADY  = 0;
+            |#10;
+            |
+            |// r_control(10)  -- writeValid
+            |io_S_AXI_AWADDR  = 40;
+            |io_S_AXI_AWVALID = 1;
+            |io_S_AXI_WDATA   = 32'h1;
+            |io_S_AXI_WVALID  = 1;
+            |#10;
+            |
+            |io_S_AXI_AWVALID = 0;
+            |io_S_AXI_WVALID  = 0;
+            |io_S_AXI_BREADY  = 1;
+            |#20;
+            |
+            |io_S_AXI_BREADY  = 0;
+            |#200;
+            |
+            |// r_control(6)  -- writeAddr
+            |io_S_AXI_AWADDR  = 24;
+            |io_S_AXI_AWVALID = 1;
+            |io_S_AXI_WDATA   = 32'h4;
+            |io_S_AXI_WVALID  = 1;
+            |#10;
+            |
+            |io_S_AXI_AWVALID = 0;
+            |io_S_AXI_WVALID  = 0;
+            |io_S_AXI_BREADY  = 1;
+            |#20;
+            |
+            |io_S_AXI_BREADY  = 0;
+            |#10;
+            |
+            |// r_control(7)  -- writeOffset
+            |io_S_AXI_AWADDR  = 28;
+            |io_S_AXI_AWVALID = 1;
+            |io_S_AXI_WDATA   = 32'h0;
+            |io_S_AXI_WVALID  = 1;
+            |#10;
+            |
+            |io_S_AXI_AWVALID = 0;
+            |io_S_AXI_WVALID  = 0;
+            |io_S_AXI_BREADY  = 1;
+            |#20;
+            |
+            |io_S_AXI_BREADY  = 0;
+            |#10;
+            |
+            |// r_control(8)  -- writeLen
+            |io_S_AXI_AWADDR  = 32;
+            |io_S_AXI_AWVALID = 1;
+            |io_S_AXI_WDATA   = 32'h4;
+            |io_S_AXI_WVALID  = 1;
+            |#10;
+            |
+            |io_S_AXI_AWVALID = 0;
+            |io_S_AXI_WVALID  = 0;
+            |io_S_AXI_BREADY  = 1;
+            |#20;
+            |
+            |io_S_AXI_BREADY  = 0;
+            |#10;
+            |
+            |// r_control(9)  -- writeData
+            |io_S_AXI_AWADDR  = 36;
+            |io_S_AXI_AWVALID = 1;
+            |io_S_AXI_WDATA   = 32'hFFFFFFFF;
+            |io_S_AXI_WVALID  = 1;
+            |#10;
+            |
+            |io_S_AXI_AWVALID = 0;
+            |io_S_AXI_WVALID  = 0;
+            |io_S_AXI_BREADY  = 1;
+            |#20;
+            |
+            |io_S_AXI_BREADY  = 0;
+            |#10;
+            |
+            |// r_control(10)  -- writeValid
+            |io_S_AXI_AWADDR  = 40;
+            |io_S_AXI_AWVALID = 1;
+            |io_S_AXI_WDATA   = 32'h1;
+            |io_S_AXI_WVALID  = 1;
+            |#10;
+            |
+            |io_S_AXI_AWVALID = 0;
+            |io_S_AXI_WVALID  = 0;
+            |io_S_AXI_BREADY  = 1;
+            |#20;
+            |
+            |io_S_AXI_BREADY  = 0;
+            |#200;
+          """
+
+      @pure def testBenchAccessResult: ST = {
+        val realAddr: Z = globalInfoMap.get(Util.displayName).get.loc + anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
+        val arrayAddr: Z = if(!anvil.config.alignAxi4) {realAddr} else {realAddr - (realAddr % 8)}
+        var resAcc: ISZ[ST] = ISZ[ST]()
+        for(i <- 0 until 6) {
+          resAcc = resAcc :+
+            st"""
+                |// r_control(11)  -- readAddr
+                |io_S_AXI_AWADDR  = 44;
+                |io_S_AXI_AWVALID = 1;
+                |io_S_AXI_WDATA   = ${arrayAddr + i*4};
+                |io_S_AXI_WVALID  = 1;
+                |#10;
+                |
+                |io_S_AXI_AWVALID = 0;
+                |io_S_AXI_WVALID  = 0;
+                |io_S_AXI_BREADY  = 1;
+                |#20;
+                |
+                |io_S_AXI_BREADY  = 0;
+                |#10;
+                |
+                |// r_control(12)  -- readOffset
+                |io_S_AXI_AWADDR  = 48;
+                |io_S_AXI_AWVALID = 1;
+                |io_S_AXI_WDATA   = 32'h0;
+                |io_S_AXI_WVALID  = 1;
+                |#10;
+                |
+                |io_S_AXI_AWVALID = 0;
+                |io_S_AXI_WVALID  = 0;
+                |io_S_AXI_BREADY  = 1;
+                |#20;
+                |
+                |io_S_AXI_BREADY  = 0;
+                |#10;
+                |
+                |// r_control(13)  -- readLen
+                |io_S_AXI_AWADDR  = 52;
+                |io_S_AXI_AWVALID = 1;
+                |io_S_AXI_WDATA   = 32'h4;
+                |io_S_AXI_WVALID  = 1;
+                |#10;
+                |
+                |io_S_AXI_AWVALID = 0;
+                |io_S_AXI_WVALID  = 0;
+                |io_S_AXI_BREADY  = 1;
+                |#20;
+                |
+                |io_S_AXI_BREADY  = 0;
+                |#10;
+                |
+                |// r_control(15)  -- readValid
+                |io_S_AXI_AWADDR  = 60;
+                |io_S_AXI_AWVALID = 1;
+                |io_S_AXI_WDATA   = 32'h1;
+                |io_S_AXI_WVALID  = 1;
+                |#10;
+                |
+                |io_S_AXI_AWVALID = 0;
+                |io_S_AXI_WVALID  = 0;
+                |io_S_AXI_BREADY  = 1;
+                |#20;
+                |
+                |io_S_AXI_BREADY  = 0;
+                |#200;
+              """
+        }
+
+        return st"${(resAcc, "")}"
+      }
+
+      return st"""
           |`timescale 1ns / 1ns
           |
           |module tb(
@@ -4277,27 +5442,213 @@ import HwSynthesizer2._
           |
           |  reg clk;
           |  reg reset;
-          |  reg start;
-          |  wire valid;
           |
-          |Top u_Top(
+          |  reg  [31:0] 	io_S_AXI_AWADDR;
+          |  reg  [2:0]  	io_S_AXI_AWPROT;
+          |  reg         	io_S_AXI_AWVALID;
+          |  wire        	io_S_AXI_AWREADY;
+          |  reg  [${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 31 else 63}:0] 	io_S_AXI_WDATA;
+          |  reg  [7:0]  	io_S_AXI_WSTRB;
+          |  reg         	io_S_AXI_WVALID;
+          |  wire        	io_S_AXI_WREADY;
+          |  wire [1:0]  	io_S_AXI_BRESP;
+          |  wire        	io_S_AXI_BVALID;
+          |  reg         	io_S_AXI_BREADY;
+          |  reg  [31:0] 	io_S_AXI_ARADDR;
+          |  reg  [2:0]  	io_S_AXI_ARPROT;
+          |  reg         	io_S_AXI_ARVALID;
+          |  wire        	io_S_AXI_ARREADY;
+          |  wire [${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 31 else 63}:0] 	io_S_AXI_RDATA;
+          |  wire [1:0]  	io_S_AXI_RRESP;
+          |  wire        	io_S_AXI_RVALID;
+          |  reg         	io_S_AXI_RREADY;
+          |
+          |  ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) axi4MasterTestBenchDeclST else st""}
+          |
+          |${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) designWrapperST else st""}
+          |
+          |${if(isFpgaTestBench) s"${name}" else "Top"} u_Top(
           |  .clock(clk),
           |  .reset(reset),
-          |  .io_start(start),
-          |  .io_valid(valid)
+          |
+          |  ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) axi4MasterTestBenchConnST else st""}
+          |
+          |  .io_S_AXI_AWADDR    (io_S_AXI_AWADDR  ),
+          |  .io_S_AXI_AWPROT    (io_S_AXI_AWPROT  ),
+          |  .io_S_AXI_AWVALID   (io_S_AXI_AWVALID ),
+          |  .io_S_AXI_AWREADY   (io_S_AXI_AWREADY ),
+          |  .io_S_AXI_WDATA     (io_S_AXI_WDATA   ),
+          |  .io_S_AXI_WSTRB     (io_S_AXI_WSTRB   ),
+          |  .io_S_AXI_WVALID    (io_S_AXI_WVALID  ),
+          |  .io_S_AXI_WREADY    (io_S_AXI_WREADY  ),
+          |  .io_S_AXI_BRESP     (io_S_AXI_BRESP   ),
+          |  .io_S_AXI_BVALID    (io_S_AXI_BVALID  ),
+          |  .io_S_AXI_BREADY    (io_S_AXI_BREADY  ),
+          |  .io_S_AXI_ARADDR    (io_S_AXI_ARADDR  ),
+          |  .io_S_AXI_ARPROT    (io_S_AXI_ARPROT  ),
+          |  .io_S_AXI_ARVALID   (io_S_AXI_ARVALID ),
+          |  .io_S_AXI_ARREADY   (io_S_AXI_ARREADY ),
+          |  .io_S_AXI_RDATA     (io_S_AXI_RDATA   ),
+          |  .io_S_AXI_RRESP     (io_S_AXI_RRESP   ),
+          |  .io_S_AXI_RVALID    (io_S_AXI_RVALID  ),
+          |  .io_S_AXI_RREADY    (io_S_AXI_RREADY  )
           |);
           |
           |  initial clk = 0;
           |  always #5 clk = ~clk;
           |
           |  initial begin
+          |    io_S_AXI_AWADDR = 0;
+          |    io_S_AXI_AWPROT = 0;
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WDATA = 0;
+          |    io_S_AXI_WSTRB = 0;
+          |    io_S_AXI_WVALID = 0;
+          |    io_S_AXI_BREADY = 0;
+          |    io_S_AXI_ARADDR = 0;
+          |    io_S_AXI_ARPROT = 0;
+          |    io_S_AXI_ARVALID = 0;
+          |    io_S_AXI_RREADY = 0;
+          |
           |    reset = 1;
           |    #20;
           |
           |    reset = 0;
-          |    start = 1;
+          |    #10;
           |
-          |    #400000;
+          |    // valid
+          |    io_S_AXI_AWADDR  = 0;
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) "#10000" else ""}
+          |
+          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchBramNativeConn else st""}
+          |
+          |    // dstID
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 8 else 16};
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    // dstCP
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 12 else 24};
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h3;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    // route_valid
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 16 else 32};
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#400000"};
+          |
+          |    // valid
+          |    io_S_AXI_AWADDR  = 0;
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) "#10000" else ""}
+          |
+          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchBramNativeConn else st""}
+          |
+          |    // dstID
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 8 else 16};
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    // dstCP
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 12 else 24};
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h3;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    // route_valid
+          |    io_S_AXI_AWADDR  = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 16 else 32};
+          |    io_S_AXI_AWVALID = 1;
+          |    io_S_AXI_WDATA   = ${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 32 else 64}'h1;
+          |    io_S_AXI_WVALID  = 1;
+          |    #10;
+          |
+          |    io_S_AXI_AWVALID = 0;
+          |    io_S_AXI_WVALID  = 0;
+          |    io_S_AXI_BREADY  = 1;
+          |    #20;
+          |
+          |    io_S_AXI_BREADY  = 0;
+          |    #10;
+          |
+          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#400000"};
+          |
+          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchAccessResult else st""}
           |    $$finish;
           |
           |  end
@@ -4430,26 +5781,79 @@ import HwSynthesizer2._
         """
     }
 
-    @strictpure def testbenchScriptST: ST = {
+    @strictpure def simDesignWrapperST: ST = {
       st"""
-          |create_project ${name} ../generated_verilog/${name}/vivado_project -part xczu9eg-ffvb1156-2-e
+          |# create block design
+          |create_bd_design "design_1"
+          |
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 blk_mem_gen_0
+          |set_property -dict [list ${backslash}
+          |  CONFIG.Write_Width_A {64} ${backslash}
+          |  CONFIG.use_bram_block {Stand_Alone} ${backslash}
+          |] [get_bd_cells blk_mem_gen_0]
+          |
+          |set_property CONFIG.use_bram_block {BRAM_Controller} [get_bd_cells blk_mem_gen_0]
+          |
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_0
+          |set_property -dict [list ${backslash}
+          |  CONFIG.DATA_WIDTH {64} ${backslash}
+          |  CONFIG.SINGLE_PORT_BRAM {1} ${backslash}
+          |] [get_bd_cells axi_bram_ctrl_0]
+          |
+          |connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
+          |
+          |make_bd_intf_pins_external  [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
+          |make_bd_pins_external  [get_bd_pins axi_bram_ctrl_0/s_axi_aclk]
+          |make_bd_pins_external  [get_bd_pins axi_bram_ctrl_0/s_axi_aresetn]
+          |
+          |save_bd_design
+          |
+          |make_wrapper -files [get_files ./vivado_project/${name}.srcs/sources_1/bd/design_1/design_1.bd] -top
+          |add_files -norecurse ./vivado_project/${name}.gen/sources_1/bd/design_1/hdl/design_1_wrapper.v
+          |
+          |update_compile_order -fileset sources_1
+        """
+    }
+
+    @strictpure def bdScriptST: ST = {
+      st"""
+          |set bd_files [get_files -all -quiet -filter {NAME =~ "*.bd"}]
+          |generate_target simulation $$bd_files
+          |export_ip_user_files -of_objects $$bd_files -no_script -sync -force -quiet
+        """
+    }
+
+    @strictpure def testbenchScriptST(isFpgaTestBench: B): ST = {
+      st"""
+          |create_project ${name} ./vivado_project -part xczu9eg-ffvb1156-2-e
           |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
           |set_property compxlib.modelsim_compiled_library_dir /home/kejun/study/xilinx_modelsim_lib_2024_2 [current_project]
           |set_property target_simulator ModelSim [current_project]
-          |set_property -name {modelsim.simulate.runtime} -value {400000ns} -objects [get_filesets sim_1]
+          |set_property -name {modelsim.simulate.runtime} -value {800000ns} -objects [get_filesets sim_1]
           |
-          |set dir ../generated_verilog/${name}
+          |set dir ./chisel/generated_verilog/${if(isFpgaTestBench) "FPGA" else ""}${name}
           |set files [glob -nocomplain -types f [file join $$dir *.v]]
           |if {[llength $$files]} {
           |    add_files -norecurse $$files
           |}
+          |${if(isFpgaTestBench) s"add_files $$dir/../fpgaTb.v" else ""}
           |update_compile_order -fileset sources_1
           |
           |source ./testbenchIpGeneration.tcl
+          |
+          |${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) simDesignWrapperST else st""}
           |update_compile_order -fileset sim_1
+          |
+          |${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) bdScriptST else st""}
+          |
+          |set xci_top [get_files -all -quiet -filter {NAME =~ "*.xci" && NAME !~ "*/bd/*"}]
+          |generate_target simulation $$xci_top
+          |export_ip_user_files -of_objects $$xci_top -no_script -sync -force -quiet
         """
     }
 
+    output.add(T, ISZ("chisel/src/main/scala", s"Top.scala"), topST(name, globalInfoMap, F, maxRegisters))
+    output.add(T, ISZ("chisel/src/main/scala", s"FPGATop.scala"), topST(name, globalInfoMap, T, maxRegisters))
     output.add(T, ISZ("config.txt"), configST)
     if(!anvil.config.noXilinxIp) {
       output.add(T, ISZ("chisel/src/main/scala", s"XilinxIpWrapper.scala"), st"${(xilinxIpWrapper, "\n")}")
@@ -4459,7 +5863,9 @@ import HwSynthesizer2._
     }
     output.add(T, ISZ("chisel/src/main/scala", s"Stack.scala"), stackST)
     output.add(T, ISZ("chisel/src/main/scala", s"Router.scala"), routerST)
-    output.add(T, ISZ("chisel/src/main/scala", s"chisel-${name}.scala"), processedProcedureST)
+    for(f <- allFunctionIpST) {
+      output.add(T, ISZ("chisel/src/main/scala", s"ip_func_${f._1}.scala"), f._2)
+    }
     output.add(T, ISZ("chisel", "build.sbt"), buildSbtST())
     output.add(T, ISZ("chisel", "project", "build.properties"), st"sbt.version=${output.sbtVersion}")
 
@@ -4484,9 +5890,6 @@ import HwSynthesizer2._
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxMultiplierUnsigned64Wrapper.v"), xilinxMul64ST(F))
     }
 
-    // temporary top function
-    output.add(T, ISZ("chisel/src/main/scala", s"Top.scala"), topST)
-
     if (anvil.config.genVerilog) {
       @strictpure def xilinxBUFGWrapperST: ST = {
         st"""
@@ -4502,10 +5905,13 @@ import HwSynthesizer2._
           """
       }
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxBUFGWrapper.v"), xilinxBUFGWrapperST)
-      output.add(T, ISZ(s"../generated_verilog/${name}", "tb.v"), verilogTestBenchST)
+      output.add(T, ISZ(s"chisel/generated_verilog/${name}", "tb.v"), verilogTestBenchST(isFpgaTestBench = F))
+      output.add(T, ISZ(s"chisel/generated_verilog", "fpgaTb.v"), verilogTestBenchST(isFpgaTestBench = T))
       output.add(T, ISZ(s"./", "testbenchIpGeneration.tcl"), testbenchIpGenTclST)
-      output.add(T, ISZ(s"./", "testbenchScript.tcl"), testbenchScriptST)
+      output.add(T, ISZ(s"./", "testbenchScript.tcl"), testbenchScriptST(isFpgaTestBench = F))
+      output.add(T, ISZ(s"./", "fpgaTestbenchScript.tcl"), testbenchScriptST(isFpgaTestBench = T))
       output.add(T, ISZ("chisel/src/test/scala", s"${name}VerilogGeneration.scala"), verilogGenerationST(name))
+      output.add(T, ISZ("chisel/src/test/scala", s"FPGA${name}VerilogGeneration.scala"), fpgaVerilogGenerationST(name))
     }
 
     return
@@ -4518,14 +5924,32 @@ import HwSynthesizer2._
           |
           |object ${moduleName}VerilogGeneration extends App {
           |  (new ChiselStage).execute(
-          |    Array("--target-dir", "../../generated_verilog/${moduleName}"),
+          |    Array("--target-dir", "./generated_verilog/${moduleName}"),
           |    Seq(ChiselGeneratorAnnotation(() => new Top(
-          |      addrWidth = 32,
-          |      dataWidth = 64,
           |      cpWidth = ${anvil.cpTypeByteSize * 8},
           |      spWidth = ${anvil.spTypeByteSize * 8},
-          |      idWidth = 6,
-          |      depth = ${anvil.config.memory}
+          |      idWidth = ${log2Up(globalRouterCount + 1)}
+          |    )))
+          |  )
+          |}
+          |
+        """
+
+    return verilogGenST
+  }
+
+  @pure def fpgaVerilogGenerationST(moduleName: String): ST = {
+    val verilogGenST: ST =
+      st"""
+          |import chisel3.stage.{ChiselStage,ChiselGeneratorAnnotation}
+          |
+          |object FPGA${moduleName}VerilogGeneration extends App {
+          |  (new ChiselStage).execute(
+          |    Array("--target-dir", "./generated_verilog/FPGA${moduleName}"),
+          |    Seq(ChiselGeneratorAnnotation(() => new ${moduleName}(
+          |      cpWidth = ${anvil.cpTypeByteSize * 8},
+          |      spWidth = ${anvil.spTypeByteSize * 8},
+          |      idWidth = ${log2Up(globalRouterCount + 1)}
           |    )))
           |  )
           |}
@@ -4582,7 +6006,678 @@ import HwSynthesizer2._
     return sbtST
   }
 
-  @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo]): (ST, ST) = {
+  @pure def topST(name: String, globalInfoMap: HashSMap[QName, VarInfo], isFpgaTop: B, maxRegisters: Util.TempVector): ST = {
+    // first element of (Z, ST, ISZ[ST]) represent how many function ip connect to the current arbiter
+    // second element of (Z, ST, ISZ[ST]) represent arbiter module delcaration
+    // third element of (Z, ST, ISZ[ST]) represent aribiter module connection with function ip
+    var allArbiter: HashSMap[ArbIpType, (Z, ST, ISZ[ST])] = HashSMap.empty[ArbIpType, (Z, ST, ISZ[ST])]
+    for(f <- ipRouterUsage.entries) {
+      val arbiterUsage: HashSSet[ArbIpType] = f._2._2
+      for(arb <- arbiterUsage.elements) {
+        val idx: Z = if(allArbiter.contains(arb)) allArbiter.get(arb).get._1 else 0
+
+        val instanceName: String = getIpInstanceName(arb).get
+        val arbConnectionSt: ST =
+          st"""
+              |mod_${f._1}.io.${instanceName}_req  <> ${instanceName}ArbiterModule.io.ipReqs(${idx})
+              |mod_${f._1}.io.${instanceName}_resp <> ${instanceName}ArbiterModule.io.ipResps(${idx})
+              """
+
+        allArbiter.get(arb) match {
+          case Some((_, st, sts)) =>
+            allArbiter = allArbiter + arb ~> (idx + 1, st, sts :+ arbConnectionSt)
+          case None() =>
+            allArbiter = allArbiter + arb ~> (idx + 1, st"", ISZ[ST]() :+ arbConnectionSt)
+        }
+      }
+    }
+
+    // record the number of IPs connected to block memory
+    // this number is used by TempSaveRestore IP
+    var numOfBlockMemInterface: Z = 0
+    // use this boolean variable to update numOfBlockMemInterface
+    var hasRecursiveFuncCall: B = F
+    for(o <- ipRouterUsage.entries) {
+      if(recursiveProcedures.contains(o._2._3)) {
+        hasRecursiveFuncCall = T
+      }
+    }
+    // initialize all arbiter module declaration string template
+    for(entry <- allArbiter.entries) {
+      val arb: ArbIpType = entry._1
+      val (n, _, conn): (Z, ST, ISZ[ST]) = entry._2
+      val moduleName: String = getIpModuleName(arb).get
+      val instanceName: String = getIpInstanceName(arb).get
+      val paraStr: String = if (arb == ArbBlockMemoryIP()) paraAssignmentSt(arb, maxRegisters).render
+                            else if(arb == ArbTempSaveRestoreIP()) paraAssignmentSt(arb, maxRegisters).render
+                            else if(arb == ArbGlobalVarIP()) paraAssignmentSt(arb, maxRegisters).render
+                            else ""
+      val numIpsStr: String = if (arb == ArbBlockMemoryIP()) s"${n + (if(!hasRecursiveFuncCall) 1 else 2)}" else s"${n}"
+      numOfBlockMemInterface = if(arb == ArbBlockMemoryIP()) n + (if(!hasRecursiveFuncCall) 1 else 2) else numOfBlockMemInterface
+      val axi4ConnST: ST =
+        if(arb == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative)
+          st"""
+              |io.M_AXI_AWID    := ${instanceName}Wrapper.io.M_AXI_AWID
+              |io.M_AXI_AWADDR  := ${instanceName}Wrapper.io.M_AXI_AWADDR
+              |io.M_AXI_AWLEN   := ${instanceName}Wrapper.io.M_AXI_AWLEN
+              |io.M_AXI_AWSIZE  := ${instanceName}Wrapper.io.M_AXI_AWSIZE
+              |io.M_AXI_AWBURST := ${instanceName}Wrapper.io.M_AXI_AWBURST
+              |io.M_AXI_AWLOCK  := ${instanceName}Wrapper.io.M_AXI_AWLOCK
+              |io.M_AXI_AWCACHE := ${instanceName}Wrapper.io.M_AXI_AWCACHE
+              |io.M_AXI_AWPROT  := ${instanceName}Wrapper.io.M_AXI_AWPROT
+              |io.M_AXI_AWQOS   := ${instanceName}Wrapper.io.M_AXI_AWQOS
+              |io.M_AXI_AWUSER  := ${instanceName}Wrapper.io.M_AXI_AWUSER
+              |io.M_AXI_AWVALID := ${instanceName}Wrapper.io.M_AXI_AWVALID
+              |${instanceName}Wrapper.io.M_AXI_AWREADY := io.M_AXI_AWREADY
+              |io.M_AXI_WDATA   := ${instanceName}Wrapper.io.M_AXI_WDATA
+              |io.M_AXI_WSTRB   := ${instanceName}Wrapper.io.M_AXI_WSTRB
+              |io.M_AXI_WLAST   := ${instanceName}Wrapper.io.M_AXI_WLAST
+              |io.M_AXI_WUSER   := ${instanceName}Wrapper.io.M_AXI_WUSER
+              |io.M_AXI_WVALID  := ${instanceName}Wrapper.io.M_AXI_WVALID
+              |${instanceName}Wrapper.io.M_AXI_WREADY  := io.M_AXI_WREADY
+              |${instanceName}Wrapper.io.M_AXI_BID     := io.M_AXI_BID
+              |${instanceName}Wrapper.io.M_AXI_BRESP   := io.M_AXI_BRESP
+              |${instanceName}Wrapper.io.M_AXI_BUSER   := io.M_AXI_BUSER
+              |${instanceName}Wrapper.io.M_AXI_BVALID  := io.M_AXI_BVALID
+              |io.M_AXI_BREADY  := ${instanceName}Wrapper.io.M_AXI_BREADY
+              |io.M_AXI_ARID    := ${instanceName}Wrapper.io.M_AXI_ARID
+              |io.M_AXI_ARADDR  := ${instanceName}Wrapper.io.M_AXI_ARADDR
+              |io.M_AXI_ARLEN   := ${instanceName}Wrapper.io.M_AXI_ARLEN
+              |io.M_AXI_ARSIZE  := ${instanceName}Wrapper.io.M_AXI_ARSIZE
+              |io.M_AXI_ARBURST := ${instanceName}Wrapper.io.M_AXI_ARBURST
+              |io.M_AXI_ARLOCK  := ${instanceName}Wrapper.io.M_AXI_ARLOCK
+              |io.M_AXI_ARCACHE := ${instanceName}Wrapper.io.M_AXI_ARCACHE
+              |io.M_AXI_ARPROT  := ${instanceName}Wrapper.io.M_AXI_ARPROT
+              |io.M_AXI_ARQOS   := ${instanceName}Wrapper.io.M_AXI_ARQOS
+              |io.M_AXI_ARUSER  := ${instanceName}Wrapper.io.M_AXI_ARUSER
+              |io.M_AXI_ARVALID := ${instanceName}Wrapper.io.M_AXI_ARVALID
+              |${instanceName}Wrapper.io.M_AXI_ARREADY := io.M_AXI_ARREADY
+              |${instanceName}Wrapper.io.M_AXI_RID     := io.M_AXI_RID
+              |${instanceName}Wrapper.io.M_AXI_RDATA   := io.M_AXI_RDATA
+              |${instanceName}Wrapper.io.M_AXI_RRESP   := io.M_AXI_RRESP
+              |${instanceName}Wrapper.io.M_AXI_RLAST   := io.M_AXI_RLAST
+              |${instanceName}Wrapper.io.M_AXI_RUSER   := io.M_AXI_RUSER
+              |${instanceName}Wrapper.io.M_AXI_RVALID  := io.M_AXI_RVALID
+              |io.M_AXI_RREADY  := ${instanceName}Wrapper.io.M_AXI_RREADY
+            """
+        else st""
+
+      val dataWidthST: ST = if(arb != ArbGlobalVarIP()) st"dataWidth = C_M_AXI_DATA_WIDTH" else st""
+
+      val declST: ST =
+        st"""
+            |val ${instanceName}Wrapper = ${if(arb != ArbBlockMemoryIP()) "withReset(myRst) {" else ""} Module(new ${moduleName}Wrapper(${dataWidthST}${paraStr})) ${if(arb != ArbBlockMemoryIP()) "}" else ""}
+            |val ${instanceName}ArbiterModule = ${if(arb != ArbBlockMemoryIP()) "withReset(myRst) {" else ""} Module(new ${moduleName}ArbiterModule(numIPs = ${numIpsStr}, ${dataWidthST}${paraStr})) ${if(arb != ArbBlockMemoryIP()) "}" else ""}
+            |${instanceName}Wrapper.io.req <> ${instanceName}ArbiterModule.io.ip.req
+            |${instanceName}Wrapper.io.resp <> ${instanceName}ArbiterModule.io.ip.resp
+            |${axi4ConnST}
+          """
+
+      allArbiter = allArbiter + arb ~> (n, declST, conn)
+    }
+
+    @strictpure def tempSaveRestoreMemSt(): ST = {
+      val instanceName: String = getIpInstanceName(ArbTempSaveRestoreIP()).get
+
+      st"""
+          |${instanceName}Wrapper.io.arbMem_req <> arbBlockMemoryArbiterModule.io.ipReqs(${numOfBlockMemInterface - 1})
+          |${instanceName}Wrapper.io.arbMem_resp <> arbBlockMemoryArbiterModule.io.ipResps(${numOfBlockMemInterface - 1})
+        """
+    }
+
+    var allArbiterST: ISZ[ST] = ISZ[ST]()
+    for(entry <- allArbiter.entries) {
+      allArbiterST = allArbiterST :+ entry._2._2 :+ st"${(entry._2._3, "")}"
+    }
+    val memInstName: String = getIpInstanceName(ArbBlockMemoryIP()).get
+    val topMemIndex: Z = allArbiter.get(ArbBlockMemoryIP()).get._1
+    allArbiterST = allArbiterST :+
+      st"""
+          |${memInstName}ArbiterModule.io.ipReqs(${topMemIndex}).bits := r_mem_req
+          |${memInstName}ArbiterModule.io.ipReqs(${topMemIndex}).valid := r_mem_req_valid
+          |r_mem_resp := ${memInstName}ArbiterModule.io.ipResps(${topMemIndex}).bits
+          |r_mem_resp_valid := ${memInstName}ArbiterModule.io.ipResps(${topMemIndex}).valid
+        """
+
+    val realAddr: Z = globalInfoMap.get(Util.displayName).get.loc + anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
+    val offset: Z = if(!anvil.config.alignAxi4) {realAddr} else {realAddr - (realAddr % 8)}
+
+    var allFunctionST: ISZ[ST] = ISZ[ST]()
+    for(f <- ipRouterUsage.entries) {
+      allFunctionST = allFunctionST :+
+        st"""
+            |val mod_${f._1} = withReset(myRst) {
+            |  Module(new ${f._1}(
+            |    addrWidth = C_M_AXI_ADDR_WIDTH,
+            |    dataWidth = C_M_AXI_DATA_WIDTH,
+            |    cpWidth = cpWidth,
+            |    spWidth = spWidth,
+            |    idWidth = idWidth,
+            |    depth = MEMORY_DEPTH
+            |  ))
+            |}
+            |router.io.out(${f._2._1}) <> mod_${f._1}.io.routeIn
+            |router.io.in(${f._2._1})  <> mod_${f._1}.io.routeOut
+          """
+    }
+
+    @strictpure def axi4MasterInterfaceST: ST = {
+      if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative)
+        st"""
+            |// master write address channel
+            |val M_AXI_AWID    = Output(UInt(1.W))
+            |val M_AXI_AWADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
+            |val M_AXI_AWLEN   = Output(UInt(8.W))
+            |val M_AXI_AWSIZE  = Output(UInt(3.W))
+            |val M_AXI_AWBURST = Output(UInt(2.W))
+            |val M_AXI_AWLOCK  = Output(Bool())
+            |val M_AXI_AWCACHE = Output(UInt(4.W))
+            |val M_AXI_AWPROT  = Output(UInt(3.W))
+            |val M_AXI_AWQOS   = Output(UInt(4.W))
+            |val M_AXI_AWUSER  = Output(UInt(1.W))
+            |val M_AXI_AWVALID = Output(Bool())
+            |val M_AXI_AWREADY = Input(Bool())
+            |
+            |// master write data channel
+            |val M_AXI_WDATA  = Output(UInt(C_M_AXI_DATA_WIDTH.W))
+            |val M_AXI_WSTRB  = Output(UInt((C_M_AXI_DATA_WIDTH/8).W))
+            |val M_AXI_WLAST  = Output(Bool())
+            |val M_AXI_WUSER  = Output(UInt(1.W))
+            |val M_AXI_WVALID = Output(Bool())
+            |val M_AXI_WREADY = Input(Bool())
+            |
+            |// master write response channel
+            |val M_AXI_BID    = Input(UInt(1.W))
+            |val M_AXI_BRESP  = Input(UInt(2.W))
+            |val M_AXI_BUSER  = Input(UInt(1.W))
+            |val M_AXI_BVALID = Input(Bool())
+            |val M_AXI_BREADY = Output(Bool())
+            |
+            |// master read address channel
+            |val M_AXI_ARID    = Output(UInt(1.W))
+            |val M_AXI_ARADDR  = Output(UInt(C_M_AXI_ADDR_WIDTH.W))
+            |val M_AXI_ARLEN   = Output(UInt(8.W))
+            |val M_AXI_ARSIZE  = Output(UInt(3.W))
+            |val M_AXI_ARBURST = Output(UInt(2.W))
+            |val M_AXI_ARLOCK  = Output(Bool())
+            |val M_AXI_ARCACHE = Output(UInt(4.W))
+            |val M_AXI_ARPROT  = Output(UInt(3.W))
+            |val M_AXI_ARQOS   = Output(UInt(4.W))
+            |val M_AXI_ARUSER  = Output(UInt(1.W))
+            |val M_AXI_ARVALID = Output(Bool())
+            |val M_AXI_ARREADY = Input(Bool())
+            |
+            |// master read data channel
+            |val M_AXI_RID    = Input(UInt(1.W))
+            |val M_AXI_RDATA  = Input(UInt(C_M_AXI_DATA_WIDTH.W))
+            |val M_AXI_RRESP  = Input(UInt(2.W))
+            |val M_AXI_RLAST  = Input(Bool())
+            |val M_AXI_RUSER  = Input(UInt(1.W))
+            |val M_AXI_RVALID = Input(Bool())
+            |val M_AXI_RREADY = Output(Bool())
+          """
+      else st""
+    }
+
+    @strictpure def axi4SlaveInterfaceST: ST = {
+      st"""
+          |// write address channel
+          |val S_AXI_AWADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |val S_AXI_AWPROT  = Input(UInt(3.W))
+          |val S_AXI_AWVALID = Input(Bool())
+          |val S_AXI_AWREADY = Output(Bool())
+          |
+          |// write data channel
+          |val S_AXI_WDATA  = Input(UInt(C_S_AXI_DATA_WIDTH.W))
+          |val S_AXI_WSTRB  = Input(UInt((C_S_AXI_DATA_WIDTH/8).W))
+          |val S_AXI_WVALID = Input(Bool())
+          |val S_AXI_WREADY = Output(Bool())
+          |
+          |// write response channel
+          |val S_AXI_BRESP  = Output(UInt(2.W))
+          |val S_AXI_BVALID = Output(Bool())
+          |val S_AXI_BREADY = Input(Bool())
+          |
+          |// read address channel
+          |val S_AXI_ARADDR  = Input(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |val S_AXI_ARPROT  = Input(UInt(3.W))
+          |val S_AXI_ARVALID = Input(Bool())
+          |val S_AXI_ARREADY = Output(Bool())
+          |
+          |// read data channel
+          |val S_AXI_RDATA  = Output(UInt(C_S_AXI_DATA_WIDTH.W))
+          |val S_AXI_RRESP  = Output(UInt(2.W))
+          |val S_AXI_RVALID = Output(Bool())
+          |val S_AXI_RREADY = Input(Bool())
+        """
+    }
+
+    @strictpure def axi4SlaveBramNativeConnST: ST = {
+      st"""
+          |// r_control(6)   -- writeAddr
+          |// r_control(7)   -- writeOffset
+          |// r_control(8)   -- writeLen
+          |// r_control(9)   -- writeData
+          |// r_control(10)  -- writeValid
+          |when(r_control(10)(0).asBool) {
+          |  r_mem_req.mode := 2.U
+          |  r_mem_req.writeAddr := r_control(6)
+          |  ${if(anvil.config.alignAxi4) "" else "r_mem_req.writeOffset := r_control(7)"}
+          |  ${if(anvil.config.alignAxi4) "" else "r_mem_req.writeLen := r_control(8)"}
+          |  r_mem_req.writeData := r_control(9)
+          |  r_mem_req_valid := Mux(r_mem_resp_valid, false.B, true.B)
+          |
+          |  when(r_mem_resp_valid) {
+          |    r_control(10) := 0.U
+          |    r_mem_req.mode := 0.U
+          |  }
+          |}
+          |
+          |// r_control(11) -- readAddr
+          |// r_control(12) -- readOffset
+          |// r_control(13) -- readLen
+          |// r_control(14) -- readData
+          |// r_control(15) -- readValid
+          |when(r_control(15)(0).asBool) {
+          |  r_mem_req.mode := 1.U
+          |  r_mem_req.readAddr := r_control(11)
+          |  ${if(anvil.config.alignAxi4) "" else "r_mem_req.readOffset := r_control(12)"}
+          |  ${if(anvil.config.alignAxi4) "" else "r_mem_req.readLen := r_control(13)"}
+          |  r_mem_req_valid := Mux(r_mem_resp_valid, false.B, true.B)
+          |
+          |  when(r_mem_resp_valid) {
+          |    r_mem_req.mode := 0.U
+          |    r_control(15) := 0.U
+          |    r_control(14) := r_mem_resp.data
+          |  }
+          |}
+        """
+    }
+
+    @strictpure def axi4SlaveBodyST: ST = {
+      st"""
+          |val r_control = RegInit(VecInit(Seq.fill(${if(isFpgaTop) (if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) 6 else 16) else 2})(0.U(C_S_AXI_DATA_WIDTH.W))))
+          |val ADDR_LSB: Int = (C_S_AXI_DATA_WIDTH / 32) + 1
+          |
+          |// registers for diff channels
+          |// write address channel
+          |val r_s_axi_awready = RegInit(true.B)
+          |val r_s_axi_awaddr  = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |
+          |// write data channel
+          |val r_s_axi_wready  = RegInit(true.B)
+          |val r_s_axi_wdata   = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
+          |
+          |// write response channel
+          |val r_s_axi_bvalid  = RegInit(false.B)
+          |
+          |// read address channel
+          |val r_s_axi_arready = RegInit(true.B)
+          |val r_s_axi_araddr  = Reg(UInt(C_S_AXI_ADDR_WIDTH.W))
+          |
+          |// read data channel
+          |val r_s_axi_rvalid  = RegInit(false.B)
+          |val r_s_axi_rdata   = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
+          |
+          |// write logic
+          |val r_aw_valid = RegInit(false.B)
+          |val r_w_valid  = RegInit(false.B)
+          |when(io.S_AXI_AWVALID & io.S_AXI_AWREADY) {
+          |  r_s_axi_awready           := false.B
+          |  r_s_axi_awaddr            := io.S_AXI_AWADDR(C_S_AXI_ADDR_WIDTH - 1, ADDR_LSB)
+          |  r_aw_valid                := true.B
+          |}
+          |
+          |when(io.S_AXI_WVALID & io.S_AXI_WREADY) {
+          |  r_s_axi_wready            := false.B
+          |  r_s_axi_wdata             := io.S_AXI_WDATA
+          |  r_w_valid                 := true.B
+          |}
+          |
+          |when(r_aw_valid & r_w_valid) {
+          |  r_control(r_s_axi_awaddr) := r_s_axi_wdata
+          |  r_s_axi_bvalid            := true.B
+          |  r_aw_valid                := false.B
+          |  r_w_valid                 := false.B
+          |}
+          |
+          |when(io.S_AXI_BVALID & io.S_AXI_BREADY) {
+          |  r_s_axi_bvalid            := false.B
+          |  r_s_axi_awready           := true.B
+          |  r_s_axi_wready            := true.B
+          |}
+          |
+          |// read logic
+          |val r_ar_valid = RegInit(false.B)
+          |
+          |when(io.S_AXI_ARVALID & io.S_AXI_ARREADY) {
+          |  r_s_axi_arready           := false.B
+          |  r_s_axi_araddr            := io.S_AXI_ARADDR(C_S_AXI_ADDR_WIDTH - 1, ADDR_LSB)
+          |  r_ar_valid                := true.B
+          |}
+          |
+          |when(r_ar_valid) {
+          |  r_s_axi_rvalid            := true.B
+          |  r_s_axi_rdata             := r_control(r_s_axi_araddr)
+          |  r_ar_valid                := false.B
+          |}
+          |
+          |when(io.S_AXI_RVALID & io.S_AXI_RREADY) {
+          |  r_s_axi_rvalid            := false.B
+          |  r_s_axi_arready           := true.B
+          |}
+          |
+          |// write address channel
+          |io.S_AXI_AWREADY := r_s_axi_awready
+          |
+          |// write channel
+          |io.S_AXI_WREADY  := r_s_axi_wready
+          |
+          |// write response channel
+          |io.S_AXI_BRESP   := 0.U
+          |io.S_AXI_BVALID  := r_s_axi_bvalid
+          |
+          |// read address channel
+          |io.S_AXI_ARREADY := r_s_axi_arready
+          |
+          |// read channel
+          |io.S_AXI_RDATA   := r_s_axi_rdata
+          |io.S_AXI_RRESP   := 0.U
+          |io.S_AXI_RVALID  := r_s_axi_rvalid
+        """
+    }
+
+    val nonFpgaStateMachineST: ST =
+      st"""
+          |val TopCP = RegInit(0.U(4.W))
+          |r_valid := Mux(TopCP === 12.U, true.B, false.B)
+          |switch(TopCP) {
+          |  is(0.U) {
+          |    TopCP := Mux(r_start, 13.U, 0.U)
+          |    r_mem_total_length := MEMORY_DEPTH.U
+          |    r_mem_clear_addr := 0.U
+          |    r_mem_clear_length := 8.U
+          |  }
+          |  is(1.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 2.U
+          |    r_mem_req.writeAddr := 0.U
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.writeOffset := 0.U"}
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.writeLen := 8.U"}
+          |    r_mem_req.writeData := "hFFFFFFFFFFFFFFFF".U
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 2.U
+          |    }
+          |  }
+          |  is(2.U) {
+          |    r_routeOut.srcID := 0.U
+          |    r_routeOut.srcCP := 4.U
+          |    r_routeOut.dstID := ${ipRouterUsage.get("$test_object").get._1}.U
+          |    r_routeOut.dstCP := 3.U
+          |    r_routeOut.isReturn := false.B
+          |    r_routeOut_valid := true.B
+          |    TopCP := 3.U
+          |  }
+          |  is(3.U) {
+          |    r_routeOut_valid := false.B
+          |    when(r_routeIn_valid) {
+          |      TopCP := r_routeIn.dstCP
+          |    }
+          |  }
+          |  is(4.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 1.U
+          |    r_mem_req.readAddr := ${offset}.U
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readOffset := 0.U"}
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readLen := 8.U"}
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 5.U
+          |    }
+          |  }
+          |  is(5.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 1.U
+          |    r_mem_req.readAddr := ${offset + 8}.U
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readOffset := 0.U"}
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readLen := 8.U"}
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 6.U
+          |    }
+          |  }
+          |  is(6.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 1.U
+          |    r_mem_req.readAddr := ${offset + 16}.U
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readOffset := 0.U"}
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readLen := 8.U"}
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 7.U
+          |    }
+          |  }
+          |  is(7.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 1.U
+          |    r_mem_req.readAddr := ${offset + 24}.U
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readOffset := 0.U"}
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readLen := 8.U"}
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 8.U
+          |    }
+          |  }
+          |  is(8.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 1.U
+          |    r_mem_req.readAddr := ${offset + 32}.U
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readOffset := 0.U"}
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readLen := 8.U"}
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 9.U
+          |    }
+          |  }
+          |  is(9.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 1.U
+          |    r_mem_req.readAddr := ${offset + 40}.U
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readOffset := 0.U"}
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readLen := 8.U"}
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 10.U
+          |    }
+          |  }
+          |  is(10.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 1.U
+          |    r_mem_req.readAddr := ${offset + 48}.U
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readOffset := 0.U"}
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readLen := 8.U"}
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 11.U
+          |    }
+          |  }
+          |  is(11.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 1.U
+          |    r_mem_req.readAddr := ${offset + 56}.U
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readOffset := 0.U"}
+          |    ${if(anvil.config.alignAxi4) "" else "r_mem_req.readLen := 8.U"}
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 12.U
+          |    }
+          |  }
+          |  is(12.U) {
+          |    TopCP := Mux(r_start, 0.U, TopCP)
+          |    printf("%x\n", r_mem_resp.data)
+          |  }
+          |  is(13.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 2.U
+          |    r_mem_req.writeAddr := r_mem_clear_addr
+          |    r_mem_req.writeOffset := 0.U
+          |    r_mem_req.writeLen := r_mem_clear_length
+          |    r_mem_req.writeData := 0.U
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 14.U
+          |    }
+          |  }
+          |  is(14.U) {
+          |    r_mem_total_length := Mux(r_mem_total_length > 8.U, r_mem_total_length - 8.U, 0.U)
+          |    r_mem_clear_addr := r_mem_clear_addr + 8.U
+          |    r_mem_clear_length := Mux(r_mem_total_length > 8.U, 8.U, r_mem_total_length)
+          |    TopCP := Mux(r_mem_total_length === 0.U, 15.U, 13.U)
+          |  }
+          |  is(15.U) {
+          |    r_control(0) := 0.U
+          |    TopCP := 1.U
+          |  }
+          |}
+        """
+
+    val fpgaConnST: ST =
+      st"""
+          |val TopCP = RegInit(0.U(4.W))
+          |
+          |r_valid          := TopCP === 4.U
+          |r_routeOut.srcID := 0.U
+          |r_routeOut.srcCP := 4.U
+          |r_routeOut.dstID := r_control(2)
+          |r_routeOut.dstCP := r_control(3)
+          |r_routeOut.isReturn := false.B
+          |
+          |switch(TopCP) {
+          |  is(0.U) {
+          |    TopCP := Mux(r_start, 5.U, 0.U)
+          |    r_mem_total_length := MEMORY_DEPTH.U
+          |    r_mem_clear_addr := 0.U
+          |    r_mem_clear_length := 8.U
+          |    r_init_done := false.B
+          |    r_control(4) := 0.U
+          |  }
+          |  is(1.U) {
+          |    when(r_control(4)(0).asBool) {
+          |      r_routeOut_valid := true.B
+          |      TopCP := 2.U
+          |    }
+          |  }
+          |  is(2.U) {
+          |    r_routeOut_valid := false.B
+          |    when(r_routeIn_valid) {
+          |      TopCP := r_routeIn.dstCP
+          |    }
+          |  }
+          |  // we do not use state 3.U
+          |  is(4.U) {
+          |    TopCP := Mux(r_start, 0.U, TopCP)
+          |  }
+          |  is(5.U) {
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 2.U
+          |    r_mem_req.writeAddr := r_mem_clear_addr
+          |    r_mem_req.writeOffset := 0.U
+          |    r_mem_req.writeLen := r_mem_clear_length
+          |    r_mem_req.writeData := 0.U
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 6.U
+          |    }
+          |  }
+          |  is(6.U) {
+          |    r_mem_total_length := Mux(r_mem_total_length > 8.U, r_mem_total_length - 8.U, 0.U)
+          |    r_mem_clear_addr := r_mem_clear_addr + 8.U
+          |    r_mem_clear_length := Mux(r_mem_total_length > 8.U, 8.U, r_mem_total_length)
+          |    TopCP := Mux(r_mem_total_length === 0.U, 7.U, 5.U)
+          |  }
+          |  is(7.U) {
+          |    r_control(0) := 0.U
+          |    TopCP := 1.U
+          |    r_init_done  := true.B
+          |  }
+          |}
+        """
+
+    return st"""
+               |import chisel3._
+               |import chisel3.util._
+               |import chisel3.experimental._
+               |
+               |class ${if(isFpgaTop) s"${name}" else "Top"}(
+               |               val C_S_AXI_DATA_WIDTH: Int = ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) 64 else 32},
+               |               val C_S_AXI_ADDR_WIDTH: Int = ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) 8 else log2Up(anvil.config.memory)},
+               |               val C_M_AXI_ADDR_WIDTH: Int = 32,
+               |               val C_M_AXI_DATA_WIDTH: Int = 64,
+               |               val C_M_TARGET_SLAVE_BASE_ADDR: BigInt = BigInt("00000000", 16),
+               |               val MEMORY_DEPTH: Int = ${anvil.config.memory + (if(hasRecursiveFuncCall) depthOfStack(maxRegisters) else 0)},
+               |               val cpWidth: Int,
+               |               val spWidth: Int,
+               |               val idWidth: Int) extends Module {
+               |  val io = IO(new Bundle{
+               |    ${axi4SlaveInterfaceST}
+               |    ${axi4MasterInterfaceST}
+               |  })
+               |
+               |  // the registers for cleaning memory contents
+               |  val r_mem_total_length = RegInit((MEMORY_DEPTH).U(log2Up(MEMORY_DEPTH + 8).W))
+               |  val r_mem_clear_addr   = RegInit(0.U(log2Up(MEMORY_DEPTH + 8).W))
+               |  val r_mem_clear_length = RegInit(8.U(4.W))
+               |
+               |  ${axi4SlaveBodyST}
+               |
+               |  val r_start = RegInit(false.B)
+               |  val r_valid = RegInit(false.B)
+               |  val r_init_done = RegInit(false.B)
+               |  r_start := r_control(0)(0)
+               |  r_control(1) := Cat(r_init_done, r_valid).asUInt
+               |
+               |  val myRst: Reset = r_start
+               |
+               |  val r_mem_req  = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(C_M_AXI_DATA_WIDTH, ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) "C_M_AXI_ADDR_WIDTH, " else ""} MEMORY_DEPTH)))
+               |  val r_mem_req_valid = RegInit(false.B)
+               |  val r_mem_resp = Reg(new BlockMemoryResponseBundle(C_M_AXI_DATA_WIDTH))
+               |  val r_mem_resp_valid = RegInit(false.B)
+               |
+               |  val router  = Module(new Router(nPorts = ${globalRouterCount}, idWidth = idWidth, cpWidth = cpWidth))
+               |
+               |  val r_routeIn         = RegInit(0.U.asTypeOf(new Packet(idWidth = idWidth, cpWidth = cpWidth)))
+               |  val r_routeIn_valid   = RegInit(false.B)
+               |  val r_routeOut        = RegInit(0.U.asTypeOf(new Packet(idWidth = idWidth, cpWidth = cpWidth)))
+               |  val r_routeOut_valid  = RegInit(false.B)
+               |  router.io.in(0).bits  := r_routeOut
+               |  router.io.in(0).valid := r_routeOut_valid
+               |  r_routeIn             := router.io.out(0).bits
+               |  r_routeIn_valid       := router.io.out(0).valid
+               |
+               |  ${(allFunctionST, "")}
+               |  ${(allArbiterST, "")}
+               |  ${if(hasRecursiveFuncCall) tempSaveRestoreMemSt() else st""}
+               |
+               |  ${if(isFpgaTop && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) axi4SlaveBramNativeConnST else st""}
+               |
+               |  ${if(isFpgaTop) fpgaConnST else nonFpgaStateMachineST}
+               |}
+               """
+  }
+
+  @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo], isRecursive: B): ST = {
 
     @pure def generalPurposeRegisterST: ST = {
       var generalRegMap: HashMap[String, (Z,Z,B)] = HashMap.empty[String, (Z,Z,B)]
@@ -4608,233 +6703,7 @@ import HwSynthesizer2._
       return st"${(generalRegST, "\n")}"
     }
 
-    @pure def globalTempST: ST = {
-      var globalTempSTs: ISZ[ST] = ISZ[ST]()
-      for(entry <- globalInfoMap.entries) {
-        if(isTempGlobal(anvil, entry._2.tipe, entry._1)) {
-          val signed: B = anvil.isSigned(entry._2.tipe)
-          val initValueST: ST = if(signed) st"0.S" else st"0.U"
-          val bitWidthST: ST = st"${anvil.typeBitSize(entry._2.tipe)}"
-          globalTempSTs = globalTempSTs :+ st"val ${globalName(entry._1)} = RegInit(${initValueST}(${bitWidthST}.W))"
-        }
-      }
-      return st"${(globalTempSTs, "\n")}"
-    }
-
-    @pure def topST(): ST = {
-      var allArbiterST: ISZ[ST] = ISZ[ST]()
-      for(e <- ipArbiterUsage.elements) {
-        val moduleName: String = getIpModuleName(e).get
-        val instanceName: String = getIpInstanceName(e).get
-        val paraStr: String = if(e == ArbBlockMemoryIP()) blockMemoryParaAssignmentStr(e) else ""
-        val numIpsStr: String = if(e == ArbBlockMemoryIP()) "2" else "1"
-        val blockMemConnectionSt: ST =
-          if(e == ArbBlockMemoryIP())
-            st"""
-                |${instanceName}ArbiterModule.io.ipReqs(1).bits := r_mem_req
-                |${instanceName}ArbiterModule.io.ipReqs(1).valid := r_mem_req_valid
-                |r_mem_resp := ${instanceName}ArbiterModule.io.ipResps(1).bits
-                |r_mem_resp_valid := ${instanceName}ArbiterModule.io.ipResps(1).valid
-              """
-          else
-            st""
-        allArbiterST = allArbiterST :+
-          st"""
-              |val ${instanceName}Wrapper = Module(new ${moduleName}Wrapper(dataWidth = dataWidth${paraStr}))
-              |val ${instanceName}ArbiterModule = Module(new ${moduleName}ArbiterModule(numIPs = ${numIpsStr}, dataWidth = dataWidth${paraStr}))
-              |${instanceName}Wrapper.io.req <> ${instanceName}ArbiterModule.io.ip.req
-              |${instanceName}Wrapper.io.resp <> ${instanceName}ArbiterModule.io.ip.resp
-              |mod.io.${instanceName}_req <> ${instanceName}ArbiterModule.io.ipReqs(0)
-              |mod.io.${instanceName}_resp <> ${instanceName}ArbiterModule.io.ipResps(0)
-              |${blockMemConnectionSt}"""
-      }
-
-      val offset: Z = globalInfoMap.get(Util.displayName).get.loc + anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
-
-      return st"""
-                 |import chisel3._
-                 |import chisel3.util._
-                 |import chisel3.experimental._
-                 |
-                 |class Top(addrWidth: Int,
-                 |          dataWidth: Int,
-                 |          cpWidth: Int,
-                 |          spWidth: Int,
-                 |          idWidth: Int,
-                 |          depth: Int) extends Module {
-                 |  val io = IO(new Bundle{
-                 |    val start = Input(Bool())
-                 |    val valid = Output(Bool())
-                 |  })
-                 |
-                 |  val r_mem_req  = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(dataWidth, depth)))
-                 |  val r_mem_req_valid = RegInit(false.B)
-                 |  val r_mem_resp = Reg(new BlockMemoryResponseBundle(dataWidth))
-                 |  val r_mem_resp_valid = RegInit(false.B)
-                 |
-                 |  val mod = Module(new ${name}(
-                 |    addrWidth = addrWidth,
-                 |    dataWidth = dataWidth,
-                 |    cpWidth = cpWidth,
-                 |    spWidth = spWidth,
-                 |    idWidth = idWidth,
-                 |    depth = depth
-                 |  ))
-                 |
-                 |  ${(allArbiterST, "")}
-                 |
-                 |  val router  = Module(new Router(nPorts = 2, idWidth = idWidth, cpWidth = cpWidth))
-                 |  router.io.out(0) <> mod.io.routeIn
-                 |  router.io.in(0) <> mod.io.routeOut
-                 |  val r_routeIn         = RegInit(0.U.asTypeOf(new Packet(idWidth = idWidth, cpWidth = cpWidth)))
-                 |  val r_routeIn_valid   = RegInit(false.B)
-                 |  val r_routeOut        = RegInit(0.U.asTypeOf(new Packet(idWidth = idWidth, cpWidth = cpWidth)))
-                 |  val r_routeOut_valid  = RegInit(false.B)
-                 |  router.io.in(1).bits  := r_routeOut
-                 |  router.io.in(1).valid := r_routeOut_valid
-                 |  r_routeIn            := router.io.out(1).bits
-                 |  r_routeIn_valid      := router.io.out(1).valid
-                 |
-                 |  val TopCP = RegInit(0.U(4.W))
-                 |  io.valid := Mux(TopCP === 12.U, true.B, false.B)
-                 |  switch(TopCP) {
-                 |    is(0.U) {
-                 |      TopCP := Mux(io.start, 1.U, 0.U)
-                 |    }
-                 |    is(1.U) {
-                 |      r_mem_req_valid := true.B
-                 |      r_mem_req.mode := 2.U
-                 |      r_mem_req.writeAddr := 0.U
-                 |      r_mem_req.writeOffset := 0.U
-                 |      r_mem_req.writeLen := 8.U
-                 |      r_mem_req.writeData := "hFFFFFFFFFFFFFFFF".U
-                 |      when(r_mem_resp_valid) {
-                 |        r_mem_req.mode := 0.U
-                 |        r_mem_req_valid := false.B
-                 |        TopCP := 2.U
-                 |      }
-                 |    }
-                 |    is(2.U) {
-                 |      r_routeOut.srcID := 1.U
-                 |      r_routeOut.srcCP := 4.U
-                 |      r_routeOut.dstID := 0.U
-                 |      r_routeOut.dstCP := 3.U
-                 |      r_routeOut_valid := true.B
-                 |      TopCP := 3.U
-                 |    }
-                 |    is(3.U) {
-                 |      r_routeOut_valid := false.B
-                 |      when(r_routeIn_valid) {
-                 |        TopCP := r_routeIn.dstCP
-                 |      }
-                 |    }
-                 |    is(4.U) {
-                 |      r_mem_req_valid := true.B
-                 |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := ${offset}.U
-                 |      r_mem_req.readOffset := 0.U
-                 |      r_mem_req.readLen := 8.U
-                 |      when(r_mem_resp_valid) {
-                 |        r_mem_req.mode := 0.U
-                 |        r_mem_req_valid := false.B
-                 |        TopCP := 5.U
-                 |      }
-                 |    }
-                 |    is(5.U) {
-                 |      r_mem_req_valid := true.B
-                 |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := ${offset + 8}.U
-                 |      r_mem_req.readOffset := 0.U
-                 |      r_mem_req.readLen := 8.U
-                 |      when(r_mem_resp_valid) {
-                 |        r_mem_req.mode := 0.U
-                 |        r_mem_req_valid := false.B
-                 |        TopCP := 6.U
-                 |      }
-                 |    }
-                 |    is(6.U) {
-                 |      r_mem_req_valid := true.B
-                 |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := ${offset + 16}.U
-                 |      r_mem_req.readOffset := 0.U
-                 |      r_mem_req.readLen := 8.U
-                 |      when(r_mem_resp_valid) {
-                 |        r_mem_req.mode := 0.U
-                 |        r_mem_req_valid := false.B
-                 |        TopCP := 7.U
-                 |      }
-                 |    }
-                 |    is(7.U) {
-                 |      r_mem_req_valid := true.B
-                 |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := ${offset + 24}.U
-                 |      r_mem_req.readOffset := 0.U
-                 |      r_mem_req.readLen := 8.U
-                 |      when(r_mem_resp_valid) {
-                 |        r_mem_req.mode := 0.U
-                 |        r_mem_req_valid := false.B
-                 |        TopCP := 8.U
-                 |      }
-                 |    }
-                 |    is(8.U) {
-                 |      r_mem_req_valid := true.B
-                 |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := ${offset + 32}.U
-                 |      r_mem_req.readOffset := 0.U
-                 |      r_mem_req.readLen := 8.U
-                 |      when(r_mem_resp_valid) {
-                 |        r_mem_req.mode := 0.U
-                 |        r_mem_req_valid := false.B
-                 |        TopCP := 9.U
-                 |      }
-                 |    }
-                 |    is(9.U) {
-                 |      r_mem_req_valid := true.B
-                 |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := ${offset + 40}.U
-                 |      r_mem_req.readOffset := 0.U
-                 |      r_mem_req.readLen := 8.U
-                 |      when(r_mem_resp_valid) {
-                 |        r_mem_req.mode := 0.U
-                 |        r_mem_req_valid := false.B
-                 |        TopCP := 10.U
-                 |      }
-                 |    }
-                 |    is(10.U) {
-                 |      r_mem_req_valid := true.B
-                 |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := ${offset + 48}.U
-                 |      r_mem_req.readOffset := 0.U
-                 |      r_mem_req.readLen := 8.U
-                 |      when(r_mem_resp_valid) {
-                 |        r_mem_req.mode := 0.U
-                 |        r_mem_req_valid := false.B
-                 |        TopCP := 11.U
-                 |      }
-                 |    }
-                 |    is(11.U) {
-                 |      r_mem_req_valid := true.B
-                 |      r_mem_req.mode := 1.U
-                 |      r_mem_req.readAddr := ${offset + 56}.U
-                 |      r_mem_req.readOffset := 0.U
-                 |      r_mem_req.readLen := 8.U
-                 |      when(r_mem_resp_valid) {
-                 |        r_mem_req.mode := 0.U
-                 |        r_mem_req_valid := false.B
-                 |        TopCP := 12.U
-                 |      }
-                 |    }
-                 |    is(12.U) {
-                 |      printf("%x\n", r_mem_resp.data)
-                 |    }
-                 |  }
-                 |}
-               """
-    }
-
     @pure def procedureST(stateMachineST: ST, stateMachineSTSize:Z, stateFunctionObjectST: ST): ST = {
-      //println(stateMachineST.render)
-      //println(stateFunctionObjectST.render)
 
       var allArbIOST: ISZ[ST] = ISZ[ST]()
       var allArbInstanceST: ISZ[ST] = ISZ[ST]()
@@ -4844,16 +6713,16 @@ import HwSynthesizer2._
 
         allArbIOST = allArbIOST :+
           st"""
-              |val ${instName}_req    = Valid(new ${getIpModuleName(e).get}RequestBundle(dataWidth${blockMemoryParaStr(e)}))
-              |val ${instName}_resp   = Flipped(Valid(new ${getIpModuleName(e).get}ResponseBundle(dataWidth)))
+              |val ${instName}_req    = Valid(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
+              |val ${instName}_resp   = Flipped(Valid(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)})))
             """
 
         allArbInstanceST = allArbInstanceST :+
           st"""
               |// ${getIpModuleName(e).get} Arbiter
-              |val r_${instName}_req          = Reg(new ${getIpModuleName(e).get}RequestBundle(dataWidth${blockMemoryParaStr(e)}))
+              |val r_${instName}_req          = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
               |val r_${instName}_req_valid    = RegInit(false.B)
-              |val r_${instName}_resp         = Reg(new ${getIpModuleName(e).get}ResponseBundle(dataWidth))
+              |val r_${instName}_resp         = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
               |val r_${instName}_resp_valid   = RegInit(false.B)
               |// connection for ${getIpModuleName(e).get} Arbiter
               |r_${instName}_resp       := io.${instName}_resp.bits
@@ -4867,9 +6736,51 @@ import HwSynthesizer2._
         val subFunctionSize: Z = stateMachineSTSize / 1024 + (if(stateMachineSTSize % 1024 == 0) 0 else 1)
         var smST: ISZ[ST] = ISZ[ST]()
         for(i <- 0 until subFunctionSize) {
-          smST = smST :+ st"StateMachine_${i}.stateMachine(this)"
+          smST = smST :+ st"${name}_StateMachine_${i}.${name}_stateMachine(this)"
         }
         return st"""${(smST, "\n")}"""
+      }
+
+      @pure def alignAxi4ST: ST = {
+        if(alignAxi4MiniStateMachineMap.isEmpty) {
+          return st""
+        } else {
+          var alignSTs: ISZ[ST] = ISZ[ST]()
+          for(entry <- alignAxi4MiniStateMachineMap.entries) {
+            if(entry._1 == "read") {
+              alignSTs = alignSTs :+
+                st"""
+                    |val readMiniStart = RegInit(false.B)
+                    |val readMiniValid = RegInit(false.B)
+                    |val readMiniCP = RegInit(0.U(3.W))
+                    |val readMiniAddr = RegInit(0.U(log2Up(depth).W))
+                    |val readMiniRes = RegInit(0.U(dataWidth.W))
+                    |val readMiniGtype_1 = RegInit(0.U(5.W))
+                    |val readMiniIndex_1 = RegInit(0.U(log2Up(${globalVarIndexMax}).W))
+                    |val readMiniGtype_2 = RegInit(0.U(5.W))
+                    |val readMiniIndex_2 = RegInit(0.U(log2Up(${globalVarIndexMax}).W))
+                    |
+                    |${entry._2}
+                  """
+            } else {
+              alignSTs = alignSTs :+
+                st"""
+                    |val writeMiniStart = RegInit(false.B)
+                    |val writeMiniValid = RegInit(false.B)
+                    |val writeMiniCP = RegInit(0.U(3.W))
+                    |val writeMiniAddr = RegInit(0.U(log2Up(depth).W))
+                    |val writeMiniValue = RegInit(0.U(dataWidth.W))
+                    |val writeMiniGtype_1 = RegInit(0.U(5.W))
+                    |val writeMiniIndex_1 = RegInit(0.U(log2Up(${globalVarIndexMax}).W))
+                    |val writeMiniGtype_2 = RegInit(0.U(5.W))
+                    |val writeMiniIndex_2 = RegInit(0.U(log2Up(${globalVarIndexMax}).W))
+                    |
+                    |${entry._2}
+                  """
+            }
+          }
+          return st"${(alignSTs, "")}"
+        }
       }
 
       return st"""
@@ -4896,7 +6807,6 @@ import HwSynthesizer2._
                  |  ${if (anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
                  |  // reg for general purpose
                  |  ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
-                 |  ${if(anvil.config.tempGlobal) globalTempST else st""}
                  |  // reg for code pointer
                  |  val ${name}CP = RegInit(2.U(cpWidth.W))
                  |  // reg for stack pointer
@@ -4918,7 +6828,12 @@ import HwSynthesizer2._
                  |  io.routeOut.bits  := r_routeOut
                  |  io.routeOut.valid := r_routeOut_valid
                  |
+                 |  ${if(isRecursive) st"val r_saveDstCP = RegInit(0.U(cpWidth.W))" else st""}
+                 |  ${if(isRecursive) st"when(r_routeIn_valid) {r_saveDstCP := r_routeIn.dstCP}" else st""}
+                 |
                  |  ${(allArbInstanceST, "\n")}
+                 |
+                 |  ${alignAxi4ST}
                  |
                  |  ${stateMachineCallST}
                  |}
@@ -4929,43 +6844,116 @@ import HwSynthesizer2._
                """
     }
 
-    val basicBlockST = processBasicBlock(name, o.body.asInstanceOf[AST.IR.Body.Basic].blocks, hwLog)
+    val basicBlockST = processBasicBlock(name, o.body.asInstanceOf[AST.IR.Body.Basic].blocks, maxRegisters, isRecursive, hwLog)
 
-    return (procedureST(basicBlockST._1, basicBlockST._2, basicBlockST._3), topST())
+    return procedureST(basicBlockST._1, basicBlockST._2, basicBlockST._3)
   }
 
-  @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], hwLog: HwSynthesizer2.HwLog): (ST, Z, ST) = {
-    for(b <- bs) {
-      if(b.label > hwLog.maxNumLabel) {
-        hwLog.maxNumLabel = b.label
+  @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], maxRegisters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): (ST, Z, ST) = {
+
+    @pure def maxBlockLabel(): Z = {
+      var maxLabel: Z = 0
+      for(b <- bs) {
+        if(b.label > maxLabel) {
+          maxLabel = b.label
+        }
       }
+      return maxLabel + 1
     }
 
     val ipPortLogic = HwSynthesizer2.IpPortAssign(anvil, ISZ[ST](), ipModules, ArbInputMap.empty, ISZ[ST](), ISZ[ST]())
     @pure def basicBlockST(grounds: HashSMap[Z, ST], functions: ISZ[ST]): (ST, Z, ST) = {
+      @pure def popStackSt: ST = {
+        val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
+        val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
+
+        var intAssignST: ISZ[ST] = ISZ[ST]()
+        for(i <- 0 until uintWidth.size) {
+          if(maxRegisters.unsigneds(uintWidth(i) - 1) > 0) {
+            intAssignST = intAssignST :+ st"generalRegFilesU${uintWidth(i)} := r_arbTempSaveRestore_resp.u${uintWidth(i)}"
+          }
+        }
+        for(i <- 0 until sintWidth.size) {
+          if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
+            intAssignST = intAssignST :+ st"generalRegFilesS${sintWidth(i)} := r_arbTempSaveRestore_resp.s${sintWidth(i)}"
+          }
+        }
+
+        val finalSt: ST =
+          st"""
+              |is(${maxBlockLabel()}.U){
+              |  r_arbTempSaveRestore_req.op := 2.U
+              |  r_arbTempSaveRestore_req_valid := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
+              |
+              |  when(r_arbTempSaveRestore_resp_valid) {
+              |    ${(intAssignST, "\n")}
+              |    r_srcID := r_arbTempSaveRestore_resp.srcId
+              |    r_srcCP := r_arbTempSaveRestore_resp.srcCp
+              |
+              |    r_arbTempSaveRestore_req.op := 0.U
+              |    ${name}CP  := r_saveDstCP
+              |  }
+              |}
+            """
+
+        return finalSt
+      }
+
+      @pure def state2St: ST = {
+        if(isRecursive) {
+          return st"""
+                     |is(2.U) {
+                     |  r_routeOut_valid := false.B
+                     |
+                     |  when(r_routeIn_valid) {
+                     |    when(r_routeIn.isReturn) {
+                     |      ${name}CP  := ${maxBlockLabel()}.U
+                     |    } .otherwise {
+                     |      r_srcCP := r_routeIn.srcCP
+                     |      r_srcID := r_routeIn.srcID
+                     |      ${name}CP  := r_routeIn.dstCP
+                     |    }
+                     |  }
+                     |}
+                   """
+        } else {
+          return st"""
+                     |is(2.U) {
+                     |  r_routeOut_valid := false.B
+                     |  when(r_routeIn_valid) {
+                     |    r_srcCP := r_routeIn.srcCP
+                     |    r_srcID := r_routeIn.srcID
+                     |    ${name}CP  := r_routeIn.dstCP
+                     |  }
+                     |}
+                   """
+        }
+      }
       var stateSTs: ISZ[ST] = ISZ[ST]()
       stateSTs = stateSTs :+
         st"""
             |is(0.U) {
-            |  r_routeOut.srcID := 0.U
-            |  r_routeOut.srcCP := 3.U
-            |  r_routeOut.dstID := r_srcID
-            |  r_routeOut.dstCP := r_srcCP
-            |  r_routeOut_valid := true.B
-            |  ${name}CP := 2.U
-            |}
-          """
-      stateSTs = stateSTs :+
-        st"""
-            |is(2.U) {
             |  r_routeOut_valid := false.B
             |  when(r_routeIn_valid) {
-            |    r_srcCP := r_routeIn.srcCP
-            |    r_srcID := r_routeIn.srcID
             |    ${name}CP  := r_routeIn.dstCP
             |  }
             |}
+            |
+            |is(1.U) {
+            |  r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
+            |  r_routeOut.srcCP := ${name}CP
+            |  r_routeOut.dstID := 0.U
+            |  r_routeOut.dstCP := 4.U
+            |  r_routeOut.isReturn := true.B
+            |  r_routeOut_valid := true.B
+            |  ${name}CP := 1.U
+            |}
           """
+      stateSTs = stateSTs :+ state2St
+      if(isRecursive) {
+        stateSTs = stateSTs :+ popStackSt
+      }
+
       for(pair <- grounds.entries) {
         stateSTs = stateSTs :+ pair._2
       }
@@ -4986,8 +6974,8 @@ import HwSynthesizer2._
       for(j <- 0 until(objectStateMachineST.size)) {
         fmsSTs = fmsSTs :+
           st"""
-              |object StateMachine_${j} {
-              |  def stateMachine(o:${name}): Unit = {
+              |object ${name}_StateMachine_${j} {
+              |  def ${name}_stateMachine(o:${name}): Unit = {
               |    import o._
               |    switch(${name}CP) {
               |      ${(objectStateMachineST(j), "\n")}
@@ -5004,7 +6992,7 @@ import HwSynthesizer2._
       )
     }
 
-    @pure def groundST(b: AST.IR.BasicBlock, ground: ST, jump: ST): (ST, ST) = {
+    @pure def groundST(b: AST.IR.BasicBlock, ground: ST, jump: ST, hasRecursive: B): (ST, ST) = {
       var commentST = ISZ[ST]()
 
       for(g <- b.grounds) {
@@ -5014,7 +7002,7 @@ import HwSynthesizer2._
 
       val jumpST: ST = {
         if(hwLog.isIndexerInCurrentBlock() && !hwLog.isMemCpyInCurrentBlock()) {
-          val jST = processJumpIntrinsic(name, hwLog.stateBlock.get, ipPortLogic, hwLog)
+          val jST = processJumpIntrinsic(name, hwLog.stateBlock.get, ipPortLogic, maxRegisters, hasRecursive, hwLog)
           val indexerName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
           st"""
               |when(r_${indexerName}_resp_valid) {
@@ -5033,8 +7021,8 @@ import HwSynthesizer2._
       if(b.label > 1) {
         val functionDefinitionST: ST =
           st"""
-              |object Block_${b.label} {
-              |  def block_${b.label}(o: ${name}): Unit = {
+              |object ${name}_Block_${b.label} {
+              |  def ${name}_block_${b.label}(o: ${name}): Unit = {
               |    import o._
               |    /*
               |    ${(commentST, "\n")}
@@ -5048,13 +7036,13 @@ import HwSynthesizer2._
           if(anvil.config.cpMax <= 0)
             st"""
                 |is(${b.label}.U) {
-                |  Block_${b.label}.block_${b.label}(o)
+                |  ${name}_Block_${b.label}.${name}_block_${b.label}(o)
                 |}
                 """
           else
             st"""
                 |is(${b.label % (anvil.config.cpMax)}.U) {
-                |  Block_${b.label}.block_${b.label}(o)
+                |  ${name}_Block_${b.label}.${name}_block_${b.label}(o)
                 |}
               """
         }
@@ -5072,8 +7060,8 @@ import HwSynthesizer2._
       hwLog.currentLabel = b.label
 
       if(b.label != 0) {
-        val processedGroundST = processGround(name, b.grounds, ipPortLogic, hwLog)
-        var jump = processJumpIntrinsic(name, b, ipPortLogic, hwLog)
+        val processedGroundST = processGround(name, b.grounds, ipPortLogic, maxRegisters, isRecursive, hwLog)
+        var jump = processJumpIntrinsic(name, b, ipPortLogic, maxRegisters, isRecursive, hwLog)
         if(ipPortLogic.whenCondST.nonEmpty) {
           jump =
             st"""
@@ -5083,7 +7071,7 @@ import HwSynthesizer2._
                 |}
               """
         }
-        val g = groundST(b, processedGroundST, jump)
+        val g = groundST(b, processedGroundST, jump, isRecursive)
         ipPortLogic.whenCondST = ISZ[ST]()
         ipPortLogic.whenStmtST = ISZ[ST]()
 
@@ -5093,22 +7081,26 @@ import HwSynthesizer2._
 
       hwLog.indexerInCurrentBlock = F
       hwLog.memCpyInCurrentBlock = F
+      hwLog.funcCallInCurrentBlock = F
 
     }
 
     return basicBlockST(allGroundsST, allFunctionsST)
   }
 
-  @pure def processGround(name: String, gs: ISZ[AST.IR.Stmt.Ground], ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
+  @pure def processGround(name: String, gs: ISZ[AST.IR.Stmt.Ground], ipPortLogic: HwSynthesizer2.IpPortAssign, maxRegisters:Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): ST = {
     var groundST = ISZ[ST]()
 
     for(g <- gs) {
       g match {
         case g: AST.IR.Stmt.Assign => {
-          groundST = groundST :+ processStmtAssign(g, ipPortLogic, hwLog)
+          groundST = groundST :+ processStmtAssign(g, ipPortLogic, maxRegisters, isRecursive, hwLog)
         }
         case g: AST.IR.Stmt.Intrinsic => {
-          groundST = groundST :+ processStmtIntrinsic(name, g, ipPortLogic, hwLog)
+          groundST = groundST :+ processStmtIntrinsic(name, g, ipPortLogic, maxRegisters, isRecursive, hwLog)
+        }
+        case g: AST.IR.Stmt.Expr => {
+          groundST = groundST :+ processExpr(g.exp, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         }
         case _ => {
           halt(s"processGround unimplemented")
@@ -5125,7 +7117,7 @@ import HwSynthesizer2._
     return st"""${(groundST, "\n")}"""
   }
 
-  @pure def processJumpIntrinsic(name: String, b: AST.IR.BasicBlock, ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
+  @pure def processJumpIntrinsic(name: String, b: AST.IR.BasicBlock, ipPortLogic: HwSynthesizer2.IpPortAssign, maxRegisters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): ST = {
     var intrinsicST: ISZ[ST] = ISZ[ST]()
     val j = b.jump
 
@@ -5135,7 +7127,7 @@ import HwSynthesizer2._
 
     j match {
       case AST.IR.Jump.Intrinsic(intrinsic: Intrinsic.GotoLocal) => {
-        val targetAddrST: ST = processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F, ipPortLogic, hwLog)
+        val targetAddrST: ST = processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         if (intrinsic.isTemp) {
           if(anvil.config.cpMax <= 0) {
             intrinsicST = intrinsicST :+ st"${name}CP := ${targetAddrST}"
@@ -5162,25 +7154,40 @@ import HwSynthesizer2._
       }
       case AST.IR.Jump.Intrinsic(intrinsic: Intrinsic.GotoGlobal) => {
         if(anvil.config.cpMax <= 0) {
+          val funName: String = st"${(intrinsic.name, "_")}".render
+          val index: Z = globalVarMap.get(funName).get._1
+          val gtype: B = globalVarMap.get(funName).get._2
           intrinsicST = intrinsicST :+
             st"""
-                |${name}CP := ${globalName(intrinsic.name)}
+                |r_arbGlobalVar_req.op := false.B
+                |r_arbGlobalVar_req.gtype := ${gtype}
+                |r_arbGlobalVar_req.index := ${index}
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |when(r_arbGlobalVar_req_valid) {
+                |  ${funName}CP := r_arbGlobalVar_resp.out
+                |}
               """
         }
       }
       case j: AST.IR.Jump.Goto => {
         if(anvil.config.cpMax <= 0) {
-          intrinsicST = intrinsicST :+ st"${name}CP := ${j.label}.U"
+          if(hwLog.isFunCallInCurrentBlock()) {
+            intrinsicST = intrinsicST :+ st"r_routeOut.srcCP := ${j.label}.U"
+            intrinsicST = intrinsicST :+ st"r_routeOut.isReturn := false.B"
+            intrinsicST = intrinsicST :+ st"${name}CP := ${if(isRecursive) "2.U" else "0.U"}"
+          } else {
+            intrinsicST = intrinsicST :+ st"${name}CP := ${j.label}.U"
+          }
         }
       }
       case j: AST.IR.Jump.If => {
-        val cond = processExpr(j.cond, F, ipPortLogic, hwLog)
+        val cond = processExpr(j.cond, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         if(anvil.config.cpMax <= 0) {
           intrinsicST = intrinsicST :+ st"${name}CP := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
         }
       }
       case j: AST.IR.Jump.Switch => {
-        val condExprST = processExpr(j.exp, F, ipPortLogic, hwLog)
+        val condExprST = processExpr(j.exp, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
 
         val tmpWire = st"__tmp_${hwLog.tmpWireCount}"
         hwLog.tmpWireCount = hwLog.tmpWireCount + 1
@@ -5194,7 +7201,7 @@ import HwSynthesizer2._
         for(i <- j.cases) {
           isStatementST = isStatementST :+
             st"""
-                |is(${processExpr(i.value, F, ipPortLogic, hwLog).render}) {
+                |is(${processExpr(i.value, F, ipPortLogic, maxRegisters, isRecursive, hwLog).render}) {
                 |  ${if(anvil.config.cpMax <=0) st"${name}CP := ${i.label}.U" else jumpSplitCpST(i.label)}
                 |}
               """
@@ -5210,6 +7217,16 @@ import HwSynthesizer2._
             """
       }
       case j: AST.IR.Jump.Return => {
+        intrinsicST = intrinsicST :+
+          st"""
+              |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
+              |r_routeOut.srcCP := 3.U
+              |r_routeOut.dstID := r_srcID
+              |r_routeOut.dstCP := r_srcCP
+              |r_routeOut.isReturn := true.B
+              |r_routeOut_valid := true.B
+              |${name}CP := 2.U
+          """
       }
       case _ => {
         halt(s"processJumpIntrinsic unimplemented")
@@ -5256,40 +7273,161 @@ import HwSynthesizer2._
     return result
   }
 
-  @pure def processStmtIntrinsic(name: String, i: AST.IR.Stmt.Intrinsic, ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
+  @strictpure def isIntrinsicLoad(e: AST.IR.Exp): B = e match {
+    case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => T
+    case _ => F
+  }
+
+  @strictpure def isIntrinsicIndexing(e: AST.IR.Exp): B = e match {
+    case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Indexing) => T
+    case _ => F
+  }
+
+  @strictpure def isBinaryExp(e: AST.IR.Exp): B = e match {
+    case AST.IR.Exp.Binary(_, _, _, _, _) => T
+    case _ => F
+  }
+
+  @strictpure def getBaseOffsetOfIntrinsicLoad(e: AST.IR.Exp): Option[(AST.IR.Exp, Z)] = e match {
+    case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => Some((intrinsic.base, intrinsic.offset))
+    case _ => None()
+  }
+
+  @pure def processStmtIntrinsic(name: String, i: AST.IR.Stmt.Intrinsic, ipPortLogic: HwSynthesizer2.IpPortAssign, maxRegisters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): ST = {
     var intrinsicST = st""
 
     i match {
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.AlignRw) => {
         ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
 
-        val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
-        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req.mode := 0.U"
+        val readAlignAddrName: String = st"${(Util.readAlignAddr, "_")}".render
+        val readAlignResName: String = st"${(Util.readAlignRes, "_")}".render
+        val t_readAlignAddr = globalVarMap.get(readAlignAddrName).get
+        val t_readAlignRes = globalVarMap.get(readAlignResName).get
+
+        val writeAlignAddrName: String = st"${(Util.writeAlignAddr, "_")}".render
+        val writeAlignValueName: String = st"${(Util.writeAlignValue, "_")}".render
+        val t_writeAlignAddr = globalVarMap.get(writeAlignAddrName).get
+        val t_writeAlignValue = globalVarMap.get(writeAlignValueName).get
 
         if(intrinsic.isRead) {
-          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${globalName(Util.readAlignRes)} := r_${instanceName}_resp.data"
+          val readST: ST =
+            st"""
+                |switch(readMiniCP) {
+                |  is(0.U) {
+                |    readMiniValid := false.B
+                |    readMiniCP := Mux(readMiniStart, 1.U, 0.U)
+                |  }
+                |  is(1.U) {
+                |    r_arbGlobalVar_req.op := false.B
+                |    r_arbGlobalVar_req.gtype := readMiniGtype_1
+                |    r_arbGlobalVar_req.index := readMiniIndex_1
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    when(r_arbGlobalVar_resp_valid) {
+                |      readMiniAddr := r_arbGlobalVar_resp.out
+                |      readMiniCP := 2.U
+                |    }
+                |  }
+                |  is(2.U) {
+                |    r_arbBlockMemory_req.mode := 1.U
+                |    r_arbBlockMemory_req.readAddr := readMiniAddr
+                |    r_arbBlockMemory_req_valid := Mux(r_arbBlockMemory_resp_valid, false.B, true.B)
+                |    when(r_arbBlockMemory_resp_valid) {
+                |      readMiniRes := r_arbBlockMemory_resp.data
+                |      r_arbBlockMemory_req.mode := 0.U
+                |      readMiniCP := 3.U
+                |    }
+                |  }
+                |  is(3.U) {
+                |    r_arbGlobalVar_req.in := readMiniRes
+                |    r_arbGlobalVar_req.op := true.B
+                |    r_arbGlobalVar_req.gtype := readMiniGtype_2
+                |    r_arbGlobalVar_req.index := readMiniIndex_2
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    when(r_arbGlobalVar_resp_valid) {
+                |      readMiniCP := 4.U
+                |      readMiniValid := true.B
+                |    }
+                |  }
+                |  is(4.U) {
+                |    readMiniCP := 0.U
+                |    readMiniValid := true.B
+                |  }
+                |}
+              """
+          alignAxi4MiniStateMachineMap = alignAxi4MiniStateMachineMap + "read" ~> readST
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"readMiniValid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"readMiniStart := false.B"
           intrinsicST =
             st"""
-                |r_${instanceName}_req.mode := 1.U
-                |r_${instanceName}_req.readAddr := ${globalName(Util.readAlignAddr)}
-                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                |readMiniStart := true.B
+                |readMiniGtype_1 := ${globalVarGtype(readAlignAddrName)}
+                |readMiniIndex_1 := ${t_readAlignAddr._1}.U
+                |readMiniGtype_2 := ${globalVarGtype(readAlignResName)}
+                |readMiniIndex_2 := ${t_readAlignRes._1}.U
               """
         } else {
-          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
+          val writeST: ST =
+            st"""
+                |switch(writeMiniCP) {
+                |  is(0.U) {
+                |    writeMiniValid := false.B
+                |    writeMiniCP := Mux(writeMiniStart, 1.U, 0.U)
+                |  }
+                |  is(1.U) {
+                |    r_arbGlobalVar_req.op := false.B
+                |    r_arbGlobalVar_req.gtype := writeMiniGtype_1
+                |    r_arbGlobalVar_req.index := writeMiniIndex_1
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    when(r_arbGlobalVar_resp_valid) {
+                |      writeMiniAddr := r_arbGlobalVar_resp.out
+                |      writeMiniCP := 2.U
+                |    }
+                |  }
+                |  is(2.U) {
+                |    r_arbGlobalVar_req.op := false.B
+                |    r_arbGlobalVar_req.gtype := writeMiniGtype_2
+                |    r_arbGlobalVar_req.index := writeMiniIndex_2
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    when(r_arbGlobalVar_resp_valid) {
+                |      writeMiniValue := r_arbGlobalVar_resp.out
+                |      writeMiniCP := 3.U
+                |    }
+                |  }
+                |  is(3.U) {
+                |    r_arbBlockMemory_req.mode := 2.U
+                |    r_arbBlockMemory_req.writeAddr := writeMiniAddr
+                |    r_arbBlockMemory_req.writeData := writeMiniValue
+                |    r_arbBlockMemory_req_valid := Mux(r_arbBlockMemory_resp_valid, false.B, true.B)
+                |    when(r_arbBlockMemory_resp_valid) {
+                |      r_arbBlockMemory_req.mode := 0.U
+                |      writeMiniCP := 4.U
+                |      writeMiniValid := true.B
+                |    }
+                |  }
+                |  is(4.U) {
+                |    writeMiniValid := false.B
+                |    writeMiniCP := 0.U
+                |  }
+                |}
+              """
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"writeMiniValid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"writeMiniStart := false.B"
+          alignAxi4MiniStateMachineMap = alignAxi4MiniStateMachineMap + "write" ~> writeST
           intrinsicST =
             st"""
-                |r_${instanceName}_req.mode := 2.U
-                |r_${instanceName}_req.writeAddr := ${globalName(Util.writeAlignAddr)}
-                |r_${instanceName}_req.writeData := ${globalName(Util.writeAlignValue)}
-                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                |writeMiniStart := true.B
+                |writeMiniGtype_1 := ${globalVarGtype(writeAlignAddrName)}
+                |writeMiniIndex_1 := ${t_writeAlignAddr._1}.U
+                |writeMiniGtype_2 := ${globalVarGtype(writeAlignValueName)}
+                |writeMiniIndex_2 := ${t_writeAlignValue._1}.U
               """
         }
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.TempLoad) => {
         ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
 
-        val readAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
+        val readAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
         val tempST: ST = st"${if (!anvil.config.splitTempSizes) s"${generalRegName}(${intrinsic.temp}.U)" else s"${getGeneralRegName(intrinsic.tipe)}(${intrinsic.temp}.U)"}"
         val byteST: ST = st"(${intrinsic.bytes * 8 - 1}, 0)"
@@ -5303,8 +7441,8 @@ import HwSynthesizer2._
           st"""
               |r_${instanceName}_req.mode := 1.U
               |r_${instanceName}_req.readAddr := ${readAddrST.render}
-              |r_${instanceName}_req.readOffset := ${readOffsetST.render}
-              |r_${instanceName}_req.readLen := ${intrinsic.bytes}.U
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${intrinsic.bytes}.U"}
               |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
             """
       }
@@ -5313,7 +7451,7 @@ import HwSynthesizer2._
 
         if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           val offsetWidth: Z = log2Up(anvil.config.memory * 8)
-          val eraseBaseST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
+          val eraseBaseST: ST = processExpr(intrinsic.base, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
           val eraseOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
           val eraseBytesST: ST = st"${intrinsic.bytes}.U"
           val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
@@ -5336,10 +7474,10 @@ import HwSynthesizer2._
         ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
 
         val offsetWidth: Z = log2Up(anvil.config.memory * 8)
-        val dmaDstAddrST: ST = processExpr(intrinsic.lbase, F, ipPortLogic, hwLog)
+        val dmaDstAddrST: ST = processExpr(intrinsic.lbase, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val dmaDstOffsetST: ST = if(intrinsic.loffset < 0) st"(${intrinsic.loffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.loffset}.U"
-        val dmaSrcLenST: ST = processExpr(intrinsic.rhsBytes, F, ipPortLogic, hwLog)
-        val dmaSrcAddrST: ST = processExpr(intrinsic.rhs, F, ipPortLogic, hwLog)
+        val dmaSrcLenST: ST = processExpr(intrinsic.rhsBytes, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+        val dmaSrcAddrST: ST = processExpr(intrinsic.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
         ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
         ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req.mode := 0.U"
@@ -5364,10 +7502,10 @@ import HwSynthesizer2._
         }
 
         val offsetWidth: Z = log2Up(anvil.config.memory * 8)
-        val writeAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)
+        val writeAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val writeOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
         val writeLenST: ST = st"${intrinsic.bytes}.U"
-        val writeDataST: ST = processExpr(intrinsic.rhs, F, ipPortLogic, hwLog)
+        val writeDataST: ST = processExpr(intrinsic.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val signedST: ST = if(intrinsic.isSigned) st".asUInt" else st""
         val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
         ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
@@ -5376,59 +7514,93 @@ import HwSynthesizer2._
           st"""
               |r_${instanceName}_req.mode := 2.U
               |r_${instanceName}_req.writeAddr := ${writeAddrST.render}
-              |r_${instanceName}_req.writeOffset := ${writeOffsetST.render}
-              |r_${instanceName}_req.writeLen := ${writeLenST.render}
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.writeOffset := ${writeOffsetST.render}"}
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.writeLen := ${writeLenST.render}"}
               |r_${instanceName}_req.writeData := ${writeDataST.render}${signedST.render}
               |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
             """
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign) => {
+
         val targetReg: String = if(intrinsic.isSP) "SP" else "DP"
 
-        var leftST: ST = st""
-        var rightST: ST = st""
-        var isPlus: B = F
-        val regValueST: ST = processExpr(intrinsic.value, F, ipPortLogic, hwLog)
-        intrinsic.value match {
-          case AST.IR.Exp.Int(_, v, _) => {
-            if (v < 0) {
-              leftST = st"${targetReg}"
-              isPlus = F
-              rightST = st"${-v}.U"
-            }
-            else {
-              leftST = st"${targetReg}"
-              isPlus = T
-              rightST = st"${v}.U"
-            }
-          }
-          case _ => {
-            if (intrinsic.isInc) {
-              leftST = st"${targetReg}"
-              isPlus = T
-              rightST = regValueST
-            }
-          }
-        }
-
-        if(intrinsic.isInc) {
-          val ipT: ArbIpType = if(isPlus) ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F) else ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
-          ipArbiterUsage = ipArbiterUsage + ipT
-
-          var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-          val instanceName: String = getIpInstanceName(ipT).get
-          hashSMap = hashSMap +
-            ".a" ~> (st"${leftST.render}", "UInt".string) +
-            ".b" ~> (st"${rightST.render}", "UInt".string) +
-            "_valid" ~> (st"Mux(r_${instanceName}_resp_valid, false.B, true.B)", "Bool".string)
-          insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
-          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := r_${instanceName}_resp.out"
-          intrinsicST = st""
-        } else {
+        if(isGlobalVar(intrinsic.value)){
+          val rhsName: String = processExpr(intrinsic.value, F, ipPortLogic, maxRegisters, isRecursive, hwLog).render
+          val t = globalVarMap.get(rhsName).get
+          val sintConvertST: ST = if(t._2) st".asSInt" else st""
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           intrinsicST =
             st"""
+                |r_arbGlobalVar_req.op := false.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+              """
+        } else {
+          var leftST: ST = st""
+          var rightST: ST = st""
+          var isPlus: B = F
+          val regValueST: ST = processExpr(intrinsic.value, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+          intrinsic.value match {
+            case AST.IR.Exp.Int(_, v, _) => {
+              if (v < 0) {
+                leftST = st"${targetReg}"
+                isPlus = F
+                rightST = st"${-v}.U"
+              }
+              else {
+                leftST = st"${targetReg}"
+                isPlus = T
+                rightST = st"${v}.U"
+              }
+            }
+            case _ => {
+              if (intrinsic.isInc) {
+                leftST = st"${targetReg}"
+                isPlus = T
+                rightST = regValueST
+              }
+            }
+          }
+
+          if (intrinsic.isInc) {
+            val ipT: ArbIpType = if (isPlus) ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F) else ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
+            ipArbiterUsage = ipArbiterUsage + ipT
+
+            var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
+            val instanceName: String = getIpInstanceName(ipT).get
+            hashSMap = hashSMap +
+              ".a" ~> (st"${leftST.render}", "UInt".string) +
+              ".b" ~> (st"${rightST.render}", "UInt".string) +
+              "_valid" ~> (st"Mux(r_${instanceName}_resp_valid, false.B, true.B)", "Bool".string)
+            insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
+            ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := r_${instanceName}_resp.out"
+            intrinsicST = st""
+          } else if (isIntrinsicLoad(intrinsic.value)) {
+            ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
+
+            val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
+            val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(intrinsic.value).get._1, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+            val offsetWidth: Z = log2Up(anvil.config.memory * 8)
+            val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(intrinsic.value).get._2
+            val readOffsetST: ST = if (intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := ${regValueST}"
+
+            intrinsicST =
+              st"""
+                  |r_${instanceName}_req.mode := 1.U
+                  |r_${instanceName}_req.readAddr := ${readAddrST.render}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(intrinsic.value.tipe)}.U"}
+                  |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+              """
+          } else {
+            intrinsicST =
+              st"""
                 |${targetReg} := ${regValueST}"""
+          }
         }
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Decl) => {
@@ -5447,99 +7619,94 @@ import HwSynthesizer2._
       anvil.isSigned(anvil.spType)
     }
 
-  @pure def processStmtAssign(a: AST.IR.Stmt.Assign, ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
+  @pure def processStmtAssign(a: AST.IR.Stmt.Assign, ipPortLogic: HwSynthesizer2.IpPortAssign, maxRegisters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): ST = {
     var assignST: ST = st""
-
-    @strictpure def isIntrinsicLoad(e: AST.IR.Exp): B = e match {
-      case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => T
-      case _ => F
-    }
-
-    @strictpure def isIntrinsicIndexing(e: AST.IR.Exp): B = e match {
-      case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Indexing) => T
-      case _ => F
-    }
-
-    @strictpure def isBinaryExp(e: AST.IR.Exp): B = e match {
-      case AST.IR.Exp.Binary(_, _, _, _, _) => T
-      case _ => F
-    }
-
-    @strictpure def getBaseOffsetOfIntrinsicLoad(e: AST.IR.Exp): Option[(AST.IR.Exp, Z)] = e match {
-      case AST.IR.Exp.Intrinsic(intrinsic: Intrinsic.Load) => Some((intrinsic.base, intrinsic.offset))
-      case _ => None()
-    }
 
     a match {
       case a: AST.IR.Stmt.Assign.Global => {
-        val lhsST: ST = globalName(a.name)
-        val rhsST = processExpr(a.rhs, F, ipPortLogic, hwLog)
-        if(isIntrinsicLoad(a.rhs)) {
-          ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
-
-          val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
-          val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, hwLog)
-          val offsetWidth: Z = log2Up(anvil.config.memory * 8)
-          val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
-          val readOffsetST: ST = if(intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
+        val lhsName: String = st"${(a.name, "_")}".render
+        val isLhsGlobal: B = globalVarMap.contains(lhsName)
+        if(isLhsGlobal) {
+          // only lhs is global variable, global variable write operation
+          val t = globalVarMap.get(lhsName).get
+          val padST: ST = if(t._3 < 64) st".pad(64)" else st""
+          val uintConvertST: ST = if(t._2) st".asUInt" else st""
+          val rhsST: ST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
           assignST =
             st"""
-                |r_${instanceName}_req.mode := 1.U
-                |r_${instanceName}_req.readAddr := ${readAddrST.render}
-                |r_${instanceName}_req.readOffset := ${readOffsetST.render}
-                |r_${instanceName}_req.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U
-                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req.in := ${rhsST}${padST}${uintConvertST}
+                |r_arbGlobalVar_req.op := true.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(lhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
-        } else if(isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {
-          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
-          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ finalST
-          assignST = st""
         } else {
-          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
-          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
-
+          // only rhs is global variable, global variable read operation
+          val rhsName: String = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog).render
+          val t = globalVarMap.get(rhsName).get
+          val sintConvertST: ST = if(t._2) st".asSInt" else st""
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsName} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           assignST =
             st"""
-                |${finalST.render}
+                |r_arbGlobalVar_req.op := false.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         }
       }
       case a: AST.IR.Stmt.Assign.Temp => {
         val regNo = a.lhs
         val lhsST: ST = if(!anvil.config.splitTempSizes)  st"${generalRegName}(${regNo}.U)" else st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
-        val rhsST = processExpr(a.rhs, F, ipPortLogic, hwLog)
-        if(isIntrinsicLoad(a.rhs)) {
-          ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
-
-          val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
-          val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, hwLog)
-          val offsetWidth: Z = log2Up(anvil.config.memory * 8)
-          val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
-          val readOffsetST: ST = if(intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
+        val rhsST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+        val temp: AST.IR.Exp = if(isTypeExp(a.rhs)) a.rhs.asInstanceOf[AST.IR.Exp.Type].exp else a.rhs
+        if(isGlobalVar(temp)) {
+          val rhsName: String = rhsST.render
+          val t = globalVarMap.get(rhsName).get
+          val sintConvertST: ST = if(isSignedExp(a.rhs)) st".asSInt" else st""
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           assignST =
             st"""
-                |r_${instanceName}_req.mode := 1.U
-                |r_${instanceName}_req.readAddr := ${readAddrST.render}
-                |r_${instanceName}_req.readOffset := ${readOffsetST.render}
-                |r_${instanceName}_req.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U
-                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req.op := false.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
-        } else if(isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {
-          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
-          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ finalST
-          assignST = st""
         } else {
-          val lhsContentST: ST = st"${if(isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if(isSignedExp(a.rhs)) ").asUInt" else ""}"
-          val finalST = st"${lhsST} := ${if(!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
+          if (isIntrinsicLoad(a.rhs)) {
+            ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
 
-          assignST =
-            st"""
+            val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
+            val readAddrST: ST = processExpr(getBaseOffsetOfIntrinsicLoad(a.rhs).get._1, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+            val offsetWidth: Z = log2Up(anvil.config.memory * 8)
+            val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
+            val readOffsetST: ST = if (intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
+            assignST =
+              st"""
+                  |r_${instanceName}_req.mode := 1.U
+                  |r_${instanceName}_req.readAddr := ${readAddrST.render}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U"}
+                  |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+              """
+          } else if (isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {
+            val lhsContentST: ST = st"${if (isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if (isSignedExp(a.rhs)) ").asUInt" else ""}"
+            val finalST = st"${lhsST} := ${if (!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ finalST
+            assignST = st""
+          } else {
+            val lhsContentST: ST = st"${if (isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if (isSignedExp(a.rhs)) ").asUInt" else ""}"
+            val finalST = st"${lhsST} := ${if (!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
+
+            assignST =
+              st"""
                 |${finalST.render}
               """
+          }
         }
       }
       case _ => {
@@ -5552,7 +7719,7 @@ import HwSynthesizer2._
 
   @strictpure def globalName(name: ISZ[String]): ST = st"global_${(name, "_")}"
 
-  @pure def processExpr(exp: AST.IR.Exp, isForcedSign: B, ipPortLogic: HwSynthesizer2.IpPortAssign, hwLog: HwSynthesizer2.HwLog): ST = {
+  @pure def processExpr(exp: AST.IR.Exp, isForcedSign: B, ipPortLogic: HwSynthesizer2.IpPortAssign, maxRegisters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): ST = {
     var exprST = st""
 
     exp match {
@@ -5576,9 +7743,9 @@ import HwSynthesizer2._
         ipArbiterUsage = ipArbiterUsage + indexerIp
         val instanceName: String = getIpInstanceName(indexerIp).get
 
-        val baseOffsetST: ST = processExpr(intrinsic.baseOffset, F, ipPortLogic, hwLog)
+        val baseOffsetST: ST = processExpr(intrinsic.baseOffset, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val dataOffset: Z = intrinsic.dataOffset
-        val indexST: ST = processExpr(intrinsic.index, F, ipPortLogic, hwLog)
+        val indexST: ST = processExpr(intrinsic.index, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val mask: Z = intrinsic.maskOpt match {
           case Some(z) => z
           case None() => 0xFFFF
@@ -5616,14 +7783,16 @@ import HwSynthesizer2._
         exprST = st"${if(exp.value > 2147483647 || exp.value < -2147483648) s"BigInt(\"${exp.value}\")" else s"${exp.value}"}.${valuePostfix}(${anvil.typeByteSize(exp.tipe)*8}.W)"
       }
       case exp: AST.IR.Exp.GlobalVarRef => {
-        exprST = globalName(exp.name)
+        ipArbiterUsage = ipArbiterUsage + ArbGlobalVarIP()
+        exprST = st"${(exp.name, "_")}"
       }
       case exp: AST.IR.Exp.Type => {
-        val splitStr: String = if(anvil.typeBitSize(exp.exp.tipe)== anvil.typeBitSize(exp.t)) "" else s".pad(${anvil.typeBitSize(exp.t)})"
-        exprST = st"${processExpr(exp.exp, F, ipPortLogic, hwLog)}${if(anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}${if(!anvil.config.splitTempSizes) "" else splitStr}"
+        val splitStr: String = if (anvil.typeBitSize(exp.exp.tipe) == anvil.typeBitSize(exp.t)) "" else s".pad(${anvil.typeBitSize(exp.t)})"
+        val postfix: ST = if(isGlobalVar(exp.exp)) st"" else st"${if (!anvil.config.splitTempSizes) "" else splitStr}${if (anvil.isSigned(exp.t)) ".asSInt" else ".asUInt"}"
+        exprST = st"${processExpr(exp.exp, F, ipPortLogic, maxRegisters, isRecursive, hwLog)}${postfix}"
       }
       case exp: AST.IR.Exp.Unary => {
-        val variableST = processExpr(exp.exp, F, ipPortLogic, hwLog)
+        val variableST = processExpr(exp.exp, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val isUnsigned = !anvil.isSigned(exp.tipe)
         val opString: String = exp.op match {
           case lang.ast.Exp.UnaryOp.Not => "!"
@@ -5639,8 +7808,8 @@ import HwSynthesizer2._
       case exp: AST.IR.Exp.Binary => {
         val isSIntOperation = isSignedExp(exp.left) || isSignedExp(exp.right)
         val isBoolOperation = isBoolExp(exp.left) || isBoolExp(exp.right)
-        val leftST = st"${processExpr(exp.left, F, ipPortLogic, hwLog).render}${if(isSIntOperation && (!isSignedExp(exp.left))) ".asSInt" else ""}"
-        val rightST = st"${processExpr(exp.right, F, ipPortLogic, hwLog).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
+        val leftST = st"${processExpr(exp.left, F, ipPortLogic, maxRegisters, isRecursive, hwLog).render}${if(isSIntOperation && (!isSignedExp(exp.left))) ".asSInt" else ""}"
+        val rightST = st"${processExpr(exp.right, F, ipPortLogic, maxRegisters, isRecursive, hwLog).render}${if(isSIntOperation && (!isSignedExp(exp.right))) ".asSInt" else ""}"
 
         @pure def genIpArbiterPortLogic(opType: IR.Exp.Binary.Op.Type): ST = {
           val arbBinIp: ArbIpType = ArbBinaryIP(opType, isSIntOperation)
@@ -5743,6 +7912,69 @@ import HwSynthesizer2._
           }
         }
       }
+      case exp: AST.IR.Exp.Apply => {
+        val procTuple: (QName, String) = replaceFuncName(exp.isInObject, exp.owner, exp.id)
+        val procQName: QName = procTuple._1
+        val procString: String = procTuple._2
+        hwLog.funcCallInCurrentBlock = T
+        if(isRecursive) {
+          ipArbiterUsage = ipArbiterUsage + ArbTempSaveRestoreIP()
+        }
+
+        if(!ipRouterUsage.contains(procString)) {
+          ipRouterUsage = ipRouterUsage + procString ~> (globalRouterCount, HashSSet.empty[ArbIpType], procQName)
+          globalRouterCount = globalRouterCount + 1
+        }
+
+        // only 2 cases need stack push when encounter function call
+        // case 1), self recursive function call
+        // case 2), mutually function call
+        if((procString == hwLog.curProcedureId && isRecursive) ||
+          (procString != hwLog.curProcedureId && recursiveProcedures.isMutuallyRecursive(hwLog.curProcedureQName, procQName))) {
+          val uintWidth: ISZ[Z] = ISZ[Z](1, 8, 16, 32, 64)
+          val sintWidth: ISZ[Z] = ISZ[Z](8, 16, 32, 64)
+
+          var intAssignST: ISZ[ST] = ISZ[ST]()
+          for(i <- 0 until uintWidth.size) {
+            if(maxRegisters.unsigneds(uintWidth(i) - 1) > 0) {
+              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req.u${uintWidth(i)} := generalRegFilesU${uintWidth(i)}"
+            }
+          }
+          for(i <- 0 until sintWidth.size) {
+            if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
+              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req.s${sintWidth(i)} := generalRegFilesS${sintWidth(i)}"
+            }
+          }
+
+          val callST: ST =
+            st"""
+                |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
+                |r_routeOut.dstID := ${ipRouterUsage.get(procString).get._1}.U
+                |r_routeOut.dstCP := 3.U
+                |r_routeOut_valid := true.B
+                |
+                |r_arbTempSaveRestore_req.op := 0.U //push
+              """
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbTempSaveRestore_resp_valid"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ callST
+          exprST =
+            st"""
+                |${(intAssignST, "\n")}
+                |r_arbTempSaveRestore_req.srcId := r_srcID
+                |r_arbTempSaveRestore_req.srcCp := r_srcCP
+                |r_arbTempSaveRestore_req.op := 1.U //push
+                |r_arbTempSaveRestore_req_valid := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
+              """
+        } else {
+          exprST =
+            st"""
+                |r_routeOut.srcID := ${ipRouterUsage.get(hwLog.curProcedureId).get._1}.U
+                |r_routeOut.dstID := ${ipRouterUsage.get(procString).get._1}.U
+                |r_routeOut.dstCP := 3.U
+                |r_routeOut_valid := true.B
+            """
+        }
+      }
       case _ => {
         halt(s"processExpr unimplemented, ${exp.prettyST(anvil.printer).render}")
       }
@@ -5766,7 +7998,10 @@ object HwSynthesizer2 {
                                   var memCpyInCurrentBlock: B,
                                   var indexerInCurrentBlock: B,
                                   var currentLabel: Z,
-                                  var maxNumLabel: Z) extends MAnvilIRTransformer{
+                                  var maxNumLabel: Z,
+                                  var curProcedureId: String,
+                                  var curProcedureQName: QName,
+                                  var funcCallInCurrentBlock: B) extends MAnvilIRTransformer{
 
     @pure def isMemCpyInCurrentBlock(): B = {
       return memCpyInCurrentBlock
@@ -5776,6 +8011,9 @@ object HwSynthesizer2 {
       return indexerInCurrentBlock
     }
 
+    @pure def isFunCallInCurrentBlock(): B = {
+      return funcCallInCurrentBlock
+    }
   }
 
   @record @unclonable class IpPortAssign(val anvil: Anvil,
