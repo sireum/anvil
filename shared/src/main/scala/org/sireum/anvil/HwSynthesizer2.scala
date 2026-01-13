@@ -2509,11 +2509,11 @@ object ArbInputMap {
   @strictpure override def expression: ArbIpType = exp
   @strictpure def addrWidthSt(isParaDecl: B): ST = {
     if(isParaDecl && memoryType != Anvil.Config.MemoryAccess.BramNative) {
-      return st"addrWidth:Int,"
+      st"addrWidth:Int,"
     } else if(!isParaDecl && memoryType != Anvil.Config.MemoryAccess.BramNative) {
-      return st"addrWidth,"
+      st"addrWidth,"
     } else {
-      return st""
+      st""
     }
   }
   @strictpure override def moduleST: ST = {
@@ -2892,11 +2892,11 @@ import HwSynthesizer2._
 
   @strictpure def addrWidthSt(isParaDecl: B): String = {
     if(isParaDecl && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) {
-      return "addrWidth:Int,"
+      "addrWidth:Int,"
     } else if(!isParaDecl && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) {
-      return "addrWidth,"
+      "addrWidth,"
     } else {
-      return ""
+      ""
     }
   }
 
