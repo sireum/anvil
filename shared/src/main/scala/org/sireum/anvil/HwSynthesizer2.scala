@@ -6992,7 +6992,7 @@ import HwSynthesizer2._
       )
     }
 
-    @pure def groundST(b: AST.IR.BasicBlock, ground: ST, jump: ST, isRecursive: B): (ST, ST) = {
+    @pure def groundST(b: AST.IR.BasicBlock, ground: ST, jump: ST, hasRecursive: B): (ST, ST) = {
       var commentST = ISZ[ST]()
 
       for(g <- b.grounds) {
@@ -7002,7 +7002,7 @@ import HwSynthesizer2._
 
       val jumpST: ST = {
         if(hwLog.isIndexerInCurrentBlock() && !hwLog.isMemCpyInCurrentBlock()) {
-          val jST = processJumpIntrinsic(name, hwLog.stateBlock.get, ipPortLogic, maxRegisters, isRecursive, hwLog)
+          val jST = processJumpIntrinsic(name, hwLog.stateBlock.get, ipPortLogic, maxRegisters, hasRecursive, hwLog)
           val indexerName: String = getIpInstanceName(ArbIntrinsicIP(defaultIndexing)).get
           st"""
               |when(r_${indexerName}_resp_valid) {
