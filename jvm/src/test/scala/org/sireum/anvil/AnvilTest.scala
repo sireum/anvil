@@ -120,7 +120,13 @@ object AnvilTest {
             "seq.sc" ~> 240 +
             "shiftS64.sc" ~> 160 +
             "shiftU64.sc" ~> 152 +
-            "sum.sc" ~> 216
+            "sum.sc" ~> 216 +
+            "1.example.sc" ~> 216 +
+            "2.example.sc" ~> 216 +
+            "3.example.sc" ~> 216 +
+            "4.example.sc" ~> 216 +
+            "5.example.sc" ~> 216 +
+            "6.example.sc" ~> 216
         }
       } else {
         return HashMap.empty[String, Z] +
@@ -143,7 +149,13 @@ object AnvilTest {
           "seq.sc" ~> 288 +
           "shiftS64.sc" ~> 224 +
           "shiftU64.sc" ~> 224 +
-          "sum.sc" ~> 280
+          "sum.sc" ~> 280 +
+          "1.example.sc" ~> 280 +
+          "2.example.sc" ~> 280 +
+          "3.example.sc" ~> 280 +
+          "4.example.sc" ~> 280 +
+          "5.example.sc" ~> 280 +
+          "6.example.sc" ~> 280
       }
     }
   }
