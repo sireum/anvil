@@ -3213,7 +3213,7 @@ import HwSynthesizer2._
     var cnt32: Z = 0
     var cnt64: Z = 0
     for(entry <- globalInfoMap.entries) {
-      if(isTempGlobal(anvil, tipe = entry._2.tipe, entry._1)) {
+      if(isTempGlobal(anvil, entry._2.tipe, entry._1)) {
         val name: String = st"${(entry._1, "_")}".render
         val signed: B = anvil.isSigned(entry._2.tipe)
         val bitWidth: Z = anvil.typeBitSize(entry._2.tipe)
@@ -3453,7 +3453,7 @@ import HwSynthesizer2._
         """
       }
 
-      @strictpure def arbiterModuleST: ST = {
+      @strictpure def arbiterModST: ST = {
         val tempSaveRestoreStr: ST =
           st"""
               |r_ipResp_bits(i).u1.foreach(_ := 0.U)
@@ -3771,7 +3771,7 @@ import HwSynthesizer2._
                  |${responseBundleST}
                  |${IpIOST}
                  |${IpArbiterIOST}
-                 |${arbiterModuleST}
+                 |${arbiterModST}
                  |${modWrapperST}
              """
     }
