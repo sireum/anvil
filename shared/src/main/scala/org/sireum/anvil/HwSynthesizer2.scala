@@ -2967,7 +2967,7 @@ import HwSynthesizer2._
 
   @pure def globalVarWidthST(t: String): ST = {
     val width: Z = globalVarMap.get(t).get._3
-    width match {
+    val result: ST = width match {
       case 1 => st"(0)"
       case 8 => st"(7,0)"
       case 16 => st"(15,0)"
@@ -2975,6 +2975,7 @@ import HwSynthesizer2._
       case 64 => st"(63,0)"
       case _ => halt("not support this width of Global Variable")
     }
+    return result
   }
 
   @strictpure def isGlobalVar(exp: AST.IR.Exp): B = {
