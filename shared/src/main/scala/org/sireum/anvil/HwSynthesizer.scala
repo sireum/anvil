@@ -2174,7 +2174,7 @@ import HwSynthesizer._
     Division(T, "DivisionSigned64", "divisionSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Div, T), xilinxIPValid),
     Remainder(F, "RemainerUnsigned64", "remainerUnsigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, F), xilinxIPValid),
     Remainder(T, "RemainerSigned64", "remainerSigned64", 64, BinaryIP(AST.IR.Exp.Binary.Op.Rem, T), xilinxIPValid),
-    BlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory, BlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4),
+    BlockMemory(T, "BlockMemory", s"${sharedMemName}", 8, anvil.config.memory, BlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, F),
     LabelToFsm(F, "LabelToFsmIP", "labelToFsmIp", 0, LabelToFsmIP())
   )
 
@@ -2360,8 +2360,7 @@ import HwSynthesizer._
           |cpMax = ${anvil.config.cpMax},
           |CPsize = ${anvil.typeBitSize(spType)},
           |SPsize = ${anvil.typeBitSize(anvil.cpType)},
-          |tempGlobal = ${anvil.config.tempGlobal},
-          |alignAxi4 = ${anvil.config.alignAxi4}
+          |tempGlobal = ${anvil.config.tempGlobal}
         """
 
     val backslash = "\\"
@@ -4709,7 +4708,7 @@ import HwSynthesizer._
     var intrinsicST = st""
 
     i match {
-      case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.AlignRw) => {
+      /*case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.AlignRw) => {
         val indexerInstanceName: String = getIpInstanceName(BlockMemoryIP()).get
         ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${indexerInstanceName}.io.mode := 0.U"
 
@@ -4730,7 +4729,7 @@ import HwSynthesizer._
                 |${indexerInstanceName}.io.writeData := ${globalName(Util.writeAlignValue)}
               """
         }
-      }
+      }*/
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.TempLoad) => {
         if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.Default) {
           val readAddrST: ST = processExpr(intrinsic.base, F, ipPortLogic, hwLog)

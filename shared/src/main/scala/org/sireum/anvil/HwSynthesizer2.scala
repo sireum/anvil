@@ -7297,7 +7297,7 @@ import HwSynthesizer2._
     var intrinsicST = st""
 
     i match {
-      case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.AlignRw) => {
+      /*case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.AlignRw) => {
         ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
 
         val readAlignAddrName: String = st"${(Util.readAlignAddr, "_")}".render
@@ -7423,7 +7423,7 @@ import HwSynthesizer2._
                 |writeMiniIndex_2 := ${t_writeAlignValue._1}.U
               """
         }
-      }
+      }*/
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.TempLoad) => {
         ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
 

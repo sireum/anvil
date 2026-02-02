@@ -159,15 +159,9 @@ class IRSimulatorTest extends SireumRcSpec {
                   ir.anvil.isSigned(ir.anvil.spType)),
                 IRSimulator.State.Accesses.empty).update(state)
               IRSimulator.State.Edit.Decl(Intrinsic.Decl(F, F, locals, ir.program.procedures(0).pos)).update(state)
-              if (config.alignAxi4) {
-                assert(testNumInfoOffset % 8 == 0)
-                IRSimulator.State.Edit.Memory64(testNumInfoOffset / 8, ISZ(u64"0xFFFFFFFFFFFFFFFF"),
-                  IRSimulator.State.Accesses.empty).update(state)
-              } else {
-                IRSimulator.State.Edit.Memory(testNumInfoOffset,
-                  for (_ <- 0 until ir.anvil.typeByteSize(AST.Typed.z)) yield u8"0xFF",
-                  IRSimulator.State.Accesses.empty).update(state)
-              }
+              IRSimulator.State.Edit.Memory(testNumInfoOffset,
+                for (_ <- 0 until ir.anvil.typeByteSize(AST.Typed.z)) yield u8"0xFF",
+                IRSimulator.State.Accesses.empty).update(state)
               IRSimulator(ir).evalProcedure(state, ir.program.procedures(0))
               val displaySize = ir.anvil.config.printSize
               if (ir.anvil.config.shouldPrint) {
@@ -175,50 +169,28 @@ class IRSimulatorTest extends SireumRcSpec {
                   ir.anvil.typeShaSize + ir.anvil.typeByteSize(AST.Typed.z)
                 val dp = if (config.isFirstGen) state.DP.toZ else {
                   val offset = ir.globalInfoMap.get(Util.dpName).get.loc
-                  if (config.alignAxi4) {
-                    state.memory64(offset / 8).toZ
-                  } else {
-                    var r = u64"0"
-                    var mask = u64"0"
-                    val size = ir.anvil.typeByteSize(ir.anvil.dpType)
-                    for (i <- 0 until size) {
-                      val b = conversions.U8.toU64(state.memory(offset + i))
-                      r = r | (b << mask)
-                      mask = mask + u64"8"
-                    }
-                    r.toZ
+                  var r = u64"0"
+                  var mask = u64"0"
+                  val size = ir.anvil.typeByteSize(ir.anvil.dpType)
+                  for (i <- 0 until size) {
+                    val b = conversions.U8.toU64(state.memory(offset + i))
+                    r = r | (b << mask)
+                    mask = mask + u64"8"
                   }
+                  r.toZ
                 }
                 val (lo, hi): (Z, Z) = if (dp < displaySize) (0, dp) else (dp, displaySize + dp - 1)
                 val u8ms = MSZ.create(hi - lo, u8"0")
                 var j: Z = 0
-                if (ir.anvil.config.alignAxi4) {
-                  def getU8(addr8: Z): U8 = {
-                    val addr64 = addr8 / 8
-                    val v = state.memory64(addr64)
-                    val rem = addr8 % 8
-                    val shift = conversions.Z.toU64(rem) << u64"3"
-                    val mask = u64"0xFF" << shift
-                    val r = (v & mask) >>> shift
-                    //println(s"display: $offset, add8: $addr8, addr64: $addr64, v: $v, shift: ${shift.toZ}, rem: $rem, mask: $mask, r: $r")
-                    return conversions.U64.toU8(r)
-                  }
-                  for (i <- lo until hi) {
-                    val addr = offset + (i % displaySize)
-                    u8ms(j) = getU8(addr)
-                    j = j + 1
-                  }
-                } else {
-                  def getU8(addr8: Z): U8 = {
-                    val r = state.memory(addr8)
-                    //println(s"display: $offset, add8: $addr8, r: $r")
-                    return r
-                  }
-                  for (i <- lo until hi) {
-                    val addr8 = offset + (i % displaySize)
-                    u8ms(j) = getU8(addr8)
-                    j = j + 1
-                  }
+                def getU8(addr8: Z): U8 = {
+                  val r = state.memory(addr8)
+                  //println(s"display: $offset, add8: $addr8, r: $r")
+                  return r
+                }
+                for (i <- lo until hi) {
+                  val addr8 = offset + (i % displaySize)
+                  u8ms(j) = getU8(addr8)
+                  j = j + 1
                 }
                 val display = conversions.String.fromU8ms(u8ms)
                 print(display)

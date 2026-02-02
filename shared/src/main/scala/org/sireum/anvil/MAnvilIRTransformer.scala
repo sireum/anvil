@@ -185,10 +185,6 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRExpIndexing: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
-  val PreResultIntrinsicAlignRw: PreResult[Intrinsic.AlignRw] = PreResult(T, MNone())
-
-  val PostResultIntrinsicAlignRw: MOption[Intrinsic.AlignRw] = MNone()
-
   val PreResult_langastIRExpType: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
 
   val PostResult_langastIRExpType: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
@@ -495,10 +491,6 @@ import MAnvilIRTransformer._
     return PreResult_langastIRExpIndexing
   }
 
-  def preIntrinsicAlignRw(o: Intrinsic.AlignRw): PreResult[Intrinsic.AlignRw] = {
-    return PreResultIntrinsicAlignRw
-  }
-
   def pre_langastIRExpType(o: org.sireum.lang.ast.IR.Exp.Type): PreResult[org.sireum.lang.ast.IR.Exp] = {
     return PreResult_langastIRExpType
   }
@@ -732,13 +724,6 @@ import MAnvilIRTransformer._
         return r
       case o: Intrinsic.RegisterAssign =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = preIntrinsicRegisterAssign(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
-         case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
-        }
-        return r
-      case o: Intrinsic.AlignRw =>
-        val r: PreResult[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = preIntrinsicAlignRw(o) match {
          case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
          case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
@@ -1059,10 +1044,6 @@ import MAnvilIRTransformer._
     return PostResult_langastIRExpIndexing
   }
 
-  def postIntrinsicAlignRw(o: Intrinsic.AlignRw): MOption[Intrinsic.AlignRw] = {
-    return PostResultIntrinsicAlignRw
-  }
-
   def post_langastIRExpType(o: org.sireum.lang.ast.IR.Exp.Type): MOption[org.sireum.lang.ast.IR.Exp] = {
     return PostResult_langastIRExpType
   }
@@ -1296,13 +1277,6 @@ import MAnvilIRTransformer._
         return r
       case o: Intrinsic.RegisterAssign =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = postIntrinsicRegisterAssign(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
-         case _ => MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]()
-        }
-        return r
-      case o: Intrinsic.AlignRw =>
-        val r: MOption[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = postIntrinsicAlignRw(o) match {
          case MSome(result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
          case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]()
@@ -1964,32 +1938,6 @@ import MAnvilIRTransformer._
     }
   }
 
-  def transformIntrinsicAlignRw(o: Intrinsic.AlignRw): MOption[Intrinsic.AlignRw] = {
-    val preR: PreResult[Intrinsic.AlignRw] = preIntrinsicAlignRw(o)
-    val r: MOption[Intrinsic.AlignRw] = if (preR.continu) {
-      val o2: Intrinsic.AlignRw = preR.resultOpt.getOrElse(o)
-      val hasChanged: B = preR.resultOpt.nonEmpty
-      if (hasChanged)
-        MSome(o2)
-      else
-        MNone()
-    } else if (preR.resultOpt.nonEmpty) {
-      MSome(preR.resultOpt.getOrElse(o))
-    } else {
-      MNone()
-    }
-    val hasChanged: B = r.nonEmpty
-    val o2: Intrinsic.AlignRw = r.getOrElse(o)
-    val postR: MOption[Intrinsic.AlignRw] = postIntrinsicAlignRw(o2)
-    if (postR.nonEmpty) {
-      return postR
-    } else if (hasChanged) {
-      return MSome(o2)
-    } else {
-      return MNone()
-    }
-  }
-
   def transform_langastIRExpIntrinsicType(o: org.sireum.lang.ast.IR.Exp.Intrinsic.Type): MOption[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = {
     val preR: PreResult[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = pre_langastIRExpIntrinsicType(o)
     val r: MOption[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = if (preR.continu) {
@@ -2386,11 +2334,6 @@ import MAnvilIRTransformer._
           val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.value)
           if (hasChanged || r0.nonEmpty)
             MSome(o2(value = r0.getOrElse(o2.value)))
-          else
-            MNone()
-        case o2: Intrinsic.AlignRw =>
-          if (hasChanged)
-            MSome(o2)
           else
             MNone()
       }

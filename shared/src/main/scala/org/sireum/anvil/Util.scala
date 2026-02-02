@@ -1265,10 +1265,7 @@ object Util {
     val indexOffset: AST.IR.Exp = if (min == 0) idx else AST.IR.Exp.Binary(
       anvil.spType, idx, AST.IR.Exp.Binary.Op.Sub, AST.IR.Exp.Int(anvil.spType, min, idx.pos), idx.pos)
     val elementSize = anvil.typeByteSize(elementType)
-    var dataOffset = anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
-    if (anvil.config.alignAxi4 && !anvil.isScalar(elementType)) {
-      dataOffset = anvil.pad64(dataOffset)
-    }
+    val dataOffset = anvil.typeShaSize + anvil.typeByteSize(AST.Typed.z)
     if (anvil.config.useIP) {
       return AST.IR.Exp.Intrinsic(Intrinsic.Indexing(rcv, dataOffset, indexOffset, maskOpt, elementSize, anvil.spType, pos))
     } else {

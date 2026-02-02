@@ -59,7 +59,6 @@ object Anvil {
                          val tempLocal: B,
                          val memoryAccess: Config.MemoryAccess.Type,
                          val baseAddress: Z,
-                         val alignAxi4: B,
                          val ipMax: Z,
                          val ipSubroutine: B,
                          val cpMax: Z,
@@ -69,7 +68,8 @@ object Anvil {
     val shouldPrint: B = printSize > 0
     val useIP: B = ipMax >= 0
     val separateCP: B = cpMax > 0
-    val padObject64: B = alignAxi4 || memoryAccess == Config.MemoryAccess.BramAxi4 || memoryAccess == Config.MemoryAccess.Ddr
+    val padObject64: B = memoryAccess == Config.MemoryAccess.BramAxi4 || memoryAccess == Config.MemoryAccess.Ddr
+    val alignAxi4: B = F
   }
 
   object Config {
@@ -103,7 +103,6 @@ object Anvil {
         tempGlobal = T,
         tempLocal = F,
         memoryAccess = Config.MemoryAccess.Default,
-        alignAxi4 = F,
         baseAddress = 0,
         ipMax = 0,
         ipSubroutine = F,
@@ -164,10 +163,6 @@ object Anvil {
           }
         case _ =>
       }
-    }
-    if (config.alignAxi4) {
-      entryPoints = entryPoints :+ TypeSpecializer.EntryPoint.Method(intrinsicName :+ "read")
-      entryPoints = entryPoints :+ TypeSpecializer.EntryPoint.Method(intrinsicName :+ "write")
     }
     val tsr = TypeSpecializer.specialize(th, entryPoints, HashMap.empty, reporter)
     if (reporter.hasError) {
@@ -384,19 +379,6 @@ import Anvil._
       }
       if (isTest) {
         val rem = typeByteSize(spType) + typeShaSize % 8
-        if (config.alignAxi4 && config.stackTrace && rem != 0) {
-          val fillerType: AST.Typed = rem match {
-            case z"1" => AST.Typed.Name(AST.Typed.sireumName :+ "U56", ISZ())
-            case z"2" => AST.Typed.Name(AST.Typed.sireumName :+ "U48", ISZ())
-            case z"3" => AST.Typed.Name(AST.Typed.sireumName :+ "U40", ISZ())
-            case z"4" => AST.Typed.u32
-            case z"5" => AST.Typed.Name(AST.Typed.sireumName :+ "U24", ISZ())
-            case z"6" => AST.Typed.u16
-            case z"7" => AST.Typed.u8
-            case _ => halt("Infeasible")
-          }
-          globals = globals :+ AST.IR.Global(fillerType, testNumNamePad, startPos)
-        }
         globals = globals :+ AST.IR.Global(AST.Typed.z, testNumName, startPos)
       }
       if (config.shouldPrint) {
@@ -764,24 +746,6 @@ import Anvil._
           pass = pass + 1
         }
 
-        if (config.tempGlobal && config.alignAxi4) {
-          @pure def isStoreLoadAlign(grounds: ISZ[AST.IR.Stmt.Ground], g: AST.IR.Stmt.Ground): B = {
-            g match {
-              case AST.IR.Stmt.Intrinsic(_: Intrinsic.Store) => return T
-              case AST.IR.Stmt.Intrinsic(_: Intrinsic.TempLoad) => return T
-              case _ => return F
-            }
-          }
-
-          p = anvil.transformSplitTest(F, fresh, p, isStoreLoadAlign _)
-          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "align-copy-store-load"), p.prettyST(anvil.printer))
-          pass = pass + 1
-
-          p = anvil.transformReadWriteAlign(fresh, p, procedureMap)
-          output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "rw-align"), p.prettyST(anvil.printer))
-          pass = pass + 1
-        }
-
         if (!config.isFirstGen) {
           p = anvil.transformSecondGenSplit(fresh, p, globalMap, procedureMap, procedureSizeMap)
           output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "second-gen-split"), p.prettyST(anvil.printer))
@@ -892,146 +856,6 @@ import Anvil._
 
     return Some(IR(anvil, name, program, maxRegisters, globalSize, globalMap, globalTemps, procDescMap,
       RecursiveProcedures(recursiveProcedureSet, recursiveProceduresUnionFind)))
-  }
-
-  def transformReadWriteAlign(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure,
-                              procedureMap: HashSMap[AST.IR.MethodContext, AST.IR.Procedure]): AST.IR.Procedure = {
-    val ifType = AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.u64)
-    @pure def intrinsicBlocks(name: QName): ISZ[AST.IR.BasicBlock] = {
-      return procedureMap.get(AST.IR.MethodContext(T, intrinsicName, name(name.size - 1), ifType))
-        .get.body.asInstanceOf[AST.IR.Body.Basic].blocks
-    }
-    @pure def intrinsicFun(name: QName): AST.Typed.Fun = {
-      return procedureMap.get(AST.IR.MethodContext(T, intrinsicName, name(name.size - 1), ifType)).get.tipe
-    }
-    val leftShiftBlocks = intrinsicBlocks(leftShiftName)
-    val rightShiftBlocks = intrinsicBlocks(rightShiftName)
-    val readBlocks = intrinsicBlocks(readName)
-    val writeBlocks = intrinsicBlocks(writeName)
-
-    @strictpure def toU64(e: AST.IR.Exp): AST.IR.Exp = if (e.tipe == AST.Typed.u64) e else AST.IR.Exp.Type(F, e,
-      AST.Typed.u64, e.pos)
-
-    @pure def updateIntrinsic(b: AST.IR.BasicBlock): ISZ[AST.IR.BasicBlock] = {
-      b.jump match {
-        case AST.IR.Jump.Return(Some(e: AST.IR.Exp.GlobalVarRef), _) if config.isFirstGen =>
-          return ISZ(b(jump = AST.IR.Jump.Intrinsic(Intrinsic.GotoGlobal(e.name, b.jump.pos))))
-        case _ =>
-          b.grounds match {
-            case ISZ(AST.IR.Stmt.Expr(e)) if e.isInObject && e.owner == intrinsicName =>
-              val pos = e.pos
-              val intrinsicLabel: Z = e.id match {
-                case `leftShiftId` =>
-                  if (!config.isFirstGen) {
-                    return ISZ(b)
-                  }
-                  leftShiftBlocks(0).label
-                case `rightShiftId` =>
-                  if (!config.isFirstGen) {
-                    return ISZ(b)
-                  }
-                  rightShiftBlocks(0).label
-                case `readAlignId` => return ISZ(b(grounds = ISZ(AST.IR.Stmt.Intrinsic(Intrinsic.AlignRw(T, pos)))))
-                case `writeAlignId` => return ISZ(b(grounds = ISZ(AST.IR.Stmt.Intrinsic(Intrinsic.AlignRw(F, pos)))))
-              }
-              val label = fresh.label()
-              val label2 = fresh.label()
-              val retId = s"${e.id}Ret"
-              return ISZ(
-                AST.IR.BasicBlock(b.label, ISZ(AST.IR.Stmt.Assign.Global(intrinsicName :+ retId, AST.Typed.u64,
-                    toU64(AST.IR.Exp.Int(cpType, label2, b.jump.pos)), pos)), AST.IR.Jump.Goto(label, pos)),
-                AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(intrinsicLabel, pos)),
-                AST.IR.BasicBlock(label2, ISZ(), b.jump)
-              )
-            case _ =>
-          }
-      }
-      return ISZ(b)
-    }
-
-    @pure def updateRwIntrinsic(b: AST.IR.BasicBlock): ISZ[AST.IR.BasicBlock] = {
-      @strictpure def wrapU64(n: Z): Z = if (n < 0) n + U64.Max.toZ else n
-      b.grounds match {
-        case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad)) =>
-          val pos = in.pos
-          val label = fresh.label()
-          val label2 = fresh.label()
-          var grounds = ISZ[AST.IR.Stmt.Ground](
-            AST.IR.Stmt.Assign.Global(readBaseAddr, AST.Typed.u64, toU64(in.base), pos),
-            AST.IR.Stmt.Assign.Global(readOffset, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, wrapU64(in.offset), pos), pos),
-            AST.IR.Stmt.Assign.Global(readLen, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, in.bytes, pos), pos)
-          )
-          if (config.isFirstGen) {
-            grounds = grounds :+ AST.IR.Stmt.Assign.Global(readRet, AST.Typed.u64, toU64(AST.IR.Exp.Int(cpType, label2, pos)), pos)
-          }
-          var rhs: AST.IR.Exp = AST.IR.Exp.GlobalVarRef(readRes, AST.Typed.u64, pos)
-          if (in.tipe != AST.Typed.u64) {
-            rhs = AST.IR.Exp.Type(F, rhs, in.tipe.asInstanceOf[AST.Typed.Name], pos)
-          }
-          val callReadBlock: AST.IR.BasicBlock =
-            if (config.isFirstGen) AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(readBlocks(0).label, pos))
-            else AST.IR.BasicBlock(label, ISZ(
-              AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, intrinsicName, readId, ISZ(), intrinsicFun(readName), pos))
-            ), AST.IR.Jump.Goto(label2, pos))
-          return ISZ(
-            b(grounds = grounds, jump = AST.IR.Jump.Goto(label, pos)),
-            callReadBlock,
-            AST.IR.BasicBlock(label2, ISZ(AST.IR.Stmt.Assign.Temp(in.temp, rhs, pos)), b.jump)
-          )
-        case ISZ(AST.IR.Stmt.Intrinsic(in: Intrinsic.Store)) =>
-          val pos = in.pos
-          val label = fresh.label()
-          val label2 = fresh.label()
-          var grounds = ISZ[AST.IR.Stmt.Ground](
-            AST.IR.Stmt.Assign.Global(writeBaseAddr, AST.Typed.u64, toU64(in.base), pos),
-            AST.IR.Stmt.Assign.Global(writeOffset, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, wrapU64(in.offset), pos), pos),
-            AST.IR.Stmt.Assign.Global(writeLen, AST.Typed.u64, AST.IR.Exp.Int(AST.Typed.u64, in.bytes, pos), pos),
-            AST.IR.Stmt.Assign.Global(writeValue, AST.Typed.u64, toU64(in.rhs), pos)
-          )
-          if (config.isFirstGen) {
-            grounds = grounds :+ AST.IR.Stmt.Assign.Global(writeRet, AST.Typed.u64, toU64(AST.IR.Exp.Int(cpType, label2, pos)), pos)
-          }
-          val callWriteBlock: AST.IR.BasicBlock =
-            if (config.isFirstGen) AST.IR.BasicBlock(label, ISZ(), AST.IR.Jump.Goto(writeBlocks(0).label, pos))
-            else AST.IR.BasicBlock(label, ISZ(
-              AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, intrinsicName, writeId, ISZ(), intrinsicFun(writeName), pos))
-            ), AST.IR.Jump.Goto(label2, pos))
-          return ISZ(
-            b(grounds = grounds, jump = AST.IR.Jump.Goto(label, pos)),
-            callWriteBlock,
-            AST.IR.BasicBlock(label2, ISZ(), b.jump)
-          )
-        case _ =>
-      }
-      return ISZ(b)
-    }
-
-    val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-
-    var blocks = ISZ[AST.IR.BasicBlock]()
-
-    if (config.isFirstGen) {
-      for (b <- body.blocks; b2 <- updateRwIntrinsic(b)) {
-        blocks = blocks :+ b2
-      }
-      for (b <- leftShiftBlocks; b2 <- updateIntrinsic(b)) {
-        blocks = blocks :+ b2
-      }
-      for (b <- rightShiftBlocks; b2 <- updateIntrinsic(b)) {
-        blocks = blocks :+ b2
-      }
-      for (b <- readBlocks; b2 <- updateIntrinsic(b)) {
-        blocks = blocks :+ b2
-      }
-      for (b <- writeBlocks; b2 <- updateIntrinsic(b)) {
-        blocks = blocks :+ b2
-      }
-    } else {
-      for (b <- body.blocks; b2 <- updateIntrinsic(b); b3 <- updateRwIntrinsic(b2)) {
-        blocks = blocks :+ b3
-      }
-    }
-    return p(body = body(blocks = blocks))
   }
 
   def transformAssignTempLoad(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1815,7 +1639,6 @@ import Anvil._
       val label2 = fresh.label()
       val label3 = fresh.label()
       val label4 = fresh.label()
-      //val label5 = fresh.label()
       val sfCallerGlobalName = p.context.owner :+ p.context.id :+ sfCallerId
       val sfCallerAssign: AST.IR.Stmt.Ground = if (config.tempGlobal) {
         AST.IR.Stmt.Assign.Temp(0, AST.IR.Exp.GlobalVarRef(sfCallerGlobalName, spType, p.pos), p.pos)
@@ -1980,9 +1803,6 @@ import Anvil._
       val elementType = t.args(1)
       val elementSize = typeByteSize(elementType)
       var dataOffset = typeShaSize + typeByteSize(AST.Typed.z)
-      if (config.alignAxi4 && !isScalar(elementType)) {
-        dataOffset = pad64(dataOffset)
-      }
       blocks = blocks :+ AST.IR.BasicBlock(createLabel, ISZ(
         AST.IR.Stmt.Assign.Temp(lhsOffsetParam, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
           AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, dataOffset, pos), pos), pos),
@@ -2319,10 +2139,6 @@ import Anvil._
       r = transformConstruct(fresh, r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "construct"), r.prettyST(printer))
       pass = pass + 1
-
-      //      r = transformSplitReadWrite(fresh, r)
-//      output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-read-write"), r.prettyST(printer))
-//      pass = pass + 1
 
       r = transformInstanceOf(fresh, r)
       output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "instanceof"), r.prettyST(printer))
@@ -3848,7 +3664,6 @@ import Anvil._
 
   def transformMain(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure, globalSize: Z, globalMap: HashSMap[QName, VarInfo]): AST.IR.Procedure = {
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
-    assert(config.alignAxi4 ->: (globalSize % 8 == 0))
     var grounds = ISZ[AST.IR.Stmt.Ground](
       AST.IR.Stmt.Intrinsic(Intrinsic.RegisterAssign(T, F, AST.IR.Exp.Int(spType, globalSize, p.pos), p.pos))
     )
@@ -3982,9 +3797,6 @@ import Anvil._
       if (f1Size < f2Size) F
       else if (f1Size > f2Size) T
       else f1 <= f2
-    }
-    if (config.alignAxi4 && ops.ISZOps(fieldTypes.values).exists((t: AST.Typed) => !isScalar(t))) {
-      offset = pad64(offset)
     }
     for (f <- ops.ISZOps(fieldTypes.keys).sortWith(fLt _)) {
       val ft = fieldTypes.get(f).get
