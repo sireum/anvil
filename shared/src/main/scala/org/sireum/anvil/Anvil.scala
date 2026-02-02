@@ -581,7 +581,8 @@ import Anvil._
       (p: AST.IR.Procedure) => transformBlock(stage, output, p)))
 
     program = program(procedures = for (p <- program.procedures) yield
-      p(body = irt.toBasic(p.body.asInstanceOf[AST.IR.Body.Block], p.pos)))
+      if (p.body.isInstanceOf[AST.IR.Body.Basic]) p
+      else p(body = irt.toBasic(p.body.asInstanceOf[AST.IR.Body.Block], p.pos)))
 
     output.add(F, ISZ("ir", s"$stage-basic.sir"), program.prettyST(printer))
 

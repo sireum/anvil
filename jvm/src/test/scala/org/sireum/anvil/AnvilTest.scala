@@ -38,6 +38,7 @@ object AnvilTest {
           "construct.sc" ~> (if (useIP) if (useMemoryIP) 248 else 232 else 232) +
           "divrem.sc" ~> 128 +
           "dll.sc" ~> (if (printSize > 0) if (tempLocal) 832 else 844 else 832) +
+          "dll2.sc" ~> (if (printSize > 0) if (tempLocal) 832 else 844 else 832) +
           "factorial.sc" ~> 128 +
           "global.sc" ~> 96 +
           "indexing-obj.sc" ~> (if (useIP) if (useMemoryIP) 184 else 176 else 176) +
@@ -60,6 +61,7 @@ object AnvilTest {
           "construct.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 248 else 232 else 232 else if (useMemoryIP) 296 else 256 + 8 * 3) +
           "divrem.sc" ~> (if (tempLocal) 128 else if (useIP) 184 else 184) +
           "dll.sc" ~> (if (printSize > 0) if (tempLocal) 840 else 848 else 832) +
+          "dll2.sc" ~> (if (printSize > 0) if (tempLocal) 840 else 848 else 832) +
           "factorial.sc" ~> (if (tempLocal) 128 else if (useIP) 176 else 176) +
           "global.sc" ~> (if (tempLocal) 104 else 152) +
           "indexing-obj.sc" ~> (if (tempLocal) if (useIP) if (useMemoryIP) 184 else 176 else 176 else 208) +
@@ -84,6 +86,7 @@ object AnvilTest {
           "construct.sc" ~> 200 +
           "divrem.sc" ~> 128 +
           "dll.sc" ~> 664 +
+          "dll2.sc" ~> 1672 +
           "factorial.sc" ~> 120 +
           "global.sc" ~> 104 +
           "indexing-obj.sc" ~> 184 +
@@ -112,6 +115,7 @@ object AnvilTest {
           "construct.sc" ~> 352 +
           "divrem.sc" ~> 248 +
           "dll.sc" ~> 760 +
+          "dll2.sc" ~> 1784 +
           "factorial.sc" ~> 176 +
           "global.sc" ~> 152 +
           "indexing-obj.sc" ~> 240 +
@@ -137,6 +141,7 @@ object AnvilTest {
   }
   val maxArrayFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "dll" ~> 3 +
+    "dll2" ~> 3 +
     "indexing-obj.sc" ~> 1 +
     "sum.sc" ~> 3
   val printFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
@@ -146,6 +151,7 @@ object AnvilTest {
     "construct.sc" ~> 16 +
     "divrem.sc" ~> 32 +
     "dll.sc" ~> 2 +
+    "dll2.sc" ~> 32 +
     "factorial.sc" ~> 32 +
     "global.sc" ~> 2 +
     "indexing.sc" ~> 8 +
