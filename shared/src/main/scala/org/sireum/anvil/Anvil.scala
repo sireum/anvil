@@ -465,7 +465,7 @@ import Anvil._
                 val mpos = minfo.posOpt.get
                 var arg: AST.IR.Exp = AST.IR.Exp.LocalVarRef(T, methodContext, id, paramType, mpos)
                 if (argType != paramType) {
-                  arg = AST.IR.Exp.Type(F, arg, argType.asInstanceOf[AST.Typed.Name], mpos)
+                  arg = AST.IR.Exp.Type(F, arg, spType /*argType.asInstanceOf[AST.Typed.Name]*/, mpos)
                 }
                 args = args :+ arg
               }
@@ -3752,7 +3752,7 @@ import Anvil._
       val last = blocks.size - 1
       val lastBlock = blocks(last)
       blocks = blocks(last ~> lastBlock(jump = AST.IR.Jump.Goto(label2, p.pos)))
-      blocks = blocks :+ AST.IR.BasicBlock(label2, ISZ(g), AST.IR.Jump.Goto(startingLabel, p.pos))
+      blocks = blocks :+ AST.IR.BasicBlock(label2, ISZ(g), AST.IR.Jump.Goto(body.blocks(0).label, p.pos))
     }
     return p(body = body(blocks ++ body.blocks))
   }

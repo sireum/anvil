@@ -101,6 +101,7 @@ object AnvilTest {
           "shiftS64.sc" ~> 160 +
           "shiftU64.sc" ~> 152 +
           "sum.sc" ~> 216 +
+          "traitmethod.sc" ~> 128 +
           "1.example.sc" ~> 216 +
           "2.example.sc" ~> 216 +
           "3.example.sc" ~> 216 +
@@ -130,6 +131,7 @@ object AnvilTest {
           "shiftS64.sc" ~> 224 +
           "shiftU64.sc" ~> 224 +
           "sum.sc" ~> 280 +
+          "traitmethod.sc" ~> 192 +
           "1.example.sc" ~> 280 +
           "2.example.sc" ~> 280 +
           "3.example.sc" ~> 280 +
@@ -143,7 +145,8 @@ object AnvilTest {
     "dll" ~> 3 +
     "dll2" ~> 3 +
     "indexing-obj.sc" ~> 1 +
-    "sum.sc" ~> 3
+    "sum.sc" ~> 3 +
+    "traitmethod.sc" ~> 1
   val printFileMap: HashMap[String, Z] = HashMap.empty[String, Z] +
     "add.sc" ~> 16 +
     "assert.sc" ~> 64 +
@@ -165,7 +168,8 @@ object AnvilTest {
     "seq.sc" ~> 32 +
     "shiftS64.sc" ~> 64 +
     "shiftU64.sc" ~> 64 +
-    "sum.sc" ~> 8
+    "sum.sc" ~> 8 +
+    "traitmethod.sc" ~> 2
   val stackTraceFileSet: HashSet[String] = HashSet.empty[String] + "assert.sc"
   val eraseFileSet: HashSet[String] = HashSet.empty[String] + "sum.sc" + "add.sc"
   val dontTestFileSet: HashSet[String] = HashSet.empty[String]
