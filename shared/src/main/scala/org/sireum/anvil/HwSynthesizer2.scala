@@ -2102,7 +2102,7 @@ object ArbInputMap {
           |  val r_dmaErase_enable  = RegInit(false.B)
           |
           |  // data from read port
-          |  io.dmaValid := RegNext(r_dmaDst_finish & r_b_valid, init = false.B)
+          |  io.dmaValid := RegNext(r_dmaDst_finish & RegNext(r_b_valid), init = false.B)
           |
           |  // initialize all registers
           |  when(r_dma_req & ~r_dma_req_next) {
@@ -2153,7 +2153,7 @@ object ArbInputMap {
           |  }
           |
           |  // write transaction
-          |  when(r_dmaDst_finish & r_b_valid) {
+          |  when(r_dmaDst_finish & RegNext(r_b_valid)) {
           |    r_dma_req_write    := false.B
           |
           |    r_dmaErase_enable  := false.B
@@ -2166,7 +2166,7 @@ object ArbInputMap {
           |    r_dmaDst_addr      := r_dmaDst_addr + 8.U
           |    r_dmaDst_finish    := r_dmaDst_len <= 8.U
           |
-          |    r_dma_req_read     := true.B
+          |    r_dma_req_read     := ~r_dmaSrc_finish
           |  }
           |
           |  // AXI4 Full port connection
