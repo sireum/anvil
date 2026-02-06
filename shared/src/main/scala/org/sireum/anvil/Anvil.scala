@@ -450,7 +450,10 @@ import Anvil._
         val paramNames: ISZ[String] = "this" +: (for (p <- info.ast.sig.params) yield p.id.value)
         fresh.setTemp(0)
         val label = fresh.label()
+        val label2 = fresh.label()
+        val label3 = fresh.label()
         val thiz = AST.IR.Exp.Temp(fresh.temp(), receiver, pos)
+        val tipe = AST.IR.Exp.Temp(fresh.temp(), typeShaType, pos)
         for (t <- tsr.typeImpl.childrenOf(receiver).elements) {
           val adt = th.typeMap.get(t.ids).get.asInstanceOf[TypeInfo.Adt]
           adt.vars.get(method.id) match {
@@ -476,8 +479,11 @@ import Anvil._
           AST.IR.BasicBlock(label, ISZ(
             AST.IR.Stmt.Assign.Temp(thiz.n,
               AST.IR.Exp.LocalVarRef(T, methodContext, "this", methodContext.receiverType, pos), pos)
-          ), AST.IR.Jump.Switch(
-            AST.IR.Exp.FieldVarRef(thiz, typeFieldId, typeShaType, pos),
+          ), AST.IR.Jump.Goto(label2, pos)),
+          AST.IR.BasicBlock(label2, ISZ(
+            AST.IR.Stmt.Assign.Temp(tipe.n, AST.IR.Exp.FieldVarRef(thiz, typeFieldId, typeShaType, pos), pos)
+          ), AST.IR.Jump.Goto(label3, pos)),
+          AST.IR.BasicBlock(label3, ISZ(), AST.IR.Jump.Switch(tipe,
             for (impl <- impls) yield AST.IR.Jump.Switch.Case(
               AST.IR.Exp.Int(typeShaType, sha3Type(impl._2).toZ, pos), impl._1),
             None(), pos
