@@ -1906,6 +1906,7 @@ object ArbInputMap {
           |  val r_dma_read_data    = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
           |  // the write length used in unaligned write
           |  val r_dma_dst_len      = RegInit(0.U(log2Up(C_M_AXI_DATA_WIDTH / 8 + 1).W))
+          |  val r_dmaErase_enable  = RegInit(false.B)
           |
           |  // read, write, dma request
           |  val r_read_req       = RegNext((io.mode === 1.U) || r_dma_req_read, init = false.B)
@@ -2050,7 +2051,7 @@ object ArbInputMap {
           |
           |  when(r_write_req & RegNext(r_r_valid)) {
           |    r_write_running := true.B
-          |    r_write_data_2  := r_write_data_1 | r_write_data_shift
+          |    r_write_data_2  := Mux(r_dmaErase_enable, r_write_data_1, r_write_data_1 | r_write_data_shift)
           |  }
           |
           |  when(r_write_running & ~r_aw_enable) {
@@ -2096,10 +2097,10 @@ object ArbInputMap {
           |  }
           |
           |  // dma logic
+          |  val r_dma_src_lt_dst   = RegNext(io.dmaSrcLen < io.dmaDstLen)
           |  val r_dma_req_next     = RegNext(r_dma_req)
           |  val r_dmaSrc_finish    = RegInit(false.B)
           |  val r_dmaDst_finish    = RegInit(false.B)
-          |  val r_dmaErase_enable  = RegInit(false.B)
           |
           |  // data from read port
           |  io.dmaValid := RegNext(r_dmaDst_finish & RegNext(r_b_valid), init = false.B)
@@ -2119,7 +2120,7 @@ object ArbInputMap {
           |    r_dma_dst_len      := Mux(io.dmaDstLen > 8.U, 8.U, io.dmaDstLen)
           |  }
           |
-          |  val unalignRead_finish = RegNext(RegNext(r_r_valid))
+          |  val unalignRead_finish = ~r_dmaErase_enable & RegNext(RegNext(r_r_valid))
           |
           |  // read transaction
           |  when((r_dmaSrc_finish & unalignRead_finish) || r_dmaErase_enable) {
@@ -2134,11 +2135,14 @@ object ArbInputMap {
           |    r_dmaSrc_finish    := r_dmaSrc_len <= 8.U
           |
           |    r_dma_req_write    := true.B
+          |  }
+          |
+          |  when((r_dma_req_read & unalignRead_finish) || r_dmaErase_enable) {
           |    r_dma_dst_len      := Mux(r_dmaDst_len > 8.U, 8.U, r_dmaDst_len)
           |  }
           |
           |  // save read data
-          |  when((r_dma_req & unalignRead_finish) || r_dmaErase_enable) {
+          |  when(r_dma_req & unalignRead_finish) {
           |    r_dma_read_data  := MuxLookup(r_dmaSrc_len, r_final_buffer,
           |                                    Seq(
           |                                        0.U -> 0.U,
@@ -2153,6 +2157,10 @@ object ArbInputMap {
           |  }
           |
           |  // write transaction
+          |  val r_write_finish_precond1 = RegInit(false.B)
+          |  val r_write_finish_precond2 = RegInit(false.B)
+          |  r_write_finish_precond1 := (~r_dmaErase_enable) & r_dma_src_lt_dst & r_dmaSrc_finish
+          |  r_write_finish_precond2 := r_dmaDst_len <= 8.U
           |  when(r_dmaDst_finish & RegNext(r_b_valid)) {
           |    r_dma_req_write    := false.B
           |
@@ -2164,7 +2172,7 @@ object ArbInputMap {
           |    r_dma_req_write    := false.B
           |    r_dmaDst_len       := Mux(r_dmaDst_len > 8.U, r_dmaDst_len - 8.U, r_dmaDst_len)
           |    r_dmaDst_addr      := r_dmaDst_addr + 8.U
-          |    r_dmaDst_finish    := r_dmaDst_len <= 8.U
+          |    r_dmaDst_finish    := r_write_finish_precond1 | r_write_finish_precond2
           |
           |    r_dma_req_read     := ~r_dmaSrc_finish
           |  }
