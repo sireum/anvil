@@ -2097,10 +2097,12 @@ object ArbInputMap {
           |  }
           |
           |  // dma logic
-          |  val r_dma_src_lt_dst   = RegNext(io.dmaSrcLen < io.dmaDstLen)
           |  val r_dma_req_next     = RegNext(r_dma_req)
           |  val r_dmaSrc_finish    = RegInit(false.B)
           |  val r_dmaDst_finish    = RegInit(false.B)
+          |  val r_temp_dmaSrc_len  = RegNext(Mux(io.dmaSrcLen < io.dmaDstLen, io.dmaSrcLen, io.dmaDstLen))
+          |  val r_temp_dmaDst_len  = RegNext(Mux(io.dmaSrcLen < io.dmaDstLen, io.dmaDstLen, io.dmaSrcLen))
+          |  val r_dma_src_lt_dst   = RegNext(r_temp_dmaSrc_len < r_temp_dmaDst_len)
           |
           |  // data from read port
           |  io.dmaValid := RegNext(r_dmaDst_finish & RegNext(r_b_valid), init = false.B)
@@ -2109,15 +2111,15 @@ object ArbInputMap {
           |  when(r_dma_req & ~r_dma_req_next) {
           |    r_dmaSrc_addr      := io.dmaSrcAddr
           |    r_dmaDst_addr      := io.dmaDstAddr + io.dmaDstOffset
-          |    r_dmaSrc_len       := io.dmaSrcLen
-          |    r_dmaDst_len       := io.dmaDstLen
+          |    r_dmaSrc_len       := r_temp_dmaSrc_len
+          |    r_dmaDst_len       := r_temp_dmaDst_len
           |
-          |    r_dmaErase_enable  := io.dmaSrcLen === 0.U
+          |    r_dmaErase_enable  := r_temp_dmaSrc_len === 0.U
           |
           |    r_dma_req_read     := true.B
-          |    r_dmaSrc_finish    := io.dmaSrcLen <= 8.U
-          |    r_dmaDst_finish    := io.dmaDstLen <= 8.U
-          |    r_dma_dst_len      := Mux(io.dmaDstLen > 8.U, 8.U, io.dmaDstLen)
+          |    r_dmaSrc_finish    := r_temp_dmaSrc_len <= 8.U
+          |    r_dmaDst_finish    := r_temp_dmaDst_len <= 8.U
+          |    r_dma_dst_len      := Mux(r_temp_dmaDst_len > 8.U, 8.U, r_temp_dmaDst_len)
           |  }
           |
           |  val unalignRead_finish = ~r_dmaErase_enable & RegNext(RegNext(r_r_valid))
