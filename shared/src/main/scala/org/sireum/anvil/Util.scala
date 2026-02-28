@@ -705,6 +705,7 @@ object Util {
       case _ => None()
     }
     @strictpure def jump(j: AST.IR.Jump): Option[ST] = None()
+    @strictpure def program(pi: AST.IR.Program.Intrinsic): Option[ST] = None()
   }
 
   @datatype class TempVector(val unsigneds: ISZ[Z], val signeds: HashSMap[Z, Z], val fp32Count: Z, val fp64Count: Z) {

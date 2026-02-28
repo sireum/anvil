@@ -283,8 +283,12 @@ import Anvil._
           case Some(t) => Some(t)
           case _ => None()
         }
-        val p = (if (config.isFirstGen && m.info.owner == intrinsicName) irtIntrinsic else irt).
-          translateMethod(F, receiverOpt, m.info.owner, m.info.ast)
+        val translator: lang.IRTranslator = if (config.isFirstGen && m.info.owner == intrinsicName) irtIntrinsic else irt
+        val p = translator.translateMethod(F, receiverOpt, m.info.owner, m.info.ast)
+        for (lp <- translator.liftedProcedures) {
+          procedures = procedures :+ lp
+        }
+        translator.liftedProcedures = ISZ()
         procedures = procedures :+ p
         procedureMod(p.context) match {
           case PMod.Main =>
@@ -368,6 +372,10 @@ import Anvil._
           val p = irt.translateMethodH(F, Some(t), t.ids, newInitId, ISZ(),
             ISZ(), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), posOpt.get,
             Some(AST.Body(stmts, ISZ())))
+          for (lp <- irt.liftedProcedures) {
+            procedures = procedures :+ lp
+          }
+          irt.liftedProcedures = ISZ()
           procedures = procedures :+ p
         }
       }
@@ -410,6 +418,10 @@ import Anvil._
         val pos = objPosOpt.get
         val objInit = irt.translateMethodH(F, None(), owner, objInitId, ISZ(), ISZ(),
           AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), pos, Some(AST.Body(stmts, ISZ())))
+        for (lp <- irt.liftedProcedures) {
+          procedures = procedures :+ lp
+        }
+        irt.liftedProcedures = ISZ()
         var body = objInit.body.asInstanceOf[AST.IR.Body.Block]
         body = body(block = body.block(stmts =
           AST.IR.Stmt.Assign.Global(owner, AST.Typed.b, AST.IR.Exp.Bool(T, pos), pos) +: body.block.stmts))
@@ -524,7 +536,12 @@ import Anvil._
 
         for (id <- pc.printIds.elements) {
           val info = th.nameMap.get(runtimeName :+ id).get.asInstanceOf[Info.Method]
-          procedures = procedures :+ irt.translateMethod(F, None(), info.owner, info.ast)
+          val p = irt.translateMethod(F, None(), info.owner, info.ast)
+          for (lp <- irt.liftedProcedures) {
+            procedures = procedures :+ lp
+          }
+          irt.liftedProcedures = ISZ()
+          procedures = procedures :+ p
         }
       }
 
@@ -568,7 +585,7 @@ import Anvil._
 
       globalSize = pad64(globalSize)
 
-      (startOpt.get.context, AST.IR.Program(threeAddressCode, globals, procedures), globalSize, globalMap, globalTemps)
+      (startOpt.get.context, AST.IR.Program(threeAddressCode, globals, procedures, ISZ()), globalSize, globalMap, globalTemps)
     }
 
     val startContext = mq._1
@@ -693,15 +710,15 @@ import Anvil._
         output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "split-indexing"), p.prettyST(anvil.printer))
         pass = pass + 1
 
-        p = anvil.transformSCreate(fresh, p, programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p))))
+        p = anvil.transformSCreate(fresh, p, programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p), ISZ())))
         output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "s-create"), p.prettyST(anvil.printer))
         pass = pass + 1
 
-        p = anvil.transformGotoLocal(fresh, p, programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p))))
+        p = anvil.transformGotoLocal(fresh, p, programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p), ISZ())))
         output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "goto-local"), p.prettyST(anvil.printer))
         pass = pass + 1
 
-        val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p)))
+        val maxTemps = programMaxTemps(anvil, AST.IR.Program(T, ISZ(), ISZ(p), ISZ()))
 
         p = anvil.transformIfLoadStoreCopyIntrinsic(fresh, p, maxTemps)
         output.add(F, irProcedurePath(p.id, p.tipe, stage, pass, "load-store-copy"), p.prettyST(anvil.printer))

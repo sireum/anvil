@@ -74,6 +74,8 @@ object AnvilIRTransformer {
         case o: org.sireum.lang.ast.IR.Exp.Indexing => return pre_langastIRExpIndexing(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.Type => return pre_langastIRExpType(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.Intrinsic => return pre_langastIRExpIntrinsic(ctx, o)
+        case o: org.sireum.lang.ast.IR.Exp.ClosureRef => return pre_langastIRExpClosureRef(ctx, o)
+        case o: org.sireum.lang.ast.IR.Exp.ApplyClosure => return pre_langastIRExpApplyClosure(ctx, o)
       }
     }
 
@@ -194,6 +196,14 @@ object AnvilIRTransformer {
     }
 
     @pure def pre_langastIRExpIntrinsic(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Intrinsic): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+      return PreResult(ctx, T, None())
+    }
+
+    @pure def pre_langastIRExpClosureRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.ClosureRef): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+      return PreResult(ctx, T, None())
+    }
+
+    @pure def pre_langastIRExpApplyClosure(ctx: Context, o: org.sireum.lang.ast.IR.Exp.ApplyClosure): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
@@ -578,6 +588,14 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
+    @pure def pre_langastIRProgramIntrinsic(ctx: Context, o: org.sireum.lang.ast.IR.Program.Intrinsic): PreResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic] = {
+      return PreResult(ctx, T, None())
+    }
+
+    @pure def pre_langastIRProgramIntrinsicType(ctx: Context, o: org.sireum.lang.ast.IR.Program.Intrinsic.Type): PreResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic.Type] = {
+      return PreResult(ctx, T, None())
+    }
+
     @pure def pre_langastIRProgram(ctx: Context, o: org.sireum.lang.ast.IR.Program): PreResult[Context, org.sireum.lang.ast.IR.Program] = {
       return PreResult(ctx, T, None())
     }
@@ -627,6 +645,8 @@ object AnvilIRTransformer {
         case o: org.sireum.lang.ast.IR.Exp.Indexing => return post_langastIRExpIndexing(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.Type => return post_langastIRExpType(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.Intrinsic => return post_langastIRExpIntrinsic(ctx, o)
+        case o: org.sireum.lang.ast.IR.Exp.ClosureRef => return post_langastIRExpClosureRef(ctx, o)
+        case o: org.sireum.lang.ast.IR.Exp.ApplyClosure => return post_langastIRExpApplyClosure(ctx, o)
       }
     }
 
@@ -747,6 +767,14 @@ object AnvilIRTransformer {
     }
 
     @pure def post_langastIRExpIntrinsic(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Intrinsic): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+      return TPostResult(ctx, None())
+    }
+
+    @pure def post_langastIRExpClosureRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.ClosureRef): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+      return TPostResult(ctx, None())
+    }
+
+    @pure def post_langastIRExpApplyClosure(ctx: Context, o: org.sireum.lang.ast.IR.Exp.ApplyClosure): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
@@ -1131,6 +1159,14 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
+    @pure def post_langastIRProgramIntrinsic(ctx: Context, o: org.sireum.lang.ast.IR.Program.Intrinsic): TPostResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic] = {
+      return TPostResult(ctx, None())
+    }
+
+    @pure def post_langastIRProgramIntrinsicType(ctx: Context, o: org.sireum.lang.ast.IR.Program.Intrinsic.Type): TPostResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic.Type] = {
+      return TPostResult(ctx, None())
+    }
+
     @pure def post_langastIRProgram(ctx: Context, o: org.sireum.lang.ast.IR.Program): TPostResult[Context, org.sireum.lang.ast.IR.Program] = {
       return TPostResult(ctx, None())
     }
@@ -1357,6 +1393,19 @@ import AnvilIRTransformer._
             TPostResult(r0.ctx, Some(o2(intrinsic = r0.resultOpt.getOrElse(o2.intrinsic))))
           else
             TPostResult(r0.ctx, None())
+        case o2: org.sireum.lang.ast.IR.Exp.ClosureRef =>
+          val r0: TPostResult[Context, IS[Z, org.sireum.lang.ast.IR.Exp]] = transformISZ(preR.ctx, o2.captures, transform_langastIRExp _)
+          if (hasChanged || r0.resultOpt.nonEmpty)
+            TPostResult(r0.ctx, Some(o2(captures = r0.resultOpt.getOrElse(o2.captures))))
+          else
+            TPostResult(r0.ctx, None())
+        case o2: org.sireum.lang.ast.IR.Exp.ApplyClosure =>
+          val r0: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(preR.ctx, o2.closureExp)
+          val r1: TPostResult[Context, IS[Z, org.sireum.lang.ast.IR.Exp]] = transformISZ(r0.ctx, o2.args, transform_langastIRExp _)
+          if (hasChanged || r0.resultOpt.nonEmpty || r1.resultOpt.nonEmpty)
+            TPostResult(r1.ctx, Some(o2(closureExp = r0.resultOpt.getOrElse(o2.closureExp), args = r1.resultOpt.getOrElse(o2.args))))
+          else
+            TPostResult(r1.ctx, None())
       }
       rOpt
     } else if (preR.resultOpt.nonEmpty) {
@@ -2428,6 +2477,57 @@ import AnvilIRTransformer._
     }
   }
 
+  @pure def transform_langastIRProgramIntrinsic(ctx: Context, o: org.sireum.lang.ast.IR.Program.Intrinsic): TPostResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic] = {
+    val preR: PreResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic] = pp.pre_langastIRProgramIntrinsic(ctx, o)
+    val r: TPostResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic] = if (preR.continu) {
+      val o2: org.sireum.lang.ast.IR.Program.Intrinsic = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      val r0: TPostResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic.Type] = transform_langastIRProgramIntrinsicType(preR.ctx, o2.intrinsic)
+      if (hasChanged || r0.resultOpt.nonEmpty)
+        TPostResult(r0.ctx, Some(o2(intrinsic = r0.resultOpt.getOrElse(o2.intrinsic))))
+      else
+        TPostResult(r0.ctx, None())
+    } else if (preR.resultOpt.nonEmpty) {
+      TPostResult(preR.ctx, Some(preR.resultOpt.getOrElse(o)))
+    } else {
+      TPostResult(preR.ctx, None())
+    }
+    val hasChanged: B = r.resultOpt.nonEmpty
+    val o2: org.sireum.lang.ast.IR.Program.Intrinsic = r.resultOpt.getOrElse(o)
+    val postR: TPostResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic] = pp.post_langastIRProgramIntrinsic(r.ctx, o2)
+    if (postR.resultOpt.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return TPostResult(postR.ctx, Some(o2))
+    } else {
+      return TPostResult(postR.ctx, None())
+    }
+  }
+
+  @pure def transform_langastIRProgramIntrinsicType(ctx: Context, o: org.sireum.lang.ast.IR.Program.Intrinsic.Type): TPostResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic.Type] = {
+    val preR: PreResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic.Type] = pp.pre_langastIRProgramIntrinsicType(ctx, o)
+    val r: TPostResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic.Type] = if (preR.continu) {
+      val o2: org.sireum.lang.ast.IR.Program.Intrinsic.Type = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      val rOpt: TPostResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic.Type] = TPostResult(ctx, None())
+      rOpt
+    } else if (preR.resultOpt.nonEmpty) {
+      TPostResult(preR.ctx, Some(preR.resultOpt.getOrElse(o)))
+    } else {
+      TPostResult(preR.ctx, None())
+    }
+    val hasChanged: B = r.resultOpt.nonEmpty
+    val o2: org.sireum.lang.ast.IR.Program.Intrinsic.Type = r.resultOpt.getOrElse(o)
+    val postR: TPostResult[Context, org.sireum.lang.ast.IR.Program.Intrinsic.Type] = pp.post_langastIRProgramIntrinsicType(r.ctx, o2)
+    if (postR.resultOpt.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return TPostResult(postR.ctx, Some(o2))
+    } else {
+      return TPostResult(postR.ctx, None())
+    }
+  }
+
   @pure def transform_langastIRProgram(ctx: Context, o: org.sireum.lang.ast.IR.Program): TPostResult[Context, org.sireum.lang.ast.IR.Program] = {
     val preR: PreResult[Context, org.sireum.lang.ast.IR.Program] = pp.pre_langastIRProgram(ctx, o)
     val r: TPostResult[Context, org.sireum.lang.ast.IR.Program] = if (preR.continu) {
@@ -2435,10 +2535,11 @@ import AnvilIRTransformer._
       val hasChanged: B = preR.resultOpt.nonEmpty
       val r0: TPostResult[Context, IS[Z, org.sireum.lang.ast.IR.Global]] = transformISZ(preR.ctx, o2.globals, transform_langastIRGlobal _)
       val r1: TPostResult[Context, IS[Z, org.sireum.lang.ast.IR.Procedure]] = transformISZ(r0.ctx, o2.procedures, transform_langastIRProcedure _)
-      if (hasChanged || r0.resultOpt.nonEmpty || r1.resultOpt.nonEmpty)
-        TPostResult(r1.ctx, Some(o2(globals = r0.resultOpt.getOrElse(o2.globals), procedures = r1.resultOpt.getOrElse(o2.procedures))))
+      val r2: TPostResult[Context, IS[Z, org.sireum.lang.ast.IR.Program.Intrinsic]] = transformISZ(r1.ctx, o2.programIntrinsics, transform_langastIRProgramIntrinsic _)
+      if (hasChanged || r0.resultOpt.nonEmpty || r1.resultOpt.nonEmpty || r2.resultOpt.nonEmpty)
+        TPostResult(r2.ctx, Some(o2(globals = r0.resultOpt.getOrElse(o2.globals), procedures = r1.resultOpt.getOrElse(o2.procedures), programIntrinsics = r2.resultOpt.getOrElse(o2.programIntrinsics))))
       else
-        TPostResult(r1.ctx, None())
+        TPostResult(r2.ctx, None())
     } else if (preR.resultOpt.nonEmpty) {
       TPostResult(preR.ctx, Some(preR.resultOpt.getOrElse(o)))
     } else {

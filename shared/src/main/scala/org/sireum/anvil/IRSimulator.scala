@@ -1329,6 +1329,8 @@ import IRSimulator._
       case _: AST.IR.Exp.EnumElementRef => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
       case _: AST.IR.Exp.If => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
       case _: AST.IR.Exp.Apply => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
+      case _: AST.IR.Exp.ClosureRef => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
+      case _: AST.IR.Exp.ApplyClosure => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
     }
   }
 

@@ -193,6 +193,14 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRExpIntrinsic: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
 
+  val PreResult_langastIRExpClosureRef: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
+
+  val PostResult_langastIRExpClosureRef: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
+
+  val PreResult_langastIRExpApplyClosure: PreResult[org.sireum.lang.ast.IR.Exp] = PreResult(T, MNone())
+
+  val PostResult_langastIRExpApplyClosure: MOption[org.sireum.lang.ast.IR.Exp] = MNone()
+
   val PreResult_langastIRStmtExpr: PreResult[org.sireum.lang.ast.IR.Stmt.Ground] = PreResult(T, MNone())
 
   val PostResult_langastIRStmtExpr: MOption[org.sireum.lang.ast.IR.Stmt.Ground] = MNone()
@@ -333,6 +341,10 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRGlobal: MOption[org.sireum.lang.ast.IR.Global] = MNone()
 
+  val PreResult_langastIRProgramIntrinsic: PreResult[org.sireum.lang.ast.IR.Program.Intrinsic] = PreResult(T, MNone())
+
+  val PostResult_langastIRProgramIntrinsic: MOption[org.sireum.lang.ast.IR.Program.Intrinsic] = MNone()
+
   val PreResult_langastIRProgram: PreResult[org.sireum.lang.ast.IR.Program] = PreResult(T, MNone())
 
   val PostResult_langastIRProgram: MOption[org.sireum.lang.ast.IR.Program] = MNone()
@@ -376,6 +388,8 @@ import MAnvilIRTransformer._
       case o: org.sireum.lang.ast.IR.Exp.Indexing => return pre_langastIRExpIndexing(o)
       case o: org.sireum.lang.ast.IR.Exp.Type => return pre_langastIRExpType(o)
       case o: org.sireum.lang.ast.IR.Exp.Intrinsic => return pre_langastIRExpIntrinsic(o)
+      case o: org.sireum.lang.ast.IR.Exp.ClosureRef => return pre_langastIRExpClosureRef(o)
+      case o: org.sireum.lang.ast.IR.Exp.ApplyClosure => return pre_langastIRExpApplyClosure(o)
     }
   }
 
@@ -497,6 +511,14 @@ import MAnvilIRTransformer._
 
   def pre_langastIRExpIntrinsic(o: org.sireum.lang.ast.IR.Exp.Intrinsic): PreResult[org.sireum.lang.ast.IR.Exp] = {
     return PreResult_langastIRExpIntrinsic
+  }
+
+  def pre_langastIRExpClosureRef(o: org.sireum.lang.ast.IR.Exp.ClosureRef): PreResult[org.sireum.lang.ast.IR.Exp] = {
+    return PreResult_langastIRExpClosureRef
+  }
+
+  def pre_langastIRExpApplyClosure(o: org.sireum.lang.ast.IR.Exp.ApplyClosure): PreResult[org.sireum.lang.ast.IR.Exp] = {
+    return PreResult_langastIRExpApplyClosure
   }
 
   def pre_langastIRExpIntrinsicType(o: org.sireum.lang.ast.IR.Exp.Intrinsic.Type): PreResult[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = {
@@ -880,6 +902,14 @@ import MAnvilIRTransformer._
     return PreResult_langastIRGlobal
   }
 
+  def pre_langastIRProgramIntrinsic(o: org.sireum.lang.ast.IR.Program.Intrinsic): PreResult[org.sireum.lang.ast.IR.Program.Intrinsic] = {
+    return PreResult_langastIRProgramIntrinsic
+  }
+
+  def pre_langastIRProgramIntrinsicType(o: org.sireum.lang.ast.IR.Program.Intrinsic.Type): PreResult[org.sireum.lang.ast.IR.Program.Intrinsic.Type] = {
+    return PreResult(T, MNone())
+  }
+
   def pre_langastIRProgram(o: org.sireum.lang.ast.IR.Program): PreResult[org.sireum.lang.ast.IR.Program] = {
     return PreResult_langastIRProgram
   }
@@ -929,6 +959,8 @@ import MAnvilIRTransformer._
       case o: org.sireum.lang.ast.IR.Exp.Indexing => return post_langastIRExpIndexing(o)
       case o: org.sireum.lang.ast.IR.Exp.Type => return post_langastIRExpType(o)
       case o: org.sireum.lang.ast.IR.Exp.Intrinsic => return post_langastIRExpIntrinsic(o)
+      case o: org.sireum.lang.ast.IR.Exp.ClosureRef => return post_langastIRExpClosureRef(o)
+      case o: org.sireum.lang.ast.IR.Exp.ApplyClosure => return post_langastIRExpApplyClosure(o)
     }
   }
 
@@ -1050,6 +1082,14 @@ import MAnvilIRTransformer._
 
   def post_langastIRExpIntrinsic(o: org.sireum.lang.ast.IR.Exp.Intrinsic): MOption[org.sireum.lang.ast.IR.Exp] = {
     return PostResult_langastIRExpIntrinsic
+  }
+
+  def post_langastIRExpClosureRef(o: org.sireum.lang.ast.IR.Exp.ClosureRef): MOption[org.sireum.lang.ast.IR.Exp] = {
+    return PostResult_langastIRExpClosureRef
+  }
+
+  def post_langastIRExpApplyClosure(o: org.sireum.lang.ast.IR.Exp.ApplyClosure): MOption[org.sireum.lang.ast.IR.Exp] = {
+    return PostResult_langastIRExpApplyClosure
   }
 
   def post_langastIRExpIntrinsicType(o: org.sireum.lang.ast.IR.Exp.Intrinsic.Type): MOption[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = {
@@ -1433,6 +1473,14 @@ import MAnvilIRTransformer._
     return PostResult_langastIRGlobal
   }
 
+  def post_langastIRProgramIntrinsic(o: org.sireum.lang.ast.IR.Program.Intrinsic): MOption[org.sireum.lang.ast.IR.Program.Intrinsic] = {
+    return PostResult_langastIRProgramIntrinsic
+  }
+
+  def post_langastIRProgramIntrinsicType(o: org.sireum.lang.ast.IR.Program.Intrinsic.Type): MOption[org.sireum.lang.ast.IR.Program.Intrinsic.Type] = {
+    return MNone()
+  }
+
   def post_langastIRProgram(o: org.sireum.lang.ast.IR.Program): MOption[org.sireum.lang.ast.IR.Program] = {
     return PostResult_langastIRProgram
   }
@@ -1619,6 +1667,19 @@ import MAnvilIRTransformer._
           val r0: MOption[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = transform_langastIRExpIntrinsicType(o2.intrinsic)
           if (hasChanged || r0.nonEmpty)
             MSome(o2(intrinsic = r0.getOrElse(o2.intrinsic)))
+          else
+            MNone()
+        case o2: org.sireum.lang.ast.IR.Exp.ClosureRef =>
+          val r0: MOption[IS[Z, org.sireum.lang.ast.IR.Exp]] = transformISZ(o2.captures, transform_langastIRExp _)
+          if (hasChanged || r0.nonEmpty)
+            MSome(o2(captures = r0.getOrElse(o2.captures)))
+          else
+            MNone()
+        case o2: org.sireum.lang.ast.IR.Exp.ApplyClosure =>
+          val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.closureExp)
+          val r1: MOption[IS[Z, org.sireum.lang.ast.IR.Exp]] = transformISZ(o2.args, transform_langastIRExp _)
+          if (hasChanged || r0.nonEmpty || r1.nonEmpty)
+            MSome(o2(closureExp = r0.getOrElse(o2.closureExp), args = r1.getOrElse(o2.args)))
           else
             MNone()
       }
@@ -2692,6 +2753,57 @@ import MAnvilIRTransformer._
     }
   }
 
+  def transform_langastIRProgramIntrinsic(o: org.sireum.lang.ast.IR.Program.Intrinsic): MOption[org.sireum.lang.ast.IR.Program.Intrinsic] = {
+    val preR: PreResult[org.sireum.lang.ast.IR.Program.Intrinsic] = pre_langastIRProgramIntrinsic(o)
+    val r: MOption[org.sireum.lang.ast.IR.Program.Intrinsic] = if (preR.continu) {
+      val o2: org.sireum.lang.ast.IR.Program.Intrinsic = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      val r0: MOption[org.sireum.lang.ast.IR.Program.Intrinsic.Type] = transform_langastIRProgramIntrinsicType(o2.intrinsic)
+      if (hasChanged || r0.nonEmpty)
+        MSome(o2(intrinsic = r0.getOrElse(o2.intrinsic)))
+      else
+        MNone()
+    } else if (preR.resultOpt.nonEmpty) {
+      MSome(preR.resultOpt.getOrElse(o))
+    } else {
+      MNone()
+    }
+    val hasChanged: B = r.nonEmpty
+    val o2: org.sireum.lang.ast.IR.Program.Intrinsic = r.getOrElse(o)
+    val postR: MOption[org.sireum.lang.ast.IR.Program.Intrinsic] = post_langastIRProgramIntrinsic(o2)
+    if (postR.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return MSome(o2)
+    } else {
+      return MNone()
+    }
+  }
+
+  def transform_langastIRProgramIntrinsicType(o: org.sireum.lang.ast.IR.Program.Intrinsic.Type): MOption[org.sireum.lang.ast.IR.Program.Intrinsic.Type] = {
+    val preR: PreResult[org.sireum.lang.ast.IR.Program.Intrinsic.Type] = pre_langastIRProgramIntrinsicType(o)
+    val r: MOption[org.sireum.lang.ast.IR.Program.Intrinsic.Type] = if (preR.continu) {
+      val o2: org.sireum.lang.ast.IR.Program.Intrinsic.Type = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      val rOpt: MOption[org.sireum.lang.ast.IR.Program.Intrinsic.Type] = MNone()
+      rOpt
+    } else if (preR.resultOpt.nonEmpty) {
+      MSome(preR.resultOpt.getOrElse(o))
+    } else {
+      MNone()
+    }
+    val hasChanged: B = r.nonEmpty
+    val o2: org.sireum.lang.ast.IR.Program.Intrinsic.Type = r.getOrElse(o)
+    val postR: MOption[org.sireum.lang.ast.IR.Program.Intrinsic.Type] = post_langastIRProgramIntrinsicType(o2)
+    if (postR.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return MSome(o2)
+    } else {
+      return MNone()
+    }
+  }
+
   def transform_langastIRProgram(o: org.sireum.lang.ast.IR.Program): MOption[org.sireum.lang.ast.IR.Program] = {
     val preR: PreResult[org.sireum.lang.ast.IR.Program] = pre_langastIRProgram(o)
     val r: MOption[org.sireum.lang.ast.IR.Program] = if (preR.continu) {
@@ -2699,8 +2811,9 @@ import MAnvilIRTransformer._
       val hasChanged: B = preR.resultOpt.nonEmpty
       val r0: MOption[IS[Z, org.sireum.lang.ast.IR.Global]] = transformISZ(o2.globals, transform_langastIRGlobal _)
       val r1: MOption[IS[Z, org.sireum.lang.ast.IR.Procedure]] = transformISZ(o2.procedures, transform_langastIRProcedure _)
-      if (hasChanged || r0.nonEmpty || r1.nonEmpty)
-        MSome(o2(globals = r0.getOrElse(o2.globals), procedures = r1.getOrElse(o2.procedures)))
+      val r2: MOption[IS[Z, org.sireum.lang.ast.IR.Program.Intrinsic]] = transformISZ(o2.programIntrinsics, transform_langastIRProgramIntrinsic _)
+      if (hasChanged || r0.nonEmpty || r1.nonEmpty || r2.nonEmpty)
+        MSome(o2(globals = r0.getOrElse(o2.globals), procedures = r1.getOrElse(o2.procedures), programIntrinsics = r2.getOrElse(o2.programIntrinsics)))
       else
         MNone()
     } else if (preR.resultOpt.nonEmpty) {
