@@ -61,6 +61,7 @@ object AnvilIRTransformer {
         case o: org.sireum.lang.ast.IR.Exp.F64 => return pre_langastIRExpF64(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.R => return pre_langastIRExpR(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.String => return pre_langastIRExpString(ctx, o)
+        case o: org.sireum.lang.ast.IR.Exp.StringInterpolate => return pre_langastIRExpStringInterpolate(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.Temp => return pre_langastIRExpTemp(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.LocalVarRef => return pre_langastIRExpLocalVarRef(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.GlobalVarRef => return pre_langastIRExpGlobalVarRef(ctx, o)
@@ -111,7 +112,15 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
+    @pure def pre_langastIRExpStringInterpolate(ctx: Context, o: org.sireum.lang.ast.IR.Exp.StringInterpolate): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+      return PreResult(ctx, T, None())
+    }
+
     @pure def pre_langastIRExpTemp(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Temp): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+      return PreResult(ctx, T, None())
+    }
+
+    @pure def preIntrinsicStore(ctx: Context, o: Intrinsic.Store): PreResult[Context, Intrinsic.Store] = {
       return PreResult(ctx, T, None())
     }
 
@@ -127,15 +136,7 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
-    @pure def preIntrinsicStore(ctx: Context, o: Intrinsic.Store): PreResult[Context, Intrinsic.Store] = {
-      return PreResult(ctx, T, None())
-    }
-
     @pure def pre_langastIRExpFieldVarRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.FieldVarRef): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
-      return PreResult(ctx, T, None())
-    }
-
-    @pure def pre_langastIRExpUnary(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Unary): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
@@ -143,7 +144,7 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
-    @pure def pre_langastIRExpBinary(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Binary): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def pre_langastIRExpUnary(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Unary): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
@@ -151,11 +152,11 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
-    @pure def preIntrinsicDecl(ctx: Context, o: Intrinsic.Decl): PreResult[Context, Intrinsic.Decl] = {
+    @pure def pre_langastIRExpBinary(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Binary): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
-    @pure def pre_langastIRExpIf(ctx: Context, o: org.sireum.lang.ast.IR.Exp.If): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def preIntrinsicDecl(ctx: Context, o: Intrinsic.Decl): PreResult[Context, Intrinsic.Decl] = {
       return PreResult(ctx, T, None())
     }
 
@@ -167,19 +168,23 @@ object AnvilIRTransformer {
       return PreResult(ctx, T, None())
     }
 
-    @pure def pre_langastIRExpConstruct(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Construct): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
-      return PreResult(ctx, T, None())
-    }
-
     @pure def preIntrinsicRegisterAssign(ctx: Context, o: Intrinsic.RegisterAssign): PreResult[Context, Intrinsic.RegisterAssign] = {
       return PreResult(ctx, T, None())
     }
 
-    @pure def pre_langastIRExpApply(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Apply): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def pre_langastIRExpIf(ctx: Context, o: org.sireum.lang.ast.IR.Exp.If): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
+      return PreResult(ctx, T, None())
+    }
+
+    @pure def pre_langastIRExpConstruct(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Construct): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
     @pure def preIntrinsicGotoLocal(ctx: Context, o: Intrinsic.GotoLocal): PreResult[Context, Intrinsic.GotoLocal] = {
+      return PreResult(ctx, T, None())
+    }
+
+    @pure def pre_langastIRExpApply(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Apply): PreResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return PreResult(ctx, T, None())
     }
 
@@ -632,6 +637,7 @@ object AnvilIRTransformer {
         case o: org.sireum.lang.ast.IR.Exp.F64 => return post_langastIRExpF64(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.R => return post_langastIRExpR(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.String => return post_langastIRExpString(ctx, o)
+        case o: org.sireum.lang.ast.IR.Exp.StringInterpolate => return post_langastIRExpStringInterpolate(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.Temp => return post_langastIRExpTemp(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.LocalVarRef => return post_langastIRExpLocalVarRef(ctx, o)
         case o: org.sireum.lang.ast.IR.Exp.GlobalVarRef => return post_langastIRExpGlobalVarRef(ctx, o)
@@ -682,7 +688,15 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
+    @pure def post_langastIRExpStringInterpolate(ctx: Context, o: org.sireum.lang.ast.IR.Exp.StringInterpolate): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+      return TPostResult(ctx, None())
+    }
+
     @pure def post_langastIRExpTemp(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Temp): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+      return TPostResult(ctx, None())
+    }
+
+    @pure def postIntrinsicStore(ctx: Context, o: Intrinsic.Store): TPostResult[Context, Intrinsic.Store] = {
       return TPostResult(ctx, None())
     }
 
@@ -698,15 +712,7 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
-    @pure def postIntrinsicStore(ctx: Context, o: Intrinsic.Store): TPostResult[Context, Intrinsic.Store] = {
-      return TPostResult(ctx, None())
-    }
-
     @pure def post_langastIRExpFieldVarRef(ctx: Context, o: org.sireum.lang.ast.IR.Exp.FieldVarRef): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
-      return TPostResult(ctx, None())
-    }
-
-    @pure def post_langastIRExpUnary(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Unary): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
@@ -714,7 +720,7 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
-    @pure def post_langastIRExpBinary(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Binary): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def post_langastIRExpUnary(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Unary): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
@@ -722,11 +728,11 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
-    @pure def postIntrinsicDecl(ctx: Context, o: Intrinsic.Decl): TPostResult[Context, Intrinsic.Decl] = {
+    @pure def post_langastIRExpBinary(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Binary): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
-    @pure def post_langastIRExpIf(ctx: Context, o: org.sireum.lang.ast.IR.Exp.If): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def postIntrinsicDecl(ctx: Context, o: Intrinsic.Decl): TPostResult[Context, Intrinsic.Decl] = {
       return TPostResult(ctx, None())
     }
 
@@ -738,19 +744,23 @@ object AnvilIRTransformer {
       return TPostResult(ctx, None())
     }
 
-    @pure def post_langastIRExpConstruct(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Construct): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
-      return TPostResult(ctx, None())
-    }
-
     @pure def postIntrinsicRegisterAssign(ctx: Context, o: Intrinsic.RegisterAssign): TPostResult[Context, Intrinsic.RegisterAssign] = {
       return TPostResult(ctx, None())
     }
 
-    @pure def post_langastIRExpApply(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Apply): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+    @pure def post_langastIRExpIf(ctx: Context, o: org.sireum.lang.ast.IR.Exp.If): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
+      return TPostResult(ctx, None())
+    }
+
+    @pure def post_langastIRExpConstruct(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Construct): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
     @pure def postIntrinsicGotoLocal(ctx: Context, o: Intrinsic.GotoLocal): TPostResult[Context, Intrinsic.GotoLocal] = {
+      return TPostResult(ctx, None())
+    }
+
+    @pure def post_langastIRExpApply(ctx: Context, o: org.sireum.lang.ast.IR.Exp.Apply): TPostResult[Context, org.sireum.lang.ast.IR.Exp] = {
       return TPostResult(ctx, None())
     }
 
@@ -1314,6 +1324,12 @@ import AnvilIRTransformer._
             TPostResult(preR.ctx, Some(o2))
           else
             TPostResult(preR.ctx, None())
+        case o2: org.sireum.lang.ast.IR.Exp.StringInterpolate =>
+          val r0: TPostResult[Context, IS[Z, org.sireum.lang.ast.IR.Exp]] = transformISZ(preR.ctx, o2.args, transform_langastIRExp _)
+          if (hasChanged || r0.resultOpt.nonEmpty)
+            TPostResult(r0.ctx, Some(o2(args = r0.resultOpt.getOrElse(o2.args))))
+          else
+            TPostResult(r0.ctx, None())
         case o2: org.sireum.lang.ast.IR.Exp.Temp =>
           if (hasChanged)
             TPostResult(preR.ctx, Some(o2))

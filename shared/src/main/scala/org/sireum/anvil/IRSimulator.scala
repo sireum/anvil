@@ -1331,6 +1331,7 @@ import IRSimulator._
       case _: AST.IR.Exp.Apply => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
       case _: AST.IR.Exp.ClosureRef => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
       case _: AST.IR.Exp.ApplyClosure => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
+      case _: AST.IR.Exp.StringInterpolate => halt(s"Infeasible: ${exp.prettyST(anvil.printer).render}")
     }
   }
 
