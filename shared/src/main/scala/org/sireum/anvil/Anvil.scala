@@ -185,9 +185,9 @@ import Anvil._
   val printer: AST.IR.Printer = AnvilIRPrinter(this, IpAlloc(HashSMap.empty, HashSMap.empty, 0))
   val typeShaType: AST.Typed.Name = AST.Typed.u32
   val typeShaSize: Z = typeByteSize(typeShaType)
-  val stringISType: AST.Typed.Name = AST.Typed.Name(AST.Typed.isName, ISZ(spType, AST.Typed.u8))
-  val cpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "CP"), ISZ())
-  val dpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "DP"), ISZ())
+  val stringISType: AST.Typed.Name = AST.Typed.Name(AST.Typed.isName, AST.Typed.noRType, ISZ(spType, AST.Typed.u8))
+  val cpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "CP"), AST.Typed.noRType, ISZ())
+  val dpType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "DP"), AST.Typed.noRType, ISZ())
   val dpMask: Z = {
     val size = anvil.Runtime.Ext.z2u(config.printSize)
     var r = u"2"
@@ -350,11 +350,11 @@ import Anvil._
             pos), pos)
           stmts = stmts :+ AST.IR.Stmt.If(tempL,
             AST.IR.Stmt.Block(ISZ(
-              AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, p.context.owner, p.context.id, ISZ(), p.tipe, pos))
+              AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, p.context.owner, p.context.id, AST.Typed.emptyRTypes, ISZ(), p.tipe, pos))
             ), pos), AST.IR.Stmt.Block(ISZ(), pos), pos)
           i = i + 1
         }
-        val test = AST.IR.Procedure(T, ISZ(), ISZ(), testId, ISZ(),
+        val test = AST.IR.Procedure(T, ISZ(), ISZ(), ISZ(), testId, ISZ(),
           AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit),
           AST.IR.Body.Block(AST.IR.Stmt.Block(stmts, pos)), pos)
         procedures = test +: procedures
@@ -412,9 +412,9 @@ import Anvil._
             objPosOpt = v.posOpt
           }
           stmts = stmts :+ AST.Stmt.Assign(AST.Exp.Ident(v.ast.id, AST.ResolvedAttr(v.posOpt, v.resOpt, v.typedOpt)),
-            v.ast.initOpt.get, AST.Attr(v.posOpt))
+            v.ast.initOpt.get, ISZ(), AST.Attr(v.posOpt))
         }
-        stmts = stmts :+ AST.Stmt.Return(None(), AST.TypedAttr(objPosOpt, AST.Typed.unitOpt))
+        stmts = stmts :+ AST.Stmt.Return(None(), ISZ(), AST.TypedAttr(objPosOpt, AST.Typed.unitOpt))
         val pos = objPosOpt.get
         val objInit = irt.translateMethodH(F, None(), owner, objInitId, ISZ(), ISZ(),
           AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), pos, Some(AST.Body(stmts, ISZ())))
@@ -484,7 +484,7 @@ import Anvil._
                 }
                 args = args :+ arg
               }
-              impls = impls :+ (fresh.label(), t, AST.IR.Exp.Apply(F, minfo.owner, method.id, args, pt, pos))
+              impls = impls :+ (fresh.label(), t, AST.IR.Exp.Apply(F, minfo.owner, method.id, AST.Typed.emptyRTypes, args, pt, pos))
           }
         }
         var blocks = ISZ[AST.IR.BasicBlock](
@@ -517,7 +517,7 @@ import Anvil._
             ), AST.IR.Jump.Return(Some(AST.IR.Exp.Temp(temp, exp.tipe, exp.pos)), exp.pos))
           }
         }
-        procedures = procedures :+ AST.IR.Procedure(F, ISZ(), method.owner, method.id, paramNames, methodContext.t,
+        procedures = procedures :+ AST.IR.Procedure(F, ISZ(), ISZ(), method.owner, method.id, paramNames, methodContext.t,
           AST.IR.Body.Basic(blocks), pos)
       }
 
@@ -1472,7 +1472,7 @@ import Anvil._
                 }
                 if (classInit(rhs.tipe).nonEmpty) {
                   grounds = grounds :+ AST.IR.Stmt.Expr(AST.IR.Exp.Apply(F, rhs.tipe.ids, newInitId,
-                    ISZ(temp), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(rhs.tipe), AST.Typed.unit), rhs.pos))
+                    AST.Typed.emptyRTypes, ISZ(temp), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(rhs.tipe), AST.Typed.unit), rhs.pos))
                 }
               case rhs: AST.IR.Exp.String =>
                 val u8is = conversions.String.toU8is(rhs.value)
@@ -1627,7 +1627,7 @@ import Anvil._
               blocks = blocks :+ AST.IR.BasicBlock(block.label, grounds, AST.IR.Jump.If(AST.IR.Exp.GlobalVarRef(
                 owner, AST.Typed.b, pos), label2, label1, pos))
               blocks = blocks :+ AST.IR.BasicBlock(label1, ISZ(AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, owner, objInitId,
-                ISZ(), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), pos))),
+                AST.Typed.emptyRTypes, ISZ(), AST.Typed.Fun(AST.Purity.Impure, F, ISZ(), AST.Typed.unit), pos))),
                 AST.IR.Jump.Goto(label2, pos))
               grounds = ISZ(g)
               block = b(label = label2, grounds = grounds)
@@ -3339,7 +3339,7 @@ import Anvil._
           val callerOffset = AST.IR.Exp.LocalVarRef(T, p.context, sfCurrentId, spType, pos)
           blocks = blocks :+ b(grounds = b.grounds ++ ISZ[AST.IR.Stmt.Ground](
             AST.IR.Stmt.Assign.Temp(0, AST.IR.Exp.Type(F, callerOffset, displayIndexType, pos), pos),
-            AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, runtimeName, id, ISZ(
+            AST.IR.Stmt.Expr(AST.IR.Exp.Apply(T, runtimeName, id, AST.Typed.emptyRTypes, ISZ(
               AST.IR.Exp.Int(spType, 0, pos),
               AST.IR.Exp.Int(displayIndexType, typeByteSize(spType), pos),
               AST.IR.Exp.Int(displayIndexType, typeShaSize, pos),
@@ -3476,27 +3476,27 @@ import Anvil._
                   case AST.Typed.b =>
                     val id = "printB"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, AST.Typed.emptyRTypes, ISZ(buffer, index, mask, arg), mt, pos)
                   case AST.Typed.c =>
                     val id = "printC"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, AST.Typed.emptyRTypes, ISZ(buffer, index, mask, arg), mt, pos)
                   case AST.Typed.z =>
                     val id = "printS64"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, AST.IR.Exp.Type(F, arg, AST.Typed.s64, pos)), mt, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, AST.Typed.emptyRTypes, ISZ(buffer, index, mask, AST.IR.Exp.Type(F, arg, AST.Typed.s64, pos)), mt, pos)
                   case AST.Typed.f32 =>
                     val id = "printF32_2"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, AST.Typed.emptyRTypes, ISZ(buffer, index, mask, arg), mt, pos)
                   case AST.Typed.f64 =>
                     val id = "printF64_2"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, AST.Typed.emptyRTypes, ISZ(buffer, index, mask, arg), mt, pos)
                   case AST.Typed.string =>
                     val id = "printString"
                     val mt = runtimePrintMethodTypeMap.get(id).get
-                    AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, arg), mt, pos)
+                    AST.IR.Exp.Apply(T, runtimeName, id, AST.Typed.emptyRTypes, ISZ(buffer, index, mask, arg), mt, pos)
                   case t if subZOpt(t).nonEmpty =>
                     if (isBitVector(t) && !isSigned(t)) {
                       val digits = AST.IR.Exp.Int(AST.Typed.z, typeByteSize(t) * 2, pos)
@@ -3506,7 +3506,7 @@ import Anvil._
                       if (a.tipe != AST.Typed.u64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.u64, pos)
                       }
-                      AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, a, digits), mt, pos)
+                      AST.IR.Exp.Apply(T, runtimeName, id, AST.Typed.emptyRTypes, ISZ(buffer, index, mask, a, digits), mt, pos)
                     } else if (isSigned(t)) {
                       val id = "printS64"
                       val mt = runtimePrintMethodTypeMap.get(id).get
@@ -3514,7 +3514,7 @@ import Anvil._
                       if (a.tipe != AST.Typed.s64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.s64, pos)
                       }
-                      AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, a), mt, pos)
+                      AST.IR.Exp.Apply(T, runtimeName, id, AST.Typed.emptyRTypes, ISZ(buffer, index, mask, a), mt, pos)
                     } else {
                       val id = "printU64"
                       val mt = runtimePrintMethodTypeMap.get(id).get
@@ -3522,7 +3522,7 @@ import Anvil._
                       if (a.tipe != AST.Typed.u64) {
                         a = AST.IR.Exp.Type(F, a, AST.Typed.u64, pos)
                       }
-                      AST.IR.Exp.Apply(T, runtimeName, id, ISZ(buffer, index, mask, a), mt, pos)
+                      AST.IR.Exp.Apply(T, runtimeName, id, AST.Typed.emptyRTypes, ISZ(buffer, index, mask, a), mt, pos)
                     }
                   case AST.Typed.r => halt(s"TODO: $arg")
                   case t => halt(s"TODO: $t, $arg")
@@ -3844,7 +3844,7 @@ import Anvil._
     }
     val indexType = t.args(0)
     indexType match {
-      case AST.Typed.Name(ISZ(index), _) =>
+      case AST.Typed.Name(ISZ(index), _, _) =>
         Z(index) match {
           case Some(size) => return size
           case _ =>
@@ -4025,7 +4025,7 @@ import Anvil._
       case Util.spType =>
       case `cpType` => assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
       case `dpType` =>
-      case AST.Typed.Name(ISZ(index), ISZ()) if Z(index).nonEmpty =>
+      case AST.Typed.Name(ISZ(index), _, ISZ()) if Z(index).nonEmpty =>
       case _ => return isSubZ(t)
     }
     return T
@@ -4058,7 +4058,7 @@ import Anvil._
   @memoize def minMaxOpt(t: AST.Typed): (Option[Z], Option[Z]) = {
     t match {
       case AST.Typed.z =>
-      case AST.Typed.Name(ISZ(index), ISZ()) if Z(index).nonEmpty => return (Some(0), None())
+      case AST.Typed.Name(ISZ(index), _, ISZ()) if Z(index).nonEmpty => return (Some(0), None())
       case _ =>
         subZOpt(t) match {
           case Some(info) =>
@@ -4093,7 +4093,7 @@ import Anvil._
         assert(numOfLocs != 0, "Number of locations for CP has not been initialized")
         return F
       case `dpType` => return F
-      case AST.Typed.Name(ISZ(index), ISZ()) if Z(index).nonEmpty => return F
+      case AST.Typed.Name(ISZ(index), _, ISZ()) if Z(index).nonEmpty => return F
       case _ =>
         subZOpt(t) match {
           case Some(info) => return info.ast.isSigned
@@ -4126,11 +4126,11 @@ import Anvil._
               val tOpt = Option.some(ae.typedOpt.get.subst(sm))
               r = r :+ AST.Stmt.Assign(AST.Exp.Select(receiver, v.ast.id, ISZ(),
                 AST.ResolvedAttr(ae.asStmt.posOpt, v.resOpt, tOpt)),
-                tsubst.transformAssignExp(T, ae).resultOpt.getOrElse(ae), AST.Attr(v.posOpt))
+                tsubst.transformAssignExp(T, ae).resultOpt.getOrElse(ae), ISZ(), AST.Attr(v.posOpt))
             case _ =>
           }
         }
-        r = r :+ AST.Stmt.Return(None(), AST.TypedAttr(info.ast.posOpt, AST.Typed.unitOpt))
+        r = r :+ AST.Stmt.Return(None(), ISZ(), AST.TypedAttr(info.ast.posOpt, AST.Typed.unitOpt))
       case _ =>
     }
     return r
@@ -4140,7 +4140,7 @@ import Anvil._
     val min: Z = indexType match {
       case AST.Typed.z => 0
       case Util.spType => 0
-      case AST.Typed.Name(ISZ(index), ISZ()) if Z(index).nonEmpty => return 0
+      case AST.Typed.Name(ISZ(index), _, ISZ()) if Z(index).nonEmpty => return 0
       case _ =>
         val subz = subZOpt(indexType).get.ast
         if (subz.isIndex) subz.min
@@ -4221,7 +4221,8 @@ import Anvil._
 
   @strictpure def allocTypeNamed(isImmutable: B, numOfBytes: Z): AST.Typed.Name = AST.Typed.Name(
     if (isImmutable) AST.Typed.isName else AST.Typed.msName,
-    ISZ(AST.Typed.Name(ISZ(s"$numOfBytes"), ISZ()), AST.Typed.u8))
+    AST.Typed.noRType,
+    ISZ(AST.Typed.Name(ISZ(s"$numOfBytes"), AST.Typed.noRType, ISZ()), AST.Typed.u8))
 
   @memoize def procMaxTemps(anvil: Anvil, pbox: PBox): TempVector = {
     val tmc = TempMaxCounter(anvil, HashSet.empty, TempVector.empty)

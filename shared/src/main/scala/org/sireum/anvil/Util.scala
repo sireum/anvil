@@ -1145,12 +1145,12 @@ object Util {
   val spName: ISZ[String] = ISZ("$sp")
   val displayId: String = "$display"
   val displayName: ISZ[String] = ISZ(displayId)
-  val displayIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "U"), ISZ())
-  val displayType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(displayIndexType, AST.Typed.u8))
-  val f32DigitIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "I50"), ISZ())
-  val f64DigitIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "I320"), ISZ())
-  val f32DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(f32DigitIndexType, AST.Typed.u8))
-  val f64DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, ISZ(f64DigitIndexType, AST.Typed.u8))
+  val displayIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "U"), AST.Typed.noRType, ISZ())
+  val displayType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, AST.Typed.noRType, ISZ(displayIndexType, AST.Typed.u8))
+  val f32DigitIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "I50"), AST.Typed.noRType, ISZ())
+  val f64DigitIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "I320"), AST.Typed.noRType, ISZ())
+  val f32DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, AST.Typed.noRType, ISZ(f32DigitIndexType, AST.Typed.u8))
+  val f64DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, AST.Typed.noRType, ISZ(f64DigitIndexType, AST.Typed.u8))
   val runtimeName: QName = AST.Typed.sireumName :+ "anvil" :+ "Runtime"
   val intrinsicName: QName = runtimeName :+ "Intrinsic"
   val mainAnnName: QName = AST.Typed.sireumName :+ "anvil" :+ "hls"
@@ -1229,7 +1229,7 @@ object Util {
   val ignoreGlobalInits: HashSet[QName] = HashSet.empty[QName] + displayName + memTypeName + memSizeName + testNumName
   val syntheticMethodIds: HashSet[String] = HashSet.empty[String] + objInitId + newInitId + testId
   val ignoredTempLocal: HashSet[String] = HashSet.empty[String] + sfLocId + sfDescId + sfCallerId + sfCurrentId + s"$resultLocalId$dataId"
-  val spType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "SP"), ISZ())
+  val spType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "SP"), AST.Typed.noRType, ISZ())
 
   @strictpure def tempST(anvil: Anvil, tipe: AST.Typed, n: Z): ST = {
     val t: AST.Typed =
