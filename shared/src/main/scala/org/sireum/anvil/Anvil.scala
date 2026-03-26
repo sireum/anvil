@@ -155,9 +155,9 @@ object Anvil {
       info match {
         case info: Info.Method if info.owner == name || info.name == name =>
           for (ann <- info.ast.sig.annotations) {
-            if (ann.name == mainAnnName && !isTest) {
+            if (ann.name.value == "hls" && !isTest) {
               entryPoints = entryPoints :+ TypeSpecializer.EntryPoint.Method(info.name)
-            } else if (ann.name == testAnnName && isTest) {
+            } else if (ann.name.value == "test" && isTest) {
               entryPoints = entryPoints :+ TypeSpecializer.EntryPoint.Method(info.name)
             }
           }
@@ -4191,10 +4191,10 @@ import Anvil._
 
   @memoize def procedureMod(context: AST.IR.MethodContext): PMod.Type = {
     for (ann <- getAnnotations(context)) {
-      if (ann.name == mainAnnName) {
+      if (ann.name.value == "hls") {
         return PMod.Main
       }
-      if (ann.name == testAnnName) {
+      if (ann.name.value == "test") {
         return PMod.Test
       }
     }
