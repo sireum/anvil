@@ -1449,6 +1449,7 @@ object ArbInputMap {
                                val exp: ArbIpType,
                                val memoryType: Anvil.Config.MemoryAccess.Type,
                                val genVerilog: B,
+                               val nonXilinxIP: B,
                                val erase: B,
                                val aligned: B,
                                val arbID: Z) extends ArbIpModule {
@@ -1547,13 +1548,18 @@ object ArbInputMap {
       """
   }
   @pure override def moduleST: ST = {
-    val bramInsST: ST =
-      if(!genVerilog) st"val bram = Module(new BRAMIP(${depthOfBRAM}, 8))"
-      else
-        st"""
-            |val bram = Module(new XilinxBRAMWrapper)
-            |bram.io.clk := clock.asBool
+    val bramInsST: ST = {
+      if(nonXilinxIP) {
+        st"val bram = Module(new BRAMIP(${depthOfBRAM}, 8))"
+      } else {
+        if (!genVerilog) st"val bram = Module(new BRAMIP(${depthOfBRAM}, 8))"
+        else
+          st"""
+              |val bram = Module(new XilinxBRAMWrapper)
+              |bram.io.clk := clock.asBool
           """
+      }
+    }
     val dmaZeroOutST: ST =
       if(erase)
         st"""
@@ -1570,7 +1576,7 @@ object ArbInputMap {
 
     val bramModuleST: ST =
       st"""
-          |${if(!genVerilog) bramIpST else st""}
+          |${if(!genVerilog) bramIpST else if(nonXilinxIP && genVerilog) bramIpST else st""}
           |class ${moduleName}(val width: Int = ${widthOfBRAM}, val depth: Int = ${depthOfBRAM}) extends Module {
           |  val io = IO(new Bundle {
           |    val mode = Input(UInt(2.W)) // 00 -> disable, 01 -> read, 10 -> write, 11 -> DMA
@@ -2886,7 +2892,7 @@ import HwSynthesizer2._
     ArbDivision(T, "DivisionSigned64", "arbDivisionSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T), noXilinxIp, 32),
     ArbRemainder(F, "RemainerUnsigned64", "arbRemainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
     ArbRemainder(T, "RemainerSigned64", "arbRemainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
-    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4, 35),
+    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, noXilinxIp, anvil.config.erase, anvil.config.alignAxi4, 35),
     ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, anvil.config.memory, ArbTempSaveRestoreIP(), anvil.config.memoryAccess, noXilinxIp, anvil.config.alignAxi4, 36),
     ArbGlobalVar(F, "GlobalVar", "arbGlobalVar", 64, ArbGlobalVarIP(), noXilinxIp, 37)
   )
@@ -4064,7 +4070,7 @@ import HwSynthesizer2._
           case ArbIndexer(_, _, _, _, _, _, _) =>
             arbiterModuleMap = arbiterModuleMap +
               ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case ArbBlockMemory(_, modName, _, _, _, _, _, _, _, _, _) =>
+          case ArbBlockMemory(_, modName, _, _, _, _, _, _, _, _, _, _) =>
             arbiterModuleMap = arbiterModuleMap +
               ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
           case _ =>
