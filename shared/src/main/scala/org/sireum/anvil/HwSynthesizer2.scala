@@ -1166,29 +1166,200 @@ object ArbInputMap {
   @strictpure override def moduleST: ST = {
     if(nonXilinxIP)
       st"""
+          |// ======================================================================
+          |//  Portable high-Fmax 64x64 -> 64 multiplier (truncated).
+          |//
+          |//  Architecture:
+          |//    Stage 0  : operand capture
+          |//    Stage 1  : Radix-4 Booth recoding -> 33 partial products
+          |//    Stage 2  : Wallace tree, reduction layer A (33 -> ~10 operands)
+          |//    Stage 3  : Wallace tree, reduction layer B (~10 -> 2 operands)
+          |//    Stage 4  : CPA low half  (low 32b)
+          |//    Stage 5  : CPA high half (high 32b with carry in)
+          |//
+          |//  Latency : 6 cycles start_rise -> valid pulse.
+          |//  No use of `*` or `/` operators anywhere in the datapath.
+          |//  No primitives - pure RTL. Portable across FPGA & ASIC.
+          |//
+          |//  Signed/unsigned: low 64 bits of a*b are identical for signed and
+          |//  unsigned operands under two's complement, so the core runs
+          |//  unsigned and the result is reinterpreted at the output.
+          |// ======================================================================
           |class ${moduleName}(val width: Int = 64) extends Module {
-          |    val io = IO(new Bundle{
-          |        val a = Input(${portType}(width.W))
-          |        val b = Input(${portType}(width.W))
-          |        val start = Input(Bool())
-          |        val out = Output(${portType}(width.W))
-          |        val valid = Output(Bool())
-          |    })
+          |  require(width == 64, "This multiplier is hand-tuned for 64-bit operands")
           |
-          |    val r_start      = RegInit(false.B)
-          |    val r_start_next = RegInit(false.B)
-          |    val r_busy       = RegInit(true.B)
+          |  val io = IO(new Bundle{
+          |    val a     = Input(${portType}(width.W))
+          |    val b     = Input(${portType}(width.W))
+          |    val start = Input(Bool())
+          |    val out   = Output(${portType}(width.W))
+          |    val valid = Output(Bool())
+          |  })
           |
-          |    r_start      := io.start
-          |    r_start_next := r_start
-          |    when(r_start & ~r_start_next) {
-          |        r_busy := false.B
-          |    } .elsewhen(io.valid) {
-          |        r_busy := true.B
+          |  val LATENCY = 6
+          |
+          |  // ---------------- handshake (same external semantics as before) ----
+          |  val start_d    = RegNext(io.start, false.B)
+          |  val start_rise = io.start && !start_d
+          |  val busy       = RegInit(false.B)
+          |  val accept     = start_rise && !busy
+          |
+          |  val valid_sr = RegInit(0.U(LATENCY.W))
+          |  valid_sr := Cat(valid_sr(LATENCY - 2, 0), accept)
+          |  io.valid := valid_sr(LATENCY - 1)
+          |  when (accept)        { busy := true.B }
+          |  .elsewhen (io.valid) { busy := false.B }
+          |
+          |  // ================================================================
+          |  //  Stage 0 : capture operands
+          |  //    RegEnable without reset so Vivado can pack them into DSP/
+          |  //    IOB regs if it chooses, and ASIC synthesis sees clean FFs.
+          |  // ================================================================
+          |  val aU = io.a.asUInt
+          |  val bU = io.b.asUInt
+          |  val a_s0 = RegEnable(aU, accept)               // 64b
+          |  // 67b: LSB=0 for Booth grouping, top 2 zeros so the k=32 group b_s0(66,64) is in range.
+          |  // Core runs unsigned (see header) so zero-extension is correct for both signed and unsigned.
+          |  val b_s0 = RegEnable(Cat(0.U(2.W), bU, 0.U(1.W)), accept)
+          |
+          |  val en_s1 = RegNext(accept, false.B)
+          |  val en_s2 = RegNext(en_s1,  false.B)
+          |  val en_s3 = RegNext(en_s2,  false.B)
+          |  val en_s4 = RegNext(en_s3,  false.B)
+          |
+          |  // ================================================================
+          |  //  Stage 1 : Radix-4 Booth PP generation
+          |  //    For k = 0..32, inspect b[2k+1 : 2k-1] (with b[-1] = 0).
+          |  //    Encoding produces {neg, two, one}:
+          |  //        000 / 111 ->  0        (one=0, two=0, neg=0)
+          |  //        001 / 010 -> +A        (one=1, two=0, neg=0)
+          |  //        011       -> +2A       (one=0, two=1, neg=0)
+          |  //        100       -> -2A       (one=0, two=1, neg=1)
+          |  //        101 / 110 -> -A        (one=1, two=0, neg=1)
+          |  //    PP bits = (mux of {0, A, 2A}) XOR neg, plus neg added at LSB.
+          |  //    We keep each PP as 66b (A can be shifted by 1, plus sign ext).
+          |  // ================================================================
+          |  val numPP = 33
+          |  val ppWidth = 66
+          |  val pp_s1      = Reg(Vec(numPP, UInt(ppWidth.W)))
+          |  val ppShift_s1 = Reg(Vec(numPP, UInt(7.W))) // shift amount for each PP (2*k)
+          |  val ppNeg_s1   = Reg(Vec(numPP, Bool()))    // carry-in for -A / -2A
+          |
+          |  // build each PP combinationally, latch at stage 1
+          |  val a65 = Cat(0.U(1.W), a_s0)   // 65b zero-extended copy for 2A shift
+          |  for (k <- 0 until numPP) {
+          |    val bits = b_s0(2*k + 2, 2*k) // 3-bit group
+          |    val one  = bits(0) ^ bits(1)
+          |    val two  = (bits(2) && !bits(1) && !bits(0)) ||
+          |               (!bits(2) &&  bits(1) &&  bits(0))
+          |    val neg  = bits(2)
+          |    // select 0 / A / 2A
+          |    val aSel = Mux(two, Cat(a_s0, 0.U(1.W)),     // 2A (65b)
+          |                Mux(one, a65,                    // A  (65b zero-extended)
+          |                         0.U(65.W)))
+          |    // conditional invert (two's complement: invert + add neg at LSB)
+          |    val ppBase = Mux(neg, ~aSel, aSel)           // 65b
+          |    // extend to 66b with proper sign for negative PPs
+          |    val ppExt  = Cat(Mux(neg, 1.U(1.W), 0.U(1.W)), ppBase)   // 66b
+          |    pp_s1(k)      := ppExt
+          |    ppShift_s1(k) := (2*k).U(7.W)
+          |    ppNeg_s1(k)   := neg
+          |  }
+          |
+          |  // Pre-shift each PP into the 128b product grid.
+          |  // Only low 64 bits matter for the truncated product, but we keep
+          |  // 65b working width to preserve carry into bit 64 during reduction.
+          |  val WORK_W = 65
+          |  val pp_shifted = Wire(Vec(numPP, UInt(WORK_W.W)))
+          |  for (k <- 0 until numPP) {
+          |    val shamt = 2*k
+          |    if (shamt >= WORK_W) {
+          |      pp_shifted(k) := 0.U
+          |    } else {
+          |      val take = pp_s1(k)(WORK_W - shamt - 1, 0)  // bits that land within [0, WORK_W)
+          |      // shamt==0 would make Cat() build a zero-width 0.U literal, which Chisel rejects.
+          |      pp_shifted(k) := (if (shamt == 0) take else Cat(take, 0.U(shamt.W)))
           |    }
+          |  }
+          |  // Booth-negative correction: add 'neg' at position 2*k of the sum
+          |  // (collected into a single 65b vector for free insertion into tree)
+          |  val negCorr = Wire(Vec(numPP, UInt(WORK_W.W)))
+          |  for (k <- 0 until numPP) {
+          |    val shamt = 2*k
+          |    if (shamt >= WORK_W) negCorr(k) := 0.U
+          |    else                 negCorr(k) := (ppNeg_s1(k).asUInt) << shamt
+          |  }
           |
-          |    io.out := io.a * io.b
-          |    io.valid := r_start & ~r_busy
+          |  // ================================================================
+          |  //  Wallace reduction: generic 3:2 CSA helper
+          |  //    sum_i   = a_i XOR b_i XOR c_i
+          |  //    carry_i = majority(a_i, b_i, c_i) shifted left by 1
+          |  //    Each FA is ~2 LUTs on Xilinx, ~4 gates on ASIC.
+          |  // ================================================================
+          |  def csa(a: UInt, b: UInt, c: UInt): (UInt, UInt) = {
+          |    val s = a ^ b ^ c
+          |    val cOut = ((a & b) | (b & c) | (a & c)) << 1
+          |    (s, cOut(WORK_W - 1, 0))
+          |  }
+          |
+          |  // Gather all operands into a mutable list for reduction.
+          |  // Seq length starts at numPP + numPP (PPs + neg corrections that
+          |  // are nonzero). In practice we can merge neg corrections into the
+          |  // first reduction layer.
+          |  var operands: Seq[UInt] = (0 until numPP).map(pp_shifted(_)) ++
+          |                            (0 until numPP).map(negCorr(_))
+          |
+          |  // ----------------------------------------------------------------
+          |  //  Stage 2 : reduction layer A  -> target ~10 operands
+          |  //  Stage 3 : reduction layer B  -> target 2 operands
+          |  //  Split point chosen so each stage has ~4 CSA levels of depth.
+          |  // ----------------------------------------------------------------
+          |  def reduceOne(ops: Seq[UInt]): Seq[UInt] = {
+          |    val buf = scala.collection.mutable.ArrayBuffer[UInt]()
+          |    var i = 0
+          |    val n = ops.length
+          |    while (i + 2 < n) {
+          |      val (s, c) = csa(ops(i), ops(i+1), ops(i+2))
+          |      buf += s; buf += c
+          |      i += 3
+          |    }
+          |    while (i < n) { buf += ops(i); i += 1 }
+          |    buf.toSeq
+          |  }
+          |
+          |  // Keep reducing until operand count <= targetA, then pipeline.
+          |  val targetA = 10
+          |  while (operands.length > targetA) operands = reduceOne(operands)
+          |
+          |  // Pipeline barrier: register stage-2 outputs
+          |  val s2_regs = operands.map(op => RegEnable(op, en_s2))
+          |  operands = s2_regs
+          |
+          |  // Continue reducing to exactly 2 operands
+          |  while (operands.length > 2) operands = reduceOne(operands)
+          |
+          |  // Pipeline barrier: register stage-3 outputs (the sum/carry pair)
+          |  val sumVec_s3   = RegEnable(operands(0), en_s3)
+          |  val carryVec_s3 = RegEnable(operands(1), en_s3)
+          |
+          |  // ================================================================
+          |  //  Stage 4-5 : final CPA, split into low/high halves for timing
+          |  // ================================================================
+          |  // Low half (32b) + carry-out
+          |  val lo_sum   = sumVec_s3(31, 0)   +& carryVec_s3(31, 0)  // 33b (32b + carry)
+          |  val lo_s4    = RegEnable(lo_sum, en_s4)                  // 33b
+          |  // High half needs to wait one more cycle; forward it through a reg
+          |  val hi_sa_s4 = RegEnable(sumVec_s3(63, 32),   en_s4)     // 32b
+          |  val hi_cb_s4 = RegEnable(carryVec_s3(63, 32), en_s4)     // 32b
+          |
+          |  // Final high add, with carry-in from stage 4
+          |  val hi_full  = hi_sa_s4 +& hi_cb_s4 +& lo_s4(32).asUInt  // 33b
+          |  val hi_s5    = RegNext(hi_full(31, 0))                   // 32b
+          |  val lo_s5    = RegNext(lo_s4(31, 0))                     // 32b
+          |
+          |  val product  = Cat(hi_s5, lo_s5)                         // 64b
+          |
+          |  io.out := product.${if (signedPort) "asSInt" else "asUInt"}
           |}
         """
     else
