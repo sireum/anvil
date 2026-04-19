@@ -131,47 +131,105 @@ object ArbInputMap {
     if(nonXilinxIP)
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
-          |    val io = IO(new Bundle{
-          |        val a = Input(${portType}(width.W))
-          |        val b = Input(${portType}(width.W))
-          |        val start = Input(Bool())
-          |        val out = Output(${portType}(width.W))
-          |        val valid = Output(Bool())
-          |    })
+          |  val io = IO(new Bundle{
+          |    val a     = Input(${portType}(width.W))
+          |    val b     = Input(${portType}(width.W))
+          |    val start = Input(Bool())
+          |    val out   = Output(${portType}(width.W))
+          |    val valid = Output(Bool())
+          |  })
           |
-          |    val state = RegInit(0.U(2.W))
-          |    val regA = Reg(${portType}(width.W))
-          |    val regB = Reg(${portType}(width.W))
-          |    val result = Reg(${portType}(width.W))
+          |  // =================================================================
+          |  //  Carry-Select Adder (CSLA), 64-bit, 4-stage pipeline.
+          |  //
+          |  //  Idea: split a+b into four 16-bit blocks. For each block,
+          |  //    compute sum assuming carry_in=0 AND carry_in=1 in parallel.
+          |  //    Then a 3-level mux chain picks the correct results using
+          |  //    actual carries — no 64-bit carry propagation anywhere.
+          |  //
+          |  //  Critical path per pipeline stage:
+          |  //    Stage 1: one 16-bit addition          (~0.5 ns FPGA / ~0.4 ns ASIC)
+          |  //    Stage 2: 3-level mux + register       (~0.5 ns FPGA / ~0.3 ns ASIC)
+          |  //
+          |  //  Portable: no platform primitives, no `*` or `/`.
+          |  //  Signed/unsigned: bit-identical for addition under two's
+          |  //  complement, so everything runs as UInt internally.
+          |  //
+          |  //  Latency: 4 cycles from start rising edge to valid pulse.
+          |  // =================================================================
+          |  val LATENCY = 4
+          |  val BW      = 16   // block width — sweet spot for FPGA CARRY8 (2 per block)
+          |  val NBLK    = 4    // 4 blocks * 16 bits = 64 bits
           |
-          |    val r_start      = RegInit(false.B)
-          |    val r_start_next = RegInit(false.B)
-          |    val r_busy       = RegInit(true.B)
+          |  // --------------- handshake (single-cycle valid pulse) -------------
+          |  val start_d    = RegNext(io.start, false.B)
+          |  val start_rise = io.start && !start_d
+          |  val busy       = RegInit(false.B)
+          |  val accept     = start_rise && !busy
           |
-          |    r_start      := io.start
-          |    r_start_next := r_start
-          |    when(r_start & ~r_start_next) {
-          |        r_busy := false.B
-          |    } .elsewhen(io.valid) {
-          |        r_busy := true.B
-          |    }
+          |  val valid_sr = RegInit(0.U(LATENCY.W))
+          |  valid_sr := Cat(valid_sr(LATENCY - 2, 0), accept)
+          |  io.valid := valid_sr(LATENCY - 1)
+          |  when (accept)        { busy := true.B }
+          |  .elsewhen (io.valid) { busy := false.B }
           |
-          |    io.valid := Mux(state === 2.U, true.B, false.B)
-          |    io.out := Mux(state === 2.U, result, 0.${if(signedPort) "S" else "U"})
-          |    switch(state) {
-          |        is(0.U) {
-          |            state := Mux(r_start & ~r_busy, 1.U, 0.U)
-          |            regA := Mux(r_start, io.a, regA)
-          |            regB := Mux(r_start, io.b, regB)
-          |        }
-          |        is(1.U) {
-          |            result := regA + regB
-          |            state := 2.U
-          |        }
-          |        is(2.U) {
-          |            state := 0.U
-          |        }
-          |    }
+          |  // --------------- Stage 0 : capture operands ----------------------
+          |  val a_s0 = RegEnable(io.a.asUInt, accept)
+          |  val b_s0 = RegEnable(io.b.asUInt, accept)
+          |  val en_s1 = RegNext(accept, false.B)
+          |  val en_s2 = RegNext(en_s1,  false.B)
+          |
+          |  // --------------- Stage 1 : parallel 16-bit additions -------------
+          |  //   For each block k, compute:
+          |  //     {cout0(k), sum0(k)} = a_block(k) + b_block(k)         (cin=0)
+          |  //     {cout1(k), sum1(k)} = a_block(k) + b_block(k) + 1     (cin=1)
+          |  //   All 8 additions run in parallel — critical path is ONE
+          |  //   16-bit add (2 CARRY8 on UltraScale+, ~4 FA on ASIC).
+          |  // -----------------------------------------------------------------
+          |  val sum0  = Reg(Vec(NBLK, UInt(BW.W)))
+          |  val cout0 = Reg(Vec(NBLK, Bool()))
+          |  val sum1  = Reg(Vec(NBLK, UInt(BW.W)))
+          |  val cout1 = Reg(Vec(NBLK, Bool()))
+          |
+          |  for (k <- 0 until NBLK) {
+          |    val aBlk = a_s0(BW*k + BW - 1, BW*k)
+          |    val bBlk = b_s0(BW*k + BW - 1, BW*k)
+          |    // zero-extend to 17b to capture carry out in MSB
+          |    val extA = Cat(0.U(1.W), aBlk)
+          |    val extB = Cat(0.U(1.W), bBlk)
+          |    val r0 = extA + extB            // 17b, cin = 0
+          |    val r1 = extA + extB + 1.U      // 17b, cin = 1
+          |    sum0(k)  := r0(BW - 1, 0)
+          |    cout0(k) := r0(BW)
+          |    sum1(k)  := r1(BW - 1, 0)
+          |    cout1(k) := r1(BW)
+          |  }
+          |
+          |  // --------------- Stage 2 : carry-select mux chain ----------------
+          |  //   Block 0 has no carry-in, so it always uses the cin=0 result.
+          |  //   Blocks 1-3 are selected by the carry-out of the previous block.
+          |  //
+          |  //   Mux chain depth = NBLK - 1 = 3 levels.
+          |  //   Each level: one 16-bit 2:1 mux + one 1-bit 2:1 mux (for carry).
+          |  //   On FPGA this is 3 LUT levels (~0.5 ns). On ASIC ~3 gate delays.
+          |  // -----------------------------------------------------------------
+          |  val res   = Wire(Vec(NBLK, UInt(BW.W)))
+          |  val carry = Wire(Vec(NBLK, Bool()))
+          |
+          |  res(0)   := sum0(0)
+          |  carry(0) := cout0(0)
+          |
+          |  for (k <- 1 until NBLK) {
+          |    res(k)   := Mux(carry(k - 1), sum1(k),  sum0(k))
+          |    carry(k) := Mux(carry(k - 1), cout1(k), cout0(k))
+          |  }
+          |
+          |  val result_s2 = RegEnable(Cat(res(3), res(2), res(1), res(0)), en_s2)
+          |
+          |  // --------------- Stage 3 : output register -----------------------
+          |  val result_s3 = RegNext(result_s2)
+          |
+          |  io.out := result_s3.${if(signedPort) "asSInt" else "asUInt"}
           |}
         """
     else
@@ -220,46 +278,101 @@ object ArbInputMap {
     if(nonXilinxIP)
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
-          |    val io = IO(new Bundle{
-          |        val a = Input(${portType}(width.W))
-          |        val b = Input(${portType}(width.W))
-          |        val start = Input(Bool())
-          |        val out = Output(${portType}(width.W))
-          |        val valid = Output(Bool())
-          |    })
-          |    val state = RegInit(0.U(2.W))
-          |    val regA = Reg(${portType}(width.W))
-          |    val regB = Reg(${portType}(width.W))
-          |    val result = Reg(${portType}(width.W))
+          |  val io = IO(new Bundle{
+          |    val a     = Input(${portType}(width.W))
+          |    val b     = Input(${portType}(width.W))
+          |    val start = Input(Bool())
+          |    val out   = Output(${portType}(width.W))
+          |    val valid = Output(Bool())
+          |  })
           |
-          |    val r_start      = RegInit(false.B)
-          |    val r_start_next = RegInit(false.B)
-          |    val r_busy       = RegInit(true.B)
+          |  // =================================================================
+          |  //  Carry-Select Subtractor (CSLA), 64-bit, 4-stage pipeline.
+          |  //
+          |  //  Core identity:  a - b  =  a + ~b + 1
+          |  //
+          |  //  Same structure as the CSLA adder, with two differences:
+          |  //    1. Operand b is bitwise-inverted before entering the CSA blocks.
+          |  //    2. Block 0 selects the cin=1 result (instead of cin=0 in the
+          |  //       adder) to account for the +1 of two's complement negation.
+          |  //
+          |  //  Critical path: 16-bit addition + 3-level mux chain.
+          |  //  FPGA Fmax target: 600-800 MHz     ASIC: 800 MHz - 1 GHz
+          |  //  Latency: 4 cycles from start rising edge to valid pulse.
+          |  // =================================================================
+          |  val LATENCY = 4
+          |  val BW      = 16
+          |  val NBLK    = 4
           |
-          |    r_start      := io.start
-          |    r_start_next := r_start
-          |    when(r_start & ~r_start_next) {
-          |        r_busy := false.B
-          |    } .elsewhen(io.valid) {
-          |        r_busy := true.B
-          |    }
+          |  // --------------- handshake (single-cycle valid pulse) -------------
+          |  val start_d    = RegNext(io.start, false.B)
+          |  val start_rise = io.start && !start_d
+          |  val busy       = RegInit(false.B)
+          |  val accept     = start_rise && !busy
           |
-          |    io.valid := Mux(state === 2.U, true.B, false.B)
-          |    io.out := Mux(state === 2.U, result, 0.${if (signedPort) "S" else "U"})
-          |    switch(state) {
-          |        is(0.U) {
-          |            state := Mux(r_start & ~r_busy, 1.U, 0.U)
-          |            regA := Mux(r_start, io.a, regA)
-          |            regB := Mux(r_start, io.b, regB)
-          |        }
-          |        is(1.U) {
-          |            result := regA - regB
-          |            state := 2.U
-          |        }
-          |        is(2.U) {
-          |            state := 0.U
-          |        }
-          |    }
+          |  val valid_sr = RegInit(0.U(LATENCY.W))
+          |  valid_sr := Cat(valid_sr(LATENCY - 2, 0), accept)
+          |  io.valid := valid_sr(LATENCY - 1)
+          |  when (accept)        { busy := true.B }
+          |  .elsewhen (io.valid) { busy := false.B }
+          |
+          |  // --------------- Stage 0 : capture operands, invert b ------------
+          |  //   a - b = a + ~b + 1
+          |  //   Invert b here; the +1 is handled by block 0 using cin=1.
+          |  val a_s0 = RegEnable(io.a.asUInt,        accept)
+          |  val b_s0 = RegEnable((~io.b.asUInt),     accept)   // ~b
+          |  val en_s1 = RegNext(accept, false.B)
+          |  val en_s2 = RegNext(en_s1,  false.B)
+          |
+          |  // --------------- Stage 1 : parallel 16-bit additions -------------
+          |  //   For each block k, compute:
+          |  //     {cout0(k), sum0(k)} = a_block(k) + ~b_block(k)       (cin=0)
+          |  //     {cout1(k), sum1(k)} = a_block(k) + ~b_block(k) + 1   (cin=1)
+          |  //   All 8 additions run in parallel — critical path is ONE
+          |  //   16-bit add.
+          |  // -----------------------------------------------------------------
+          |  val sum0  = Reg(Vec(NBLK, UInt(BW.W)))
+          |  val cout0 = Reg(Vec(NBLK, Bool()))
+          |  val sum1  = Reg(Vec(NBLK, UInt(BW.W)))
+          |  val cout1 = Reg(Vec(NBLK, Bool()))
+          |
+          |  for (k <- 0 until NBLK) {
+          |    val aBlk = a_s0(BW*k + BW - 1, BW*k)
+          |    val bBlk = b_s0(BW*k + BW - 1, BW*k)   // already inverted
+          |    val extA = Cat(0.U(1.W), aBlk)           // 17b
+          |    val extB = Cat(0.U(1.W), bBlk)           // 17b
+          |    val r0 = extA + extB                     // cin = 0
+          |    val r1 = extA + extB + 1.U               // cin = 1
+          |    sum0(k)  := r0(BW - 1, 0)
+          |    cout0(k) := r0(BW)
+          |    sum1(k)  := r1(BW - 1, 0)
+          |    cout1(k) := r1(BW)
+          |  }
+          |
+          |  // --------------- Stage 2 : carry-select mux chain ----------------
+          |  //   KEY DIFFERENCE from adder:
+          |  //     Block 0 uses the cin=1 result — this is the "+1" in a + ~b + 1.
+          |  //     Blocks 1-3 are muxed by the carry-out of the previous block.
+          |  // -----------------------------------------------------------------
+          |  val res   = Wire(Vec(NBLK, UInt(BW.W)))
+          |  val carry = Wire(Vec(NBLK, Bool()))
+          |
+          |  // block 0: cin = 1 (the +1 of two's complement)
+          |  res(0)   := sum1(0)
+          |  carry(0) := cout1(0)
+          |
+          |  // blocks 1-3: mux based on incoming carry
+          |  for (k <- 1 until NBLK) {
+          |    res(k)   := Mux(carry(k - 1), sum1(k),  sum0(k))
+          |    carry(k) := Mux(carry(k - 1), cout1(k), cout0(k))
+          |  }
+          |
+          |  val result_s2 = RegEnable(Cat(res(3), res(2), res(1), res(0)), en_s2)
+          |
+          |  // --------------- Stage 3 : output register -----------------------
+          |  val result_s3 = RegNext(result_s2)
+          |
+          |  io.out := result_s3.${if(signedPort) "asSInt" else "asUInt"}
           |}
         """
     else
@@ -352,53 +465,109 @@ object ArbInputMap {
     if(nonXilinxIP)
       st"""
           |class Indexer(val width: Int = 16) extends Module {
-          |    val io = IO(new Bundle{
-          |        val baseOffset = Input(UInt(width.W))
-          |        val dataOffset = Input(UInt(width.W))
-          |        val index = Input(UInt(width.W))
-          |        val elementSize = Input(UInt(width.W))
-          |        val mask = Input(UInt(width.W))
-          |        val ready = Input(Bool())
-          |        val valid = Output(Bool())
-          |        val out = Output(UInt(width.W))
-          |    })
+          |  val io = IO(new Bundle{
+          |    val baseOffset  = Input(UInt(width.W))
+          |    val dataOffset  = Input(UInt(width.W))
+          |    val index       = Input(UInt(width.W))
+          |    val elementSize = Input(UInt(width.W))
+          |    val mask        = Input(UInt(width.W))
+          |    val ready       = Input(Bool())
+          |    val valid       = Output(Bool())
+          |    val out         = Output(UInt(width.W))
+          |  })
           |
-          |    val r_start      = RegInit(false.B)
-          |    val r_start_next = RegInit(false.B)
-          |    val r_busy       = RegInit(true.B)
+          |  // =================================================================
+          |  //  Pipelined index address calculator.  No `*` operator.
+          |  //
+          |  //  Computes: out = (baseOffset + dataOffset)
+          |  //                + ((index × elementSize) & mask)
+          |  //
+          |  //  The 16×16 multiply is implemented as a Wallace CSA tree over
+          |  //  16 AND-gated partial products — no `*` anywhere.
+          |  //
+          |  //  Pipeline:
+          |  //    Stage 0 : capture inputs
+          |  //    Stage 1 : baseAddr = baseOffset + dataOffset
+          |  //              generate 16 partial products (AND + wiring)
+          |  //    Stage 2 : Wallace reduction first half  (16 → 6)
+          |  //    Stage 3 : Wallace reduction second half (6 → 2) + CPA + mask
+          |  //    Stage 4 : result = baseAddr + masked_product
+          |  //
+          |  //  Latency: 5 cycles from ready rising edge to valid pulse.
+          |  //  Critical path per stage: ~3 CSA layers (~0.5 ns FPGA / ~0.4 ns
+          |  //  ASIC), comfortably supporting 600+ MHz on both platforms.
+          |  // =================================================================
+          |  val LATENCY = 5
           |
-          |    r_start      := io.ready
-          |    r_start_next := r_start
-          |    when(r_start & ~r_start_next) {
-          |        r_busy := false.B
-          |    } .elsewhen(io.valid) {
-          |        r_busy := true.B
+          |  // --------------- handshake (single-cycle valid pulse) -------------
+          |  val start_d    = RegNext(io.ready, false.B)
+          |  val start_rise = io.ready && !start_d
+          |  val busy       = RegInit(false.B)
+          |  val accept     = start_rise && !busy
+          |
+          |  val valid_sr = RegInit(0.U(LATENCY.W))
+          |  valid_sr := Cat(valid_sr(LATENCY - 2, 0), accept)
+          |  io.valid := valid_sr(LATENCY - 1)
+          |  when (accept)        { busy := true.B }
+          |  .elsewhen (io.valid) { busy := false.B }
+          |
+          |  // --------------- CSA helpers (elaboration-time) ------------------
+          |  def csa(a: UInt, b: UInt, c: UInt): (UInt, UInt) = {
+          |    val s    = a ^ b ^ c
+          |    val cOut = ((a & b) | (b & c) | (a & c)) << 1
+          |    (s(width - 1, 0), cOut(width - 1, 0))
+          |  }
+          |  def reduceOnce(ops: Seq[UInt]): Seq[UInt] = {
+          |    val buf = scala.collection.mutable.ArrayBuffer[UInt]()
+          |    var i = 0
+          |    while (i + 2 < ops.length) {
+          |      val (s, c) = csa(ops(i), ops(i + 1), ops(i + 2))
+          |      buf += s; buf += c; i += 3
           |    }
+          |    while (i < ops.length) { buf += ops(i); i += 1 }
+          |    buf.toSeq
+          |  }
           |
-          |    val stateReg = RegInit(0.U(2.W))
-          |    switch(stateReg) {
-          |        is(0.U) {
-          |            stateReg := Mux(io.ready, 1.U, 0.U)
-          |        }
-          |        is(1.U) {
-          |            stateReg := 2.U
-          |        }
-          |        is(2.U) {
-          |            stateReg := 3.U
-          |        }
-          |        is(3.U) {
-          |            stateReg := Mux(!io.ready, 0.U, 3.U)
-          |        }
-          |    }
+          |  // --------------- Stage 0 : capture inputs ------------------------
+          |  val baseOff_s0 = RegEnable(io.baseOffset,  accept)
+          |  val dataOff_s0 = RegEnable(io.dataOffset,  accept)
+          |  val index_s0   = RegEnable(io.index,       accept)
+          |  val elemSz_s0  = RegEnable(io.elementSize, accept)
+          |  val mask_s0    = RegEnable(io.mask,        accept)
           |
-          |    io.valid := Mux(stateReg === 3.U & ~r_busy, true.B, false.B)
+          |  // --------------- Stage 1 : base-addr add + PP generation ---------
+          |  //   PP[i] = index[i] ? (elementSize << i) : 0   (just AND + wiring)
+          |  val baseAddr_s1 = RegNext(baseOff_s0 + dataOff_s0)
+          |  val mask_s1     = RegNext(mask_s0)
           |
-          |    val regBaseAddr = RegNext(io.baseOffset + io.dataOffset)
+          |  val pp_s1 = (0 until width).map { i =>
+          |    val shifted = if (i == 0) elemSz_s0
+          |                  else (elemSz_s0 << i)(width - 1, 0)
+          |    RegNext(Mux(index_s0(i), shifted, 0.U(width.W)))
+          |  }
           |
-          |    val regIndex = RegNext(io.index)
-          |    val regMult = RegNext(regIndex * io.elementSize)
+          |  // --------------- Stage 2 : Wallace first half (16 → 6) ----------
+          |  //   Three rounds of 3:2 CSA compression.
+          |  //   16 → 11 → 8 → 6
+          |  var ops: Seq[UInt] = pp_s1
+          |  for (_ <- 0 until 3) ops = reduceOnce(ops)
           |
-          |    io.out := RegNext(regBaseAddr + (regMult & io.mask))
+          |  val s2_regs     = ops.map(op => RegNext(op))
+          |  val baseAddr_s2 = RegNext(baseAddr_s1)
+          |  val mask_s2     = RegNext(mask_s1)
+          |
+          |  // --------------- Stage 3 : Wallace second half (6 → 2) + CPA ----
+          |  //   Three more rounds: 6 → 4 → 3 → 2, then final add + mask.
+          |  ops = s2_regs
+          |  while (ops.length > 2) ops = reduceOnce(ops)
+          |
+          |  val mult_s3     = RegNext(((ops(0) + ops(1))(width - 1, 0)) & mask_s2)
+          |  val baseAddr_s3 = RegNext(baseAddr_s2)
+          |
+          |  // --------------- Stage 4 : final add + output register -----------
+          |  val result_s4 = RegNext(baseAddr_s3 + mult_s3)
+          |
+          |  io.out := Mux(io.valid, result_s4, 0.U)
           |}
         """
     else
@@ -1405,6 +1574,35 @@ object ArbInputMap {
   }
   @strictpure override def expression: ArbIpType = exp
   @strictpure override def moduleST: ST = {
+    val negRegs: ST = if(signedPort)
+      st"""val neg_q = Reg(Bool())
+          |  val neg_r = Reg(Bool())"""
+    else st""""""
+
+    val captureBody: ST = if(signedPort)
+      st"""val a_neg = io.a(width - 1)
+          |        val b_neg = io.b(width - 1)
+          |        val a_abs = Mux(a_neg, (-io.a).asUInt, io.a.asUInt)
+          |        val b_abs = Mux(b_neg, (-io.b).asUInt, io.b.asUInt)
+          |        dividend := a_abs
+          |        divisor  := b_abs
+          |        divInv   := ~b_abs
+          |        neg_q    := a_neg ^ b_neg
+          |        neg_r    := a_neg"""
+    else
+      st"""dividend := io.a.asUInt
+          |        divisor  := io.b.asUInt
+          |        divInv   := ~io.b.asUInt"""
+
+    val outputBody: ST = if(signedPort)
+      st"""io.quotient  := Mux(state === sDone & ~r_busy,
+          |                    Mux(neg_q, (-quot.asSInt), quot.asSInt), 0.S)
+          |  io.remainder := Mux(state === sDone & ~r_busy,
+          |                    Mux(neg_r, (-rem.asSInt),  rem.asSInt),  0.S)"""
+    else
+      st"""io.quotient  := Mux(state === sDone & ~r_busy, quot, 0.U)
+          |  io.remainder := Mux(state === sDone & ~r_busy, rem,  0.U)"""
+
     if(nonXilinxIP)
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
@@ -1417,44 +1615,18 @@ object ArbInputMap {
           |    val remainder = Output(${portType}(width.W))
           |  })
           |
-          |  val a_neg = io.a(width-1)
-          |  val b_neg = io.b(width-1)
-          |  val a_abs = Mux(a_neg, -io.a, io.a).asUInt
-          |  val b_abs = Mux(b_neg, -io.b, io.b).asUInt
+          |  val BW   = 16
+          |  val NBLK = width / BW
           |
-          |  val dividend = RegInit(0.U(width.W))
-          |  val divisor = RegInit(0.U(width.W))
-          |  val quotient = RegInit(0.U(width.W))
-          |  val remainder = RegInit(0.U(width.W))
-          |  val count = RegInit((width - 1).U((1+log2Ceil(width)).W))
-          |  val busy = RegInit(false.B)
-          |
-          |  when(io.start && !busy) {
-          |    dividend := a_abs
-          |    divisor := b_abs
-          |    quotient := 0.U
-          |    remainder := 0.U
-          |    count := width.U
-          |    busy := true.B
-          |  } .elsewhen(busy) {
-          |    when(count === 0.U) {
-          |      count := width.U
-          |      busy := false.B
-          |    } .otherwise {
-          |      val shifted = remainder << 1 | (dividend >> (width - 1))
-          |      remainder := shifted
-          |
-          |      when (shifted >= divisor) {
-          |        remainder := shifted - divisor
-          |        quotient := (quotient << 1) | 1.U
-          |      } .otherwise {
-          |        quotient := quotient << 1
-          |      }
-          |
-          |      dividend := dividend << 1
-          |      count := count - 1.U
-          |    }
-          |  }
+          |  val sIdle :: sRunning :: sDone :: Nil = Enum(3)
+          |  val state    = RegInit(sIdle)
+          |  val count    = RegInit(0.U((log2Ceil(width) + 1).W))
+          |  val dividend = Reg(UInt(width.W))
+          |  val divisor  = Reg(UInt(width.W))
+          |  val divInv   = Reg(UInt(width.W))
+          |  val rem      = Reg(UInt(width.W))
+          |  val quot     = Reg(UInt(width.W))
+          |  ${negRegs}
           |
           |  val r_start      = RegInit(false.B)
           |  val r_start_next = RegInit(false.B)
@@ -1463,16 +1635,73 @@ object ArbInputMap {
           |  r_start      := io.start
           |  r_start_next := r_start
           |  when(r_start & ~r_start_next) {
-          |      r_busy := false.B
+          |    r_busy := false.B
           |  } .elsewhen(io.valid) {
-          |      r_busy := true.B
+          |    r_busy := true.B
           |  }
           |
-          |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient)${if(signedPort) ".asSInt" else ""}
-          |  io.remainder := Mux(a_neg, -remainder, remainder)${if(signedPort) ".asSInt" else ""}
-          |  io.valid := (count === 0.U) & ~r_busy
+          |  val shifted = Cat(rem(width - 2, 0), dividend(width - 1))
+          |
+          |  val cs_sum0  = Wire(Vec(NBLK, UInt(BW.W)))
+          |  val cs_cout0 = Wire(Vec(NBLK, Bool()))
+          |  val cs_sum1  = Wire(Vec(NBLK, UInt(BW.W)))
+          |  val cs_cout1 = Wire(Vec(NBLK, Bool()))
+          |
+          |  for (k <- 0 until NBLK) {
+          |    val aBlk = shifted(BW * k + BW - 1, BW * k)
+          |    val bBlk = divInv(BW * k + BW - 1, BW * k)
+          |    val extA = Cat(0.U(1.W), aBlk)
+          |    val extB = Cat(0.U(1.W), bBlk)
+          |    val r0   = extA + extB
+          |    val r1   = extA + extB + 1.U
+          |    cs_sum0(k)  := r0(BW - 1, 0)
+          |    cs_cout0(k) := r0(BW)
+          |    cs_sum1(k)  := r1(BW - 1, 0)
+          |    cs_cout1(k) := r1(BW)
+          |  }
+          |
+          |  val cs_res   = Wire(Vec(NBLK, UInt(BW.W)))
+          |  val cs_carry = Wire(Vec(NBLK, Bool()))
+          |
+          |  cs_res(0)   := cs_sum1(0)
+          |  cs_carry(0) := cs_cout1(0)
+          |
+          |  for (k <- 1 until NBLK) {
+          |    cs_res(k)   := Mux(cs_carry(k - 1), cs_sum1(k),  cs_sum0(k))
+          |    cs_carry(k) := Mux(cs_carry(k - 1), cs_cout1(k), cs_cout0(k))
+          |  }
+          |
+          |  val subResult   = Cat(cs_res(3), cs_res(2), cs_res(1), cs_res(0))
+          |  val noUnderflow = cs_carry(NBLK - 1)
+          |
+          |  switch(state) {
+          |    is(sIdle) {
+          |      when(r_start & ~r_busy) {
+          |        ${captureBody}
+          |        rem      := 0.U
+          |        quot     := 0.U
+          |        count    := width.U
+          |        state    := sRunning
+          |      }
+          |    }
+          |    is(sRunning) {
+          |      rem      := Mux(noUnderflow, subResult, shifted)
+          |      quot     := Mux(noUnderflow, (quot << 1) | 1.U, quot << 1)
+          |      dividend := dividend << 1
+          |      count    := count - 1.U
+          |      when(count === 1.U) {
+          |        state := sDone
+          |      }
+          |    }
+          |    is(sDone) {
+          |      state := sIdle
+          |    }
+          |  }
+          |
+          |  ${outputBody}
+          |  io.valid := (state === sDone) & ~r_busy
           |}
-      """
+        """
     else
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
@@ -1519,6 +1748,35 @@ object ArbInputMap {
   }
   @strictpure override def expression: ArbIpType = exp
   @strictpure override def moduleST: ST = {
+    val negRegs: ST = if(signedPort)
+      st"""val neg_q = Reg(Bool())
+          |  val neg_r = Reg(Bool())"""
+    else st""""""
+
+    val captureBody: ST = if(signedPort)
+      st"""val a_neg = io.a(width - 1)
+          |        val b_neg = io.b(width - 1)
+          |        val a_abs = Mux(a_neg, (-io.a).asUInt, io.a.asUInt)
+          |        val b_abs = Mux(b_neg, (-io.b).asUInt, io.b.asUInt)
+          |        dividend := a_abs
+          |        divisor  := b_abs
+          |        divInv   := ~b_abs
+          |        neg_q    := a_neg ^ b_neg
+          |        neg_r    := a_neg"""
+    else
+      st"""dividend := io.a.asUInt
+          |        divisor  := io.b.asUInt
+          |        divInv   := ~io.b.asUInt"""
+
+    val outputBody: ST = if(signedPort)
+      st"""io.quotient  := Mux(state === sDone & ~r_busy,
+          |                    Mux(neg_q, (-quot.asSInt), quot.asSInt), 0.S)
+          |  io.remainder := Mux(state === sDone & ~r_busy,
+          |                    Mux(neg_r, (-rem.asSInt),  rem.asSInt),  0.S)"""
+    else
+      st"""io.quotient  := Mux(state === sDone & ~r_busy, quot, 0.U)
+          |  io.remainder := Mux(state === sDone & ~r_busy, rem,  0.U)"""
+
     if(nonXilinxIP)
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
@@ -1531,44 +1789,18 @@ object ArbInputMap {
           |    val remainder = Output(${portType}(width.W))
           |  })
           |
-          |  val a_neg = io.a(width-1)
-          |  val b_neg = io.b(width-1)
-          |  val a_abs = Mux(a_neg, -io.a, io.a).asUInt
-          |  val b_abs = Mux(b_neg, -io.b, io.b).asUInt
+          |  val BW   = 16
+          |  val NBLK = width / BW
           |
-          |  val dividend = RegInit(0.U(width.W))
-          |  val divisor = RegInit(0.U(width.W))
-          |  val quotient = RegInit(0.U(width.W))
-          |  val remainder = RegInit(0.U(width.W))
-          |  val count = RegInit((width - 1).U((1+log2Ceil(width)).W))
-          |  val busy = RegInit(false.B)
-          |
-          |  when(io.start && !busy) {
-          |    dividend := a_abs
-          |    divisor := b_abs
-          |    quotient := 0.U
-          |    remainder := 0.U
-          |    count := width.U
-          |    busy := true.B
-          |  } .elsewhen(busy) {
-          |    when(count === 0.U) {
-          |      count := width.U
-          |      busy := false.B
-          |    } .otherwise {
-          |      val shifted = remainder << 1 | (dividend >> (width - 1))
-          |      remainder := shifted
-          |
-          |      when (shifted >= divisor) {
-          |        remainder := shifted - divisor
-          |        quotient := (quotient << 1) | 1.U
-          |      } .otherwise {
-          |        quotient := quotient << 1
-          |      }
-          |
-          |      dividend := dividend << 1
-          |      count := count - 1.U
-          |    }
-          |  }
+          |  val sIdle :: sRunning :: sDone :: Nil = Enum(3)
+          |  val state    = RegInit(sIdle)
+          |  val count    = RegInit(0.U((log2Ceil(width) + 1).W))
+          |  val dividend = Reg(UInt(width.W))
+          |  val divisor  = Reg(UInt(width.W))
+          |  val divInv   = Reg(UInt(width.W))
+          |  val rem      = Reg(UInt(width.W))
+          |  val quot     = Reg(UInt(width.W))
+          |  ${negRegs}
           |
           |  val r_start      = RegInit(false.B)
           |  val r_start_next = RegInit(false.B)
@@ -1577,16 +1809,73 @@ object ArbInputMap {
           |  r_start      := io.start
           |  r_start_next := r_start
           |  when(r_start & ~r_start_next) {
-          |      r_busy := false.B
+          |    r_busy := false.B
           |  } .elsewhen(io.valid) {
-          |      r_busy := true.B
+          |    r_busy := true.B
           |  }
           |
-          |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient)${if(signedPort) ".asSInt" else ""}
-          |  io.remainder := Mux(a_neg, -remainder, remainder)${if(signedPort) ".asSInt" else ""}
-          |  io.valid := (count === 0.U) & ~r_busy
+          |  val shifted = Cat(rem(width - 2, 0), dividend(width - 1))
+          |
+          |  val cs_sum0  = Wire(Vec(NBLK, UInt(BW.W)))
+          |  val cs_cout0 = Wire(Vec(NBLK, Bool()))
+          |  val cs_sum1  = Wire(Vec(NBLK, UInt(BW.W)))
+          |  val cs_cout1 = Wire(Vec(NBLK, Bool()))
+          |
+          |  for (k <- 0 until NBLK) {
+          |    val aBlk = shifted(BW * k + BW - 1, BW * k)
+          |    val bBlk = divInv(BW * k + BW - 1, BW * k)
+          |    val extA = Cat(0.U(1.W), aBlk)
+          |    val extB = Cat(0.U(1.W), bBlk)
+          |    val r0   = extA + extB
+          |    val r1   = extA + extB + 1.U
+          |    cs_sum0(k)  := r0(BW - 1, 0)
+          |    cs_cout0(k) := r0(BW)
+          |    cs_sum1(k)  := r1(BW - 1, 0)
+          |    cs_cout1(k) := r1(BW)
+          |  }
+          |
+          |  val cs_res   = Wire(Vec(NBLK, UInt(BW.W)))
+          |  val cs_carry = Wire(Vec(NBLK, Bool()))
+          |
+          |  cs_res(0)   := cs_sum1(0)
+          |  cs_carry(0) := cs_cout1(0)
+          |
+          |  for (k <- 1 until NBLK) {
+          |    cs_res(k)   := Mux(cs_carry(k - 1), cs_sum1(k),  cs_sum0(k))
+          |    cs_carry(k) := Mux(cs_carry(k - 1), cs_cout1(k), cs_cout0(k))
+          |  }
+          |
+          |  val subResult   = Cat(cs_res(3), cs_res(2), cs_res(1), cs_res(0))
+          |  val noUnderflow = cs_carry(NBLK - 1)
+          |
+          |  switch(state) {
+          |    is(sIdle) {
+          |      when(r_start & ~r_busy) {
+          |        ${captureBody}
+          |        rem      := 0.U
+          |        quot     := 0.U
+          |        count    := width.U
+          |        state    := sRunning
+          |      }
+          |    }
+          |    is(sRunning) {
+          |      rem      := Mux(noUnderflow, subResult, shifted)
+          |      quot     := Mux(noUnderflow, (quot << 1) | 1.U, quot << 1)
+          |      dividend := dividend << 1
+          |      count    := count - 1.U
+          |      when(count === 1.U) {
+          |        state := sDone
+          |      }
+          |    }
+          |    is(sDone) {
+          |      state := sIdle
+          |    }
+          |  }
+          |
+          |  ${outputBody}
+          |  io.valid := (state === sDone) & ~r_busy
           |}
-      """
+        """
     else
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
@@ -1721,9 +2010,9 @@ object ArbInputMap {
   @pure override def moduleST: ST = {
     val bramInsST: ST = {
       if(nonXilinxIP) {
-        st"val bram = Module(new BRAMIP(${depthOfBRAM}, 8))"
+        st"val bram = Module(new BRAMIP(depth, width))"
       } else {
-        if (!genVerilog) st"val bram = Module(new BRAMIP(${depthOfBRAM}, 8))"
+        if (!genVerilog) st"val bram = Module(new BRAMIP(depth, width))"
         else
           st"""
               |val bram = Module(new XilinxBRAMWrapper)
@@ -3422,6 +3711,18 @@ import HwSynthesizer2._
         }
       }
     }
+
+    // this is only used for updating the memory depth of BRAMIP (for NonXilinx = T and GenVerilog = F)
+    @pure def updateDepth(m: ArbIpModule): ArbIpModule = {
+      m match {
+        case ats: ArbBlockMemory =>
+          return ats(depthOfBRAM =
+            anvil.config.memory + (if (hasRecursiveInAllfunctions()) depthOfStack(maxRegisters)
+            else 0))
+        case _ => return m
+      }
+    }
+    ipModules = for (m <- ipModules) yield updateDepth(m)
 
     for(o <- program.procedures) {
       val procTuple: (QName, String) = replaceFuncName(o.isInObject, o.owner, o.id)
@@ -7897,7 +8198,7 @@ import HwSynthesizer2._
         }
       }
       case _ => {
-        halt(s"processStmtAssign unimplemented")
+        halt(s"processStmtAssign unimplemented: ${a.prettyST(anvil.printer).render}")
       }
     }
 
