@@ -4103,7 +4103,12 @@ import HwSynthesizer2._
             |  val r_ipReq_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
             |  val r_ipReq_valid_next = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
             |  val r_ipReq_enable = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-            |  val r_ipReq_bits = RegInit(VecInit(Seq.fill(numIPs)(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))))
+            |  // Payload holds no semantic "reset" value — it is only read when
+            |  // r_ipReq_enable fires, and only written on the valid rising edge.
+            |  // Using Reg(...) instead of RegInit(...) removes the request-bundle
+            |  // width x numIPs worth of FF reset inputs from the reset-tree fanout
+            |  // that drove the -24.76 ns WNS on myRst_reg paths at 90nm.
+            |  val r_ipReq_bits = Reg(Vec(numIPs, new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))
             |
             |  for (i <- 0 until numIPs) {
             |    r_ipReq_valid(i) := io.ipReqs(i).valid
@@ -4118,7 +4123,9 @@ import HwSynthesizer2._
             |
             |  // ------------------ Stage 1: Arbitration Decision Pipeline ------------------
             |  val r_foundReq = RegInit(false.B)
-            |  val r_reqBits  = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))
+            |  // Payload only observed when r_foundReq is T (driven by the same
+            |  // arbitration cycle that writes r_reqBits); no reset needed.
+            |  val r_reqBits  = Reg(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)}))
             |  val r_chosen   = RegInit(0.U(log2Up(numIPs).W))
             |
             |  r_foundReq := r_ipReq_enable.reduce(_ || _)
@@ -4138,7 +4145,10 @@ import HwSynthesizer2._
             |  val r_mem_resp_id    = RegNext(r_chosen, init = 0.U)
             |
             |  val r_ipResp_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-            |  val r_ipResp_bits  = RegInit(VecInit(Seq.fill(numIPs)(0.U.asTypeOf(new ${mod.moduleName}ResponseBundle(${responseParaStr(ip, maxRegisters)})))))
+            |  // Payload is default-written to 0 every cycle in the `for` loop
+            |  // below (and overridden by the mem_resp branch), so RegInit reset
+            |  // value is redundant — drop it to remove another wide reset load.
+            |  val r_ipResp_bits  = Reg(Vec(numIPs, new ${mod.moduleName}ResponseBundle(${responseParaStr(ip, maxRegisters)})))
             |
             |  for (i <- 0 until numIPs) {
             |    r_ipResp_valid(i)    := false.B
@@ -4351,7 +4361,8 @@ import HwSynthesizer2._
 
         val tempSaveRestoreRegSt: ST = if(ip != ArbTempSaveRestoreIP()) st"" else
           st"""
-              |val r_arbMem_req = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(dataWidth, ${addrWidthSt(F)} depth)))
+              |// Payload tracks mod.io.arbMem_req.bits every cycle; no reset needed.
+              |val r_arbMem_req = Reg(new BlockMemoryRequestBundle(dataWidth, ${addrWidthSt(F)} depth))
               |val r_arbMem_req_valid = RegInit(false.B)
               |val r_arbMem_resp_data  = RegNext(io.arbMem_resp.bits)
               |val r_arbMem_resp_valid = RegNext(io.arbMem_resp.valid, init = false.B)
@@ -4372,7 +4383,10 @@ import HwSynthesizer2._
             |
             |    ${tempSaveRestoreRegSt}
             |
-            |    val r_req            = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))
+            |    // Payload is rewritten unconditionally every cycle (r_req := io.req.bits).
+            |    // Drop the RegInit reset value — it's redundant and adds FF-wide reset
+            |    // fanout back onto the parent module's reset net.
+            |    val r_req            = Reg(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)}))
             |    val r_req_valid      = RegNext(io.req.valid, init = false.B)
             |    ${if(ip == ArbBlockMemoryIP()) "val r_req_valid_next = RegNext(r_req_valid, init = false.B)" else ""}
             |
@@ -7395,11 +7409,23 @@ import HwSynthesizer2._
               |// ${getIpModuleName(e).get} Arbiter
               |val r_${instName}_req          = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
               |val r_${instName}_req_valid    = RegInit(false.B)
+              |// Two-stage latch for the arbiter response: io.resp -> _s1 -> r_*.
+              |// Adding this RegNext in the response path breaks the combinational
+              |// chain `arbiter.resp -> switch-case block -> CP_next` that fed
+              |// directly into the huge per-procedure FSM decode. With the extra
+              |// stage, every state transition waiting on an arbiter response
+              |// takes one extra cycle, but the CP-write path no longer sees
+              |// the arbiter's combinational output in the same cycle, which
+              |// was a primary contributor to the -26 ns WNS on DLLPool FSMs.
+              |val r_${instName}_resp_s1       = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
+              |val r_${instName}_resp_valid_s1 = RegInit(false.B)
               |val r_${instName}_resp         = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
               |val r_${instName}_resp_valid   = RegInit(false.B)
               |// connection for ${getIpModuleName(e).get} Arbiter
-              |r_${instName}_resp       := io.${instName}_resp.bits
-              |r_${instName}_resp_valid := io.${instName}_resp.valid
+              |r_${instName}_resp_s1       := io.${instName}_resp.bits
+              |r_${instName}_resp_valid_s1 := io.${instName}_resp.valid
+              |r_${instName}_resp       := r_${instName}_resp_s1
+              |r_${instName}_resp_valid := r_${instName}_resp_valid_s1
               |io.${instName}_req.bits  := r_${instName}_req
               |io.${instName}_req.valid := r_${instName}_req_valid
             """
