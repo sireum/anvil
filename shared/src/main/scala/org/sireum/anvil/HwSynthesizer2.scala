@@ -5020,22 +5020,22 @@ import HwSynthesizer2._
           |set_property target_language Verilog [current_project]
           |
           |# Synthesis strategy
-          |#set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
+          |set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
           |# Implementation strategy
-          |#set_property strategy Performance_Explore     [get_runs impl_1]
+          |set_property strategy Performance_Explore     [get_runs impl_1]
           |
           |# opt_design directive
-          |#set_property STEPS.OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
+          |set_property STEPS.OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
           |
           |# place_design directive
-          |#set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
+          |set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
           |
           |# phys_opt_design directive (post-place)
           |# If your Vivado step name differs, use: report_property [get_runs impl_1] to check
-          |#set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+          |set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
           |
           |# route_design directive (+ optional tns_cleanup)
-          |#set_property STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+          |set_property STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
           |
           |create_bd_design "design_1"
           |update_compile_order -fileset sources_1
@@ -5101,7 +5101,7 @@ import HwSynthesizer2._
           |log_file="time_log.txt"
           |
           |start_bound=350
-          |end_bound=475
+          |end_bound=450
           |step=25
           |
           |bound=$$start_bound
@@ -6362,11 +6362,11 @@ import HwSynthesizer2._
     }
     output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxIndexAdderWrapper.v"), xilinxIndexAdderWrapperST(anvil.typeBitSize(spType)))
     output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxIndexMultiplierWrapper.v"), xilinxIndexMultiplierWrapperST(anvil.typeBitSize(spType)))
+    output.addPerm(T, ISZ("chisel/..", "test_many.sh"), testManyShScriptST, "+x")
+    output.addPerm(T, ISZ("chisel/..", "auto_script.sh"), autoShScriptST, "+x")
+    output.add(T, ISZ("chisel/..", "synthesize_zcu102_zynq.tcl"), synthImplST)
+    output.add(T, ISZ("chisel/..", "ip_generation.tcl"), ipGenerationTclST)
     if(!anvil.config.noXilinxIp) {
-      output.addPerm(T, ISZ("chisel/..", "test_many.sh"), testManyShScriptST, "+x")
-      output.addPerm(T, ISZ("chisel/..", "auto_script.sh"), autoShScriptST, "+x")
-      output.add(T, ISZ("chisel/..", "synthesize_zcu102_zynq.tcl"), synthImplST)
-      output.add(T, ISZ("chisel/..", "ip_generation.tcl"), ipGenerationTclST)
       output.add(T, ISZ("chisel/src/main/resources/C", "zynq_program.c"), zynqCProgramST)
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxAdderSigned64Wrapper.v"), xilinxAddSub64ST(T ,T))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxAdderUnsigned64Wrapper.v"), xilinxAddSub64ST(T, F))
