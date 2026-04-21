@@ -7434,7 +7434,16 @@ import HwSynthesizer2._
                  |  // reg for general purpose
                  |  ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
                  |  // reg for code pointer
-                 |  val ${name}CP = RegInit(2.U(cpWidth.W))
+                 |  // CP (stable) feeds the switch decoder; CP_next absorbs the
+                 |  // "chosen next state" computed inside blocks. A 1-cycle
+                 |  // latch `CP := CP_next` breaks the CP -> huge-decode -> CP
+                 |  // self-loop (the 1011-way critical path on the DLLPool FSMs
+                 |  // at 90nm). The switch is gated by (CP === CP_next) so
+                 |  // stale cycles hold all block outputs rather than re-firing.
+                 |  val ${name}CP      = RegInit(2.U(cpWidth.W))
+                 |  val ${name}CP_next = RegInit(2.U(cpWidth.W))
+                 |  ${name}CP_next := ${name}CP_next
+                 |  ${name}CP      := ${name}CP_next
                  |  // reg for stack pointer
                  |  val SP = RegInit(0.U(spWidth.W))
                  |  // reg for display pointer
@@ -7517,7 +7526,7 @@ import HwSynthesizer2._
               |    r_srcCP := r_arbTempSaveRestore_resp.srcCp
               |
               |    r_arbTempSaveRestore_req.op := 0.U
-              |    ${name}CP  := r_saveDstCP
+              |    ${name}CP_next := r_saveDstCP
               |  }
               |}
             """
@@ -7533,11 +7542,11 @@ import HwSynthesizer2._
                      |
                      |  when(r_routeIn_valid) {
                      |    when(r_routeIn.isReturn) {
-                     |      ${name}CP  := ${maxBlockLabel()}.U
+                     |      ${name}CP_next := ${maxBlockLabel()}.U
                      |    } .otherwise {
                      |      r_srcCP := r_routeIn.srcCP
                      |      r_srcID := r_routeIn.srcID
-                     |      ${name}CP  := r_routeIn.dstCP
+                     |      ${name}CP_next := r_routeIn.dstCP
                      |    }
                      |  }
                      |}
@@ -7549,7 +7558,7 @@ import HwSynthesizer2._
                      |  when(r_routeIn_valid) {
                      |    r_srcCP := r_routeIn.srcCP
                      |    r_srcID := r_routeIn.srcID
-                     |    ${name}CP  := r_routeIn.dstCP
+                     |    ${name}CP_next := r_routeIn.dstCP
                      |  }
                      |}
                    """
@@ -7561,7 +7570,7 @@ import HwSynthesizer2._
             |is(0.U) {
             |  r_routeOut_valid := false.B
             |  when(r_routeIn_valid) {
-            |    ${name}CP  := r_routeIn.dstCP
+            |    ${name}CP_next := r_routeIn.dstCP
             |  }
             |}
             |
@@ -7572,7 +7581,7 @@ import HwSynthesizer2._
             |  r_routeOut.dstCP := 4.U
             |  r_routeOut.isReturn := true.B
             |  r_routeOut_valid := true.B
-            |  ${name}CP := 1.U
+            |  ${name}CP_next := 1.U
             |}
           """
       stateSTs = stateSTs :+ state2St
@@ -7603,8 +7612,14 @@ import HwSynthesizer2._
               |object ${name}_StateMachine_${j} {
               |  def ${name}_stateMachine(o:${name}): Unit = {
               |    import o._
-              |    switch(${name}CP) {
-              |      ${(objectStateMachineST(j), "\n")}
+              |    // Gate by (CP === CP_next): a "stale" cycle (when the previous
+              |    // block wrote CP_next to a new state but CP hasn't caught up
+              |    // yet) must not re-fire the current block's combinational
+              |    // outputs.
+              |    when(${name}CP === ${name}CP_next) {
+              |      switch(${name}CP) {
+              |        ${(objectStateMachineST(j), "\n")}
+              |      }
               |    }
               |  }
               |}
@@ -7748,7 +7763,7 @@ import HwSynthesizer2._
     val j = b.jump
 
     @strictpure def jumpSplitCpST(label: Z): ST = {
-      st"${name}CP := ${hwLog.currentLabel}.U"
+      st"${name}CP_next := ${hwLog.currentLabel}.U"
     }
 
     j match {
@@ -7756,7 +7771,7 @@ import HwSynthesizer2._
         val targetAddrST: ST = processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         if (intrinsic.isTemp) {
           if(anvil.config.cpMax <= 0) {
-            intrinsicST = intrinsicST :+ st"${name}CP := ${targetAddrST}"
+            intrinsicST = intrinsicST :+ st"${name}CP_next := ${targetAddrST}"
           }
         } else {
           var returnAddrST = ISZ[ST]()
@@ -7772,7 +7787,7 @@ import HwSynthesizer2._
 
           intrinsicST = intrinsicST :+
             st"""
-                |${name}CP := Cat(
+                |${name}CP_next := Cat(
                 |  ${(returnAddrST, "\n")}
                 |)
             """
@@ -7790,7 +7805,7 @@ import HwSynthesizer2._
                 |r_arbGlobalVar_req.index := ${index}
                 |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |when(r_arbGlobalVar_req_valid) {
-                |  ${funName}CP := r_arbGlobalVar_resp.out
+                |  ${funName}CP_next := r_arbGlobalVar_resp.out
                 |}
               """
         }
@@ -7800,16 +7815,16 @@ import HwSynthesizer2._
           if(hwLog.isFunCallInCurrentBlock()) {
             intrinsicST = intrinsicST :+ st"r_routeOut.srcCP := ${j.label}.U"
             intrinsicST = intrinsicST :+ st"r_routeOut.isReturn := false.B"
-            intrinsicST = intrinsicST :+ st"${name}CP := ${if(isRecursive) "2.U" else "0.U"}"
+            intrinsicST = intrinsicST :+ st"${name}CP_next := ${if(isRecursive) "2.U" else "0.U"}"
           } else {
-            intrinsicST = intrinsicST :+ st"${name}CP := ${j.label}.U"
+            intrinsicST = intrinsicST :+ st"${name}CP_next := ${j.label}.U"
           }
         }
       }
       case j: AST.IR.Jump.If => {
         val cond = processExpr(j.cond, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         if(anvil.config.cpMax <= 0) {
-          intrinsicST = intrinsicST :+ st"${name}CP := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
+          intrinsicST = intrinsicST :+ st"${name}CP_next := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
         }
       }
       case j: AST.IR.Jump.Switch => {
@@ -7819,7 +7834,7 @@ import HwSynthesizer2._
         hwLog.tmpWireCount = hwLog.tmpWireCount + 1
 
         val defaultStatementST: ST = j.defaultLabelOpt match {
-          case Some(x) => if(anvil.config.cpMax <= 0) st"${name}CP := ${x}.U" else jumpSplitCpST(x)
+          case Some(x) => if(anvil.config.cpMax <= 0) st"${name}CP_next := ${x}.U" else jumpSplitCpST(x)
           case None() => st""
         }
 
@@ -7828,7 +7843,7 @@ import HwSynthesizer2._
           isStatementST = isStatementST :+
             st"""
                 |is(${processExpr(i.value, F, ipPortLogic, maxRegisters, isRecursive, hwLog).render}) {
-                |  ${if(anvil.config.cpMax <=0) st"${name}CP := ${i.label}.U" else jumpSplitCpST(i.label)}
+                |  ${if(anvil.config.cpMax <=0) st"${name}CP_next := ${i.label}.U" else jumpSplitCpST(i.label)}
                 |}
               """
         }
@@ -7851,7 +7866,7 @@ import HwSynthesizer2._
               |r_routeOut.dstCP := r_srcCP
               |r_routeOut.isReturn := true.B
               |r_routeOut_valid := true.B
-              |${name}CP := 2.U
+              |${name}CP_next := 2.U
           """
       }
       case _ => {
