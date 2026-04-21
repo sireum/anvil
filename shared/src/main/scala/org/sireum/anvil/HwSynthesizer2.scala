@@ -6730,10 +6730,24 @@ import HwSynthesizer2._
 
       val dataWidthST: ST = if(arb != ArbGlobalVarIP()) st"dataWidth = C_M_AXI_DATA_WIDTH" else st""
 
+      // Route each arbiter into the partitioned reset tree defined in the
+      // Top module. Control-plane arbiters (GlobalVar / TempSaveRestore)
+      // share myRst_ctrl with the per-procedure FSM modules; all other
+      // datapath arbiters use myRst_arith. BlockMemory keeps the default
+      // module reset so its AXI master state machines are not stomped by
+      // soft-reset pulses from r_start.
+      val rstClass: String =
+        if      (arb == ArbBlockMemoryIP())     ""
+        else if (arb == ArbGlobalVarIP())       "myRst_ctrl"
+        else if (arb == ArbTempSaveRestoreIP()) "myRst_ctrl"
+        else                                    "myRst_arith"
+      val withRstOpen : String = if (rstClass != "") s"withReset(${rstClass}) {" else ""
+      val withRstClose: String = if (rstClass != "") "}" else ""
+
       val declST: ST =
         st"""
-            |val ${instanceName}Wrapper = ${if(arb != ArbBlockMemoryIP()) "withReset(myRst) {" else ""} Module(new ${moduleName}Wrapper(${dataWidthST}${paraStr})) ${if(arb != ArbBlockMemoryIP()) "}" else ""}
-            |val ${instanceName}ArbiterModule = ${if(arb != ArbBlockMemoryIP()) "withReset(myRst) {" else ""} Module(new ${moduleName}ArbiterModule(numIPs = ${numIpsStr}, ${dataWidthST}${paraStr})) ${if(arb != ArbBlockMemoryIP()) "}" else ""}
+            |val ${instanceName}Wrapper = ${withRstOpen} Module(new ${moduleName}Wrapper(${dataWidthST}${paraStr})) ${withRstClose}
+            |val ${instanceName}ArbiterModule = ${withRstOpen} Module(new ${moduleName}ArbiterModule(numIPs = ${numIpsStr}, ${dataWidthST}${paraStr})) ${withRstClose}
             |${instanceName}Wrapper.io.req <> ${instanceName}ArbiterModule.io.ip.req
             |${instanceName}Wrapper.io.resp <> ${instanceName}ArbiterModule.io.ip.resp
             |${axi4ConnST}
@@ -6770,9 +6784,11 @@ import HwSynthesizer2._
 
     var allFunctionST: ISZ[ST] = ISZ[ST]()
     for(f <- ipRouterUsage.entries) {
+      // Per-procedure CP-FSM modules belong to the control-plane reset
+      // partition (myRst_ctrl) together with GlobalVar / TempSaveRestore.
       allFunctionST = allFunctionST :+
         st"""
-            |val mod_${f._1} = withReset(myRst) {
+            |val mod_${f._1} = withReset(myRst_ctrl) {
             |  Module(new ${f._1}(
             |    addrWidth = C_M_AXI_ADDR_WIDTH,
             |    dataWidth = C_M_AXI_DATA_WIDTH,
@@ -6923,6 +6939,12 @@ import HwSynthesizer2._
     @strictpure def axi4SlaveBodyST: ST = {
       st"""
           |val r_control = RegInit(VecInit(Seq.fill(${if(isFpgaTop) (if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) 6 else 16) else 2})(0.U(C_S_AXI_DATA_WIDTH.W))))
+          |// Dedicated status register for AXI read-back. Separating this from
+          |// r_control avoids the bi-directional write conflict that arose when
+          |// both the AXI write path (r_control(r_s_axi_awaddr) := r_s_axi_wdata)
+          |// and the internal status writer (r_control(1) := ...) targeted the
+          |// same Vec slot. AXI reads at address 1 are muxed to r_status below.
+          |val r_status  = RegInit(0.U(C_S_AXI_DATA_WIDTH.W))
           |val ADDR_LSB: Int = (C_S_AXI_DATA_WIDTH / 32) + 1
           |
           |// registers for diff channels
@@ -6984,7 +7006,9 @@ import HwSynthesizer2._
           |
           |when(r_ar_valid) {
           |  r_s_axi_rvalid            := true.B
-          |  r_s_axi_rdata             := r_control(r_s_axi_araddr)
+          |  // Address 1 reads the dedicated status register; all other
+          |  // addresses pass through to r_control (which is written by AXI).
+          |  r_s_axi_rdata             := Mux(r_s_axi_araddr === 1.U, r_status, r_control(r_s_axi_araddr))
           |  r_ar_valid                := false.B
           |}
           |
@@ -7272,9 +7296,32 @@ import HwSynthesizer2._
                |  val r_valid = RegInit(false.B)
                |  val r_init_done = RegInit(false.B)
                |  r_start := r_control(0)(0)
-               |  r_control(1) := Cat(r_init_done, r_valid).asUInt
+               |  // Status bits go to the dedicated r_status register (defined
+               |  // alongside r_control in the AXI-Lite slave body). Writing
+               |  // r_status here avoids the double-write conflict with AXI on
+               |  // the same r_control(1) Vec element.
+               |  r_status := Cat(r_init_done, r_valid).asUInt
                |
-               |  val myRst: Reset = r_start
+               |  // Partitioned synchronous reset tree. A single myRst driven by
+               |  // r_start previously fanned out to every RegInit in all 16+
+               |  // procedure modules and all 20+ arithmetic/control arbiters,
+               |  // producing the -24.76 ns WNS on myRst_reg paths at 90nm.
+               |  // We register r_start into three class-local copies so DC can
+               |  // insert an independent buffer tree per partition:
+               |  //   - myRst_arith : datapath arbiters (Add/Sub/Mul/Div/Rem/And/
+               |  //                   Or/Xor/Eq/Ne/Lt/Le/Gt/Ge/Shl/Shr/Ushr,
+               |  //                   Indexer)
+               |  //   - myRst_ctrl  : GlobalVar / TempSaveRestore arbiters and
+               |  //                   the per-procedure FSM modules (CP state)
+               |  //   - myRst_mem   : reserved; BlockMemory stays on the module
+               |  //                   default reset so its AXI master state
+               |  //                   survives soft-reset pulses from r_start
+               |  val myRst_arith_q = RegNext(r_start, false.B)
+               |  val myRst_ctrl_q  = RegNext(r_start, false.B)
+               |  val myRst_mem_q   = RegNext(r_start, false.B)
+               |  val myRst_arith: Reset = myRst_arith_q
+               |  val myRst_ctrl:  Reset = myRst_ctrl_q
+               |  val myRst_mem:   Reset = myRst_mem_q
                |
                |  val r_mem_req  = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(C_M_AXI_DATA_WIDTH, ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) "C_M_AXI_ADDR_WIDTH, " else ""} MEMORY_DEPTH)))
                |  val r_mem_req_valid = RegInit(false.B)
