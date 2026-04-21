@@ -140,26 +140,29 @@ object ArbInputMap {
           |  })
           |
           |  // =================================================================
-          |  //  Carry-Select Adder (CSLA), 64-bit, 4-stage pipeline.
+          |  //  Carry-Select Adder (CSLA), 64-bit, 5-stage pipeline.
           |  //
-          |  //  Idea: split a+b into four 16-bit blocks. For each block,
+          |  //  Idea: split a+b into EIGHT 8-bit blocks. For each block
           |  //    compute sum assuming carry_in=0 AND carry_in=1 in parallel.
-          |  //    Then a 3-level mux chain picks the correct results using
-          |  //    actual carries — no 64-bit carry propagation anywhere.
+          |  //    The 7-level mux chain is split across two pipeline stages
+          |  //    (Stage 2a for lower 4 blocks, Stage 2b for upper 4),
+          |  //    so no single cycle has more than ~4 mux levels.
           |  //
-          |  //  Critical path per pipeline stage:
-          |  //    Stage 1: one 16-bit addition          (~0.5 ns FPGA / ~0.4 ns ASIC)
-          |  //    Stage 2: 3-level mux + register       (~0.5 ns FPGA / ~0.3 ns ASIC)
+          |  //  Critical path per pipeline stage (90nm SAED, typ corner):
+          |  //    Stage 1 : one 8-bit addition               (~3-4 ns)
+          |  //    Stage 2a: 3-level mux on 8-bit wires       (~1-2 ns)
+          |  //    Stage 2b: 3-level mux on 8-bit wires       (~1-2 ns)
           |  //
           |  //  Portable: no platform primitives, no `*` or `/`.
           |  //  Signed/unsigned: bit-identical for addition under two's
           |  //  complement, so everything runs as UInt internally.
           |  //
-          |  //  Latency: 4 cycles from start rising edge to valid pulse.
+          |  //  Latency: 5 cycles from start rising edge to valid pulse.
           |  // =================================================================
-          |  val LATENCY = 4
-          |  val BW      = 16   // block width — sweet spot for FPGA CARRY8 (2 per block)
-          |  val NBLK    = 4    // 4 blocks * 16 bits = 64 bits
+          |  val LATENCY = 5
+          |  val BW      = 8    // block width — smaller blocks shorten Stage 1 RCA
+          |  val NBLK    = 8    // 8 blocks * 8 bits = 64 bits
+          |  val HALF    = NBLK / 2
           |
           |  // --------------- handshake (single-cycle valid pulse) -------------
           |  val start_d    = RegNext(io.start, false.B)
@@ -176,15 +179,13 @@ object ArbInputMap {
           |  // --------------- Stage 0 : capture operands ----------------------
           |  val a_s0 = RegEnable(io.a.asUInt, accept)
           |  val b_s0 = RegEnable(io.b.asUInt, accept)
-          |  val en_s1 = RegNext(accept, false.B)
-          |  val en_s2 = RegNext(en_s1,  false.B)
+          |  val en_s1  = RegNext(accept, false.B)
+          |  val en_s2a = RegNext(en_s1,  false.B)
+          |  val en_s2b = RegNext(en_s2a, false.B)
           |
-          |  // --------------- Stage 1 : parallel 16-bit additions -------------
-          |  //   For each block k, compute:
-          |  //     {cout0(k), sum0(k)} = a_block(k) + b_block(k)         (cin=0)
-          |  //     {cout1(k), sum1(k)} = a_block(k) + b_block(k) + 1     (cin=1)
-          |  //   All 8 additions run in parallel — critical path is ONE
-          |  //   16-bit add (2 CARRY8 on UltraScale+, ~4 FA on ASIC).
+          |  // --------------- Stage 1 : parallel 8-bit additions --------------
+          |  //   For each of 8 blocks, compute {cin=0, cin=1} sums in parallel.
+          |  //   Critical path per block is ONE 8-bit RCA (~8 FA gates).
           |  // -----------------------------------------------------------------
           |  val sum0  = Reg(Vec(NBLK, UInt(BW.W)))
           |  val cout0 = Reg(Vec(NBLK, Bool()))
@@ -194,37 +195,65 @@ object ArbInputMap {
           |  for (k <- 0 until NBLK) {
           |    val aBlk = a_s0(BW*k + BW - 1, BW*k)
           |    val bBlk = b_s0(BW*k + BW - 1, BW*k)
-          |    // zero-extend to 17b to capture carry out in MSB
+          |    // zero-extend to 9b to capture carry out in MSB
           |    val extA = Cat(0.U(1.W), aBlk)
           |    val extB = Cat(0.U(1.W), bBlk)
-          |    val r0 = extA + extB            // 17b, cin = 0
-          |    val r1 = extA + extB + 1.U      // 17b, cin = 1
+          |    val r0 = extA + extB            // 9b, cin = 0
+          |    val r1 = extA + extB + 1.U      // 9b, cin = 1
           |    sum0(k)  := r0(BW - 1, 0)
           |    cout0(k) := r0(BW)
           |    sum1(k)  := r1(BW - 1, 0)
           |    cout1(k) := r1(BW)
           |  }
           |
-          |  // --------------- Stage 2 : carry-select mux chain ----------------
-          |  //   Block 0 has no carry-in, so it always uses the cin=0 result.
-          |  //   Blocks 1-3 are selected by the carry-out of the previous block.
-          |  //
-          |  //   Mux chain depth = NBLK - 1 = 3 levels.
-          |  //   Each level: one 16-bit 2:1 mux + one 1-bit 2:1 mux (for carry).
-          |  //   On FPGA this is 3 LUT levels (~0.5 ns). On ASIC ~3 gate delays.
+          |  // --------------- Stage 2a : lower-half carry-select mux chain ---
+          |  //   Block 0 uses cin=0; blocks 1..HALF-1 are muxed by preceding
+          |  //   block's carry-out. Only 3 mux levels on 8-bit wires.
+          |  //   Upper-half partials (sum0/sum1/cout0/cout1 for blocks 4..7)
+          |  //   are forwarded one stage via dedicated registers.
           |  // -----------------------------------------------------------------
-          |  val res   = Wire(Vec(NBLK, UInt(BW.W)))
-          |  val carry = Wire(Vec(NBLK, Bool()))
+          |  val resA     = Reg(Vec(HALF, UInt(BW.W)))
+          |  val carryA   = Reg(Bool())
+          |  val sum0_hi  = Reg(Vec(HALF, UInt(BW.W)))
+          |  val sum1_hi  = Reg(Vec(HALF, UInt(BW.W)))
+          |  val cout0_hi = Reg(Vec(HALF, Bool()))
+          |  val cout1_hi = Reg(Vec(HALF, Bool()))
           |
-          |  res(0)   := sum0(0)
-          |  carry(0) := cout0(0)
-          |
-          |  for (k <- 1 until NBLK) {
-          |    res(k)   := Mux(carry(k - 1), sum1(k),  sum0(k))
-          |    carry(k) := Mux(carry(k - 1), cout1(k), cout0(k))
+          |  {
+          |    val resW   = Wire(Vec(HALF, UInt(BW.W)))
+          |    val carryW = Wire(Vec(HALF, Bool()))
+          |    resW(0)   := sum0(0)
+          |    carryW(0) := cout0(0)
+          |    for (k <- 1 until HALF) {
+          |      resW(k)   := Mux(carryW(k - 1), sum1(k),  sum0(k))
+          |      carryW(k) := Mux(carryW(k - 1), cout1(k), cout0(k))
+          |    }
+          |    for (k <- 0 until HALF) {
+          |      resA(k)      := resW(k)
+          |      sum0_hi(k)   := sum0(HALF + k)
+          |      sum1_hi(k)   := sum1(HALF + k)
+          |      cout0_hi(k)  := cout0(HALF + k)
+          |      cout1_hi(k)  := cout1(HALF + k)
+          |    }
+          |    carryA := carryW(HALF - 1)
           |  }
           |
-          |  val result_s2 = RegEnable(Cat(res(3), res(2), res(1), res(0)), en_s2)
+          |  // --------------- Stage 2b : upper-half carry-select mux chain ---
+          |  //   Seeded by carryA. 3 more mux levels, then concat all 8 blocks
+          |  //   into a 64-bit result register.
+          |  // -----------------------------------------------------------------
+          |  val resB = Wire(Vec(HALF, UInt(BW.W)))
+          |  {
+          |    val carryW = Wire(Vec(HALF, Bool()))
+          |    resB(0)   := Mux(carryA, sum1_hi(0),  sum0_hi(0))
+          |    carryW(0) := Mux(carryA, cout1_hi(0), cout0_hi(0))
+          |    for (k <- 1 until HALF) {
+          |      resB(k)   := Mux(carryW(k - 1), sum1_hi(k),  sum0_hi(k))
+          |      carryW(k) := Mux(carryW(k - 1), cout1_hi(k), cout0_hi(k))
+          |    }
+          |  }
+          |
+          |  val result_s2 = RegEnable(Cat(resB.asUInt, resA.asUInt), en_s2b)
           |
           |  // --------------- Stage 3 : output register -----------------------
           |  val result_s3 = RegNext(result_s2)
@@ -287,7 +316,7 @@ object ArbInputMap {
           |  })
           |
           |  // =================================================================
-          |  //  Carry-Select Subtractor (CSLA), 64-bit, 4-stage pipeline.
+          |  //  Carry-Select Subtractor (CSLA), 64-bit, 5-stage pipeline.
           |  //
           |  //  Core identity:  a - b  =  a + ~b + 1
           |  //
@@ -296,13 +325,17 @@ object ArbInputMap {
           |  //    2. Block 0 selects the cin=1 result (instead of cin=0 in the
           |  //       adder) to account for the +1 of two's complement negation.
           |  //
-          |  //  Critical path: 16-bit addition + 3-level mux chain.
-          |  //  FPGA Fmax target: 600-800 MHz     ASIC: 800 MHz - 1 GHz
-          |  //  Latency: 4 cycles from start rising edge to valid pulse.
+          |  //  Pipeline: 8 x 8-bit blocks; 7-level mux chain split across
+          |  //  Stage 2a (lower half) and Stage 2b (upper half).
+          |  //  Critical path per stage (90nm SAED typ):
+          |  //    Stage 1 : 8-bit addition           (~3-4 ns)
+          |  //    Stage 2a/2b: 3-level mux           (~1-2 ns)
+          |  //  Latency: 5 cycles from start rising edge to valid pulse.
           |  // =================================================================
-          |  val LATENCY = 4
-          |  val BW      = 16
-          |  val NBLK    = 4
+          |  val LATENCY = 5
+          |  val BW      = 8
+          |  val NBLK    = 8
+          |  val HALF    = NBLK / 2
           |
           |  // --------------- handshake (single-cycle valid pulse) -------------
           |  val start_d    = RegNext(io.start, false.B)
@@ -321,15 +354,13 @@ object ArbInputMap {
           |  //   Invert b here; the +1 is handled by block 0 using cin=1.
           |  val a_s0 = RegEnable(io.a.asUInt,        accept)
           |  val b_s0 = RegEnable((~io.b.asUInt),     accept)   // ~b
-          |  val en_s1 = RegNext(accept, false.B)
-          |  val en_s2 = RegNext(en_s1,  false.B)
+          |  val en_s1  = RegNext(accept, false.B)
+          |  val en_s2a = RegNext(en_s1,  false.B)
+          |  val en_s2b = RegNext(en_s2a, false.B)
           |
-          |  // --------------- Stage 1 : parallel 16-bit additions -------------
-          |  //   For each block k, compute:
-          |  //     {cout0(k), sum0(k)} = a_block(k) + ~b_block(k)       (cin=0)
-          |  //     {cout1(k), sum1(k)} = a_block(k) + ~b_block(k) + 1   (cin=1)
-          |  //   All 8 additions run in parallel — critical path is ONE
-          |  //   16-bit add.
+          |  // --------------- Stage 1 : parallel 8-bit additions --------------
+          |  //   For each block, compute a_blk + ~b_blk with cin=0 and cin=1.
+          |  //   Critical path = one 8-bit RCA.
           |  // -----------------------------------------------------------------
           |  val sum0  = Reg(Vec(NBLK, UInt(BW.W)))
           |  val cout0 = Reg(Vec(NBLK, Bool()))
@@ -339,8 +370,8 @@ object ArbInputMap {
           |  for (k <- 0 until NBLK) {
           |    val aBlk = a_s0(BW*k + BW - 1, BW*k)
           |    val bBlk = b_s0(BW*k + BW - 1, BW*k)   // already inverted
-          |    val extA = Cat(0.U(1.W), aBlk)           // 17b
-          |    val extB = Cat(0.U(1.W), bBlk)           // 17b
+          |    val extA = Cat(0.U(1.W), aBlk)           // 9b
+          |    val extB = Cat(0.U(1.W), bBlk)           // 9b
           |    val r0 = extA + extB                     // cin = 0
           |    val r1 = extA + extB + 1.U               // cin = 1
           |    sum0(k)  := r0(BW - 1, 0)
@@ -349,25 +380,54 @@ object ArbInputMap {
           |    cout1(k) := r1(BW)
           |  }
           |
-          |  // --------------- Stage 2 : carry-select mux chain ----------------
-          |  //   KEY DIFFERENCE from adder:
-          |  //     Block 0 uses the cin=1 result — this is the "+1" in a + ~b + 1.
-          |  //     Blocks 1-3 are muxed by the carry-out of the previous block.
+          |  // --------------- Stage 2a : lower-half carry-select mux chain ---
+          |  //   Block 0 uses cin=1 (the +1 of two's complement negation).
+          |  //   Blocks 1..HALF-1 muxed by the previous block's carry-out.
+          |  //   Upper-half partials are forwarded one stage.
           |  // -----------------------------------------------------------------
-          |  val res   = Wire(Vec(NBLK, UInt(BW.W)))
-          |  val carry = Wire(Vec(NBLK, Bool()))
+          |  val resA     = Reg(Vec(HALF, UInt(BW.W)))
+          |  val carryA   = Reg(Bool())
+          |  val sum0_hi  = Reg(Vec(HALF, UInt(BW.W)))
+          |  val sum1_hi  = Reg(Vec(HALF, UInt(BW.W)))
+          |  val cout0_hi = Reg(Vec(HALF, Bool()))
+          |  val cout1_hi = Reg(Vec(HALF, Bool()))
           |
-          |  // block 0: cin = 1 (the +1 of two's complement)
-          |  res(0)   := sum1(0)
-          |  carry(0) := cout1(0)
-          |
-          |  // blocks 1-3: mux based on incoming carry
-          |  for (k <- 1 until NBLK) {
-          |    res(k)   := Mux(carry(k - 1), sum1(k),  sum0(k))
-          |    carry(k) := Mux(carry(k - 1), cout1(k), cout0(k))
+          |  {
+          |    val resW   = Wire(Vec(HALF, UInt(BW.W)))
+          |    val carryW = Wire(Vec(HALF, Bool()))
+          |    // block 0: cin = 1 (the +1 of two's complement)
+          |    resW(0)   := sum1(0)
+          |    carryW(0) := cout1(0)
+          |    for (k <- 1 until HALF) {
+          |      resW(k)   := Mux(carryW(k - 1), sum1(k),  sum0(k))
+          |      carryW(k) := Mux(carryW(k - 1), cout1(k), cout0(k))
+          |    }
+          |    for (k <- 0 until HALF) {
+          |      resA(k)      := resW(k)
+          |      sum0_hi(k)   := sum0(HALF + k)
+          |      sum1_hi(k)   := sum1(HALF + k)
+          |      cout0_hi(k)  := cout0(HALF + k)
+          |      cout1_hi(k)  := cout1(HALF + k)
+          |    }
+          |    carryA := carryW(HALF - 1)
           |  }
           |
-          |  val result_s2 = RegEnable(Cat(res(3), res(2), res(1), res(0)), en_s2)
+          |  // --------------- Stage 2b : upper-half carry-select mux chain ---
+          |  //   Seeded by carryA (the outgoing carry from block HALF-1).
+          |  //   3 more mux levels, then register the final 64-bit result.
+          |  // -----------------------------------------------------------------
+          |  val resB = Wire(Vec(HALF, UInt(BW.W)))
+          |  {
+          |    val carryW = Wire(Vec(HALF, Bool()))
+          |    resB(0)   := Mux(carryA, sum1_hi(0),  sum0_hi(0))
+          |    carryW(0) := Mux(carryA, cout1_hi(0), cout0_hi(0))
+          |    for (k <- 1 until HALF) {
+          |      resB(k)   := Mux(carryW(k - 1), sum1_hi(k),  sum0_hi(k))
+          |      carryW(k) := Mux(carryW(k - 1), cout1_hi(k), cout0_hi(k))
+          |    }
+          |  }
+          |
+          |  val result_s2 = RegEnable(Cat(resB.asUInt, resA.asUInt), en_s2b)
           |
           |  // --------------- Stage 3 : output register -----------------------
           |  val result_s3 = RegNext(result_s2)
@@ -1615,10 +1675,27 @@ object ArbInputMap {
           |    val remainder = Output(${portType}(width.W))
           |  })
           |
-          |  val BW   = 16
+          |  // ==================================================================
+          |  //  Non-restoring division, 2 cycles per bit.
+          |  //
+          |  //  The original single-cycle iteration forced a full 64-bit
+          |  //  CSLA subtract AND the update of rem/quot/dividend into one
+          |  //  clock period, which violates the 10 ns budget at 90nm.
+          |  //  We split each iteration into:
+          |  //    Phase A (sRunningA): parallel 8-bit block adds
+          |  //                         (8 x 9-bit RCA); latch sum0/cout0,
+          |  //                         sum1/cout1, and the shifted remainder.
+          |  //    Phase B (sRunningB): 7-level carry-select mux chain on the
+          |  //                         registered partials; update rem, quot,
+          |  //                         dividend, count.
+          |  //
+          |  //  Critical path per phase ~ 4-5 ns at 90nm SAED typ.
+          |  //  Latency: 2 * width cycles between start acceptance and valid.
+          |  // ==================================================================
+          |  val BW   = 8
           |  val NBLK = width / BW
           |
-          |  val sIdle :: sRunning :: sDone :: Nil = Enum(3)
+          |  val sIdle :: sRunningA :: sRunningB :: sDone :: Nil = Enum(4)
           |  val state    = RegInit(sIdle)
           |  val count    = RegInit(0.U((log2Ceil(width) + 1).W))
           |  val dividend = Reg(UInt(width.W))
@@ -1627,6 +1704,13 @@ object ArbInputMap {
           |  val rem      = Reg(UInt(width.W))
           |  val quot     = Reg(UInt(width.W))
           |  ${negRegs}
+          |
+          |  // Phase A -> Phase B pipeline registers
+          |  val r_sum0    = Reg(Vec(NBLK, UInt(BW.W)))
+          |  val r_cout0   = Reg(Vec(NBLK, Bool()))
+          |  val r_sum1    = Reg(Vec(NBLK, UInt(BW.W)))
+          |  val r_cout1   = Reg(Vec(NBLK, Bool()))
+          |  val r_shifted = Reg(UInt(width.W))
           |
           |  val r_start      = RegInit(false.B)
           |  val r_start_next = RegInit(false.B)
@@ -1642,6 +1726,7 @@ object ArbInputMap {
           |
           |  val shifted = Cat(rem(width - 2, 0), dividend(width - 1))
           |
+          |  // ----- Phase A combinational : parallel 8-bit block adds -----
           |  val cs_sum0  = Wire(Vec(NBLK, UInt(BW.W)))
           |  val cs_cout0 = Wire(Vec(NBLK, Bool()))
           |  val cs_sum1  = Wire(Vec(NBLK, UInt(BW.W)))
@@ -1660,18 +1745,19 @@ object ArbInputMap {
           |    cs_cout1(k) := r1(BW)
           |  }
           |
+          |  // ----- Phase B combinational : mux chain over registered partials -----
           |  val cs_res   = Wire(Vec(NBLK, UInt(BW.W)))
           |  val cs_carry = Wire(Vec(NBLK, Bool()))
           |
-          |  cs_res(0)   := cs_sum1(0)
-          |  cs_carry(0) := cs_cout1(0)
+          |  cs_res(0)   := r_sum1(0)
+          |  cs_carry(0) := r_cout1(0)
           |
           |  for (k <- 1 until NBLK) {
-          |    cs_res(k)   := Mux(cs_carry(k - 1), cs_sum1(k),  cs_sum0(k))
-          |    cs_carry(k) := Mux(cs_carry(k - 1), cs_cout1(k), cs_cout0(k))
+          |    cs_res(k)   := Mux(cs_carry(k - 1), r_sum1(k),  r_sum0(k))
+          |    cs_carry(k) := Mux(cs_carry(k - 1), r_cout1(k), r_cout0(k))
           |  }
           |
-          |  val subResult   = Cat(cs_res(3), cs_res(2), cs_res(1), cs_res(0))
+          |  val subResult   = cs_res.asUInt
           |  val noUnderflow = cs_carry(NBLK - 1)
           |
           |  switch(state) {
@@ -1681,16 +1767,29 @@ object ArbInputMap {
           |        rem      := 0.U
           |        quot     := 0.U
           |        count    := width.U
-          |        state    := sRunning
+          |        state    := sRunningA
           |      }
           |    }
-          |    is(sRunning) {
-          |      rem      := Mux(noUnderflow, subResult, shifted)
+          |    is(sRunningA) {
+          |      // latch block-add partials for phase B
+          |      for (k <- 0 until NBLK) {
+          |        r_sum0(k)  := cs_sum0(k)
+          |        r_cout0(k) := cs_cout0(k)
+          |        r_sum1(k)  := cs_sum1(k)
+          |        r_cout1(k) := cs_cout1(k)
+          |      }
+          |      r_shifted := shifted
+          |      state := sRunningB
+          |    }
+          |    is(sRunningB) {
+          |      rem      := Mux(noUnderflow, subResult, r_shifted)
           |      quot     := Mux(noUnderflow, (quot << 1) | 1.U, quot << 1)
           |      dividend := dividend << 1
           |      count    := count - 1.U
           |      when(count === 1.U) {
           |        state := sDone
+          |      } .otherwise {
+          |        state := sRunningA
           |      }
           |    }
           |    is(sDone) {
@@ -1789,10 +1888,27 @@ object ArbInputMap {
           |    val remainder = Output(${portType}(width.W))
           |  })
           |
-          |  val BW   = 16
+          |  // ==================================================================
+          |  //  Non-restoring division, 2 cycles per bit.
+          |  //
+          |  //  The original single-cycle iteration forced a full 64-bit
+          |  //  CSLA subtract AND the update of rem/quot/dividend into one
+          |  //  clock period, which violates the 10 ns budget at 90nm.
+          |  //  We split each iteration into:
+          |  //    Phase A (sRunningA): parallel 8-bit block adds
+          |  //                         (8 x 9-bit RCA); latch sum0/cout0,
+          |  //                         sum1/cout1, and the shifted remainder.
+          |  //    Phase B (sRunningB): 7-level carry-select mux chain on the
+          |  //                         registered partials; update rem, quot,
+          |  //                         dividend, count.
+          |  //
+          |  //  Critical path per phase ~ 4-5 ns at 90nm SAED typ.
+          |  //  Latency: 2 * width cycles between start acceptance and valid.
+          |  // ==================================================================
+          |  val BW   = 8
           |  val NBLK = width / BW
           |
-          |  val sIdle :: sRunning :: sDone :: Nil = Enum(3)
+          |  val sIdle :: sRunningA :: sRunningB :: sDone :: Nil = Enum(4)
           |  val state    = RegInit(sIdle)
           |  val count    = RegInit(0.U((log2Ceil(width) + 1).W))
           |  val dividend = Reg(UInt(width.W))
@@ -1801,6 +1917,13 @@ object ArbInputMap {
           |  val rem      = Reg(UInt(width.W))
           |  val quot     = Reg(UInt(width.W))
           |  ${negRegs}
+          |
+          |  // Phase A -> Phase B pipeline registers
+          |  val r_sum0    = Reg(Vec(NBLK, UInt(BW.W)))
+          |  val r_cout0   = Reg(Vec(NBLK, Bool()))
+          |  val r_sum1    = Reg(Vec(NBLK, UInt(BW.W)))
+          |  val r_cout1   = Reg(Vec(NBLK, Bool()))
+          |  val r_shifted = Reg(UInt(width.W))
           |
           |  val r_start      = RegInit(false.B)
           |  val r_start_next = RegInit(false.B)
@@ -1816,6 +1939,7 @@ object ArbInputMap {
           |
           |  val shifted = Cat(rem(width - 2, 0), dividend(width - 1))
           |
+          |  // ----- Phase A combinational : parallel 8-bit block adds -----
           |  val cs_sum0  = Wire(Vec(NBLK, UInt(BW.W)))
           |  val cs_cout0 = Wire(Vec(NBLK, Bool()))
           |  val cs_sum1  = Wire(Vec(NBLK, UInt(BW.W)))
@@ -1834,18 +1958,19 @@ object ArbInputMap {
           |    cs_cout1(k) := r1(BW)
           |  }
           |
+          |  // ----- Phase B combinational : mux chain over registered partials -----
           |  val cs_res   = Wire(Vec(NBLK, UInt(BW.W)))
           |  val cs_carry = Wire(Vec(NBLK, Bool()))
           |
-          |  cs_res(0)   := cs_sum1(0)
-          |  cs_carry(0) := cs_cout1(0)
+          |  cs_res(0)   := r_sum1(0)
+          |  cs_carry(0) := r_cout1(0)
           |
           |  for (k <- 1 until NBLK) {
-          |    cs_res(k)   := Mux(cs_carry(k - 1), cs_sum1(k),  cs_sum0(k))
-          |    cs_carry(k) := Mux(cs_carry(k - 1), cs_cout1(k), cs_cout0(k))
+          |    cs_res(k)   := Mux(cs_carry(k - 1), r_sum1(k),  r_sum0(k))
+          |    cs_carry(k) := Mux(cs_carry(k - 1), r_cout1(k), r_cout0(k))
           |  }
           |
-          |  val subResult   = Cat(cs_res(3), cs_res(2), cs_res(1), cs_res(0))
+          |  val subResult   = cs_res.asUInt
           |  val noUnderflow = cs_carry(NBLK - 1)
           |
           |  switch(state) {
@@ -1855,16 +1980,29 @@ object ArbInputMap {
           |        rem      := 0.U
           |        quot     := 0.U
           |        count    := width.U
-          |        state    := sRunning
+          |        state    := sRunningA
           |      }
           |    }
-          |    is(sRunning) {
-          |      rem      := Mux(noUnderflow, subResult, shifted)
+          |    is(sRunningA) {
+          |      // latch block-add partials for phase B
+          |      for (k <- 0 until NBLK) {
+          |        r_sum0(k)  := cs_sum0(k)
+          |        r_cout0(k) := cs_cout0(k)
+          |        r_sum1(k)  := cs_sum1(k)
+          |        r_cout1(k) := cs_cout1(k)
+          |      }
+          |      r_shifted := shifted
+          |      state := sRunningB
+          |    }
+          |    is(sRunningB) {
+          |      rem      := Mux(noUnderflow, subResult, r_shifted)
           |      quot     := Mux(noUnderflow, (quot << 1) | 1.U, quot << 1)
           |      dividend := dividend << 1
           |      count    := count - 1.U
           |      when(count === 1.U) {
           |        state := sDone
+          |      } .otherwise {
+          |        state := sRunningA
           |      }
           |    }
           |    is(sDone) {
