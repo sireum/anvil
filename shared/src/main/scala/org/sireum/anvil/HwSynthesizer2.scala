@@ -243,6 +243,7 @@ object ArbInputMap {
           |  //   into a 64-bit result register.
           |  // -----------------------------------------------------------------
           |  val resB = Wire(Vec(HALF, UInt(BW.W)))
+          |
           |  {
           |    val carryW = Wire(Vec(HALF, Bool()))
           |    resB(0)   := Mux(carryA, sum1_hi(0),  sum0_hi(0))
@@ -417,6 +418,7 @@ object ArbInputMap {
           |  //   3 more mux levels, then register the final 64-bit result.
           |  // -----------------------------------------------------------------
           |  val resB = Wire(Vec(HALF, UInt(BW.W)))
+          |
           |  {
           |    val carryW = Wire(Vec(HALF, Bool()))
           |    resB(0)   := Mux(carryA, sum1_hi(0),  sum0_hi(0))
