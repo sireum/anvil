@@ -4130,12 +4130,29 @@ import HwSynthesizer2._
             |  val r_reqBits  = Reg(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)}))
             |  val r_chosen   = RegInit(0.U(log2Up(numIPs).W))
             |
-            |  r_foundReq := r_ipReq_enable.reduce(_ || _)
-            |  for (i <- 0 until numIPs) {
-            |    when(r_ipReq_enable(i)) {
-            |      r_reqBits := r_ipReq_bits(i)
-            |      r_chosen  := i.U
-            |    }
+            |  // Parallel priority select. The previous form
+            |  //   for (i <- 0 until numIPs) when(r_ipReq_enable(i)) {
+            |  //     r_reqBits := r_ipReq_bits(i); r_chosen := i.U }
+            |  // synthesized to an numIPs-deep cascaded 2:1 mux (last-when-wins,
+            |  // i.e. highest-index priority) with ~numIPs x 0.4 ns of delay on
+            |  // the 64-bit data path at 90nm — the main source of the
+            |  // -5..-13 ns WNS seen on arb*ArbiterModule_r_reqBits_* and
+            |  // arb*ArbiterModule_r_ipReq_bits_N_* endpoints.
+            |  //
+            |  // Using PriorityEncoder(Reverse(...)) gives an MSB-first priority
+            |  // encoder (equivalent "highest-index wins" semantic), and Mux1H
+            |  // on the one-hot select collapses the chain to a log2(numIPs)
+            |  // balanced mux tree (~4 levels for numIPs = 12).
+            |  val r_ipReq_enableU = r_ipReq_enable.asUInt
+            |  val anyEnabled      = r_ipReq_enableU.orR
+            |  val chosenFromMsb   = PriorityEncoder(Reverse(r_ipReq_enableU))
+            |  val chosen          = (numIPs - 1).U(log2Up(numIPs).W) - chosenFromMsb
+            |  val selOH           = UIntToOH(chosen, numIPs)
+            |
+            |  r_foundReq := anyEnabled
+            |  when(anyEnabled) {
+            |    r_chosen  := chosen
+            |    r_reqBits := Mux1H(selOH.asBools, r_ipReq_bits)
             |  }
             |
             |  io.ip.req.valid := r_foundReq
