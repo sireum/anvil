@@ -908,20 +908,34 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    val r_start      = RegInit(false.B)
-        |    val r_start_next = RegInit(false.B)
-        |    val r_busy       = RegInit(true.B)
+        |    // 2-stage pipelined ${widthOfPort}-bit equality compare:
+        |    //   stage 1: compare high / low halves in parallel
+        |    //   stage 2: AND the two half-results -> io.out
+        |    // Latency = 2 cycles from io.start rising edge; single-cycle
+        |    // 64-bit compare was the SAED90 Fmax bottleneck (37-level OAI chain).
+        |    val r_start  = RegInit(false.B)
+        |    val r_start1 = RegInit(false.B)
+        |    val r_start2 = RegInit(false.B)
+        |    val r_busy   = RegInit(true.B)
         |
-        |    r_start      := io.start
-        |    r_start_next := r_start
-        |    when(r_start & ~r_start_next) {
+        |    r_start  := io.start
+        |    r_start1 := r_start
+        |    r_start2 := r_start1
+        |    when(r_start1 & ~r_start2) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    io.valid := r_start & ~r_busy
-        |    io.out := RegNext(io.a === io.b)
+        |    val a_hi = io.a(width - 1, width / 2)
+        |    val a_lo = io.a(width / 2 - 1, 0)
+        |    val b_hi = io.b(width - 1, width / 2)
+        |    val b_lo = io.b(width / 2 - 1, 0)
+        |    val hi_eq_r = RegNext(a_hi === b_hi)
+        |    val lo_eq_r = RegNext(a_lo === b_lo)
+        |
+        |    io.out   := RegNext(hi_eq_r & lo_eq_r)
+        |    io.valid := r_start2 & ~r_busy
         |}
       """
   }
@@ -957,20 +971,32 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    val r_start      = RegInit(false.B)
-        |    val r_start_next = RegInit(false.B)
-        |    val r_busy       = RegInit(true.B)
+        |    // 2-stage pipelined ${widthOfPort}-bit inequality compare:
+        |    //   stage 1: compare high / low halves in parallel
+        |    //   stage 2: OR the two half-mismatches -> io.out
+        |    val r_start  = RegInit(false.B)
+        |    val r_start1 = RegInit(false.B)
+        |    val r_start2 = RegInit(false.B)
+        |    val r_busy   = RegInit(true.B)
         |
-        |    r_start      := io.start
-        |    r_start_next := r_start
-        |    when(r_start & ~r_start_next) {
+        |    r_start  := io.start
+        |    r_start1 := r_start
+        |    r_start2 := r_start1
+        |    when(r_start1 & ~r_start2) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    io.valid := r_start & ~r_busy
-        |    io.out := RegNext(io.a =/= io.b)
+        |    val a_hi = io.a(width - 1, width / 2)
+        |    val a_lo = io.a(width / 2 - 1, 0)
+        |    val b_hi = io.b(width - 1, width / 2)
+        |    val b_lo = io.b(width / 2 - 1, 0)
+        |    val hi_ne_r = RegNext(a_hi =/= b_hi)
+        |    val lo_ne_r = RegNext(a_lo =/= b_lo)
+        |
+        |    io.out   := RegNext(hi_ne_r | lo_ne_r)
+        |    io.valid := r_start2 & ~r_busy
         |}
       """
   }
@@ -1006,20 +1032,33 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    val r_start      = RegInit(false.B)
-        |    val r_start_next = RegInit(false.B)
-        |    val r_busy       = RegInit(true.B)
+        |    // 2-stage pipelined ${widthOfPort}-bit >= :
+        |    //   out = (hi > ) | ((hi == ) & (lo >= ))
+        |    // High half uses ${portType} compare; low half is always unsigned.
+        |    val r_start  = RegInit(false.B)
+        |    val r_start1 = RegInit(false.B)
+        |    val r_start2 = RegInit(false.B)
+        |    val r_busy   = RegInit(true.B)
         |
-        |    r_start      := io.start
-        |    r_start_next := r_start
-        |    when(r_start & ~r_start_next) {
+        |    r_start  := io.start
+        |    r_start1 := r_start
+        |    r_start2 := r_start1
+        |    when(r_start1 & ~r_start2) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    io.valid := r_start & ~r_busy
-        |    io.out := RegNext(io.a >= io.b)
+        |    val a_hi = io.a(width - 1, width / 2)
+        |    val a_lo = io.a(width / 2 - 1, 0)
+        |    val b_hi = io.b(width - 1, width / 2)
+        |    val b_lo = io.b(width / 2 - 1, 0)
+        |    val hi_gt_r = RegNext(${if(signedPort) "a_hi.asSInt > b_hi.asSInt" else "a_hi > b_hi"})
+        |    val hi_eq_r = RegNext(a_hi === b_hi)
+        |    val lo_ge_r = RegNext(a_lo >= b_lo)
+        |
+        |    io.out   := RegNext(hi_gt_r | (hi_eq_r & lo_ge_r))
+        |    io.valid := r_start2 & ~r_busy
         |}
       """
   }
@@ -1055,20 +1094,32 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    val r_start      = RegInit(false.B)
-        |    val r_start_next = RegInit(false.B)
-        |    val r_busy       = RegInit(true.B)
+        |    // 2-stage pipelined ${widthOfPort}-bit > :
+        |    //   out = (hi > ) | ((hi == ) & (lo > ))
+        |    val r_start  = RegInit(false.B)
+        |    val r_start1 = RegInit(false.B)
+        |    val r_start2 = RegInit(false.B)
+        |    val r_busy   = RegInit(true.B)
         |
-        |    r_start      := io.start
-        |    r_start_next := r_start
-        |    when(r_start & ~r_start_next) {
+        |    r_start  := io.start
+        |    r_start1 := r_start
+        |    r_start2 := r_start1
+        |    when(r_start1 & ~r_start2) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    io.valid := r_start & ~r_busy
-        |    io.out := RegNext(io.a > io.b)
+        |    val a_hi = io.a(width - 1, width / 2)
+        |    val a_lo = io.a(width / 2 - 1, 0)
+        |    val b_hi = io.b(width - 1, width / 2)
+        |    val b_lo = io.b(width / 2 - 1, 0)
+        |    val hi_gt_r = RegNext(${if(signedPort) "a_hi.asSInt > b_hi.asSInt" else "a_hi > b_hi"})
+        |    val hi_eq_r = RegNext(a_hi === b_hi)
+        |    val lo_gt_r = RegNext(a_lo > b_lo)
+        |
+        |    io.out   := RegNext(hi_gt_r | (hi_eq_r & lo_gt_r))
+        |    io.valid := r_start2 & ~r_busy
         |}
       """
   }
@@ -1104,20 +1155,32 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    val r_start      = RegInit(false.B)
-        |    val r_start_next = RegInit(false.B)
-        |    val r_busy       = RegInit(true.B)
+        |    // 2-stage pipelined ${widthOfPort}-bit <= :
+        |    //   out = (hi < ) | ((hi == ) & (lo <= ))
+        |    val r_start  = RegInit(false.B)
+        |    val r_start1 = RegInit(false.B)
+        |    val r_start2 = RegInit(false.B)
+        |    val r_busy   = RegInit(true.B)
         |
-        |    r_start      := io.start
-        |    r_start_next := r_start
-        |    when(r_start & ~r_start_next) {
+        |    r_start  := io.start
+        |    r_start1 := r_start
+        |    r_start2 := r_start1
+        |    when(r_start1 & ~r_start2) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    io.valid := r_start & ~r_busy
-        |    io.out := RegNext(io.a <= io.b)
+        |    val a_hi = io.a(width - 1, width / 2)
+        |    val a_lo = io.a(width / 2 - 1, 0)
+        |    val b_hi = io.b(width - 1, width / 2)
+        |    val b_lo = io.b(width / 2 - 1, 0)
+        |    val hi_lt_r = RegNext(${if(signedPort) "a_hi.asSInt < b_hi.asSInt" else "a_hi < b_hi"})
+        |    val hi_eq_r = RegNext(a_hi === b_hi)
+        |    val lo_le_r = RegNext(a_lo <= b_lo)
+        |
+        |    io.out   := RegNext(hi_lt_r | (hi_eq_r & lo_le_r))
+        |    io.valid := r_start2 & ~r_busy
         |}
       """
   }
@@ -1153,20 +1216,32 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    val r_start      = RegInit(false.B)
-        |    val r_start_next = RegInit(false.B)
-        |    val r_busy       = RegInit(true.B)
+        |    // 2-stage pipelined ${widthOfPort}-bit < :
+        |    //   out = (hi < ) | ((hi == ) & (lo < ))
+        |    val r_start  = RegInit(false.B)
+        |    val r_start1 = RegInit(false.B)
+        |    val r_start2 = RegInit(false.B)
+        |    val r_busy   = RegInit(true.B)
         |
-        |    r_start      := io.start
-        |    r_start_next := r_start
-        |    when(r_start & ~r_start_next) {
+        |    r_start  := io.start
+        |    r_start1 := r_start
+        |    r_start2 := r_start1
+        |    when(r_start1 & ~r_start2) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    io.valid := r_start & ~r_busy
-        |    io.out := RegNext(io.a < io.b)
+        |    val a_hi = io.a(width - 1, width / 2)
+        |    val a_lo = io.a(width / 2 - 1, 0)
+        |    val b_hi = io.b(width - 1, width / 2)
+        |    val b_lo = io.b(width / 2 - 1, 0)
+        |    val hi_lt_r = RegNext(${if(signedPort) "a_hi.asSInt < b_hi.asSInt" else "a_hi < b_hi"})
+        |    val hi_eq_r = RegNext(a_hi === b_hi)
+        |    val lo_lt_r = RegNext(a_lo < b_lo)
+        |
+        |    io.out   := RegNext(hi_lt_r | (hi_eq_r & lo_lt_r))
+        |    io.valid := r_start2 & ~r_busy
         |}
       """
   }
@@ -4402,11 +4477,25 @@ import HwSynthesizer2._
             |
             |    ${tempSaveRestoreRegSt}
             |
-            |    // Payload is rewritten unconditionally every cycle (r_req := io.req.bits).
-            |    // Drop the RegInit reset value — it's redundant and adds FF-wide reset
-            |    // fanout back onto the parent module's reset net.
-            |    val r_req            = Reg(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)}))
-            |    val r_req_valid      = RegNext(io.req.valid, init = false.B)
+            |    // Two-stage skid on the IP request bus.
+            |    //
+            |    // Previously there was a single Reg stage (r_req) between
+            |    // io.req and mod. But io.req.bits is driven from the top-level
+            |    // instantiation where a wide mux tree gathers `r_arb*_req_*`
+            |    // outputs from every per-procedure FSM module. That mux tree
+            |    // plus the wrapper's internal combinational kept tons of
+            |    // <top>->arbBlockMemoryWrapper paths (~1,278 violations in run 3).
+            |    //
+            |    // r_req_pre catches the top-level bus at the wrapper boundary
+            |    // (terminates the long mux-tree path); r_req feeds mod one
+            |    // cycle later (isolates the wide internal decode on mod from
+            |    // the top bus). Latency to the IP grows by 1 cycle;
+            |    // throughput is unchanged (the IP's own start->valid handshake
+            |    // dominates).
+            |    val r_req_pre        = Reg(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)}))
+            |    val r_req_pre_valid  = RegNext(io.req.valid, init = false.B)
+            |    val r_req            = RegNext(r_req_pre)
+            |    val r_req_valid      = RegNext(r_req_pre_valid, init = false.B)
             |    ${if(ip == ArbBlockMemoryIP()) "val r_req_valid_next = RegNext(r_req_valid, init = false.B)" else ""}
             |
             |    ${if(ip == ArbBlockMemoryIP()) "val memory_valid = mod.io.readValid | mod.io.writeValid | mod.io.dmaValid" else ""}
@@ -4415,7 +4504,7 @@ import HwSynthesizer2._
             |
             |    ${reqValidST}
             |
-            |    r_req := io.req.bits
+            |    r_req_pre := io.req.bits
             |
             |    ${interfaceLogicST}
             |    io.resp.valid    := r_resp_valid
@@ -6524,7 +6613,7 @@ import HwSynthesizer2._
           |# 2) tb_simulate.do: 去掉末尾 quit -force
           |set do_path $$sim_dir/tb_simulate.do
           |set f [open $$do_path r]; set c [read $$f]; close $$f
-          |regsub -line -all {^quit -force\s*$$} $$c {} c
+          |regsub -line -all {^quit -force\\s*$$} $$c {} c
           |set f [open $$do_path w]; puts -nonewline $$f $$c; close $$f
         """
     }
@@ -7353,12 +7442,20 @@ import HwSynthesizer2._
                |  // the same r_control(1) Vec element.
                |  r_status := Cat(r_init_done, r_valid).asUInt
                |
-               |  // Partitioned synchronous reset tree. A single myRst driven by
-               |  // r_start previously fanned out to every RegInit in all 16+
-               |  // procedure modules and all 20+ arithmetic/control arbiters,
+               |  // Partitioned reset tree. A single myRst driven by r_start
+               |  // previously fanned out synchronously to every RegInit in all
+               |  // 16+ procedure modules and all 20+ arithmetic/control arbiters,
                |  // producing the -24.76 ns WNS on myRst_reg paths at 90nm.
-               |  // We register r_start into three class-local copies so DC can
-               |  // insert an independent buffer tree per partition:
+               |  //
+               |  // Each partition is now an AsyncReset with a 2-FF synchronizer
+               |  // on the deassertion edge. DC treats AsyncReset fanout as a
+               |  // recovery/removal check (not a setup check on every reg D
+               |  // input), which removes ~5k "reset" setup-violation paths
+               |  // once the SDC adds:
+               |  //     set_false_path -from [get_ports reset]
+               |  //     set_false_path -from [get_cells -hier *myRst_*_s1_reg]
+               |  //
+               |  // Partitions:
                |  //   - myRst_arith : datapath arbiters (Add/Sub/Mul/Div/Rem/And/
                |  //                   Or/Xor/Eq/Ne/Lt/Le/Gt/Ge/Shl/Shr/Ushr,
                |  //                   Indexer)
@@ -7367,12 +7464,30 @@ import HwSynthesizer2._
                |  //   - myRst_mem   : reserved; BlockMemory stays on the module
                |  //                   default reset so its AXI master state
                |  //                   survives soft-reset pulses from r_start
-               |  val myRst_arith_q = RegNext(r_start, false.B)
-               |  val myRst_ctrl_q  = RegNext(r_start, false.B)
-               |  val myRst_mem_q   = RegNext(r_start, false.B)
-               |  val myRst_arith: Reset = myRst_arith_q
-               |  val myRst_ctrl:  Reset = myRst_ctrl_q
-               |  val myRst_mem:   Reset = myRst_mem_q
+               |  //
+               |  // Assert path: top-level `reset` (typed as AsyncReset) forces
+               |  // s0/s1 to `false.B` immediately — downstream RegInit resets
+               |  // on the same edge (same polarity as the original design:
+               |  // myRst = 1 asserts reset, matching the r_start=1 soft-reset
+               |  // pulse used during boot memory-clear).
+               |  // Deassert path: once top-level reset drops, s0 captures
+               |  // `r_start` on the next clk; s1 captures s0 one clk later
+               |  // — giving 2 clocks of metastability filtering.
+               |  val myRst_arith_s0 = withReset(reset.asAsyncReset)(RegInit(false.B))
+               |  val myRst_arith_s1 = withReset(reset.asAsyncReset)(RegInit(false.B))
+               |  val myRst_ctrl_s0  = withReset(reset.asAsyncReset)(RegInit(false.B))
+               |  val myRst_ctrl_s1  = withReset(reset.asAsyncReset)(RegInit(false.B))
+               |  val myRst_mem_s0   = withReset(reset.asAsyncReset)(RegInit(false.B))
+               |  val myRst_mem_s1   = withReset(reset.asAsyncReset)(RegInit(false.B))
+               |  myRst_arith_s0 := r_start
+               |  myRst_arith_s1 := myRst_arith_s0
+               |  myRst_ctrl_s0  := r_start
+               |  myRst_ctrl_s1  := myRst_ctrl_s0
+               |  myRst_mem_s0   := r_start
+               |  myRst_mem_s1   := myRst_mem_s0
+               |  val myRst_arith: Reset = myRst_arith_s1.asAsyncReset
+               |  val myRst_ctrl:  Reset = myRst_ctrl_s1.asAsyncReset
+               |  val myRst_mem:   Reset = myRst_mem_s1.asAsyncReset
                |
                |  val r_mem_req  = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(C_M_AXI_DATA_WIDTH, ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) "C_M_AXI_ADDR_WIDTH, " else ""} MEMORY_DEPTH)))
                |  val r_mem_req_valid = RegInit(false.B)
@@ -7543,17 +7658,37 @@ import HwSynthesizer2._
                  |  ${if (anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
                  |  // reg for general purpose
                  |  ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
-                 |  // reg for code pointer
-                 |  // CP (stable) feeds the switch decoder; CP_next absorbs the
-                 |  // "chosen next state" computed inside blocks. A 1-cycle
-                 |  // latch `CP := CP_next` breaks the CP -> huge-decode -> CP
-                 |  // self-loop (the 1011-way critical path on the DLLPool FSMs
-                 |  // at 90nm). The switch is gated by (CP === CP_next) so
-                 |  // stale cycles hold all block outputs rather than re-firing.
-                 |  val ${name}CP      = RegInit(2.U(cpWidth.W))
-                 |  val ${name}CP_next = RegInit(2.U(cpWidth.W))
-                 |  ${name}CP_next := ${name}CP_next
-                 |  ${name}CP      := ${name}CP_next
+                 |  // reg for code pointer — 3-stage CP ring:
+                 |  //
+                 |  //   switch(CP) { is(k.U) { CP_pre_next := <decode expr> ; ... } }
+                 |  //                                       |
+                 |  //                                     (flop)
+                 |  //                                       v
+                 |  //                                   CP_next
+                 |  //                                       |
+                 |  //                                     (flop)
+                 |  //                                       v
+                 |  //                                      CP
+                 |  //
+                 |  // The switch body writes to CP_pre_next; CP_next and CP are
+                 |  // passive single-source follower registers. This isolates
+                 |  // the large switch-decode combinational (CP -> decode +
+                 |  // block-body expressions) from the CP register's own
+                 |  // fanout-reducing buffer tree — DC can now place the
+                 |  // decoder flop farther from CP, and `r_arb*_req_*` writes
+                 |  // inside each `is(k.U)` terminate at flops only one stage
+                 |  // (CP_pre_next family) away from the switch output.
+                 |  //
+                 |  // The switch is gated by (CP === CP_next && CP_next ===
+                 |  // CP_pre_next) so the 2-cycle stale window (between a
+                 |  // state-change write to CP_pre_next and CP finally catching
+                 |  // up) holds all block outputs instead of re-firing.
+                 |  val ${name}CP          = RegInit(2.U(cpWidth.W))
+                 |  val ${name}CP_next     = RegInit(2.U(cpWidth.W))
+                 |  val ${name}CP_pre_next = RegInit(2.U(cpWidth.W))
+                 |  ${name}CP_pre_next := ${name}CP_pre_next
+                 |  ${name}CP_next     := ${name}CP_pre_next
+                 |  ${name}CP          := ${name}CP_next
                  |  // reg for stack pointer
                  |  val SP = RegInit(0.U(spWidth.W))
                  |  // reg for display pointer
@@ -7636,7 +7771,7 @@ import HwSynthesizer2._
               |    r_srcCP := r_arbTempSaveRestore_resp.srcCp
               |
               |    r_arbTempSaveRestore_req.op := 0.U
-              |    ${name}CP_next := r_saveDstCP
+              |    ${name}CP_pre_next := r_saveDstCP
               |  }
               |}
             """
@@ -7652,11 +7787,11 @@ import HwSynthesizer2._
                      |
                      |  when(r_routeIn_valid) {
                      |    when(r_routeIn.isReturn) {
-                     |      ${name}CP_next := ${maxBlockLabel()}.U
+                     |      ${name}CP_pre_next := ${maxBlockLabel()}.U
                      |    } .otherwise {
                      |      r_srcCP := r_routeIn.srcCP
                      |      r_srcID := r_routeIn.srcID
-                     |      ${name}CP_next := r_routeIn.dstCP
+                     |      ${name}CP_pre_next := r_routeIn.dstCP
                      |    }
                      |  }
                      |}
@@ -7668,7 +7803,7 @@ import HwSynthesizer2._
                      |  when(r_routeIn_valid) {
                      |    r_srcCP := r_routeIn.srcCP
                      |    r_srcID := r_routeIn.srcID
-                     |    ${name}CP_next := r_routeIn.dstCP
+                     |    ${name}CP_pre_next := r_routeIn.dstCP
                      |  }
                      |}
                    """
@@ -7680,7 +7815,7 @@ import HwSynthesizer2._
             |is(0.U) {
             |  r_routeOut_valid := false.B
             |  when(r_routeIn_valid) {
-            |    ${name}CP_next := r_routeIn.dstCP
+            |    ${name}CP_pre_next := r_routeIn.dstCP
             |  }
             |}
             |
@@ -7691,7 +7826,7 @@ import HwSynthesizer2._
             |  r_routeOut.dstCP := 4.U
             |  r_routeOut.isReturn := true.B
             |  r_routeOut_valid := true.B
-            |  ${name}CP_next := 1.U
+            |  ${name}CP_pre_next := 1.U
             |}
           """
       stateSTs = stateSTs :+ state2St
@@ -7722,11 +7857,14 @@ import HwSynthesizer2._
               |object ${name}_StateMachine_${j} {
               |  def ${name}_stateMachine(o:${name}): Unit = {
               |    import o._
-              |    // Gate by (CP === CP_next): a "stale" cycle (when the previous
-              |    // block wrote CP_next to a new state but CP hasn't caught up
-              |    // yet) must not re-fire the current block's combinational
-              |    // outputs.
-              |    when(${name}CP === ${name}CP_next) {
+              |    // Gate by full 3-stage equality: the switch-body writes to
+              |    // CP_pre_next, which then propagates CP_pre_next -> CP_next
+              |    // -> CP across 2 clocks. During those 2 "stale" clocks the
+              |    // block must not re-fire its outputs (double-issuing
+              |    // r_arb*_req_* etc.). Once all three registers agree, the
+              |    // FSM has stabilized and the switch fires at most once per
+              |    // state arrival.
+              |    when((${name}CP === ${name}CP_next) & (${name}CP_next === ${name}CP_pre_next)) {
               |      switch(${name}CP) {
               |        ${(objectStateMachineST(j), "\n")}
               |      }
@@ -7873,7 +8011,7 @@ import HwSynthesizer2._
     val j = b.jump
 
     @strictpure def jumpSplitCpST(label: Z): ST = {
-      st"${name}CP_next := ${hwLog.currentLabel}.U"
+      st"${name}CP_pre_next := ${hwLog.currentLabel}.U"
     }
 
     j match {
@@ -7881,7 +8019,7 @@ import HwSynthesizer2._
         val targetAddrST: ST = processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         if (intrinsic.isTemp) {
           if(anvil.config.cpMax <= 0) {
-            intrinsicST = intrinsicST :+ st"${name}CP_next := ${targetAddrST}"
+            intrinsicST = intrinsicST :+ st"${name}CP_pre_next := ${targetAddrST}"
           }
         } else {
           var returnAddrST = ISZ[ST]()
@@ -7897,7 +8035,7 @@ import HwSynthesizer2._
 
           intrinsicST = intrinsicST :+
             st"""
-                |${name}CP_next := Cat(
+                |${name}CP_pre_next := Cat(
                 |  ${(returnAddrST, "\n")}
                 |)
             """
@@ -7915,7 +8053,7 @@ import HwSynthesizer2._
                 |r_arbGlobalVar_req.index := ${index}
                 |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |when(r_arbGlobalVar_req_valid) {
-                |  ${funName}CP_next := r_arbGlobalVar_resp.out
+                |  ${funName}CP_pre_next := r_arbGlobalVar_resp.out
                 |}
               """
         }
@@ -7925,16 +8063,16 @@ import HwSynthesizer2._
           if(hwLog.isFunCallInCurrentBlock()) {
             intrinsicST = intrinsicST :+ st"r_routeOut.srcCP := ${j.label}.U"
             intrinsicST = intrinsicST :+ st"r_routeOut.isReturn := false.B"
-            intrinsicST = intrinsicST :+ st"${name}CP_next := ${if(isRecursive) "2.U" else "0.U"}"
+            intrinsicST = intrinsicST :+ st"${name}CP_pre_next := ${if(isRecursive) "2.U" else "0.U"}"
           } else {
-            intrinsicST = intrinsicST :+ st"${name}CP_next := ${j.label}.U"
+            intrinsicST = intrinsicST :+ st"${name}CP_pre_next := ${j.label}.U"
           }
         }
       }
       case j: AST.IR.Jump.If => {
         val cond = processExpr(j.cond, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         if(anvil.config.cpMax <= 0) {
-          intrinsicST = intrinsicST :+ st"${name}CP_next := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
+          intrinsicST = intrinsicST :+ st"${name}CP_pre_next := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
         }
       }
       case j: AST.IR.Jump.Switch => {
@@ -7944,7 +8082,7 @@ import HwSynthesizer2._
         hwLog.tmpWireCount = hwLog.tmpWireCount + 1
 
         val defaultStatementST: ST = j.defaultLabelOpt match {
-          case Some(x) => if(anvil.config.cpMax <= 0) st"${name}CP_next := ${x}.U" else jumpSplitCpST(x)
+          case Some(x) => if(anvil.config.cpMax <= 0) st"${name}CP_pre_next := ${x}.U" else jumpSplitCpST(x)
           case None() => st""
         }
 
@@ -7953,7 +8091,7 @@ import HwSynthesizer2._
           isStatementST = isStatementST :+
             st"""
                 |is(${processExpr(i.value, F, ipPortLogic, maxRegisters, isRecursive, hwLog).render}) {
-                |  ${if(anvil.config.cpMax <=0) st"${name}CP_next := ${i.label}.U" else jumpSplitCpST(i.label)}
+                |  ${if(anvil.config.cpMax <=0) st"${name}CP_pre_next := ${i.label}.U" else jumpSplitCpST(i.label)}
                 |}
               """
         }
@@ -7976,7 +8114,7 @@ import HwSynthesizer2._
               |r_routeOut.dstCP := r_srcCP
               |r_routeOut.isReturn := true.B
               |r_routeOut_valid := true.B
-              |${name}CP_next := 2.U
+              |${name}CP_pre_next := 2.U
           """
       }
       case _ => {
