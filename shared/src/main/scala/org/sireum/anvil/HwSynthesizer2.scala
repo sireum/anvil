@@ -6687,7 +6687,7 @@ import HwSynthesizer2._
           |export_ip_user_files -of_objects $$xci_top -no_script -sync -force -quiet
           |
           |# simulation
-          |launch_simulation -install_path /home/kejun/software/modelsim_2020_4/modeltech/linux_x86_64
+          |launch_simulation -install_path /home/kejun/software/modelsim/modeltech/linux_x86_64
           |
           |# ---- patch generated sim scripts so ./simulate.sh opens GUI and stays open ----
           |set sim_dir [file normalize ./vivado_project/Test.sim/sim_1/behav/modelsim]
@@ -6701,7 +6701,7 @@ import HwSynthesizer2._
           |# 2) tb_simulate.do: 去掉末尾 quit -force
           |set do_path $$sim_dir/tb_simulate.do
           |set f [open $$do_path r]; set c [read $$f]; close $$f
-          |regsub -line -all {^quit -force\\s*$$} $$c {} c
+          |regsub -line -all {^quit -force\s*$$} $$c {} c
           |set f [open $$do_path w]; puts -nonewline $$f $$c; close $$f
         """
     }
