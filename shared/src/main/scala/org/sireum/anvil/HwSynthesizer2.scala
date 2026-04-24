@@ -1753,26 +1753,37 @@ object ArbInputMap {
           |  })
           |
           |  // ==================================================================
-          |  //  Non-restoring division, 2 cycles per bit.
+          |  //  Non-restoring division, 3 cycles per bit.
           |  //
-          |  //  The original single-cycle iteration forced a full 64-bit
-          |  //  CSLA subtract AND the update of rem/quot/dividend into one
-          |  //  clock period, which violates the 10 ns budget at 90nm.
-          |  //  We split each iteration into:
-          |  //    Phase A (sRunningA): parallel 8-bit block adds
-          |  //                         (8 x 9-bit RCA); latch sum0/cout0,
-          |  //                         sum1/cout1, and the shifted remainder.
-          |  //    Phase B (sRunningB): 7-level carry-select mux chain on the
-          |  //                         registered partials; update rem, quot,
-          |  //                         dividend, count.
+          |  //  The single-cycle iteration forced a full 64-bit CSLA subtract
+          |  //  AND the rem/quot/dividend update into one clock period; we
+          |  //  split each iteration into three phases so that no single
+          |  //  cycle has more than ~3-4 mux levels:
           |  //
-          |  //  Critical path per phase ~ 4-5 ns at 90nm SAED typ.
-          |  //  Latency: 2 * width cycles between start acceptance and valid.
+          |  //    Phase A  (sRunningA): parallel 8-bit block adds
+          |  //                          (8 x 9-bit RCA); latch sum0/cout0,
+          |  //                          sum1/cout1, and the shifted remainder.
+          |  //    Phase B1 (sRunningB1): carry-select mux chain over the LOWER
+          |  //                           4 blocks only (3 mux levels); latch
+          |  //                           the selected lower-half sum, the
+          |  //                           boundary carry, and forward the
+          |  //                           upper-half partials + shifted value.
+          |  //    Phase B2 (sRunningB2): carry-select mux chain over the UPPER
+          |  //                           4 blocks seeded by the registered
+          |  //                           boundary carry (1 seed mux + 3 chain
+          |  //                           muxes = 4 mux levels); commit rem,
+          |  //                           quot, dividend, decrement count.
+          |  //
+          |  //  Critical path per phase ~ 3-4 ns at 90nm SAED typ (was 4-5 ns
+          |  //  for the original unsplit 7-mux Phase B).
+          |  //  Latency: 3 * width cycles between start acceptance and valid
+          |  //  (was 2 * width; +50% runtime to buy the extra Fmax headroom).
           |  // ==================================================================
           |  val BW   = 8
           |  val NBLK = width / BW
+          |  val HALF = NBLK / 2
           |
-          |  val sIdle :: sRunningA :: sRunningB :: sDone :: Nil = Enum(4)
+          |  val sIdle :: sRunningA :: sRunningB1 :: sRunningB2 :: sDone :: Nil = Enum(5)
           |  val state    = RegInit(sIdle)
           |  val count    = RegInit(0.U((log2Ceil(width) + 1).W))
           |  val dividend = Reg(UInt(width.W))
@@ -1782,12 +1793,21 @@ object ArbInputMap {
           |  val quot     = Reg(UInt(width.W))
           |  ${negRegs}
           |
-          |  // Phase A -> Phase B pipeline registers
+          |  // Phase A -> Phase B1 pipeline registers
           |  val r_sum0    = Reg(Vec(NBLK, UInt(BW.W)))
           |  val r_cout0   = Reg(Vec(NBLK, Bool()))
           |  val r_sum1    = Reg(Vec(NBLK, UInt(BW.W)))
           |  val r_cout1   = Reg(Vec(NBLK, Bool()))
           |  val r_shifted = Reg(UInt(width.W))
+          |
+          |  // Phase B1 -> Phase B2 pipeline registers
+          |  val r_resLo       = Reg(Vec(HALF, UInt(BW.W)))  // selected lower-half sums
+          |  val r_carryMid    = Reg(Bool())                 // carry at block-HALF boundary
+          |  val r_sum0_hi     = Reg(Vec(HALF, UInt(BW.W)))  // forwarded upper partials
+          |  val r_cout0_hi    = Reg(Vec(HALF, Bool()))
+          |  val r_sum1_hi     = Reg(Vec(HALF, UInt(BW.W)))
+          |  val r_cout1_hi    = Reg(Vec(HALF, Bool()))
+          |  val r_shifted_b1  = Reg(UInt(width.W))          // shifted remainder forwarded
           |
           |  val r_start      = RegInit(false.B)
           |  val r_start_next = RegInit(false.B)
@@ -1822,20 +1842,30 @@ object ArbInputMap {
           |    cs_cout1(k) := r1(BW)
           |  }
           |
-          |  // ----- Phase B combinational : mux chain over registered partials -----
-          |  val cs_res   = Wire(Vec(NBLK, UInt(BW.W)))
-          |  val cs_carry = Wire(Vec(NBLK, Bool()))
-          |
-          |  cs_res(0)   := r_sum1(0)
-          |  cs_carry(0) := r_cout1(0)
-          |
-          |  for (k <- 1 until NBLK) {
-          |    cs_res(k)   := Mux(cs_carry(k - 1), r_sum1(k),  r_sum0(k))
-          |    cs_carry(k) := Mux(cs_carry(k - 1), r_cout1(k), r_cout0(k))
+          |  // ----- Phase B1 combinational : lower-half (blocks 0..HALF-1) -----
+          |  //   HALF-1 mux levels over BW-bit wires (3 levels when HALF=4).
+          |  val b1_res   = Wire(Vec(HALF, UInt(BW.W)))
+          |  val b1_carry = Wire(Vec(HALF, Bool()))
+          |  b1_res(0)   := r_sum1(0)
+          |  b1_carry(0) := r_cout1(0)
+          |  for (k <- 1 until HALF) {
+          |    b1_res(k)   := Mux(b1_carry(k - 1), r_sum1(k),  r_sum0(k))
+          |    b1_carry(k) := Mux(b1_carry(k - 1), r_cout1(k), r_cout0(k))
           |  }
           |
-          |  val subResult   = cs_res.asUInt
-          |  val noUnderflow = cs_carry(NBLK - 1)
+          |  // ----- Phase B2 combinational : upper-half (blocks HALF..NBLK-1) -----
+          |  //   Seeded by r_carryMid; HALF mux levels = 4 when HALF=4.
+          |  val b2_res   = Wire(Vec(HALF, UInt(BW.W)))
+          |  val b2_carry = Wire(Vec(HALF, Bool()))
+          |  b2_res(0)   := Mux(r_carryMid, r_sum1_hi(0),  r_sum0_hi(0))
+          |  b2_carry(0) := Mux(r_carryMid, r_cout1_hi(0), r_cout0_hi(0))
+          |  for (k <- 1 until HALF) {
+          |    b2_res(k)   := Mux(b2_carry(k - 1), r_sum1_hi(k),  r_sum0_hi(k))
+          |    b2_carry(k) := Mux(b2_carry(k - 1), r_cout1_hi(k), r_cout0_hi(k))
+          |  }
+          |
+          |  val subResult   = Cat(b2_res.asUInt, r_resLo.asUInt)
+          |  val noUnderflow = b2_carry(HALF - 1)
           |
           |  switch(state) {
           |    is(sIdle) {
@@ -1848,7 +1878,7 @@ object ArbInputMap {
           |      }
           |    }
           |    is(sRunningA) {
-          |      // latch block-add partials for phase B
+          |      // latch Phase A partials for Phase B1
           |      for (k <- 0 until NBLK) {
           |        r_sum0(k)  := cs_sum0(k)
           |        r_cout0(k) := cs_cout0(k)
@@ -1856,10 +1886,24 @@ object ArbInputMap {
           |        r_cout1(k) := cs_cout1(k)
           |      }
           |      r_shifted := shifted
-          |      state := sRunningB
+          |      state := sRunningB1
           |    }
-          |    is(sRunningB) {
-          |      rem      := Mux(noUnderflow, subResult, r_shifted)
+          |    is(sRunningB1) {
+          |      // latch lower-half B1 chain result + boundary carry;
+          |      // forward upper-half partials and r_shifted to B2
+          |      for (k <- 0 until HALF) {
+          |        r_resLo(k)    := b1_res(k)
+          |        r_sum0_hi(k)  := r_sum0(HALF + k)
+          |        r_cout0_hi(k) := r_cout0(HALF + k)
+          |        r_sum1_hi(k)  := r_sum1(HALF + k)
+          |        r_cout1_hi(k) := r_cout1(HALF + k)
+          |      }
+          |      r_carryMid   := b1_carry(HALF - 1)
+          |      r_shifted_b1 := r_shifted
+          |      state := sRunningB2
+          |    }
+          |    is(sRunningB2) {
+          |      rem      := Mux(noUnderflow, subResult, r_shifted_b1)
           |      quot     := Mux(noUnderflow, (quot << 1) | 1.U, quot << 1)
           |      dividend := dividend << 1
           |      count    := count - 1.U
@@ -1966,26 +2010,37 @@ object ArbInputMap {
           |  })
           |
           |  // ==================================================================
-          |  //  Non-restoring division, 2 cycles per bit.
+          |  //  Non-restoring division, 3 cycles per bit.
           |  //
-          |  //  The original single-cycle iteration forced a full 64-bit
-          |  //  CSLA subtract AND the update of rem/quot/dividend into one
-          |  //  clock period, which violates the 10 ns budget at 90nm.
-          |  //  We split each iteration into:
-          |  //    Phase A (sRunningA): parallel 8-bit block adds
-          |  //                         (8 x 9-bit RCA); latch sum0/cout0,
-          |  //                         sum1/cout1, and the shifted remainder.
-          |  //    Phase B (sRunningB): 7-level carry-select mux chain on the
-          |  //                         registered partials; update rem, quot,
-          |  //                         dividend, count.
+          |  //  The single-cycle iteration forced a full 64-bit CSLA subtract
+          |  //  AND the rem/quot/dividend update into one clock period; we
+          |  //  split each iteration into three phases so that no single
+          |  //  cycle has more than ~3-4 mux levels:
           |  //
-          |  //  Critical path per phase ~ 4-5 ns at 90nm SAED typ.
-          |  //  Latency: 2 * width cycles between start acceptance and valid.
+          |  //    Phase A  (sRunningA): parallel 8-bit block adds
+          |  //                          (8 x 9-bit RCA); latch sum0/cout0,
+          |  //                          sum1/cout1, and the shifted remainder.
+          |  //    Phase B1 (sRunningB1): carry-select mux chain over the LOWER
+          |  //                           4 blocks only (3 mux levels); latch
+          |  //                           the selected lower-half sum, the
+          |  //                           boundary carry, and forward the
+          |  //                           upper-half partials + shifted value.
+          |  //    Phase B2 (sRunningB2): carry-select mux chain over the UPPER
+          |  //                           4 blocks seeded by the registered
+          |  //                           boundary carry (1 seed mux + 3 chain
+          |  //                           muxes = 4 mux levels); commit rem,
+          |  //                           quot, dividend, decrement count.
+          |  //
+          |  //  Critical path per phase ~ 3-4 ns at 90nm SAED typ (was 4-5 ns
+          |  //  for the original unsplit 7-mux Phase B).
+          |  //  Latency: 3 * width cycles between start acceptance and valid
+          |  //  (was 2 * width; +50% runtime to buy the extra Fmax headroom).
           |  // ==================================================================
           |  val BW   = 8
           |  val NBLK = width / BW
+          |  val HALF = NBLK / 2
           |
-          |  val sIdle :: sRunningA :: sRunningB :: sDone :: Nil = Enum(4)
+          |  val sIdle :: sRunningA :: sRunningB1 :: sRunningB2 :: sDone :: Nil = Enum(5)
           |  val state    = RegInit(sIdle)
           |  val count    = RegInit(0.U((log2Ceil(width) + 1).W))
           |  val dividend = Reg(UInt(width.W))
@@ -1995,12 +2050,21 @@ object ArbInputMap {
           |  val quot     = Reg(UInt(width.W))
           |  ${negRegs}
           |
-          |  // Phase A -> Phase B pipeline registers
+          |  // Phase A -> Phase B1 pipeline registers
           |  val r_sum0    = Reg(Vec(NBLK, UInt(BW.W)))
           |  val r_cout0   = Reg(Vec(NBLK, Bool()))
           |  val r_sum1    = Reg(Vec(NBLK, UInt(BW.W)))
           |  val r_cout1   = Reg(Vec(NBLK, Bool()))
           |  val r_shifted = Reg(UInt(width.W))
+          |
+          |  // Phase B1 -> Phase B2 pipeline registers
+          |  val r_resLo       = Reg(Vec(HALF, UInt(BW.W)))  // selected lower-half sums
+          |  val r_carryMid    = Reg(Bool())                 // carry at block-HALF boundary
+          |  val r_sum0_hi     = Reg(Vec(HALF, UInt(BW.W)))  // forwarded upper partials
+          |  val r_cout0_hi    = Reg(Vec(HALF, Bool()))
+          |  val r_sum1_hi     = Reg(Vec(HALF, UInt(BW.W)))
+          |  val r_cout1_hi    = Reg(Vec(HALF, Bool()))
+          |  val r_shifted_b1  = Reg(UInt(width.W))          // shifted remainder forwarded
           |
           |  val r_start      = RegInit(false.B)
           |  val r_start_next = RegInit(false.B)
@@ -2035,20 +2099,30 @@ object ArbInputMap {
           |    cs_cout1(k) := r1(BW)
           |  }
           |
-          |  // ----- Phase B combinational : mux chain over registered partials -----
-          |  val cs_res   = Wire(Vec(NBLK, UInt(BW.W)))
-          |  val cs_carry = Wire(Vec(NBLK, Bool()))
-          |
-          |  cs_res(0)   := r_sum1(0)
-          |  cs_carry(0) := r_cout1(0)
-          |
-          |  for (k <- 1 until NBLK) {
-          |    cs_res(k)   := Mux(cs_carry(k - 1), r_sum1(k),  r_sum0(k))
-          |    cs_carry(k) := Mux(cs_carry(k - 1), r_cout1(k), r_cout0(k))
+          |  // ----- Phase B1 combinational : lower-half (blocks 0..HALF-1) -----
+          |  //   HALF-1 mux levels over BW-bit wires (3 levels when HALF=4).
+          |  val b1_res   = Wire(Vec(HALF, UInt(BW.W)))
+          |  val b1_carry = Wire(Vec(HALF, Bool()))
+          |  b1_res(0)   := r_sum1(0)
+          |  b1_carry(0) := r_cout1(0)
+          |  for (k <- 1 until HALF) {
+          |    b1_res(k)   := Mux(b1_carry(k - 1), r_sum1(k),  r_sum0(k))
+          |    b1_carry(k) := Mux(b1_carry(k - 1), r_cout1(k), r_cout0(k))
           |  }
           |
-          |  val subResult   = cs_res.asUInt
-          |  val noUnderflow = cs_carry(NBLK - 1)
+          |  // ----- Phase B2 combinational : upper-half (blocks HALF..NBLK-1) -----
+          |  //   Seeded by r_carryMid; HALF mux levels = 4 when HALF=4.
+          |  val b2_res   = Wire(Vec(HALF, UInt(BW.W)))
+          |  val b2_carry = Wire(Vec(HALF, Bool()))
+          |  b2_res(0)   := Mux(r_carryMid, r_sum1_hi(0),  r_sum0_hi(0))
+          |  b2_carry(0) := Mux(r_carryMid, r_cout1_hi(0), r_cout0_hi(0))
+          |  for (k <- 1 until HALF) {
+          |    b2_res(k)   := Mux(b2_carry(k - 1), r_sum1_hi(k),  r_sum0_hi(k))
+          |    b2_carry(k) := Mux(b2_carry(k - 1), r_cout1_hi(k), r_cout0_hi(k))
+          |  }
+          |
+          |  val subResult   = Cat(b2_res.asUInt, r_resLo.asUInt)
+          |  val noUnderflow = b2_carry(HALF - 1)
           |
           |  switch(state) {
           |    is(sIdle) {
@@ -2061,7 +2135,7 @@ object ArbInputMap {
           |      }
           |    }
           |    is(sRunningA) {
-          |      // latch block-add partials for phase B
+          |      // latch Phase A partials for Phase B1
           |      for (k <- 0 until NBLK) {
           |        r_sum0(k)  := cs_sum0(k)
           |        r_cout0(k) := cs_cout0(k)
@@ -2069,10 +2143,24 @@ object ArbInputMap {
           |        r_cout1(k) := cs_cout1(k)
           |      }
           |      r_shifted := shifted
-          |      state := sRunningB
+          |      state := sRunningB1
           |    }
-          |    is(sRunningB) {
-          |      rem      := Mux(noUnderflow, subResult, r_shifted)
+          |    is(sRunningB1) {
+          |      // latch lower-half B1 chain result + boundary carry;
+          |      // forward upper-half partials and r_shifted to B2
+          |      for (k <- 0 until HALF) {
+          |        r_resLo(k)    := b1_res(k)
+          |        r_sum0_hi(k)  := r_sum0(HALF + k)
+          |        r_cout0_hi(k) := r_cout0(HALF + k)
+          |        r_sum1_hi(k)  := r_sum1(HALF + k)
+          |        r_cout1_hi(k) := r_cout1(HALF + k)
+          |      }
+          |      r_carryMid   := b1_carry(HALF - 1)
+          |      r_shifted_b1 := r_shifted
+          |      state := sRunningB2
+          |    }
+          |    is(sRunningB2) {
+          |      rem      := Mux(noUnderflow, subResult, r_shifted_b1)
           |      quot     := Mux(noUnderflow, (quot << 1) | 1.U, quot << 1)
           |      dividend := dividend << 1
           |      count    := count - 1.U
@@ -6328,7 +6416,7 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
-          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#800000"};
+          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#1000000"};
           |
           |    // valid
           |    io_S_AXI_AWADDR  = 0;
@@ -6394,7 +6482,7 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
-          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#800000"};
+          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#1000000"};
           |
           |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchAccessResult else st""}
           |    $$finish;
@@ -6577,7 +6665,7 @@ import HwSynthesizer2._
           |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
           |set_property compxlib.modelsim_compiled_library_dir /home/kejun/study/xilinx_modelsim_lib_2024_2 [current_project]
           |set_property target_simulator ModelSim [current_project]
-          |set_property -name {modelsim.simulate.runtime} -value {1600000ns} -objects [get_filesets sim_1]
+          |set_property -name {modelsim.simulate.runtime} -value {2000000ns} -objects [get_filesets sim_1]
           |
           |set dir ./chisel/generated_verilog/${if(isFpgaTestBench) "FPGA" else ""}${name}
           |set files [glob -nocomplain -types f [file join $$dir *.v]]
@@ -7559,8 +7647,26 @@ import HwSynthesizer2._
         allArbInstanceST = allArbInstanceST :+
           st"""
               |// ${getIpModuleName(e).get} Arbiter
-              |val r_${instName}_req          = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
-              |val r_${instName}_req_valid    = RegInit(false.B)
+              |//
+              |// Two-stage skid on the outgoing IP request:
+              |//   _pre  : written by the FSM switch body (target of
+              |//           `r_*_req.field := X` / `r_*_req_valid := Y`).
+              |//           The deep `CP_reg -> switch decoder -> RHS comb`
+              |//           path terminates HERE (at a flop), not at the
+              |//           output register that drives io.req.
+              |//   r_*   : RegNext of _pre, drives io.req (sees the IP
+              |//           one cycle later than the switch body commits).
+              |//
+              |// Without this skid, the critical path `CP_reg -> decode
+              |// -> r_arb*_req_*_D` was the dominant remaining contributor
+              |// to the -14.79 ns WNS (see TIMING_ANALYSIS §3). The switch
+              |// body keeps reading `_pre` (not r_*_req) for polling so
+              |// internal timing of `req_valid -> do something` is
+              |// unchanged; only the IP-facing req is delayed by 1 cycle.
+              |val r_${instName}_req_pre       = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
+              |val r_${instName}_req_valid_pre = RegInit(false.B)
+              |val r_${instName}_req           = RegNext(r_${instName}_req_pre)
+              |val r_${instName}_req_valid     = RegNext(r_${instName}_req_valid_pre, false.B)
               |// Two-stage latch for the arbiter response: io.resp -> _s1 -> r_*.
               |// Adding this RegNext in the response path breaks the combinational
               |// chain `arbiter.resp -> switch-case block -> CP_next` that fed
@@ -7762,15 +7868,15 @@ import HwSynthesizer2._
         val finalSt: ST =
           st"""
               |is(${maxBlockLabel()}.U){
-              |  r_arbTempSaveRestore_req.op := 2.U
-              |  r_arbTempSaveRestore_req_valid := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
+              |  r_arbTempSaveRestore_req_pre.op := 2.U
+              |  r_arbTempSaveRestore_req_valid_pre := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
               |
               |  when(r_arbTempSaveRestore_resp_valid) {
               |    ${(intAssignST, "\n")}
               |    r_srcID := r_arbTempSaveRestore_resp.srcId
               |    r_srcCP := r_arbTempSaveRestore_resp.srcCp
               |
-              |    r_arbTempSaveRestore_req.op := 0.U
+              |    r_arbTempSaveRestore_req_pre.op := 0.U
               |    ${name}CP_pre_next := r_saveDstCP
               |  }
               |}
@@ -8048,11 +8154,11 @@ import HwSynthesizer2._
           val gtype: B = globalVarMap.get(funName).get._2
           intrinsicST = intrinsicST :+
             st"""
-                |r_arbGlobalVar_req.op := false.B
-                |r_arbGlobalVar_req.gtype := ${gtype}
-                |r_arbGlobalVar_req.index := ${index}
-                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
-                |when(r_arbGlobalVar_req_valid) {
+                |r_arbGlobalVar_req_pre.op := false.B
+                |r_arbGlobalVar_req_pre.gtype := ${gtype}
+                |r_arbGlobalVar_req_pre.index := ${index}
+                |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |when(r_arbGlobalVar_req_valid_pre) {
                 |  ${funName}CP_pre_next := r_arbGlobalVar_resp.out
                 |}
               """
@@ -8208,10 +8314,10 @@ import HwSynthesizer2._
                 |    readMiniCP := Mux(readMiniStart, 1.U, 0.U)
                 |  }
                 |  is(1.U) {
-                |    r_arbGlobalVar_req.op := false.B
-                |    r_arbGlobalVar_req.gtype := readMiniGtype_1
-                |    r_arbGlobalVar_req.index := readMiniIndex_1
-                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    r_arbGlobalVar_req_pre.op := false.B
+                |    r_arbGlobalVar_req_pre.gtype := readMiniGtype_1
+                |    r_arbGlobalVar_req_pre.index := readMiniIndex_1
+                |    r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |    when(r_arbGlobalVar_resp_valid) {
                 |      readMiniAddr := r_arbGlobalVar_resp.out
                 |      readMiniCP := 2.U
@@ -8228,11 +8334,11 @@ import HwSynthesizer2._
                 |    }
                 |  }
                 |  is(3.U) {
-                |    r_arbGlobalVar_req.in := readMiniRes
-                |    r_arbGlobalVar_req.op := true.B
-                |    r_arbGlobalVar_req.gtype := readMiniGtype_2
-                |    r_arbGlobalVar_req.index := readMiniIndex_2
-                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    r_arbGlobalVar_req_pre.in := readMiniRes
+                |    r_arbGlobalVar_req_pre.op := true.B
+                |    r_arbGlobalVar_req_pre.gtype := readMiniGtype_2
+                |    r_arbGlobalVar_req_pre.index := readMiniIndex_2
+                |    r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |    when(r_arbGlobalVar_resp_valid) {
                 |      readMiniCP := 4.U
                 |      readMiniValid := true.B
@@ -8264,20 +8370,20 @@ import HwSynthesizer2._
                 |    writeMiniCP := Mux(writeMiniStart, 1.U, 0.U)
                 |  }
                 |  is(1.U) {
-                |    r_arbGlobalVar_req.op := false.B
-                |    r_arbGlobalVar_req.gtype := writeMiniGtype_1
-                |    r_arbGlobalVar_req.index := writeMiniIndex_1
-                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    r_arbGlobalVar_req_pre.op := false.B
+                |    r_arbGlobalVar_req_pre.gtype := writeMiniGtype_1
+                |    r_arbGlobalVar_req_pre.index := writeMiniIndex_1
+                |    r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |    when(r_arbGlobalVar_resp_valid) {
                 |      writeMiniAddr := r_arbGlobalVar_resp.out
                 |      writeMiniCP := 2.U
                 |    }
                 |  }
                 |  is(2.U) {
-                |    r_arbGlobalVar_req.op := false.B
-                |    r_arbGlobalVar_req.gtype := writeMiniGtype_2
-                |    r_arbGlobalVar_req.index := writeMiniIndex_2
-                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    r_arbGlobalVar_req_pre.op := false.B
+                |    r_arbGlobalVar_req_pre.gtype := writeMiniGtype_2
+                |    r_arbGlobalVar_req_pre.index := writeMiniIndex_2
+                |    r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |    when(r_arbGlobalVar_resp_valid) {
                 |      writeMiniValue := r_arbGlobalVar_resp.out
                 |      writeMiniCP := 3.U
@@ -8325,14 +8431,14 @@ import HwSynthesizer2._
         val readOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
         ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
         ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${tempST.render} := r_${instanceName}_resp.data${byteST.render}${signedST.render}"
-        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req.mode := 0.U"
+        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
         intrinsicST =
           st"""
-              |r_${instanceName}_req.mode := 1.U
-              |r_${instanceName}_req.readAddr := ${readAddrST.render}
-              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
-              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${intrinsic.bytes}.U"}
-              |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+              |r_${instanceName}_req_pre.mode := 1.U
+              |r_${instanceName}_req_pre.readAddr := ${readAddrST.render}
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readOffset := ${readOffsetST.render}"}
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readLen := ${intrinsic.bytes}.U"}
+              |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
             """
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Erase) => {
@@ -8345,17 +8451,17 @@ import HwSynthesizer2._
           val eraseBytesST: ST = st"${intrinsic.bytes}.U"
           val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req.mode := 0.U"
-          val ioDmaDstOffsetST: ST = st"r_${instanceName}_req.dmaDstOffset := ${eraseOffsetST.render}"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
+          val ioDmaDstOffsetST: ST = st"r_${instanceName}_req_pre.dmaDstOffset := ${eraseOffsetST.render}"
           intrinsicST =
             st"""
-                |r_${instanceName}_req.mode := 3.U
-                |r_${instanceName}_req.dmaSrcAddr := 0.U
-                |r_${instanceName}_req.dmaDstAddr := ${eraseBaseST.render}
-                |r_${instanceName}_req.dmaSrcLen := 0.U
-                |r_${instanceName}_req.dmaDstLen := ${eraseBytesST.render}
+                |r_${instanceName}_req_pre.mode := 3.U
+                |r_${instanceName}_req_pre.dmaSrcAddr := 0.U
+                |r_${instanceName}_req_pre.dmaDstAddr := ${eraseBaseST.render}
+                |r_${instanceName}_req_pre.dmaSrcLen := 0.U
+                |r_${instanceName}_req_pre.dmaDstLen := ${eraseBytesST.render}
                 |${if(!anvil.config.alignAxi4) ioDmaDstOffsetST.render else ""}
-                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
               """
         }
       }
@@ -8369,17 +8475,17 @@ import HwSynthesizer2._
         val dmaSrcAddrST: ST = processExpr(intrinsic.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
         ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req.mode := 0.U"
-        val ioDmaDstOffsetST: ST = st"r_${instanceName}_req.dmaDstOffset := ${dmaDstOffsetST.render}"
+        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
+        val ioDmaDstOffsetST: ST = st"r_${instanceName}_req_pre.dmaDstOffset := ${dmaDstOffsetST.render}"
         intrinsicST =
           st"""
-              |r_${instanceName}_req.mode := 3.U
-              |r_${instanceName}_req.dmaSrcAddr := ${dmaSrcAddrST.render}
-              |r_${instanceName}_req.dmaDstAddr := ${dmaDstAddrST.render}
-              |r_${instanceName}_req.dmaSrcLen := ${dmaSrcLenST.render}
-              |r_${instanceName}_req.dmaDstLen := ${intrinsic.lhsBytes}.U
+              |r_${instanceName}_req_pre.mode := 3.U
+              |r_${instanceName}_req_pre.dmaSrcAddr := ${dmaSrcAddrST.render}
+              |r_${instanceName}_req_pre.dmaDstAddr := ${dmaDstAddrST.render}
+              |r_${instanceName}_req_pre.dmaSrcLen := ${dmaSrcLenST.render}
+              |r_${instanceName}_req_pre.dmaDstLen := ${intrinsic.lhsBytes}.U
               |${if(!anvil.config.alignAxi4) ioDmaDstOffsetST.render else ""}
-              |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+              |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
             """
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Store) => {
@@ -8398,15 +8504,15 @@ import HwSynthesizer2._
         val signedST: ST = if(intrinsic.isSigned) st".asUInt" else st""
         val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
         ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req.mode := 0.U"
+        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
         intrinsicST =
           st"""
-              |r_${instanceName}_req.mode := 2.U
-              |r_${instanceName}_req.writeAddr := ${writeAddrST.render}
-              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.writeOffset := ${writeOffsetST.render}"}
-              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.writeLen := ${writeLenST.render}"}
-              |r_${instanceName}_req.writeData := ${writeDataST.render}${signedST.render}
-              |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+              |r_${instanceName}_req_pre.mode := 2.U
+              |r_${instanceName}_req_pre.writeAddr := ${writeAddrST.render}
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.writeOffset := ${writeOffsetST.render}"}
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.writeLen := ${writeLenST.render}"}
+              |r_${instanceName}_req_pre.writeData := ${writeDataST.render}${signedST.render}
+              |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
             """
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign) => {
@@ -8421,10 +8527,10 @@ import HwSynthesizer2._
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           intrinsicST =
             st"""
-                |r_arbGlobalVar_req.op := false.B
-                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
-                |r_arbGlobalVar_req.index := ${t._1}.U
-                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req_pre.op := false.B
+                |r_arbGlobalVar_req_pre.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req_pre.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         } else {
           var leftST: ST = st""
@@ -8479,11 +8585,11 @@ import HwSynthesizer2._
 
             intrinsicST =
               st"""
-                  |r_${instanceName}_req.mode := 1.U
-                  |r_${instanceName}_req.readAddr := ${readAddrST.render}
-                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
-                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(intrinsic.value.tipe)}.U"}
-                  |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                  |r_${instanceName}_req_pre.mode := 1.U
+                  |r_${instanceName}_req_pre.readAddr := ${readAddrST.render}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readOffset := ${readOffsetST.render}"}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readLen := ${anvil.typeByteSize(intrinsic.value.tipe)}.U"}
+                  |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
               """
           } else {
             intrinsicST =
@@ -8524,11 +8630,11 @@ import HwSynthesizer2._
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
           assignST =
             st"""
-                |r_arbGlobalVar_req.in := ${rhsST}${padST}${uintConvertST}
-                |r_arbGlobalVar_req.op := true.B
-                |r_arbGlobalVar_req.gtype := ${globalVarGtype(lhsName)}
-                |r_arbGlobalVar_req.index := ${t._1}.U
-                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req_pre.in := ${rhsST}${padST}${uintConvertST}
+                |r_arbGlobalVar_req_pre.op := true.B
+                |r_arbGlobalVar_req_pre.gtype := ${globalVarGtype(lhsName)}
+                |r_arbGlobalVar_req_pre.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         } else {
           // only rhs is global variable, global variable read operation
@@ -8539,10 +8645,10 @@ import HwSynthesizer2._
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsName} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           assignST =
             st"""
-                |r_arbGlobalVar_req.op := false.B
-                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
-                |r_arbGlobalVar_req.index := ${t._1}.U
-                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req_pre.op := false.B
+                |r_arbGlobalVar_req_pre.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req_pre.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         }
       }
@@ -8559,10 +8665,10 @@ import HwSynthesizer2._
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           assignST =
             st"""
-                |r_arbGlobalVar_req.op := false.B
-                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
-                |r_arbGlobalVar_req.index := ${t._1}.U
-                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req_pre.op := false.B
+                |r_arbGlobalVar_req_pre.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req_pre.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         } else {
           if (isIntrinsicLoad(a.rhs)) {
@@ -8576,11 +8682,11 @@ import HwSynthesizer2._
             ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
             assignST =
               st"""
-                  |r_${instanceName}_req.mode := 1.U
-                  |r_${instanceName}_req.readAddr := ${readAddrST.render}
-                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
-                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U"}
-                  |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                  |r_${instanceName}_req_pre.mode := 1.U
+                  |r_${instanceName}_req_pre.readAddr := ${readAddrST.render}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readOffset := ${readOffsetST.render}"}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U"}
+                  |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
               """
           } else if (isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {
             val lhsContentST: ST = st"${if (isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if (isSignedExp(a.rhs)) ").asUInt" else ""}"
@@ -8826,12 +8932,12 @@ import HwSynthesizer2._
           var intAssignST: ISZ[ST] = ISZ[ST]()
           for(i <- 0 until uintWidth.size) {
             if(maxRegisters.unsigneds(uintWidth(i) - 1) > 0) {
-              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req.u${uintWidth(i)} := generalRegFilesU${uintWidth(i)}"
+              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req_pre.u${uintWidth(i)} := generalRegFilesU${uintWidth(i)}"
             }
           }
           for(i <- 0 until sintWidth.size) {
             if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
-              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req.s${sintWidth(i)} := generalRegFilesS${sintWidth(i)}"
+              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req_pre.s${sintWidth(i)} := generalRegFilesS${sintWidth(i)}"
             }
           }
 
@@ -8842,17 +8948,17 @@ import HwSynthesizer2._
                 |r_routeOut.dstCP := 3.U
                 |r_routeOut_valid := true.B
                 |
-                |r_arbTempSaveRestore_req.op := 0.U //push
+                |r_arbTempSaveRestore_req_pre.op := 0.U //push
               """
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbTempSaveRestore_resp_valid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ callST
           exprST =
             st"""
                 |${(intAssignST, "\n")}
-                |r_arbTempSaveRestore_req.srcId := r_srcID
-                |r_arbTempSaveRestore_req.srcCp := r_srcCP
-                |r_arbTempSaveRestore_req.op := 1.U //push
-                |r_arbTempSaveRestore_req_valid := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
+                |r_arbTempSaveRestore_req_pre.srcId := r_srcID
+                |r_arbTempSaveRestore_req_pre.srcCp := r_srcCP
+                |r_arbTempSaveRestore_req_pre.op := 1.U //push
+                |r_arbTempSaveRestore_req_valid_pre := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
               """
         } else {
           exprST =
