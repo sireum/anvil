@@ -6239,7 +6239,7 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
-          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#400000"};
+          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#800000"};
           |
           |    // valid
           |    io_S_AXI_AWADDR  = 0;
@@ -6305,7 +6305,7 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
-          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#400000"};
+          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#800000"};
           |
           |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchAccessResult else st""}
           |    $$finish;
@@ -6488,7 +6488,7 @@ import HwSynthesizer2._
           |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
           |set_property compxlib.modelsim_compiled_library_dir /home/kejun/study/xilinx_modelsim_lib_2024_2 [current_project]
           |set_property target_simulator ModelSim [current_project]
-          |set_property -name {modelsim.simulate.runtime} -value {800000ns} -objects [get_filesets sim_1]
+          |set_property -name {modelsim.simulate.runtime} -value {1600000ns} -objects [get_filesets sim_1]
           |
           |set dir ./chisel/generated_verilog/${if(isFpgaTestBench) "FPGA" else ""}${name}
           |set files [glob -nocomplain -types f [file join $$dir *.v]]
@@ -6508,6 +6508,24 @@ import HwSynthesizer2._
           |set xci_top [get_files -all -quiet -filter {NAME =~ "*.xci" && NAME !~ "*/bd/*"}]
           |generate_target simulation $$xci_top
           |export_ip_user_files -of_objects $$xci_top -no_script -sync -force -quiet
+          |
+          |# simulation
+          |launch_simulation -install_path /home/kejun/software/modelsim_2020_4/modeltech/linux_x86_64
+          |
+          |# ---- patch generated sim scripts so ./simulate.sh opens GUI and stays open ----
+          |set sim_dir [file normalize ./vivado_project/Test.sim/sim_1/behav/modelsim]
+          |
+          |# 1) simulate.sh: 去掉 -c（命令行模式）
+          |set sh_path $$sim_dir/simulate.sh
+          |set f [open $$sh_path r]; set c [read $$f]; close $$f
+          |regsub -all {vsim -64 -c -do} $$c {vsim -64 -do} c
+          |set f [open $$sh_path w]; puts -nonewline $$f $$c; close $$f
+          |
+          |# 2) tb_simulate.do: 去掉末尾 quit -force
+          |set do_path $$sim_dir/tb_simulate.do
+          |set f [open $$do_path r]; set c [read $$f]; close $$f
+          |regsub -line -all {^quit -force\s*$$} $$c {} c
+          |set f [open $$do_path w]; puts -nonewline $$f $$c; close $$f
         """
     }
 
