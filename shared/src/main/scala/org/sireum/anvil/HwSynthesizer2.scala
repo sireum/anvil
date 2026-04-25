@@ -552,12 +552,23 @@ object ArbInputMap {
           |  //    Stage 1 : baseAddr = baseOffset + dataOffset
           |  //              generate 16 partial products (AND + wiring)
           |  //    Stage 2 : Wallace reduction first half  (16 → 6)
-          |  //    Stage 3 : Wallace reduction second half (6 → 2) + CPA + mask
-          |  //    Stage 4 : result = baseAddr + masked_product
+          |  //    Stage 3 : Wallace reduction second half (6 → 2) + CPA + mask;
+          |  //              also pre-add LOW 8 bits of (baseAddr + masked_product)
+          |  //              into mult_lo_s3 (with carry-out captured), and pass
+          |  //              HIGH 8 bits of baseAddr / masked_product unmodified.
+          |  //    Stage 4 : final 9-bit add (high8 + high8 + carry-in), then
+          |  //              concat with low8. The 16-bit ripple add that used to
+          |  //              live entirely in stage 4 is split 8+9 across stages
+          |  //              3 and 4, halving the worst-case CPA chain.
           |  //
-          |  //  Latency: 5 cycles from ready rising edge to valid pulse.
+          |  //  Latency: 5 cycles from ready rising edge to valid pulse (unchanged).
           |  //  Critical path per stage: ~3 CSA layers (~0.5 ns FPGA / ~0.4 ns
           |  //  ASIC), comfortably supporting 600+ MHz on both platforms.
+          |  //  P0-B fix: at SAED90 / WLM=2M the original `RegNext(baseAddr_s3 +
+          |  //  mult_s3)` synthesized to a 30-level NAND chain (the absolute WNS
+          |  //  path -14.08 ns from arbIndexerWrapper_mod/baseAddr_s3_reg_0_ to
+          |  //  result_s4_reg_16_). Splitting into 8+9 bit halves cuts the CPA
+          |  //  ripple in half without changing latency or functional behavior.
           |  // =================================================================
           |  val LATENCY = 5
           |
@@ -623,11 +634,21 @@ object ArbInputMap {
           |  ops = s2_regs
           |  while (ops.length > 2) ops = reduceOnce(ops)
           |
-          |  val mult_s3     = RegNext(((ops(0) + ops(1))(width - 1, 0)) & mask_s2)
-          |  val baseAddr_s3 = RegNext(baseAddr_s2)
+          |  val mult_s3_full = ((ops(0) + ops(1))(width - 1, 0)) & mask_s2
+          |  val LO_W = width / 2
+          |  val HI_W = width - LO_W
+          |  // Pre-add low halves here so stage 4 only does a HI_W-bit add.
+          |  // `+&` widens by 1 bit so we capture the carry into stage 4.
+          |  val sumLo_s3_w = baseAddr_s2(LO_W - 1, 0) +& mult_s3_full(LO_W - 1, 0)
+          |  val sumLo_s3   = RegNext(sumLo_s3_w(LO_W - 1, 0))
+          |  val carryLo_s3 = RegNext(sumLo_s3_w(LO_W))
+          |  // Pass through the high halves of baseAddr / mult to stage 4.
+          |  val baseAddrHi_s3 = RegNext(baseAddr_s2(width - 1, LO_W))
+          |  val multHi_s3     = RegNext(mult_s3_full(width - 1, LO_W))
           |
-          |  // --------------- Stage 4 : final add + output register -----------
-          |  val result_s4 = RegNext(baseAddr_s3 + mult_s3)
+          |  // --------------- Stage 4 : final HI add + concat + output reg ----
+          |  val sumHi_s4 = baseAddrHi_s3 + multHi_s3 + carryLo_s3
+          |  val result_s4 = RegNext(Cat(sumHi_s4(HI_W - 1, 0), sumLo_s3))
           |
           |  io.out := Mux(io.valid, result_s4, 0.U)
           |}
@@ -4341,36 +4362,51 @@ import HwSynthesizer2._
             |    }
             |  }
             |
-            |  // ------------------ Stage 1: Arbitration Decision Pipeline ------------------
-            |  val r_foundReq = RegInit(false.B)
-            |  // Payload only observed when r_foundReq is T (driven by the same
-            |  // arbitration cycle that writes r_reqBits); no reset needed.
-            |  val r_reqBits  = Reg(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)}))
-            |  val r_chosen   = RegInit(0.U(log2Up(numIPs).W))
-            |
-            |  // Parallel priority select. The previous form
-            |  //   for (i <- 0 until numIPs) when(r_ipReq_enable(i)) {
-            |  //     r_reqBits := r_ipReq_bits(i); r_chosen := i.U }
-            |  // synthesized to an numIPs-deep cascaded 2:1 mux (last-when-wins,
-            |  // i.e. highest-index priority) with ~numIPs x 0.4 ns of delay on
-            |  // the 64-bit data path at 90nm — the main source of the
-            |  // -5..-13 ns WNS seen on arb*ArbiterModule_r_reqBits_* and
-            |  // arb*ArbiterModule_r_ipReq_bits_N_* endpoints.
+            |  // ------------------ Stage 1a: Arbitration Decision (decide-only) -----------
+            |  // P0-C fix: previously the priority encoder + Mux1H + 64-bit-bundle
+            |  // assignment all collapsed into one cycle. At numIPs=12..14 with
+            |  // 64-bit BlockMemory request bundles, this still synthesized to
+            |  // ~30 logic levels (PriorityEncoder + Reverse + subtract +
+            |  // UIntToOH + 4-deep 64-bit Mux1H), driving the second-worst path
+            |  // arbBlockMemoryArbiterModule/r_ipReq_enable_*_reg ->
+            |  // r_reqBits_writeAddr_reg_* at -14.07 ns on SAED90/WLM=2M.
             |  //
-            |  // Using PriorityEncoder(Reverse(...)) gives an MSB-first priority
-            |  // encoder (equivalent "highest-index wins" semantic), and Mux1H
-            |  // on the one-hot select collapses the chain to a log2(numIPs)
-            |  // balanced mux tree (~4 levels for numIPs = 12).
+            |  // Splitting into two cycles: stage 1a flops the one-hot select +
+            |  // chosen index + anyEnabled flag; stage 1b uses the flopped
+            |  // one-hot to drive the wide Mux1H into r_reqBits. Per-stage logic
+            |  // levels drop to ~15 each. Arbiter latency grows by 1 cycle
+            |  // (request-side); ipReqs->ip.req throughput is unchanged.
+            |  val r_selOH_s1     = RegInit(0.U(numIPs.W))
+            |  val r_chosen_s1    = RegInit(0.U(log2Up(numIPs).W))
+            |  val r_anyEnabled_s1 = RegInit(false.B)
+            |
+            |  // Parallel priority select. Using PriorityEncoder(Reverse(...))
+            |  // gives an MSB-first priority encoder (equivalent "highest-index
+            |  // wins" semantic), and Mux1H on the one-hot select collapses to
+            |  // a log2(numIPs) balanced mux tree (~4 levels for numIPs = 12).
             |  val r_ipReq_enableU = r_ipReq_enable.asUInt
             |  val anyEnabled      = r_ipReq_enableU.orR
             |  val chosenFromMsb   = PriorityEncoder(Reverse(r_ipReq_enableU))
             |  val chosen          = (numIPs - 1).U(log2Up(numIPs).W) - chosenFromMsb
             |  val selOH           = UIntToOH(chosen, numIPs)
             |
-            |  r_foundReq := anyEnabled
+            |  r_anyEnabled_s1 := anyEnabled
             |  when(anyEnabled) {
-            |    r_chosen  := chosen
-            |    r_reqBits := Mux1H(selOH.asBools, r_ipReq_bits)
+            |    r_selOH_s1  := selOH
+            |    r_chosen_s1 := chosen
+            |  }
+            |
+            |  // ------------------ Stage 1b: Apply selection to bits ------------------
+            |  val r_foundReq = RegInit(false.B)
+            |  // Payload only observed when r_foundReq is T (driven by the same
+            |  // arbitration cycle that writes r_reqBits); no reset needed.
+            |  val r_reqBits  = Reg(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)}))
+            |  val r_chosen   = RegInit(0.U(log2Up(numIPs).W))
+            |
+            |  r_foundReq := r_anyEnabled_s1
+            |  when(r_anyEnabled_s1) {
+            |    r_chosen  := r_chosen_s1
+            |    r_reqBits := Mux1H(r_selOH_s1.asBools, r_ipReq_bits)
             |  }
             |
             |  io.ip.req.valid := r_foundReq
@@ -6745,7 +6781,11 @@ import HwSynthesizer2._
           |launch_simulation -install_path /home/kejun/software/modelsim/modeltech/linux_x86_64
           |
           |# ---- patch generated sim scripts so ./simulate.sh opens GUI and stays open ----
-          |set sim_dir [file normalize ./vivado_project/Test.sim/sim_1/behav/modelsim]
+          |# NOTE: must use $${name}.sim (the project name from `create_project $${name} ...`
+          |# at the top of this script), not the hardcoded "Test.sim". Cases with a
+          |# non-`Test` procedure name (e.g. `BubbleTest`) have Vivado emit
+          |# BubbleTest.sim and would fail the `open $$sh_path r` below otherwise.
+          |set sim_dir [file normalize ./vivado_project/${name}.sim/sim_1/behav/modelsim]
           |
           |# 1) simulate.sh: 去掉 -c（命令行模式）
           |set sh_path $$sim_dir/simulate.sh
@@ -7666,28 +7706,79 @@ import HwSynthesizer2._
     reqPreROM = HashSMap.empty
     perFsmMaxLabel = HashSMap.empty
 
-    @pure def generalPurposeRegisterST: ST = {
+    // Shared regfile-bank discovery so that declarations, per-cycle defaults
+    // and the deferred-commit block all see the same set of banks.
+    // Each entry: bankName -> (bitWidth, depth, isSigned).
+    @pure def generalRegBanks: HashMap[String, (Z,Z,B)] = {
       var generalRegMap: HashMap[String, (Z,Z,B)] = HashMap.empty[String, (Z,Z,B)]
-      var generalRegST: ISZ[ST] = ISZ[ST]()
-
       for(i <- 0 until maxRegisters.unsigneds.size){
         if(maxRegisters.unsigneds(i) > 0) {
           generalRegMap = generalRegMap + (s"${generalRegName}U${i+1}" ~> (i+1, maxRegisters.unsigneds(i), F))
         }
       }
-
       for(entry <- maxRegisters.signeds.entries) {
         if(entry._2 > 0) {
           generalRegMap = generalRegMap + (s"${generalRegName}S${entry._1}" ~> (entry._1, entry._2, T))
         }
       }
+      return generalRegMap
+    }
 
-      for(entry <- generalRegMap.entries) {
-        //generalRegST = generalRegST :+ st"val ${entry._1} = RegInit(VecInit(${entry._2._2}, ${if(entry._2._3) "SInt" else "UInt"}(${entry._2._1}.W)))"
-        generalRegST = generalRegST :+ st"val ${entry._1} = RegInit(VecInit(Seq.fill(${entry._2._2})(${if(entry._2._3) "0.S" else "0.U"}(${entry._2._1}.W))))"
+    @pure def generalPurposeRegisterST: ST = {
+      var generalRegST: ISZ[ST] = ISZ[ST]()
+
+      for(entry <- generalRegBanks.entries) {
+        val bankName: String = entry._1
+        val width: Z = entry._2._1
+        val depth: Z = entry._2._2
+        val signed: B = entry._2._3
+        val zeroLit: String = if (signed) "0.S" else "0.U"
+        val sintOrUint: String = if (signed) "SInt" else "UInt"
+        // Real regfile (commit target). Reset to 0 to keep startup behavior.
+        generalRegST = generalRegST :+ st"val ${bankName} = RegInit(VecInit(Seq.fill(${depth})(${zeroLit}(${width}.W))))"
+        // P0-A: shadow `_next` Reg and `_we` write-enable Vec.
+        // Per-index switch-arm writes to `_next(i)` + `_we(i) := true.B` are
+        // committed one cycle later by a non-switched commit block, splitting
+        // the deep `CP_reg -> switch decode -> Vec-write mux tree` cone in half.
+        // `_next` holds no semantic value when `_we` is false, so it does not
+        // need a reset (saves wide reset-tree fanout, same idea as
+        // `r_ipReq_bits` in the IP arbiter template). `_we` MUST reset to false
+        // so that no spurious commits fire after reset.
+        generalRegST = generalRegST :+ st"val ${bankName}_next = Reg(Vec(${depth}, ${sintOrUint}(${width}.W)))"
+        generalRegST = generalRegST :+ st"val ${bankName}_we   = RegInit(VecInit(Seq.fill(${depth})(false.B)))"
       }
 
       return st"${(generalRegST, "\n")}"
+    }
+
+    // Per-cycle defaults for shadow `_we`/`_next`: emitted BEFORE the switch
+    // body (inside `procedureST`), so that switch arms can override `_we(i)`
+    // to true via Chisel last-connect. `_next(i)` self-holds (Reg semantics)
+    // — we do not need an explicit hold; we only override it inside arms.
+    @pure def generalRegDefaultST: ST = {
+      var defaults: ISZ[ST] = ISZ[ST]()
+      for(entry <- generalRegBanks.entries) {
+        val bankName: String = entry._1
+        defaults = defaults :+ st"for (i <- 0 until ${entry._2._2}) { ${bankName}_we(i) := false.B }"
+      }
+      return st"${(defaults, "\n")}"
+    }
+
+    // Deferred-commit block: emitted AFTER the switch body. When `_we(i)` was
+    // raised by a switch arm in the previous cycle, copy the shadow value to
+    // the real regfile. Adds 1 cycle of write latency vs the legacy direct
+    // write, which is well within the 3-cycle CP-ring stable window between
+    // consecutive switch firings (CP_pre_next -> CP_next -> CP).
+    @pure def generalRegCommitST: ST = {
+      var commits: ISZ[ST] = ISZ[ST]()
+      for(entry <- generalRegBanks.entries) {
+        val bankName: String = entry._1
+        commits = commits :+
+          st"""for (i <- 0 until ${entry._2._2}) {
+              |  when (${bankName}_we(i)) { ${bankName}(i) := ${bankName}_next(i) }
+              |}"""
+      }
+      return st"${(commits, "\n")}"
     }
 
     @pure def procedureST(stateMachineST: ST, stateMachineSTSize:Z, stateFunctionObjectST: ST): ST = {
@@ -7936,7 +8027,19 @@ import HwSynthesizer2._
                  |  // `when(r_<inst>_resp_valid) { ... }` overrides via last-connect.
                  |  ${reqPreROMST}
                  |
+                 |  // P0-A: regfile shadow defaults. Each cycle, `_we(i)` resets
+                 |  // to false; switch arms in `stateMachineCallST` may override
+                 |  // it back to true via last-connect for indices they write.
+                 |  ${generalRegDefaultST}
+                 |
                  |  ${stateMachineCallST}
+                 |
+                 |  // P0-A: regfile shadow commit. Reads the (already-flopped)
+                 |  // `_we` from the prior cycle and copies `_next(i)` -> regfile(i).
+                 |  // Placed AFTER the state machine so this `when` is closer to the
+                 |  // regfile flop (terminating the cone with a small AND+mux instead
+                 |  // of a wide CP decoder). One cycle of write latency vs legacy.
+                 |  ${generalRegCommitST}
                  |}
                  |
                  |${(stateMachineST, "")}
@@ -8545,7 +8648,7 @@ import HwSynthesizer2._
         val offsetWidth: Z = log2Up(anvil.config.memory * 8)
         val readOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
         ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${tempST.render} := r_${instanceName}_resp.data${byteST.render}${signedST.render}"
+        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ regFileShadowWriteST(tempST.render, st"r_${instanceName}_resp.data${byteST.render}${signedST.render}".render)
         ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
         intrinsicST =
           st"""
@@ -8777,7 +8880,7 @@ import HwSynthesizer2._
           val t = globalVarMap.get(rhsName).get
           val sintConvertST: ST = if(isSignedExp(a.rhs)) st".asSInt" else st""
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ regFileShadowWriteST(lhsST.render, st"r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}".render)
           val curFsm: String = hwLog.curProcedureId
           assignST =
             st"""
@@ -8795,7 +8898,7 @@ import HwSynthesizer2._
             val offsetWidth: Z = log2Up(anvil.config.memory * 8)
             val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
             val readOffsetST: ST = if (intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
-            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ regFileShadowWriteST(lhsST.render, rhsST.render)
             val curFsm: String = hwLog.curProcedureId
             assignST =
               st"""
@@ -8807,16 +8910,15 @@ import HwSynthesizer2._
               """
           } else if (isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {
             val lhsContentST: ST = st"${if (isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if (isSignedExp(a.rhs)) ").asUInt" else ""}"
-            val finalST = st"${lhsST} := ${if (!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
-            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ finalST
+            val finalRhsRender: String = if (!anvil.config.splitTempSizes) lhsContentST.render else rhsST.render
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ regFileShadowWriteST(lhsST.render, finalRhsRender)
             assignST = st""
           } else {
             val lhsContentST: ST = st"${if (isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if (isSignedExp(a.rhs)) ").asUInt" else ""}"
-            val finalST = st"${lhsST} := ${if (!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
-
+            val finalRhsRender: String = if (!anvil.config.splitTempSizes) lhsContentST.render else rhsST.render
             assignST =
               st"""
-                |${finalST.render}
+                |${regFileShadowWriteST(lhsST.render, finalRhsRender).render}
               """
           }
         }
@@ -8830,6 +8932,25 @@ import HwSynthesizer2._
   }
 
   @strictpure def globalName(name: ISZ[String]): ST = st"global_${(name, "_")}"
+
+  // P0-A: rewrite a regfile per-index assignment into a shadow `_next`/`_we`
+  // pair. If `lhsRender` does not start with `generalRegFiles`, returns a
+  // single original-form `lhs := rhs` ST (i.e. acts as identity). The split
+  // breaks the wide `CP_reg -> switch decode -> Vec write mux` cone by
+  // terminating writes at flops that DC can co-locate with the regfile,
+  // instead of at the regfile flop itself reached via a deep mux tree.
+  @pure def regFileShadowWriteST(lhsRender: String, rhsRender: String): ST = {
+    val lhsOps = ops.StringOps(lhsRender)
+    val parenIdx: Z = lhsOps.indexOf('(')
+    val isRegFile: B = lhsOps.startsWith(generalRegName) && parenIdx > 0
+    if (!isRegFile) {
+      return st"${lhsRender} := ${rhsRender}"
+    }
+    val base: String = lhsOps.substring(0, parenIdx)
+    val idxAndRest: String = lhsOps.substring(parenIdx, lhsRender.size)
+    return st"""${base}_next${idxAndRest} := ${rhsRender}
+               |${base}_we${idxAndRest} := true.B"""
+  }
 
   @pure def processExpr(exp: AST.IR.Exp, isForcedSign: B, ipPortLogic: HwSynthesizer2.IpPortAssign, maxRegisters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): ST = {
     var exprST = st""
