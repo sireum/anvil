@@ -3619,6 +3619,15 @@ import HwSynthesizer2._
   var globalVarMap: HashSMap[String, (Z, B, Z)] = HashSMap.empty
   // record whether using alignAxi4 mini state machine and corresponding string template
   var alignAxi4MiniStateMachineMap: HashSMap[String, ST] = HashSMap.empty
+  // Tier-1 ROM: per-state writes to `r_<inst>_req_pre.<field>` captured during
+  // processStmt*/processJumpIntrinsic and emitted as VecInit-based gated writes
+  // in procedureST. Replaces the wide `switch(CP)` mux tree feeding req_pre
+  // registers with a `log2(N)` Vec lookup, breaking the dominant CP-decode ->
+  // req_pre register critical path. Cleared at the start of each procedure.
+  //   key: (procedureName, instanceName, fieldName) -> stateLabel -> rendered RHS
+  var reqPreROM: HashSMap[(String, String, String), HashSMap[Z, ST]] = HashSMap.empty
+  // Per-procedure max state label captured into reqPreROM, used to size each Vec.
+  var perFsmMaxLabel: HashSMap[String, Z] = HashSMap.empty
   var ipModules: ISZ[ArbIpModule] = ISZ[ArbIpModule](
     ArbAdder(F, "AdderUnsigned64", "arbAdderUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F), noXilinxIp, 0),
     ArbAdder(T, "AdderSigned64", "arbAdderSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, T), noXilinxIp, 1),
@@ -3667,6 +3676,52 @@ import HwSynthesizer2._
       }
     }
     return None()
+  }
+
+  // Tier-1 ROM helpers: see `reqPreROM` field comment.
+  // Push `r_<instanceName>_req_pre.<fieldName> := <valueST>` for state `label`
+  // into the per-(fsm, instance, field) capture table.
+  def captureReqPre(fsmName: String, instanceName: String, fieldName: String, label: Z, valueST: ST): Unit = {
+    val key: (String, String, String) = (fsmName, instanceName, fieldName)
+    val byLabel: HashSMap[Z, ST] = reqPreROM.get(key) match {
+      case Some(m) => m
+      case _ => HashSMap.empty
+    }
+    reqPreROM = reqPreROM + key ~> (byLabel + label ~> valueST)
+    val cur: Z = perFsmMaxLabel.get(fsmName) match {
+      case Some(m) => m
+      case _ => 0
+    }
+    if (label > cur) {
+      perFsmMaxLabel = perFsmMaxLabel + fsmName ~> label
+    }
+    return
+  }
+
+  // Either capture the per-state RHS (Tier-1 ROM mode, default cpMax==0) and
+  // return an empty ST (skip emitting the original `:=` in the switch body),
+  // or return the original `r_<inst>_req_pre.<field> := <RHS>` line unchanged
+  // (when split-CP is in effect and ROM-ification is disabled).
+  def captureOrEmit(fsmName: String, instanceName: String, fieldName: String, valueST: ST, hwLog: HwSynthesizer2.HwLog): ST = {
+    if (anvil.config.cpMax <= 0) {
+      captureReqPre(fsmName, instanceName, fieldName, hwLog.currentLabel, valueST)
+      return st""
+    } else {
+      return st"r_${instanceName}_req_pre.${fieldName} := ${valueST.render}"
+    }
+  }
+
+  // A captured field is treated as Bool-typed iff some captured value is a
+  // Bool literal. Used to pick the default fill (`false.B` vs `0.U`) for
+  // unmapped state slots in the value-ROM Seq.
+  @pure def reqPreFieldIsBool(byLabel: HashSMap[Z, ST]): B = {
+    for (e <- byLabel.entries) {
+      val s: String = e._2.render
+      if (s == "false.B" || s == "true.B") {
+        return T
+      }
+    }
+    return F
   }
 
   @strictpure def addrWidthSt(isParaDecl: B): String = {
@@ -7606,6 +7661,11 @@ import HwSynthesizer2._
 
   @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo], isRecursive: B): ST = {
 
+    // Tier-1 ROM state is per-procedure (per-FSM); reset before this procedure's
+    // basic blocks are walked so captures from a prior procedure don't leak.
+    reqPreROM = HashSMap.empty
+    perFsmMaxLabel = HashSMap.empty
+
     @pure def generalPurposeRegisterST: ST = {
       var generalRegMap: HashMap[String, (Z,Z,B)] = HashMap.empty[String, (Z,Z,B)]
       var generalRegST: ISZ[ST] = ISZ[ST]()
@@ -7696,6 +7756,55 @@ import HwSynthesizer2._
           smST = smST :+ st"${name}_StateMachine_${i}.${name}_stateMachine(this)"
         }
         return st"""${(smST, "\n")}"""
+      }
+
+      // Tier-1 ROM emission: for every (instance, field) captured for THIS FSM
+      // (`name`), emit a wrEn ROM + value ROM (`VecInit(Seq(...))`) and a single
+      // gated `when` write to the corresponding `r_<inst>_req_pre.<field>`. The
+      // `when` is gated by the same 3-stage CP equality as the switch body, plus
+      // the per-state wrEn slot, so unmapped states keep their previous value.
+      // The state body's inner `when(r_<inst>_resp_valid) { ... mode := 0.U }`
+      // still wins via Chisel last-connect (state body comes after this block in
+      // the template), preserving original semantics. See `reqPreROM` field doc.
+      @pure def reqPreROMST: ST = {
+        var blocks: ISZ[ST] = ISZ[ST]()
+        val maxLabel: Z = perFsmMaxLabel.get(name) match {
+          case Some(m) => m
+          case _ => 0
+        }
+        for (entry <- reqPreROM.entries) {
+          val key: (String, String, String) = entry._1
+          val byLabel: HashSMap[Z, ST] = entry._2
+          val fsmName: String = key._1
+          if (fsmName == name) {
+            val instanceName: String = key._2
+            val fieldName: String = key._3
+            val isBool: B = reqPreFieldIsBool(byLabel)
+            val defaultVal: ST = if (isBool) st"false.B" else st"0.U"
+            var wrEnSeq: ISZ[ST] = ISZ[ST]()
+            var valSeq: ISZ[ST] = ISZ[ST]()
+            for (i <- 0 until (maxLabel + 1)) {
+              byLabel.get(i) match {
+                case Some(rhs) =>
+                  wrEnSeq = wrEnSeq :+ st"true.B"
+                  valSeq = valSeq :+ rhs
+                case _ =>
+                  wrEnSeq = wrEnSeq :+ st"false.B"
+                  valSeq = valSeq :+ defaultVal
+              }
+            }
+            val romPrefix: String = s"${instanceName}_req_pre_${fieldName}"
+            blocks = blocks :+
+              st"""
+                  |val ${romPrefix}_wrEn_ROM = VecInit(Seq(${(wrEnSeq, ", ")}))
+                  |val ${romPrefix}_val_ROM  = VecInit(Seq(${(valSeq, ", ")}))
+                  |when((${name}CP === ${name}CP_next) & (${name}CP_next === ${name}CP_pre_next) & ${romPrefix}_wrEn_ROM(${name}CP_next)) {
+                  |  r_${instanceName}_req_pre.${fieldName} := ${romPrefix}_val_ROM(${name}CP_next)
+                  |}
+                """
+          }
+        }
+        return st"${(blocks, "\n")}"
       }
 
       @pure def alignAxi4ST: ST = {
@@ -7820,6 +7929,12 @@ import HwSynthesizer2._
                  |  ${(allArbInstanceST, "\n")}
                  |
                  |  ${alignAxi4ST}
+                 |
+                 |  // Tier-1 req_pre ROMs (per-state writes lifted out of the switch body
+                 |  // to break the wide CP-decode -> req_pre register critical path).
+                 |  // Emitted BEFORE the state machine so the state body's inner
+                 |  // `when(r_<inst>_resp_valid) { ... }` overrides via last-connect.
+                 |  ${reqPreROMST}
                  |
                  |  ${stateMachineCallST}
                  |}
@@ -8154,9 +8269,9 @@ import HwSynthesizer2._
           val gtype: B = globalVarMap.get(funName).get._2
           intrinsicST = intrinsicST :+
             st"""
-                |r_arbGlobalVar_req_pre.op := false.B
-                |r_arbGlobalVar_req_pre.gtype := ${gtype}
-                |r_arbGlobalVar_req_pre.index := ${index}
+                |${captureOrEmit(name, "arbGlobalVar", "op", st"false.B", hwLog)}
+                |${captureOrEmit(name, "arbGlobalVar", "gtype", st"${gtype}", hwLog)}
+                |${captureOrEmit(name, "arbGlobalVar", "index", st"${index}", hwLog)}
                 |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |when(r_arbGlobalVar_req_valid_pre) {
                 |  ${funName}CP_pre_next := r_arbGlobalVar_resp.out
@@ -8434,10 +8549,10 @@ import HwSynthesizer2._
         ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
         intrinsicST =
           st"""
-              |r_${instanceName}_req_pre.mode := 1.U
-              |r_${instanceName}_req_pre.readAddr := ${readAddrST.render}
-              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readOffset := ${readOffsetST.render}"}
-              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readLen := ${intrinsic.bytes}.U"}
+              |${captureOrEmit(name, instanceName, "mode", st"1.U", hwLog)}
+              |${captureOrEmit(name, instanceName, "readAddr", readAddrST, hwLog)}
+              |${if(anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "readOffset", readOffsetST, hwLog)}
+              |${if(anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "readLen", st"${intrinsic.bytes}.U", hwLog)}
               |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
             """
       }
@@ -8452,15 +8567,14 @@ import HwSynthesizer2._
           val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
-          val ioDmaDstOffsetST: ST = st"r_${instanceName}_req_pre.dmaDstOffset := ${eraseOffsetST.render}"
           intrinsicST =
             st"""
-                |r_${instanceName}_req_pre.mode := 3.U
-                |r_${instanceName}_req_pre.dmaSrcAddr := 0.U
-                |r_${instanceName}_req_pre.dmaDstAddr := ${eraseBaseST.render}
-                |r_${instanceName}_req_pre.dmaSrcLen := 0.U
-                |r_${instanceName}_req_pre.dmaDstLen := ${eraseBytesST.render}
-                |${if(!anvil.config.alignAxi4) ioDmaDstOffsetST.render else ""}
+                |${captureOrEmit(name, instanceName, "mode", st"3.U", hwLog)}
+                |${captureOrEmit(name, instanceName, "dmaSrcAddr", st"0.U", hwLog)}
+                |${captureOrEmit(name, instanceName, "dmaDstAddr", eraseBaseST, hwLog)}
+                |${captureOrEmit(name, instanceName, "dmaSrcLen", st"0.U", hwLog)}
+                |${captureOrEmit(name, instanceName, "dmaDstLen", eraseBytesST, hwLog)}
+                |${if(!anvil.config.alignAxi4) captureOrEmit(name, instanceName, "dmaDstOffset", eraseOffsetST, hwLog) else st""}
                 |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
               """
         }
@@ -8476,15 +8590,14 @@ import HwSynthesizer2._
         val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
         ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
         ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
-        val ioDmaDstOffsetST: ST = st"r_${instanceName}_req_pre.dmaDstOffset := ${dmaDstOffsetST.render}"
         intrinsicST =
           st"""
-              |r_${instanceName}_req_pre.mode := 3.U
-              |r_${instanceName}_req_pre.dmaSrcAddr := ${dmaSrcAddrST.render}
-              |r_${instanceName}_req_pre.dmaDstAddr := ${dmaDstAddrST.render}
-              |r_${instanceName}_req_pre.dmaSrcLen := ${dmaSrcLenST.render}
-              |r_${instanceName}_req_pre.dmaDstLen := ${intrinsic.lhsBytes}.U
-              |${if(!anvil.config.alignAxi4) ioDmaDstOffsetST.render else ""}
+              |${captureOrEmit(name, instanceName, "mode", st"3.U", hwLog)}
+              |${captureOrEmit(name, instanceName, "dmaSrcAddr", dmaSrcAddrST, hwLog)}
+              |${captureOrEmit(name, instanceName, "dmaDstAddr", dmaDstAddrST, hwLog)}
+              |${captureOrEmit(name, instanceName, "dmaSrcLen", dmaSrcLenST, hwLog)}
+              |${captureOrEmit(name, instanceName, "dmaDstLen", st"${intrinsic.lhsBytes}.U", hwLog)}
+              |${if(!anvil.config.alignAxi4) captureOrEmit(name, instanceName, "dmaDstOffset", dmaDstOffsetST, hwLog) else st""}
               |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
             """
       }
@@ -8507,11 +8620,11 @@ import HwSynthesizer2._
         ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
         intrinsicST =
           st"""
-              |r_${instanceName}_req_pre.mode := 2.U
-              |r_${instanceName}_req_pre.writeAddr := ${writeAddrST.render}
-              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.writeOffset := ${writeOffsetST.render}"}
-              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.writeLen := ${writeLenST.render}"}
-              |r_${instanceName}_req_pre.writeData := ${writeDataST.render}${signedST.render}
+              |${captureOrEmit(name, instanceName, "mode", st"2.U", hwLog)}
+              |${captureOrEmit(name, instanceName, "writeAddr", writeAddrST, hwLog)}
+              |${if(anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "writeOffset", writeOffsetST, hwLog)}
+              |${if(anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "writeLen", writeLenST, hwLog)}
+              |${captureOrEmit(name, instanceName, "writeData", st"${writeDataST.render}${signedST.render}", hwLog)}
               |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
             """
       }
@@ -8527,9 +8640,9 @@ import HwSynthesizer2._
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           intrinsicST =
             st"""
-                |r_arbGlobalVar_req_pre.op := false.B
-                |r_arbGlobalVar_req_pre.gtype := ${globalVarGtype(rhsName)}
-                |r_arbGlobalVar_req_pre.index := ${t._1}.U
+                |${captureOrEmit(name, "arbGlobalVar", "op", st"false.B", hwLog)}
+                |${captureOrEmit(name, "arbGlobalVar", "gtype", globalVarGtype(rhsName), hwLog)}
+                |${captureOrEmit(name, "arbGlobalVar", "index", st"${t._1}.U", hwLog)}
                 |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         } else {
@@ -8585,10 +8698,10 @@ import HwSynthesizer2._
 
             intrinsicST =
               st"""
-                  |r_${instanceName}_req_pre.mode := 1.U
-                  |r_${instanceName}_req_pre.readAddr := ${readAddrST.render}
-                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readOffset := ${readOffsetST.render}"}
-                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readLen := ${anvil.typeByteSize(intrinsic.value.tipe)}.U"}
+                  |${captureOrEmit(name, instanceName, "mode", st"1.U", hwLog)}
+                  |${captureOrEmit(name, instanceName, "readAddr", readAddrST, hwLog)}
+                  |${if (anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "readOffset", readOffsetST, hwLog)}
+                  |${if (anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "readLen", st"${anvil.typeByteSize(intrinsic.value.tipe)}.U", hwLog)}
                   |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
               """
           } else {
@@ -8628,12 +8741,13 @@ import HwSynthesizer2._
           val uintConvertST: ST = if(t._2) st".asUInt" else st""
           val rhsST: ST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
+          val curFsm: String = hwLog.curProcedureId
           assignST =
             st"""
-                |r_arbGlobalVar_req_pre.in := ${rhsST}${padST}${uintConvertST}
-                |r_arbGlobalVar_req_pre.op := true.B
-                |r_arbGlobalVar_req_pre.gtype := ${globalVarGtype(lhsName)}
-                |r_arbGlobalVar_req_pre.index := ${t._1}.U
+                |${captureOrEmit(curFsm, "arbGlobalVar", "in", st"${rhsST.render}${padST.render}${uintConvertST.render}", hwLog)}
+                |${captureOrEmit(curFsm, "arbGlobalVar", "op", st"true.B", hwLog)}
+                |${captureOrEmit(curFsm, "arbGlobalVar", "gtype", globalVarGtype(lhsName), hwLog)}
+                |${captureOrEmit(curFsm, "arbGlobalVar", "index", st"${t._1}.U", hwLog)}
                 |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         } else {
@@ -8643,11 +8757,12 @@ import HwSynthesizer2._
           val sintConvertST: ST = if(t._2) st".asSInt" else st""
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsName} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
+          val curFsm: String = hwLog.curProcedureId
           assignST =
             st"""
-                |r_arbGlobalVar_req_pre.op := false.B
-                |r_arbGlobalVar_req_pre.gtype := ${globalVarGtype(rhsName)}
-                |r_arbGlobalVar_req_pre.index := ${t._1}.U
+                |${captureOrEmit(curFsm, "arbGlobalVar", "op", st"false.B", hwLog)}
+                |${captureOrEmit(curFsm, "arbGlobalVar", "gtype", globalVarGtype(rhsName), hwLog)}
+                |${captureOrEmit(curFsm, "arbGlobalVar", "index", st"${t._1}.U", hwLog)}
                 |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         }
@@ -8663,11 +8778,12 @@ import HwSynthesizer2._
           val sintConvertST: ST = if(isSignedExp(a.rhs)) st".asSInt" else st""
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
+          val curFsm: String = hwLog.curProcedureId
           assignST =
             st"""
-                |r_arbGlobalVar_req_pre.op := false.B
-                |r_arbGlobalVar_req_pre.gtype := ${globalVarGtype(rhsName)}
-                |r_arbGlobalVar_req_pre.index := ${t._1}.U
+                |${captureOrEmit(curFsm, "arbGlobalVar", "op", st"false.B", hwLog)}
+                |${captureOrEmit(curFsm, "arbGlobalVar", "gtype", globalVarGtype(rhsName), hwLog)}
+                |${captureOrEmit(curFsm, "arbGlobalVar", "index", st"${t._1}.U", hwLog)}
                 |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         } else {
@@ -8680,12 +8796,13 @@ import HwSynthesizer2._
             val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
             val readOffsetST: ST = if (intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
             ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
+            val curFsm: String = hwLog.curProcedureId
             assignST =
               st"""
-                  |r_${instanceName}_req_pre.mode := 1.U
-                  |r_${instanceName}_req_pre.readAddr := ${readAddrST.render}
-                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readOffset := ${readOffsetST.render}"}
-                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req_pre.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U"}
+                  |${captureOrEmit(curFsm, instanceName, "mode", st"1.U", hwLog)}
+                  |${captureOrEmit(curFsm, instanceName, "readAddr", readAddrST, hwLog)}
+                  |${if (anvil.config.alignAxi4) st"" else captureOrEmit(curFsm, instanceName, "readOffset", readOffsetST, hwLog)}
+                  |${if (anvil.config.alignAxi4) st"" else captureOrEmit(curFsm, instanceName, "readLen", st"${anvil.typeByteSize(a.rhs.tipe)}.U", hwLog)}
                   |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
               """
           } else if (isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {

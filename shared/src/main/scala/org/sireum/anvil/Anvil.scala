@@ -260,15 +260,13 @@ import Anvil._
       threeAddressCode = threeAddressCode,
       threeAddressExpF = should3AC _,
       th = tsr.typeHierarchy,
-      fresh = fresh,
-      useExtImplementationOwner = F)
+      fresh = fresh)
     val irtIntrinsic = lang.IRTranslator(
       spec = F,
       threeAddressCode = threeAddressCode,
       threeAddressExpF = (_: AST.IR.Exp) => F,
       th = tsr.typeHierarchy,
-      fresh = fresh,
-      useExtImplementationOwner = F)
+      fresh = fresh)
 
     var stage: Z = 0
 
