@@ -2692,6 +2692,16 @@ object ArbInputMap {
           |  val r_dmaSrc_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
           |  val r_dmaSrc_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
           |  val r_dmaDst_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  // P0'-3: shadow `_plus8` precomputes `r_dmaDst_addr + 8` one cycle
+          |  // ahead so the AXI4 write-burst increment becomes a 32-bit mux
+          |  // (no ripple-add on the critical path). Worst-WNS path in 3_exp
+          |  // was r_dma_req_write_reg -> r_dmaDst_addr_reg_29_ at -10.66 ns;
+          |  // splitting the 32-bit CPA off the gating cone retires it.
+          |  // Latency: r_dmaDst_addr_plus8 lags r_dmaDst_addr by 1 cycle. Safe
+          |  // because every increment is gated by r_b_valid (AXI BVALID/BREADY
+          |  // handshake), which guarantees >=3 dead cycles between consecutive
+          |  // writes — plenty of slack for the shadow to catch up.
+          |  val r_dmaDst_addr_plus8 = RegNext(r_dmaDst_addr + 8.U, 0.U)
           |  val r_dmaDst_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
           |  val r_dma_read_data    = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
           |  // the write length used in unaligned write
@@ -2963,7 +2973,8 @@ object ArbInputMap {
           |  } .elsewhen(r_dma_req_write & r_b_valid) {
           |    r_dma_req_write    := false.B
           |    r_dmaDst_len       := Mux(r_dmaDst_len > 8.U, r_dmaDst_len - 8.U, r_dmaDst_len)
-          |    r_dmaDst_addr      := r_dmaDst_addr + 8.U
+          |    // P0'-3: was `r_dmaDst_addr + 8.U` here — moved to shadow Reg.
+          |    r_dmaDst_addr      := r_dmaDst_addr_plus8
           |    r_dmaDst_finish    := r_write_finish_precond1 | r_write_finish_precond2
           |
           |    r_dma_req_read     := ~r_dmaSrc_finish
@@ -7889,8 +7900,26 @@ import HwSynthesizer2._
               st"""
                   |val ${romPrefix}_wrEn_ROM = VecInit(Seq(${(wrEnSeq, ", ")}))
                   |val ${romPrefix}_val_ROM  = VecInit(Seq(${(valSeq, ", ")}))
-                  |when((${name}CP === ${name}CP_next) & (${name}CP_next === ${name}CP_pre_next) & ${romPrefix}_wrEn_ROM(${name}CP_next)) {
-                  |  r_${instanceName}_req_pre.${fieldName} := ${romPrefix}_val_ROM(${name}CP_next)
+                  |// P0'-2: split the ROM lookup into a 2-stage pipeline. The
+                  |// wide (log2(maxLabel+1) + bundle width) mux tree feeding
+                  |// `r_*_req_pre.field` was a top-of-list violator pattern
+                  |// in 4_exp (e.g., test1_objectCP_reg_4_ ->
+                  |// r_arbAndUnsigned64_req_a_* at -11.07 ns, 11 of worst 20).
+                  |// Indexing with CP_pre_next (one CP-ring stage ahead of
+                  |// the original CP_next index) + RegNext lifts the result
+                  |// to the same timing alignment as a CP_next-indexed read
+                  |// would have produced, because the ring assigns
+                  |// CP_next := CP_pre_next every cycle. The gate
+                  |// CP===CP_next===CP_pre_next ensures the ring is stable
+                  |// for >=2 cycles when the write fires, so
+                  |// CP_pre_next[T-1] == CP_next[T] == X and the flopped
+                  |// `_val_s` carries val_ROM(X). Effective ROM-write latency:
+                  |// +1 cycle (absorbed by the 3-cycle stable window between
+                  |// successive switch firings).
+                  |val ${romPrefix}_wrEn_s = RegNext(${romPrefix}_wrEn_ROM(${name}CP_pre_next), false.B)
+                  |val ${romPrefix}_val_s  = RegNext(${romPrefix}_val_ROM(${name}CP_pre_next))
+                  |when((${name}CP === ${name}CP_next) & (${name}CP_next === ${name}CP_pre_next) & ${romPrefix}_wrEn_s) {
+                  |  r_${instanceName}_req_pre.${fieldName} := ${romPrefix}_val_s
                   |}
                 """
           }
