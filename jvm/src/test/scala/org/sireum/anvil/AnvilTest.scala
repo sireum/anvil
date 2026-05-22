@@ -115,8 +115,8 @@ object AnvilTest {
           "bubble.sc" ~> 344 +
           "construct.sc" ~> 352 +
           "divrem.sc" ~> 248 +
-          "dll.sc" ~> 760 +
-          "dll2.sc" ~> 1784 +
+          "dll.sc" ~> 768 +
+          "dll2.sc" ~> 1792 +
           "factorial.sc" ~> 176 +
           "global.sc" ~> 152 +
           "indexing-obj.sc" ~> 240 +

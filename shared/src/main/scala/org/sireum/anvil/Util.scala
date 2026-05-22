@@ -317,7 +317,7 @@ object Util {
     override def post_langastIRStmtBlock(o: AST.IR.Stmt.Block): MOption[AST.IR.Stmt] = {
       @strictpure def isConversions(name: QName): B =
         (name.size > 3  && name(0) == "org" && name(1) == "sireum" && name(2) == "conversions") ||
-          name == ISZ("org", "sireum", "anvil", "Runtime", "Ext_Ext")
+          name == ISZ("org", "sireum", "anvil", "Runtime", "Ext")
       var changed = F
       var stmts = ISZ[AST.IR.Stmt]()
       for (stmt <- o.stmts) {
