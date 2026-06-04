@@ -6730,15 +6730,23 @@ import HwSynthesizer3._
         allNodeInstanceST = allNodeInstanceST :+
           st"""
               |// ${getIpModuleName(e).get} Node
-              |val r_${instName}_req          = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
-              |val r_${instName}_req_valid    = RegInit(false.B)
-              |val r_${instName}_resp         = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
-              |val r_${instName}_resp_valid   = RegInit(false.B)
+              |val r_${instName}_req            = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
+              |val r_${instName}_req_valid      = RegInit(false.B)
+              |// Trailing pipeline stage at the procedure→IP boundary. Logically
+              |// a no-op (mux depth unchanged), but gives Vivado enough timing
+              |// slack to replicate the CP register on UltraScale -2, cutting
+              |// fanout on the worst CP→req path. ~+13 MHz on dll2 @ 400 MHz.
+              |val r_${instName}_req_stage      = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
+              |val r_${instName}_req_stage_valid= RegInit(false.B)
+              |val r_${instName}_resp           = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
+              |val r_${instName}_resp_valid     = RegInit(false.B)
               |// connection for ${getIpModuleName(e).get} Node
-              |r_${instName}_resp       := io.${instName}_resp.bits
-              |r_${instName}_resp_valid := io.${instName}_resp.valid
-              |io.${instName}_req.bits  := r_${instName}_req
-              |io.${instName}_req.valid := r_${instName}_req_valid
+              |r_${instName}_req_stage          := r_${instName}_req
+              |r_${instName}_req_stage_valid    := r_${instName}_req_valid
+              |r_${instName}_resp               := io.${instName}_resp.bits
+              |r_${instName}_resp_valid         := io.${instName}_resp.valid
+              |io.${instName}_req.bits          := r_${instName}_req_stage
+              |io.${instName}_req.valid         := r_${instName}_req_stage_valid
             """
       }
 
