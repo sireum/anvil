@@ -456,7 +456,8 @@ import Anvil._
           halt(s"Infeasible: $method of $receiver}")
         }
         val receiver = method.receiverOpt.get
-        val methodContext = AST.IR.MethodContext(F, info.owner, method.id, method.tpe(args = receiver +: method.tpe.args))
+        val methodContext = AST.IR.MethodContext(F, info.owner, method.id,
+          method.tpe(args = receiver +: method.tpe.args))
         var impls = ISZ[(Z, AST.Typed.Name, AST.IR.Exp)]()
         val pos = info.posOpt.get
         val paramNames: ISZ[String] = "this" +: (for (p <- info.ast.sig.params) yield p.id.value)
@@ -984,6 +985,10 @@ import Anvil._
     @strictpure def shouldProcess(e: AST.IR.Exp.Apply): B = e.owner match {
       case AST.Typed.mszName => F
       case AST.Typed.iszName => F
+      case Util.mszExtName => F
+      case Util.iszExtName => F
+      case Util.isExtName => F
+      case Util.msExtName => F
       case _ => T
     }
     val body = p.body.asInstanceOf[AST.IR.Body.Basic]
@@ -1415,6 +1420,10 @@ import Anvil._
         case AST.Typed.msName => T
         case AST.Typed.iszName => T
         case AST.Typed.mszName => T
+        case Util.isExtName => T
+        case Util.msExtName => T
+        case Util.iszExtName => T
+        case Util.mszExtName => T
         case _ => F
       }
     case _ => F
@@ -1747,6 +1756,10 @@ import Anvil._
           case AST.Typed.msName => T
           case AST.Typed.iszName => T
           case AST.Typed.mszName => T
+          case Util.isExtName => T
+          case Util.msExtName => T
+          case Util.iszExtName => T
+          case Util.mszExtName => T
           case _ => F
         }
       case _ => F

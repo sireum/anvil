@@ -323,7 +323,12 @@ object Util {
       for (stmt <- o.stmts) {
         stmt match {
           case stmt@AST.IR.Stmt.Assign.Temp(_, rhs: AST.IR.Exp.Apply, pos) if isConversions(rhs.owner) =>
-            val objectOps = ops.StringOps(rhs.owner(rhs.owner.size - 1))
+            val ownerLast: String = {
+              val last = rhs.owner(rhs.owner.size - 1)
+              val lastOps = ops.StringOps(last)
+              if (lastOps.endsWith("_Ext")) lastOps.substring(0, last.size - 4) else last
+            }
+            val objectOps = ops.StringOps(ownerLast)
             val idOps = ops.StringOps(rhs.id)
             assert(rhs.args.size == 1)
             var arg = rhs.args(0)
@@ -1151,6 +1156,10 @@ object Util {
   val f64DigitIndexType: AST.Typed.Name = AST.Typed.Name(ISZ("org", "sireum", "anvil", "PrinterIndex", "I320"), AST.Typed.noRType, ISZ())
   val f32DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, AST.Typed.noRType, ISZ(f32DigitIndexType, AST.Typed.u8))
   val f64DigitBufferType: AST.Typed.Name = AST.Typed.Name(AST.Typed.msName, AST.Typed.noRType, ISZ(f64DigitIndexType, AST.Typed.u8))
+  val isExtName: QName = AST.Typed.sireumName :+ "IS_Ext"
+  val msExtName: QName = AST.Typed.sireumName :+ "MS_Ext"
+  val iszExtName: QName = AST.Typed.sireumName :+ "ISZ_Ext"
+  val mszExtName: QName = AST.Typed.sireumName :+ "MSZ_Ext"
   val runtimeName: QName = AST.Typed.sireumName :+ "anvil" :+ "Runtime"
   val intrinsicName: QName = runtimeName :+ "Intrinsic"
   val mainAnnName: QName = AST.Typed.sireumName :+ "anvil" :+ "hls"

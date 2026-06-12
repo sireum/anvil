@@ -1286,25 +1286,38 @@ import DLLPool._
         pool(0) = Node(elem, T, Null, Null)
         Spec { count_free_on_alloc(qool, pool, 0)
                list = List.make(elem) }
+        free = free - 1
       } else {
-        val pnew: Z = findFreeNode()
-        @spec val qool = pool // permits easy access to "old" pool value
-        pool(pnew) = Node(elem, T, Null, head)
-        Spec { unusedInv(qool, head, list, pool, pnew)
-               refinesNewHead(pool, head, list, pnew, elem)
-               count_free_on_alloc(qool, pool, pnew) }
-        @spec val rool = pool
-        pool(head) = pool(head)(left = pnew)
-        Spec { listCoincidence(pool, rool, head)
-               freeCoincidence(pool, rool) }
-        head = pnew
-        Deduce(|- (poolRightProp(pool)),
-               |- (poolRightValidProp(pool, tail)),
-               |- (poolRightUsedProp(pool)))
-        Spec { list = Cons(elem, list) }
+        consNonEmpty(elem)
       }
-      free = free - 1
     }
+  }
+
+  // Extracted from cons's non-empty branch so the hardware FSM generated for
+  // cons stays under the per-module state budget (the combined version exceeded
+  // 1000 states). Caller must guarantee free > 0 and !isEmpty.
+  def consNonEmpty(elem: E): Unit = {
+    Contract(Modifies(list),
+      Case(
+        Requires(free > 0, !isEmpty, refinesProp(pool, head, list)),
+        Ensures(refinesProp(pool, head, list),
+                list == Cons(elem, In(list)))))
+    val pnew: Z = findFreeNode()
+    @spec val qool = pool // permits easy access to "old" pool value
+    pool(pnew) = Node(elem, T, Null, head)
+    Spec { unusedInv(qool, head, list, pool, pnew)
+           refinesNewHead(pool, head, list, pnew, elem)
+           count_free_on_alloc(qool, pool, pnew) }
+    @spec val rool = pool
+    pool(head) = pool(head)(left = pnew)
+    Spec { listCoincidence(pool, rool, head)
+           freeCoincidence(pool, rool) }
+    head = pnew
+    Deduce(|- (poolRightProp(pool)),
+           |- (poolRightValidProp(pool, tail)),
+           |- (poolRightUsedProp(pool)))
+    Spec { list = Cons(elem, list) }
+    free = free - 1
   }
 
 }
