@@ -195,8 +195,11 @@ def instrument_tb(proj_dir):
 
 def ensure_fpga_verilog(proj_dir, proj):
     v = os.path.join(proj_dir, "chisel", "generated_verilog", f"FPGA{proj}", f"{proj}.v")
+    src = os.path.join(proj_dir, "chisel", "src", "main", "scala", "FPGATop.scala")
     if os.path.isfile(v):
-        return
+        if not os.path.isfile(src) or os.path.getmtime(v) >= os.path.getmtime(src):
+            return
+        print("  FPGA Verilog is older than the Chisel sources; regenerating ...")
     print(f"  FPGA Verilog missing; running sbt Test/runMain FPGA{proj}VerilogGeneration ...")
     env = dict(os.environ)
     if os.path.isdir(SBT_JAVA_HOME):
