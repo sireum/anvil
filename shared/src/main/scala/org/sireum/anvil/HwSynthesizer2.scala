@@ -1509,39 +1509,44 @@ object ArbInputMap {
   @strictpure override def expression: ArbIpType = exp
   @strictpure def bramIpST: ST = {
     st"""
-        |class BRAMIP (val depth: Int = 1024, val width: Int = 8) extends Module {
+        |// 64-bit word-organized dual-port RAM with per-byte write enables (wea/web).
+        |// words = number of 64-bit words; byte lane i is enabled by bit i of wea/web.
+        |class BRAMIP (val words: Int = 128) extends Module {
         |    val io = IO(new Bundle{
         |        val ena = Input(Bool())
-        |        val wea = Input(Bool())
-        |        val addra = Input(UInt(log2Ceil(depth).W))
-        |        val dina = Input(UInt(width.W))
-        |        val douta = Output(UInt(width.W))
+        |        val wea = Input(UInt(8.W))
+        |        val addra = Input(UInt(log2Ceil(words).W))
+        |        val dina = Input(UInt(64.W))
+        |        val douta = Output(UInt(64.W))
         |
         |        val enb = Input(Bool())
-        |        val web = Input(Bool())
-        |        val addrb = Input(UInt(log2Ceil(depth).W))
-        |        val dinb = Input(UInt(width.W))
-        |        val doutb = Output(UInt(width.W))
+        |        val web = Input(UInt(8.W))
+        |        val addrb = Input(UInt(log2Ceil(words).W))
+        |        val dinb = Input(UInt(64.W))
+        |        val doutb = Output(UInt(64.W))
         |    })
         |
-        |    val mem = SyncReadMem(depth, UInt(width.W))
+        |    val mem = SyncReadMem(words, Vec(8, UInt(8.W)))
         |
         |    io.douta := 0.U
         |    io.doutb := 0.U
         |
+        |    val w_dinaVec = VecInit(Seq.tabulate(8)(i => io.dina(8 * i + 7, 8 * i)))
+        |    val w_dinbVec = VecInit(Seq.tabulate(8)(i => io.dinb(8 * i + 7, 8 * i)))
+        |
         |    when(io.ena) {
-        |      when(io.wea) {
-        |        mem.write(io.addra, io.dina)
+        |      when(io.wea.orR) {
+        |        mem.write(io.addra, w_dinaVec, io.wea.asBools)
         |      } .otherwise {
-        |        io.douta := mem.read(io.addra)
+        |        io.douta := mem.read(io.addra).asUInt
         |      }
         |    }
         |
         |    when(io.enb) {
-        |      when(io.web) {
-        |        mem.write(io.addrb, io.dinb)
+        |      when(io.web.orR) {
+        |        mem.write(io.addrb, w_dinbVec, io.web.asBools)
         |      } .otherwise {
-        |        io.doutb := mem.read(io.addrb)
+        |        io.doutb := mem.read(io.addrb).asUInt
         |      }
         |    }
         |}
@@ -1550,9 +1555,9 @@ object ArbInputMap {
   @pure override def moduleST: ST = {
     val bramInsST: ST = {
       if(nonXilinxIP) {
-        st"val bram = Module(new BRAMIP(depth, width))"
+        st"val bram = Module(new BRAMIP((depth + 7) / 8))"
       } else {
-        if (!genVerilog) st"val bram = Module(new BRAMIP(depth, width))"
+        if (!genVerilog) st"val bram = Module(new BRAMIP((depth + 7) / 8))"
         else
           st"""
               |val bram = Module(new XilinxBRAMWrapper)
@@ -1607,12 +1612,12 @@ object ArbInputMap {
           |
           |  // BRAM default
           |  bram.io.ena := false.B
-          |  bram.io.wea := false.B
+          |  bram.io.wea := 0.U
           |  bram.io.addra := 0.U
           |  bram.io.dina := 0.U
           |
           |  bram.io.enb := false.B
-          |  bram.io.web := false.B
+          |  bram.io.web := 0.U
           |  bram.io.addrb := 0.U
           |  bram.io.dinb := 0.U
           |
@@ -1620,106 +1625,84 @@ object ArbInputMap {
           |  val w_writeEnable = io.mode === 2.U
           |  val w_dmaEnable   = io.mode === 3.U
           |
-          |  // === READ Operation ===
-          |  val sReadIdle :: sReadFirst :: sReadTrans :: sReadEnd :: Nil = Enum(4)
+          |  // === READ Operation (64-bit datapath, constant 4-cycle for any alignment/len) ===
+          |  val sReadIdle :: sReadIssue :: sReadMerge :: sReadEnd :: Nil = Enum(4)
           |
-          |  val r_readCnt      = Reg(UInt(4.W))
-          |  val r_lastReadCnt  = Reg(UInt(4.W))
-          |  val r_readAddr     = Reg(UInt(log2Ceil(depth).W))
           |  val r_readState    = RegInit(sReadIdle)
-          |  val r_readBytes    = Reg(Vec(8, UInt(8.W)))
+          |  val r_readByteAddr = Reg(UInt(log2Ceil(depth).W))
+          |  val r_readLen      = Reg(UInt(4.W))
+          |  val r_readData     = Reg(UInt(64.W))
+          |
+          |  val w_readWord = r_readByteAddr >> 3
+          |  val w_readLane = r_readByteAddr(2, 0)
           |
           |  switch(r_readState) {
           |    is(sReadIdle) {
           |      when(w_readEnable) {
-          |        r_readState   := sReadFirst
-          |        r_readCnt     := 0.U
-          |        r_lastReadCnt := 0.U
-          |        r_readAddr    := io.readAddr + io.readOffset
+          |        r_readState    := sReadIssue
+          |        r_readByteAddr := io.readAddr + io.readOffset
+          |        r_readLen      := io.readLen
           |      }
-          |      r_readBytes(0) := 0.U
-          |      r_readBytes(1) := 0.U
-          |      r_readBytes(2) := 0.U
-          |      r_readBytes(3) := 0.U
-          |      r_readBytes(4) := 0.U
-          |      r_readBytes(5) := 0.U
-          |      r_readBytes(6) := 0.U
-          |      r_readBytes(7) := 0.U
           |    }
-          |    is(sReadFirst) {
-          |      bram.io.addra := r_readAddr
+          |    is(sReadIssue) {
+          |      // fetch the word holding the first byte on port A and its successor on
+          |      // port B in the same cycle; a crossing access needs no extra state
           |      bram.io.ena   := true.B
-          |      bram.io.wea   := false.B
-          |
-          |      r_lastReadCnt := r_readCnt
-          |      r_readCnt     := r_readCnt + 1.U
-          |      r_readAddr    := r_readAddr + 1.U
-          |      r_readState   := sReadTrans
+          |      bram.io.wea   := 0.U
+          |      bram.io.addra := w_readWord
+          |      bram.io.enb   := true.B
+          |      bram.io.web   := 0.U
+          |      bram.io.addrb := w_readWord + 1.U
+          |      r_readState   := sReadMerge
           |    }
-          |    is(sReadTrans) {
-          |      r_readBytes(r_lastReadCnt) := bram.io.douta
-          |
-          |      bram.io.addra          := r_readAddr
-          |      bram.io.ena            := true.B
-          |      bram.io.wea            := false.B
-          |
-          |      r_lastReadCnt          := r_readCnt
-          |      r_readCnt              := r_readCnt + 1.U
-          |      r_readAddr             := r_readAddr + 1.U
-          |
-          |      r_readState            := Mux(io.readLen === 1.U, sReadEnd, Mux(r_readCnt < io.readLen, sReadTrans, sReadEnd))
+          |    is(sReadMerge) {
+          |      val w_raw128   = Cat(bram.io.doutb, bram.io.douta) >> (w_readLane << 3)
+          |      val w_dataMask = ((1.U(65.W) << (r_readLen << 3)) - 1.U)(63, 0)
+          |      r_readData  := w_raw128(63, 0) & w_dataMask
+          |      r_readState := sReadEnd
           |    }
           |    is(sReadEnd) {
           |      r_readState   := sReadIdle
           |    }
           |  }
           |
-          |  io.readData  := Cat(r_readBytes(7.U),
-          |                      r_readBytes(6.U),
-          |                      r_readBytes(5.U),
-          |                      r_readBytes(4.U),
-          |                      r_readBytes(3.U),
-          |                      r_readBytes(2.U),
-          |                      r_readBytes(1.U),
-          |                      r_readBytes(0.U))
+          |  io.readData  := r_readData
           |  io.readValid := Mux(r_readState === sReadEnd, true.B, false.B)
           |
-          |  // === WRITE Operation ===
+          |  // === WRITE Operation (byte-enables, constant 3-cycle, no read-modify-write) ===
           |  val sWriteIdle :: sWriteTrans :: sWriteEnd :: Nil = Enum(3)
           |
-          |  val r_writeCnt      = Reg(UInt(4.W))
-          |  val r_writeAddr     = Reg(UInt(log2Ceil(depth).W))
-          |  val r_writeState    = RegInit(sWriteIdle)
-          |  val r_writeBytes    = Reg(Vec(8, UInt(8.W)))
-          |  val r_writeLen      = Reg(UInt(4.W))
+          |  val r_writeState   = RegInit(sWriteIdle)
+          |  val r_writeWord    = Reg(UInt(log2Ceil(depth).W))
+          |  val r_writeData128 = Reg(UInt(128.W))
+          |  val r_writeBe16    = Reg(UInt(16.W))
           |
           |  switch(r_writeState) {
           |    is(sWriteIdle) {
           |      when(w_writeEnable) {
-          |        r_writeState      := sWriteTrans
-          |        r_writeCnt        := 0.U
-          |        r_writeAddr       := io.writeAddr + io.writeOffset
-          |        r_writeLen        := io.writeLen - 1.U
-          |
-          |        r_writeBytes(0.U) := io.writeData(7, 0)
-          |        r_writeBytes(1.U) := io.writeData(15, 8)
-          |        r_writeBytes(2.U) := io.writeData(23, 16)
-          |        r_writeBytes(3.U) := io.writeData(31, 24)
-          |        r_writeBytes(4.U) := io.writeData(39, 32)
-          |        r_writeBytes(5.U) := io.writeData(47, 40)
-          |        r_writeBytes(6.U) := io.writeData(55, 48)
-          |        r_writeBytes(7.U) := io.writeData(63, 56)
+          |        val w_addr = io.writeAddr + io.writeOffset
+          |        val w_lane = w_addr(2, 0)
+          |        val w_be8  = ((1.U(9.W) << io.writeLen) - 1.U)(7, 0)
+          |        r_writeState   := sWriteTrans
+          |        r_writeWord    := w_addr >> 3
+          |        r_writeBe16    := (Cat(0.U(8.W), w_be8) << w_lane)(15, 0)
+          |        r_writeData128 := (Cat(0.U(64.W), io.writeData) << (w_lane << 3))(127, 0)
           |      }
           |    }
           |    is(sWriteTrans) {
-          |      bram.io.addrb := r_writeAddr
-          |      bram.io.enb   := true.B
-          |      bram.io.web   := true.B
-          |      bram.io.dinb  := r_writeBytes(r_writeCnt)
-          |
-          |      r_writeCnt    := r_writeCnt + 1.U
-          |      r_writeAddr   := r_writeAddr + 1.U
-          |      r_writeState  := Mux(r_writeCnt < r_writeLen, sWriteTrans, sWriteEnd)
+          |      // port A writes the first word; on a crossing access port B writes the
+          |      // spill-over bytes into the next word in the same cycle
+          |      bram.io.ena   := true.B
+          |      bram.io.wea   := r_writeBe16(7, 0)
+          |      bram.io.addra := r_writeWord
+          |      bram.io.dina  := r_writeData128(63, 0)
+          |      when(r_writeBe16(15, 8) =/= 0.U) {
+          |        bram.io.enb   := true.B
+          |        bram.io.web   := r_writeBe16(15, 8)
+          |        bram.io.addrb := r_writeWord + 1.U
+          |        bram.io.dinb  := r_writeData128(127, 64)
+          |      }
+          |      r_writeState  := sWriteEnd
           |    }
           |    is(sWriteEnd) {
           |      r_writeState  := sWriteIdle
@@ -1728,13 +1711,15 @@ object ArbInputMap {
           |
           |  io.writeValid := Mux(r_writeState === sWriteEnd, true.B, false.B)
           |
-          |  // DMA logic
+          |  // DMA logic (v1: byte-serial on the 64-bit ports, same throughput as before;
+          |  // the 8-bytes/cycle sliding-window upgrade is a planned follow-up)
           |  val sDmaIdle :: sDmaFirstRead :: sDmaTrans :: sDmaDone :: Nil = Enum(4)
           |
           |  val r_dmaSrcCount = Reg(UInt(log2Ceil(depth).W))
           |  val r_dmaDstCount = Reg(UInt(log2Ceil(depth).W))
           |  val r_dmaSrcAddr  = Reg(UInt(log2Ceil(depth).W))
           |  val r_dmaDstAddr  = Reg(UInt(log2Ceil(depth).W))
+          |  val r_dmaSrcLane  = Reg(UInt(3.W))
           |  val r_dmaState    = RegInit(sDmaIdle)
           |
           |  switch(r_dmaState) {
@@ -1751,21 +1736,24 @@ object ArbInputMap {
           |    is(sDmaFirstRead) {
           |      r_dmaState    := sDmaTrans
           |
-          |      // first read
-          |      bram.io.addra := r_dmaSrcAddr
+          |      // first read (word holding the source byte; lane remembered for extraction)
+          |      bram.io.addra := r_dmaSrcAddr >> 3
           |      bram.io.ena   := true.B
-          |      bram.io.wea   := false.B
+          |      bram.io.wea   := 0.U
           |
+          |      r_dmaSrcLane  := r_dmaSrcAddr(2, 0)
           |      r_dmaSrcAddr  := r_dmaSrcAddr + 1.U
           |      r_dmaSrcCount := r_dmaSrcCount + 1.U
           |    }
           |    is(sDmaTrans) {
-          |      // write the data from the read port
+          |      // write the byte extracted from last cycle's read word
           |      when(r_dmaDstCount < io.dmaDstLen) {
-          |        bram.io.addrb := r_dmaDstAddr
+          |        val w_srcByte = (bram.io.douta >> (r_dmaSrcLane << 3))(7, 0)
+          |        val w_dstLane = r_dmaDstAddr(2, 0)
+          |        bram.io.addrb := r_dmaDstAddr >> 3
           |        bram.io.enb   := true.B
-          |        bram.io.web   := true.B
-          |        bram.io.dinb  := Mux(r_dmaDstCount >= r_dmaSrcCount, 0.U, bram.io.douta)
+          |        bram.io.web   := (1.U(8.W) << w_dstLane)(7, 0)
+          |        bram.io.dinb  := (Cat(0.U(56.W), Mux(r_dmaDstCount >= r_dmaSrcCount, 0.U(8.W), w_srcByte)) << (w_dstLane << 3))(63, 0)
           |
           |        r_dmaDstAddr  := r_dmaDstAddr + 1.U
           |        r_dmaDstCount := r_dmaDstCount + 1.U
@@ -1774,9 +1762,10 @@ object ArbInputMap {
           |      // keep all the data from read port valid
           |      bram.io.ena   := true.B
           |      when(r_dmaSrcCount < io.dmaSrcLen) {
-          |        bram.io.addra := r_dmaSrcAddr
-          |        bram.io.wea   := false.B
+          |        bram.io.addra := r_dmaSrcAddr >> 3
+          |        bram.io.wea   := 0.U
           |
+          |        r_dmaSrcLane  := r_dmaSrcAddr(2, 0)
           |        r_dmaSrcAddr  := r_dmaSrcAddr + 1.U
           |        r_dmaSrcCount := r_dmaSrcCount + 1.U
           |      }
@@ -3975,15 +3964,15 @@ import HwSynthesizer2._
             |  val io = IO(new Bundle {
             |    val clk = Input(Bool())
             |    val ena = Input(Bool())
-            |    val wea = Input(Bool())
-            |    val addra = Input(UInt(${log2Up(anvil.config.memory) + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}.W))
-            |    val dina = Input(UInt(8.W))
-            |    val douta = Output(UInt(8.W))
+            |    val wea = Input(UInt(8.W))
+            |    val addra = Input(UInt(${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8)}.W))
+            |    val dina = Input(UInt(64.W))
+            |    val douta = Output(UInt(64.W))
             |    val enb = Input(Bool())
-            |    val web = Input(Bool())
-            |    val addrb = Input(UInt(${log2Up(anvil.config.memory) + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}.W))
-            |    val dinb = Input(UInt(8.W))
-            |    val doutb = Output(UInt(8.W))
+            |    val web = Input(UInt(8.W))
+            |    val addrb = Input(UInt(${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8)}.W))
+            |    val dinb = Input(UInt(64.W))
+            |    val doutb = Output(UInt(64.W))
             |  })
             |
             |  addResource("/verilog/XilinxBRAMWrapper.v")
@@ -4252,15 +4241,22 @@ import HwSynthesizer2._
     val bramNativeGenerationST: ST =
       st"""
           |# need to be customzied for different benchmarks
+          |# 64-bit word-organized with per-byte write enables (wea/web[7:0]);
+          |# byte-write enable is incompatible with NO_CHANGE, hence READ_FIRST
           |create_ip -name blk_mem_gen -vendor xilinx.com -library ip -version 8.4 -module_name XilinxBRAM
           |set_property -dict [list $backslash
           |  CONFIG.Memory_Type {True_Dual_Port_RAM} $backslash
-          |  CONFIG.Operating_Mode_A {NO_CHANGE} $backslash
-          |  CONFIG.Operating_Mode_B {NO_CHANGE} $backslash
+          |  CONFIG.Use_Byte_Write_Enable {true} $backslash
+          |  CONFIG.Byte_Size {8} $backslash
+          |  CONFIG.Operating_Mode_A {READ_FIRST} $backslash
+          |  CONFIG.Operating_Mode_B {READ_FIRST} $backslash
           |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
           |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
-          |  CONFIG.Write_Depth_A {${anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}} $backslash
-          |  CONFIG.Write_Width_A {8} $backslash
+          |  CONFIG.Write_Depth_A {${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8}} $backslash
+          |  CONFIG.Write_Width_A {64} $backslash
+          |  CONFIG.Read_Width_A {64} $backslash
+          |  CONFIG.Write_Width_B {64} $backslash
+          |  CONFIG.Read_Width_B {64} $backslash
           |] [get_ips XilinxBRAM]
           """
     val ipGenerationTclST: ST =
@@ -5004,30 +5000,30 @@ import HwSynthesizer2._
           |module XilinxBRAMWrapper(
           |    input wire clk,
           |    input wire ena,
-          |    input wire wea,
-          |    input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1}:0] addra,
-          |    input wire [7:0] dina,
-          |    output wire [7:0] douta,
+          |    input wire [7:0] wea,
+          |    input wire [${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8) - 1}:0] addra,
+          |    input wire [63:0] dina,
+          |    output wire [63:0] douta,
           |    input wire enb,
-          |    input wire web,
-          |    input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1}:0] addrb,
-          |    input wire [7:0] dinb,
-          |    output wire [7:0] doutb
+          |    input wire [7:0] web,
+          |    input wire [${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8) - 1}:0] addrb,
+          |    input wire [63:0] dinb,
+          |    output wire [63:0] doutb
           |);
           |
           |  XilinxBRAM u_XilinxBRAM (
           |    .clka(clk),    // input wire clka
           |    .ena(ena),      // input wire ena
-          |    .wea(wea),      // input wire [0 : 0] wea
-          |    .addra(addra),  // input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1} : 0] addra
-          |    .dina(dina),    // input wire [7: 0] dina
-          |    .douta(douta),  // output wire [7: 0] douta
+          |    .wea(wea),      // input wire [7 : 0] wea
+          |    .addra(addra),  // input wire [${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8) - 1} : 0] addra
+          |    .dina(dina),    // input wire [63: 0] dina
+          |    .douta(douta),  // output wire [63: 0] douta
           |    .clkb(clk),    // input wire clkb
           |    .enb(enb),      // input wire enb
-          |    .web(web),      // input wire [0 : 0] web
-          |    .addrb(addrb),  // input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1} : 0] addrb
-          |    .dinb(dinb),    // input wire [7: 0] dinb
-          |    .doutb(doutb)  // output wire [7: 0] doutb
+          |    .web(web),      // input wire [7 : 0] web
+          |    .addrb(addrb),  // input wire [${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8) - 1} : 0] addrb
+          |    .dinb(dinb),    // input wire [63: 0] dinb
+          |    .doutb(doutb)  // output wire [63: 0] doutb
           |  );
           |
           |endmodule
@@ -5559,7 +5555,7 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
-          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) "#10000" else ""}
+          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) s"#${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8 * 400 + 10000} // scaled: startup memory-clear takes ~14 cycles/word" else ""}
           |
           |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchBramNativeConn else st""}
           |
@@ -5625,7 +5621,7 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
-          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) "#10000" else ""}
+          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) s"#${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8 * 400 + 10000} // scaled: startup memory-clear takes ~14 cycles/word" else ""}
           |
           |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchBramNativeConn else st""}
           |
@@ -5857,7 +5853,7 @@ import HwSynthesizer2._
           |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
           |set_property compxlib.modelsim_compiled_library_dir /home/kejun/study/xilinx_modelsim_lib_2024_2 [current_project]
           |set_property target_simulator ModelSim [current_project]
-          |set_property -name {modelsim.simulate.runtime} -value {800000ns} -objects [get_filesets sim_1]
+          |set_property -name {modelsim.simulate.runtime} -value {${800000 + (anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8 * 400 * 2}ns} -objects [get_filesets sim_1]
           |
           |set dir ./chisel/generated_verilog/${if(isFpgaTestBench) "FPGA" else ""}${name}
           |set files [glob -nocomplain -types f [file join $$dir *.v]]
