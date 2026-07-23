@@ -61,11 +61,20 @@ SBT_JAVA_HOME = os.environ.get(
     "SBT_JAVA_HOME", "/home/kejun/.sdkman/candidates/java/8.0.472-amzn")
 
 MARKER = "BLKTRACE"
+DISP_MARKER = "DISPTRACE"
+BM_PATH = "u_Top.arbBlockMemoryWrapper.mod"
 
 
 def canon(name):
-    """Canonical procedure name shared by golden trace and RTL labels."""
-    return name.replace(".", "_").replace("$", "")
+    """Canonical procedure name shared by golden trace and RTL labels.
+
+    Golden names like "DLLPool.<init>" and RTL labels like "DLLPool_init_"
+    must compare equal, so strip everything but alphanumerics. An optional
+    trailing "_object" (RTL object-method suffix) is dropped first.
+    """
+    if name.endswith("_object"):
+        name = name[:-len("_object")]
+    return re.sub(r"[^0-9A-Za-z]", "", name)
 
 
 def project_name(proj_dir):
@@ -111,12 +120,24 @@ def ip_instances(proj_dir):
     return insts
 
 
+def is_bram_native(proj_dir):
+    try:
+        with open(os.path.join(proj_dir, "config.txt")) as f:
+            return "BramNative" in f.read()
+    except OSError:
+        return False
+
+
 def instrument_tb(proj_dir):
     tb = os.path.join(proj_dir, "chisel", "generated_verilog", "fpgaTb.v")
     with open(tb) as f:
         text = f.read()
+    if MARKER in text and (DISP_MARKER in text or not is_bram_native(proj_dir)):
+        return False  # already instrumented with the current version
     if MARKER in text:
-        return False  # already instrumented
+        # older instrumentation version: restart from the pristine testbench
+        with open(tb + ".orig") as f:
+            text = f.read()
     insts = ip_instances(proj_dir)
     lines = [
         "",
@@ -148,9 +169,25 @@ def instrument_tb(proj_dir):
         lines.append(f'      $display("{MARKER} %0t {label} %0d", $time, {sig});')
         lines.append("    end")
     lines.append("  end")
+    if is_bram_native(proj_dir):
+        lines += [
+            "",
+            "  // ---- DISPTRACE: BlockMemory write-port monitor (auto-inserted) ----",
+            "  reg dt_prev;",
+            "  initial dt_prev = 1'b0;",
+            "  always @(posedge clk) begin",
+            f"    if ({BM_PATH}.io_writeValid && !dt_prev) begin",
+            f'      $display("{DISP_MARKER} %0t %0d %0d %h", $time,',
+            f"        {BM_PATH}.io_writeAddr + {BM_PATH}.io_writeOffset,",
+            f"        {BM_PATH}.io_writeLen, {BM_PATH}.io_writeData);",
+            "    end",
+            f"    dt_prev <= {BM_PATH}.io_writeValid;",
+            "  end",
+        ]
     lines.append("  // ---- end auto-inserted instrumentation ----")
     lines.append("")
-    shutil.copyfile(tb, tb + ".orig")
+    if not os.path.exists(tb + ".orig"):
+        shutil.copyfile(tb, tb + ".orig")
     with open(tb, "w") as f:
         f.write(text.replace("\nendmodule", "\n" + "\n".join(lines) + "\nendmodule", 1))
     return True
@@ -197,23 +234,51 @@ def find_simulate_log(proj_dir):
     return logs[0] if logs else None
 
 
-def load_rtl(sim_log):
-    events, cycles = [], []
+def real_block_map(proj_dir):
+    """canon(proc) -> set of real IR block numbers, from the generated ip_func
+    sources. CP values outside this set are synthetic states (e.g. the
+    register-restore state used on recursive returns) with no counterpart in
+    the IR simulator trace, and must be filtered out before comparing."""
+    blocks = {}
+    for f in glob.glob(os.path.join(proj_dir, "chisel", "src", "main", "scala", "ip_func_*.scala")):
+        with open(f, errors="replace") as fh:
+            text = fh.read()
+        m = re.search(r"\nclass (\S+) \(", text)
+        if not m:
+            continue
+        key = canon(m.group(1))
+        blocks[key] = {int(n) for n in re.findall(r"_Block_(\d+)\b", text)}
+    return blocks
+
+
+def load_rtl(sim_log, block_map=None):
+    events, cycles, disp = [], [], []
     rx = re.compile(rf"{MARKER} (\d+) (\S+) (\d+)\b")
+    dx = re.compile(rf"{DISP_MARKER} (\d+) (\d+) (\d+) ([0-9a-fA-Fx]+)")
     cyc = re.compile(r"ANVIL_EXEC_CYCLES=(\d+) \(exit state=(\d+)\)")
     with open(sim_log, errors="replace") as f:
         for line in f:
             m = rx.search(line)
             if m:
                 t, proc, cp = int(m.group(1)), canon(m.group(2)), int(m.group(3))
-                if cp >= 3:  # CP 0/1/2 are halt/idle states, not IR blocks
-                    events.append((t, proc, cp))
+                if cp < 3:  # CP 0/1/2 are halt/idle states, not IR blocks
+                    continue
+                if block_map is not None and proc in block_map and cp not in block_map[proc]:
+                    continue  # synthetic state (e.g. recursive-return restore)
+                events.append((t, proc, cp))
+                continue
+            m = dx.search(line)
+            if m:
+                if "x" not in m.group(4) and "X" not in m.group(4):
+                    disp.append((int(m.group(1)), int(m.group(2)),
+                                 int(m.group(3)), int(m.group(4), 16)))
                 continue
             m = cyc.search(line)
             if m:
                 cycles.append((int(m.group(1)), int(m.group(2))))
     events.sort(key=lambda e: e[0])
-    return [(p, c) for _, p, c in events], cycles
+    disp.sort(key=lambda e: e[0])
+    return [(p, c) for _, p, c in events], [t for t, _, _ in events], cycles, disp
 
 
 def split_runs(seq, start_event):
@@ -226,6 +291,45 @@ def split_runs(seq, start_event):
     if cur:
         runs.append(cur)
     return runs
+
+
+def golden_display_text(golden_file):
+    """Program output printed by the IR simulator: text after the final state dump."""
+    with open(golden_file, errors="replace") as f:
+        content = f.read()
+    i = content.rfind("\n  }")
+    return None if i < 0 else content[i + 4:].strip("\n")
+
+
+def golden_display_window(golden_file, proj_dir):
+    """(dataStart, printSize): display bytes live at displayLoc + sha(4) + Z(8)."""
+    with open(golden_file, errors="replace") as f:
+        m = re.search(r"\$display@\[[0-9A-Fa-f]+ \((\d+)\)", f.read())
+    if not m:
+        return None
+    with open(os.path.join(proj_dir, "config.txt")) as f:
+        p = re.search(r"printSize = (\d+)", f.read())
+    return (int(m.group(1)) + 12, int(p.group(1))) if p else None
+
+
+def rtl_display_text(disp, window, t_end):
+    """Reconstruct the display buffer from write-port traffic of the first run."""
+    start, size = window
+    buf = {}
+    for t, addr, ln, data in disp:
+        if t >= t_end:
+            break
+        for i in range(ln):
+            pos = addr + i - start
+            if 0 <= pos < size:
+                buf[pos] = (data >> (8 * i)) & 0xFF
+    out = []
+    for pos in range(size):
+        if pos not in buf:
+            break
+        out.append(buf[pos])
+    # trailing NULs are startup memory-clear residue, not printed characters
+    return bytes(out).rstrip(b"\x00").decode("latin-1").strip("\n")
 
 
 def first_divergence(a, b):
@@ -264,7 +368,7 @@ def check_project(proj_dir, skip_sim, keep_project):
         print("  FAIL: no simulate.log produced (see vivado_simcheck.log)")
         return False
 
-    seq, cycles = load_rtl(sim_log)
+    seq, times, cycles, disp = load_rtl(sim_log, real_block_map(proj_dir))
     runs = split_runs(seq, golden[0])
     print(f"  golden events: {len(golden)}; rtl events: {len(seq)} in {len(runs)} run(s); "
           f"exec cycles: {', '.join(f'{c} (exit={s})' for c, s in cycles) or 'n/a'}")
@@ -287,6 +391,24 @@ def check_project(proj_dir, skip_sim, keep_project):
             lo = max(0, j - 3)
             print(f"    rtl    context: {run[lo:j+3]}")
             print(f"    golden context: {golden[lo:j+3]}")
+
+    if is_bram_native(proj_dir):
+        expected = golden_display_text(gp)
+        window = golden_display_window(gp, proj_dir)
+        if expected is None or window is None:
+            print("  display: SKIP (could not derive expected text/window from golden)")
+        else:
+            starts = [j for j, ev in enumerate(seq) if ev == golden[0]]
+            # cut at the LAST event of run 1: run 2's startup memory-clear loop
+            # runs before its $test entry and would wipe the display bytes
+            t_end = times[starts[1] - 1] + 1 if len(starts) > 1 else float("inf")
+            actual = rtl_display_text(disp, window, t_end)
+            if actual == expected:
+                print(f"  display: MATCH ({expected!r})")
+            else:
+                ok = False
+                print(f"  display: FAIL — rtl={actual!r} golden={expected!r}")
+
     print(f"  RESULT: {'PASS' if ok else 'FAIL'}")
     return ok
 
