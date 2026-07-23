@@ -1449,6 +1449,7 @@ object ArbInputMap {
                                val exp: ArbIpType,
                                val memoryType: Anvil.Config.MemoryAccess.Type,
                                val genVerilog: B,
+                               val nonXilinxIP: B,
                                val erase: B,
                                val aligned: B,
                                val arbID: Z) extends ArbIpModule {
@@ -1547,13 +1548,18 @@ object ArbInputMap {
       """
   }
   @pure override def moduleST: ST = {
-    val bramInsST: ST =
-      if(!genVerilog) st"val bram = Module(new BRAMIP(${depthOfBRAM}, 8))"
-      else
-        st"""
-            |val bram = Module(new XilinxBRAMWrapper)
-            |bram.io.clk := clock.asBool
+    val bramInsST: ST = {
+      if(nonXilinxIP) {
+        st"val bram = Module(new BRAMIP(depth, width))"
+      } else {
+        if (!genVerilog) st"val bram = Module(new BRAMIP(depth, width))"
+        else
+          st"""
+              |val bram = Module(new XilinxBRAMWrapper)
+              |bram.io.clk := clock.asBool
           """
+      }
+    }
     val dmaZeroOutST: ST =
       if(erase)
         st"""
@@ -1570,7 +1576,7 @@ object ArbInputMap {
 
     val bramModuleST: ST =
       st"""
-          |${if(!genVerilog) bramIpST else st""}
+          |${if(!genVerilog) bramIpST else if(nonXilinxIP && genVerilog) bramIpST else st""}
           |class ${moduleName}(val width: Int = ${widthOfBRAM}, val depth: Int = ${depthOfBRAM}) extends Module {
           |  val io = IO(new Bundle {
           |    val mode = Input(UInt(2.W)) // 00 -> disable, 01 -> read, 10 -> write, 11 -> DMA
@@ -2886,7 +2892,7 @@ import HwSynthesizer2._
     ArbDivision(T, "DivisionSigned64", "arbDivisionSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T), noXilinxIp, 32),
     ArbRemainder(F, "RemainerUnsigned64", "arbRemainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
     ArbRemainder(T, "RemainerSigned64", "arbRemainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
-    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, anvil.config.erase, anvil.config.alignAxi4, 35),
+    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, noXilinxIp, anvil.config.erase, anvil.config.alignAxi4, 35),
     ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, anvil.config.memory, ArbTempSaveRestoreIP(), anvil.config.memoryAccess, noXilinxIp, anvil.config.alignAxi4, 36),
     ArbGlobalVar(F, "GlobalVar", "arbGlobalVar", 64, ArbGlobalVarIP(), noXilinxIp, 37)
   )
@@ -3245,6 +3251,18 @@ import HwSynthesizer2._
         }
       }
     }
+
+    // this is only used for updating the memory depth of BRAMIP (for NonXilinx = T and GenVerilog = F)
+    @pure def updateDepth(m: ArbIpModule): ArbIpModule = {
+      m match {
+        case ats: ArbBlockMemory =>
+          return ats(depthOfBRAM =
+            anvil.config.memory + (if (hasRecursiveInAllfunctions()) depthOfStack(maxRegisters)
+            else 0))
+        case _ => return m
+      }
+    }
+    ipModules = for (m <- ipModules) yield updateDepth(m)
 
     for(o <- program.procedures) {
       val procTuple: (QName, String) = replaceFuncName(o.isInObject, o.owner, o.id)
@@ -4064,7 +4082,7 @@ import HwSynthesizer2._
           case ArbIndexer(_, _, _, _, _, _, _) =>
             arbiterModuleMap = arbiterModuleMap +
               ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case ArbBlockMemory(_, modName, _, _, _, _, _, _, _, _, _) =>
+          case ArbBlockMemory(_, modName, _, _, _, _, _, _, _, _, _, _) =>
             arbiterModuleMap = arbiterModuleMap +
               ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
           case _ =>
@@ -4542,22 +4560,22 @@ import HwSynthesizer2._
           |set_property target_language Verilog [current_project]
           |
           |# Synthesis strategy
-          |#set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
+          |set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
           |# Implementation strategy
-          |#set_property strategy Performance_Explore     [get_runs impl_1]
+          |set_property strategy Performance_Explore     [get_runs impl_1]
           |
           |# opt_design directive
-          |#set_property STEPS.OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
+          |set_property STEPS.OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
           |
           |# place_design directive
-          |#set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
+          |set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
           |
           |# phys_opt_design directive (post-place)
           |# If your Vivado step name differs, use: report_property [get_runs impl_1] to check
-          |#set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+          |set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
           |
           |# route_design directive (+ optional tns_cleanup)
-          |#set_property STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+          |set_property STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
           |
           |create_bd_design "design_1"
           |update_compile_order -fileset sources_1
