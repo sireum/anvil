@@ -3628,17 +3628,29 @@ import HwSynthesizer2._
                 |io.resp.valid    := r_resp_valid
               """
         } else {
+          // Phase 8: BramNative memory direct-connect. The de-arbitration mux
+          // (Phase 1) already pulses io.req.valid for a single cycle while the
+          // client holds io.req.bits stable for the whole transaction, so the
+          // wrapper's r_req/r_mode input registers are redundant — feed the FSM
+          // combinationally and drop 2 cycles of request latency per access.
+          val bramDirect: B = ip == ArbBlockMemoryIP() && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative
           val h: HashSMap[String, (B, String)] = mod.portList
           for (entry <- h.entries) {
             // it is control signal
             if (entry._2._1) {
-              if (ip == ArbBlockMemoryIP()) {
+              if (bramDirect) {
+                sts = sts :+ st"mod.io.${entry._1} := Mux(io.req.valid, io.req.bits.${entry._1}, 0.U)"
+              } else if (ip == ArbBlockMemoryIP()) {
                 sts = sts :+ st"mod.io.${entry._1} := r_mode"
               } else {
                 sts = sts :+ st"mod.io.${entry._1} := r_mod_start"
               }
             } else {
-              sts = sts :+ st"mod.io.${entry._1} := r_req.${entry._1}"
+              if (bramDirect) {
+                sts = sts :+ st"mod.io.${entry._1} := io.req.bits.${entry._1}"
+              } else {
+                sts = sts :+ st"mod.io.${entry._1} := r_req.${entry._1}"
+              }
             }
           }
           sts = sts :+ st"io.resp.bits.${outputNameStr} := r_resp_data"
@@ -3656,8 +3668,11 @@ import HwSynthesizer2._
           case _ => "out"
         }
 
+        val bramDirect: B = ip == ArbBlockMemoryIP() && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative
         val reqValidST: ST =
-          if(ip == ArbBlockMemoryIP())
+          if(bramDirect)
+            st"" // Phase 8: mode driven combinationally in interfaceLogicST, no r_mode register
+          else if(ip == ArbBlockMemoryIP())
             st"""
                 |val r_mode = RegInit(0.U(2.W))
                 |when(memory_valid) {
@@ -3813,9 +3828,9 @@ import HwSynthesizer2._
             |
             |    ${tempSaveRestoreRegSt}
             |
-            |    val r_req            = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))
-            |    val r_req_valid      = RegNext(io.req.valid, init = false.B)
-            |    ${if(ip == ArbBlockMemoryIP()) "val r_req_valid_next = RegNext(r_req_valid, init = false.B)" else ""}
+            |    ${if(bramDirect) "" else st"val r_req            = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))".render}
+            |    ${if(bramDirect) "" else "val r_req_valid      = RegNext(io.req.valid, init = false.B)"}
+            |    ${if(ip == ArbBlockMemoryIP() && !bramDirect) "val r_req_valid_next = RegNext(r_req_valid, init = false.B)" else ""}
             |
             |    ${if(ip == ArbBlockMemoryIP()) "val memory_valid = mod.io.readValid | mod.io.writeValid | mod.io.dmaValid" else ""}
             |    val r_resp_data  = RegNext(mod.io.${respDataStr})
@@ -3823,7 +3838,7 @@ import HwSynthesizer2._
             |
             |    ${reqValidST}
             |
-            |    r_req := io.req.bits
+            |    ${if(bramDirect) "" else "r_req := io.req.bits"}
             |
             |    ${interfaceLogicST}
             |    io.resp.valid    := r_resp_valid
