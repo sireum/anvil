@@ -1446,4 +1446,342 @@ object Util {
     }
     return true
   }
+
+  // ===========================================================================
+  // Basic-block folding: jump threading + straight-line merging (second gen).
+  //
+  // Runs on the final IR consumed by both IRSimulator and HwSynthesizer2, so
+  // the executed block sequences of simulation and hardware stay identical.
+  //
+  // - Jump threading: static jump targets (Goto/If/Switch) that point at an
+  //   empty goto-only block are retargeted to its destination. This includes
+  //   the goto of a call block: the hardware return continuation is emitted
+  //   as that goto label constant (r_routeOut.srcCP := label), so retargeting
+  //   stays consistent with the callee's return.
+  // - Merging: block A ending in Goto(B) absorbs B when B has exactly one
+  //   static predecessor, is not a runtime entry (procedure entry, call
+  //   return continuation), and the combined block stays hardware-safe:
+  //   at most one multi-cycle ("heavy") statement, and no RAW/WAW/WAR
+  //   conflicts between A and B (hardware executes a block's statements
+  //   concurrently, while the IR/simulator semantics are sequential; the
+  //   conflict rules make both agree).
+  // ===========================================================================
+
+  @record @unclonable class TempAccessCollector(var temps: HashSet[Z],
+                                                var usesSP: B,
+                                                var usesDP: B) extends MAnvilIRTransformer {
+    override def pre_langastIRExpTemp(o: AST.IR.Exp.Temp): MAnvilIRTransformer.PreResult[AST.IR.Exp] = {
+      temps = temps + o.n
+      return MAnvilIRTransformer.PreResult_langastIRExpTemp
+    }
+    override def preIntrinsicRegister(o: Intrinsic.Register): MAnvilIRTransformer.PreResult[Intrinsic.Register] = {
+      if (o.isSP) {
+        usesSP = T
+      } else {
+        usesDP = T
+      }
+      return MAnvilIRTransformer.PreResultIntrinsicRegister
+    }
+  }
+
+  @pure def foldBasicBlocks(proc: AST.IR.Procedure): AST.IR.Procedure = {
+    proc.body match {
+      case body: AST.IR.Body.Basic =>
+        var blocks = body.blocks
+        if (blocks.isEmpty) {
+          return proc
+        }
+
+        @pure def jumpTargets(j: AST.IR.Jump): Option[ISZ[Z]] = {
+          j match {
+            case j: AST.IR.Jump.Goto => return Some(ISZ(j.label))
+            case j: AST.IR.Jump.If => return Some(ISZ(j.thenLabel, j.elseLabel))
+            case j: AST.IR.Jump.Switch =>
+              var r = ISZ[Z]()
+              for (c <- j.cases) {
+                r = r :+ c.label
+              }
+              j.defaultLabelOpt match {
+                case Some(l) => r = r :+ l
+                case _ =>
+              }
+              return Some(r)
+            case _: AST.IR.Jump.Return => return Some(ISZ[Z]())
+            case _: AST.IR.Jump.Halt => return Some(ISZ[Z]())
+            case _ => return None()
+          }
+        }
+
+        // bail out when a jump has non-static targets (e.g., GotoGlobal)
+        for (b <- blocks) {
+          if (jumpTargets(b.jump).isEmpty) {
+            return proc
+          }
+        }
+
+        @pure def hasApply(b: AST.IR.BasicBlock): B = {
+          for (g <- b.grounds) {
+            g match {
+              case _: AST.IR.Stmt.Expr => return T
+              case _ =>
+            }
+          }
+          return F
+        }
+
+        // reads of a block (temps, SP, DP), including the jump condition;
+        // RegisterAssign with isInc also reads its register
+        @pure def accessesOf(b: AST.IR.BasicBlock): (HashSet[Z], B, B) = {
+          val c = TempAccessCollector(HashSet.empty, F, F)
+          for (g <- b.grounds) {
+            c.transform_langastIRStmtGround(g)
+            g match {
+              case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) =>
+                if (in.isInc) {
+                  if (in.isSP) {
+                    c.usesSP = T
+                  } else {
+                    c.usesDP = T
+                  }
+                }
+              case _ =>
+            }
+          }
+          c.transform_langastIRJump(b.jump)
+          return (c.temps, c.usesSP, c.usesDP)
+        }
+
+        // (temp defs, defines SP, defines DP); None = unhandled ground kind
+        @pure def groundDefs(g: AST.IR.Stmt.Ground): Option[(ISZ[Z], B, B)] = {
+          g match {
+            case g: AST.IR.Stmt.Assign.Temp => return Some((ISZ(g.lhs), F, F))
+            case _: AST.IR.Stmt.Assign.Global => return Some((ISZ[Z](), F, F))
+            case AST.IR.Stmt.Intrinsic(in: Intrinsic.TempLoad) => return Some((ISZ(in.temp), F, F))
+            case AST.IR.Stmt.Intrinsic(_: Intrinsic.Store) => return Some((ISZ[Z](), F, F))
+            case AST.IR.Stmt.Intrinsic(_: Intrinsic.Copy) => return Some((ISZ[Z](), F, F))
+            case AST.IR.Stmt.Intrinsic(_: Intrinsic.Erase) => return Some((ISZ[Z](), F, F))
+            case AST.IR.Stmt.Intrinsic(_: Intrinsic.Decl) => return Some((ISZ[Z](), F, F))
+            case AST.IR.Stmt.Intrinsic(in: Intrinsic.RegisterAssign) => return Some((ISZ[Z](), in.isSP, !in.isSP))
+            case _ => return None()
+          }
+        }
+
+        // cheap = emitted as a plain same-cycle register assignment (no handshake)
+        @pure def isCheapGround(g: AST.IR.Stmt.Ground): B = {
+          g match {
+            case g: AST.IR.Stmt.Assign.Temp =>
+              val rhs: AST.IR.Exp = g.rhs match {
+                case r: AST.IR.Exp.Type => r.exp
+                case r => r
+              }
+              rhs match {
+                case _: AST.IR.Exp.Temp => return T
+                case _: AST.IR.Exp.Bool => return T
+                case _: AST.IR.Exp.Int => return T
+                case AST.IR.Exp.Intrinsic(_: Intrinsic.Register) => return T
+                case _ => return F
+              }
+            case AST.IR.Stmt.Intrinsic(_: Intrinsic.Decl) => return T
+            case _ => return F
+          }
+        }
+
+        // ---- 1. jump threading ---------------------------------------------
+        var blockMap = HashMap.empty[Z, AST.IR.BasicBlock]
+        for (b <- blocks) {
+          blockMap = blockMap + b.label ~> b
+        }
+
+        @pure def resolveTarget(start: Z): Z = {
+          var l = start
+          var seen = HashSet.empty[Z]
+          var done = F
+          while (!done) {
+            seen = seen + l
+            var next = l
+            blockMap.get(l) match {
+              case Some(b) =>
+                if (b.grounds.isEmpty) {
+                  b.jump match {
+                    case j: AST.IR.Jump.Goto =>
+                      if (!seen.contains(j.label)) {
+                        next = j.label
+                      }
+                    case _ =>
+                  }
+                }
+              case _ =>
+            }
+            if (next == l) {
+              done = T
+            } else {
+              l = next
+            }
+          }
+          return l
+        }
+
+        @pure def retarget(j: AST.IR.Jump): AST.IR.Jump = {
+          j match {
+            case j: AST.IR.Jump.Goto => return j(label = resolveTarget(j.label))
+            case j: AST.IR.Jump.If => return j(thenLabel = resolveTarget(j.thenLabel), elseLabel = resolveTarget(j.elseLabel))
+            case j: AST.IR.Jump.Switch =>
+              var cs = ISZ[AST.IR.Jump.Switch.Case]()
+              for (c <- j.cases) {
+                cs = cs :+ c(label = resolveTarget(c.label))
+              }
+              val dOpt: Option[Z] = j.defaultLabelOpt match {
+                case Some(l) => Some(resolveTarget(l))
+                case _ => None()
+              }
+              return j(cases = cs, defaultLabelOpt = dOpt)
+            case _ => return j
+          }
+        }
+
+        blocks = for (b <- blocks) yield b(jump = retarget(b.jump))
+
+        // ---- 2. straight-line merging --------------------------------------
+        @pure def canMerge(a: AST.IR.BasicBlock, b: AST.IR.BasicBlock): B = {
+          var heavy: Z = 0
+          for (g <- a.grounds) {
+            if (!isCheapGround(g)) {
+              heavy = heavy + 1
+            }
+          }
+          for (g <- b.grounds) {
+            if (!isCheapGround(g)) {
+              heavy = heavy + 1
+            }
+          }
+          if (heavy > 1) {
+            return F
+          }
+          var aDefs = HashSet.empty[Z]
+          var aDefsSP = F
+          var aDefsDP = F
+          for (g <- a.grounds) {
+            groundDefs(g) match {
+              case Some((ts, sp, dp)) =>
+                for (t <- ts) {
+                  aDefs = aDefs + t
+                }
+                aDefsSP = aDefsSP || sp
+                aDefsDP = aDefsDP || dp
+              case _ => return F
+            }
+          }
+          var bDefs = HashSet.empty[Z]
+          var bDefsSP = F
+          var bDefsDP = F
+          for (g <- b.grounds) {
+            groundDefs(g) match {
+              case Some((ts, sp, dp)) =>
+                for (t <- ts) {
+                  bDefs = bDefs + t
+                }
+                bDefsSP = bDefsSP || sp
+                bDefsDP = bDefsDP || dp
+              case _ => return F
+            }
+          }
+          val aAcc = accessesOf(a)
+          val bAcc = accessesOf(b)
+          for (t <- aDefs.elements) {
+            if (bAcc._1.contains(t) || bDefs.contains(t)) { // RAW / WAW
+              return F
+            }
+          }
+          for (t <- bDefs.elements) {
+            if (aAcc._1.contains(t)) { // WAR (unsafe under concurrent HW state)
+              return F
+            }
+          }
+          if (aDefsSP && (bAcc._2 || bDefsSP)) {
+            return F
+          }
+          if (aDefsDP && (bAcc._3 || bDefsDP)) {
+            return F
+          }
+          if (bDefsSP && aAcc._2) {
+            return F
+          }
+          if (bDefsDP && aAcc._3) {
+            return F
+          }
+          return T
+        }
+
+        var changed = T
+        while (changed) {
+          changed = F
+          var pinned = HashSet.empty[Z] + blocks(0).label
+          var preds = HashMap.empty[Z, Z]
+          blockMap = HashMap.empty
+          for (b <- blocks) {
+            blockMap = blockMap + b.label ~> b
+            jumpTargets(b.jump) match {
+              case Some(ts) =>
+                for (t <- ts) {
+                  preds = preds + t ~> (preds.get(t).getOrElse(0) + 1)
+                }
+                if (hasApply(b)) {
+                  // runtime return continuation: the callee resumes at this
+                  // block's goto target via the router
+                  for (t <- ts) {
+                    pinned = pinned + t
+                  }
+                }
+              case _ =>
+            }
+          }
+
+          var mergeInto = HashMap.empty[Z, Z] // A.label -> absorbed B.label
+          var absorbed = HashSet.empty[Z]
+          var busy = HashSet.empty[Z]
+          for (a <- blocks) {
+            if (!busy.contains(a.label) && !hasApply(a)) {
+              a.jump match {
+                case j: AST.IR.Jump.Goto =>
+                  val bl = j.label
+                  if (bl != a.label && !busy.contains(bl) && !pinned.contains(bl) &&
+                    preds.get(bl).getOrElse(0) == 1) {
+                    blockMap.get(bl) match {
+                      case Some(bb) =>
+                        if (!hasApply(bb) && canMerge(a, bb)) {
+                          mergeInto = mergeInto + a.label ~> bl
+                          absorbed = absorbed + bl
+                          busy = busy + a.label
+                          busy = busy + bl
+                          changed = T
+                        }
+                      case _ =>
+                    }
+                  }
+                case _ =>
+              }
+            }
+          }
+
+          if (changed) {
+            var nb = ISZ[AST.IR.BasicBlock]()
+            for (b <- blocks) {
+              if (!absorbed.contains(b.label)) {
+                mergeInto.get(b.label) match {
+                  case Some(bl) =>
+                    val bb = blockMap.get(bl).get
+                    nb = nb :+ b(grounds = b.grounds ++ bb.grounds, jump = bb.jump)
+                  case _ =>
+                    nb = nb :+ b
+                }
+              }
+            }
+            blocks = nb
+          }
+        }
+
+        return proc(body = body(blocks = blocks))
+      case _ => return proc
+    }
+  }
 }

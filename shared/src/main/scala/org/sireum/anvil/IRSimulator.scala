@@ -1535,6 +1535,11 @@ import IRSimulator._
       case _ =>
         b.jump match {
           case _: AST.IR.Jump.Return =>
+            // blocks folded by Util.foldBasicBlocks may carry grounds into a
+            // return block; evaluate them before popping the call frame
+            for (g <- b.grounds) {
+              r = r :+ evalStmt(state, g)
+            }
             if (state.callStack.isEmpty) {
               r = r :+ State.Edit.Temp(State.Edit.Temp.Kind.CP, anvil.isFP(anvil.cpType), anvil.isSigned(anvil.cpType),
                 anvil.typeBitSize(anvil.cpType), 0, Value.fromZ(0, anvil.typeBitSize(anvil.cpType),

@@ -805,6 +805,12 @@ import Anvil._
       }
     }
 
+    if (!config.isFirstGen) {
+      // jump threading + straight-line block merging on the final IR, shared
+      // by IRSimulator and HwSynthesizer2 (see Util.foldBasicBlocks)
+      program = program(procedures = for (p <- program.procedures) yield Util.foldBasicBlocks(p))
+    }
+
     val maxRegisters = programMaxTemps(anvil, program)
 
     val header: ST = {
