@@ -2102,92 +2102,121 @@ object ArbInputMap {
           |    r_b_valid       := false.B
           |  }
           |
-          |  // dma logic
-          |  val r_dma_req_next     = RegNext(r_dma_req)
-          |  val r_dmaSrc_finish    = RegInit(false.B)
-          |  val r_dmaDst_finish    = RegInit(false.B)
-          |  val r_temp_dmaSrc_len  = RegNext(Mux(io.dmaSrcLen < io.dmaDstLen, io.dmaSrcLen, io.dmaDstLen))
-          |  val r_temp_dmaDst_len  = RegNext(Mux(io.dmaSrcLen < io.dmaDstLen, io.dmaDstLen, io.dmaSrcLen))
-          |  val r_dma_src_lt_dst   = RegNext(r_temp_dmaSrc_len < r_temp_dmaDst_len)
+          |  // ===== Burst DMA (mode==3): single bounded burst, combinational AXI outputs =====
+          |  // Copy min(dmaSrcLen,dmaDstLen) bytes src->dst; erase config zero-fills
+          |  // dst [copyN, dmaDstLen). One read burst gathers the source span, DRE
+          |  // (shift=(srcAddr-dstAddr) mod 8, same as BramNative sliding window)
+          |  // realigns, one write burst emits with per-beat WSTRB (byte-exact).
+          |  val DMA_MAX_WORDS = 34
+          |  val sDma_idle :: sDma_rAddr :: sDma_rData :: sDma_wAddr :: sDma_wData :: sDma_resp :: sDma_done :: Nil = Enum(7)
+          |  val rDma_state   = RegInit(sDma_idle)
+          |  val rDma_srcAddr = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val rDma_dstWord = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val rDma_dstLane = RegInit(0.U(3.W))
+          |  val rDma_copyN   = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val rDma_zeroN   = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val rDma_off     = RegInit(0.U(3.W))
+          |  val rDma_erase   = RegInit(false.B)
+          |  val rDma_buf     = Reg(Vec(DMA_MAX_WORDS + 1, UInt(C_M_AXI_DATA_WIDTH.W)))
+          |  val rDma_rcnt    = RegInit(0.U(8.W))
+          |  val rDma_rbeats  = RegInit(0.U(8.W))
+          |  val rDma_wcnt    = RegInit(0.U(8.W))
+          |  val rDma_wbeats  = RegInit(0.U(8.W))
+          |  val rDma_valid   = RegInit(false.B)
+          |  val rDma_modePrev = RegNext(io.mode === 3.U, false.B)
+          |  val dma_active   = rDma_state =/= sDma_idle
+          |  val dma_arvalid  = WireDefault(false.B)
+          |  val dma_araddr   = WireDefault(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val dma_arlen    = WireDefault(0.U(8.W))
+          |  val dma_awvalid  = WireDefault(false.B)
+          |  val dma_awaddr   = WireDefault(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val dma_awlen    = WireDefault(0.U(8.W))
+          |  val dma_wvalid   = WireDefault(false.B)
+          |  val dma_wdata    = WireDefault(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val dma_wstrb    = WireDefault(0.U((C_M_AXI_DATA_WIDTH / 8).W))
+          |  val dma_wlast    = WireDefault(false.B)
+          |  io.dmaValid := rDma_valid
+          |  rDma_valid := false.B
           |
-          |  // data from read port
-          |  io.dmaValid := RegNext(r_dmaDst_finish & RegNext(r_b_valid), init = false.B)
+          |  val w_dmaCopyN    = Mux(io.dmaSrcLen < io.dmaDstLen, io.dmaSrcLen, io.dmaDstLen)
+          |  val w_dmaDstBase  = io.dmaDstAddr + io.dmaDstOffset
+          |  val w_dmaZeroN    = ${if(erase) "io.dmaDstLen" else "w_dmaCopyN"}
+          |  val w_dmaDstLane  = w_dmaDstBase(2, 0)
+          |  val w_dmaWbeats   = (w_dmaDstLane +& w_dmaZeroN + 7.U) >> 3
+          |  val w_dmaRbeats   = Mux(w_dmaCopyN === 0.U, 0.U, ((w_dmaDstLane +& w_dmaCopyN + 7.U) >> 3) + 1.U)
+          |  val w_dmaSrcStart = Cat((io.dmaSrcAddr - w_dmaDstLane)(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
           |
-          |  // initialize all registers
-          |  when(r_dma_req & ~r_dma_req_next) {
-          |    r_dmaSrc_addr      := io.dmaSrcAddr
-          |    r_dmaDst_addr      := io.dmaDstAddr + io.dmaDstOffset
-          |    r_dmaSrc_len       := r_temp_dmaSrc_len
-          |    r_dmaDst_len       := r_temp_dmaDst_len
-          |
-          |    r_dmaErase_enable  := r_temp_dmaSrc_len === 0.U
-          |
-          |    r_dma_req_read     := true.B
-          |    r_dmaSrc_finish    := r_temp_dmaSrc_len <= 8.U
-          |    r_dmaDst_finish    := r_temp_dmaDst_len <= 8.U
-          |    r_dma_dst_len      := Mux(r_temp_dmaDst_len > 8.U, 8.U, r_temp_dmaDst_len)
+          |  val w_wlo   = rDma_buf(rDma_wcnt)
+          |  val w_whi   = rDma_buf(rDma_wcnt + 1.U)
+          |  val w_wcomb = (Cat(w_whi, w_wlo) >> (rDma_off << 3))(C_M_AXI_DATA_WIDTH - 1, 0)
+          |  val w_wstrbV = Wire(Vec(C_M_AXI_DATA_WIDTH / 8, Bool()))
+          |  val w_wdataV = Wire(Vec(C_M_AXI_DATA_WIDTH / 8, UInt(8.W)))
+          |  for (l <- 0 until C_M_AXI_DATA_WIDTH / 8) {
+          |    val absByte = Cat(rDma_wcnt, l.U(3.W))
+          |    val inDst   = absByte >= rDma_dstLane && absByte < (rDma_dstLane +& rDma_zeroN)
+          |    val p       = absByte - rDma_dstLane
+          |    w_wstrbV(l) := inDst
+          |    w_wdataV(l) := Mux(inDst && (p < rDma_copyN) && ~rDma_erase, w_wcomb(8 * l + 7, 8 * l), 0.U)
           |  }
           |
-          |  val unalignRead_finish = ~r_dmaErase_enable & RegNext(RegNext(r_r_valid))
-          |
-          |  // read transaction
-          |  when((r_dmaSrc_finish & unalignRead_finish) || r_dmaErase_enable) {
-          |    r_dma_req_read     := false.B
-          |
-          |    r_dmaSrc_len       := 0.U
-          |    r_dma_req_write    := true.B
-          |  } .elsewhen(r_dma_req_read & unalignRead_finish) {
-          |    r_dma_req_read     := false.B
-          |    r_dmaSrc_len       := Mux(r_dmaSrc_len > 8.U, r_dmaSrc_len - 8.U, r_dmaSrc_len)
-          |    r_dmaSrc_addr      := r_dmaSrc_addr + 8.U
-          |    r_dmaSrc_finish    := r_dmaSrc_len <= 8.U
-          |
-          |    r_dma_req_write    := true.B
-          |  }
-          |
-          |  when((r_dma_req_read & unalignRead_finish) || r_dmaErase_enable) {
-          |    r_dma_dst_len      := Mux(r_dmaDst_len > 8.U, 8.U, r_dmaDst_len)
-          |  }
-          |
-          |  // save read data
-          |  when(r_dma_req & unalignRead_finish) {
-          |    r_dma_read_data  := MuxLookup(r_dmaSrc_len, r_final_buffer,
-          |                                    Seq(
-          |                                        0.U -> 0.U,
-          |                                        1.U -> r_final_buffer(7,0),
-          |                                        2.U -> r_final_buffer(15,0),
-          |                                        3.U -> r_final_buffer(23,0),
-          |                                        4.U -> r_final_buffer(31,0),
-          |                                        5.U -> r_final_buffer(39,0),
-          |                                        6.U -> r_final_buffer(47,0),
-          |                                        7.U -> r_final_buffer(55,0)
-          |                                    ))
-          |  }
-          |
-          |  // write transaction
-          |  val r_write_finish_precond1 = RegInit(false.B)
-          |  val r_write_finish_precond2 = RegInit(false.B)
-          |  r_write_finish_precond1 := (~r_dmaErase_enable) & r_dma_src_lt_dst & r_dmaSrc_finish
-          |  r_write_finish_precond2 := r_dmaDst_len <= 8.U
-          |  when(r_dmaDst_finish & RegNext(r_b_valid)) {
-          |    r_dma_req_write    := false.B
-          |
-          |    r_dmaErase_enable  := false.B
-          |
-          |    r_dmaSrc_finish    := false.B
-          |    r_dmaDst_finish    := false.B
-          |  } .elsewhen(r_dma_req_write & r_b_valid) {
-          |    r_dma_req_write    := false.B
-          |    r_dmaDst_len       := Mux(r_dmaDst_len > 8.U, r_dmaDst_len - 8.U, r_dmaDst_len)
-          |    r_dmaDst_addr      := r_dmaDst_addr + 8.U
-          |    r_dmaDst_finish    := r_write_finish_precond1 | r_write_finish_precond2
-          |
-          |    r_dma_req_read     := ~r_dmaSrc_finish
+          |  switch(rDma_state) {
+          |    is(sDma_idle) {
+          |      when((io.mode === 3.U) & ~rDma_modePrev) {
+          |        rDma_srcAddr := w_dmaSrcStart
+          |        rDma_dstWord := Cat(w_dmaDstBase(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
+          |        rDma_dstLane := w_dmaDstLane
+          |        rDma_copyN   := w_dmaCopyN
+          |        rDma_zeroN   := w_dmaZeroN
+          |        rDma_off     := (io.dmaSrcAddr - w_dmaDstBase)(2, 0)
+          |        rDma_erase   := w_dmaCopyN === 0.U
+          |        rDma_rbeats  := w_dmaRbeats
+          |        rDma_wbeats  := w_dmaWbeats
+          |        rDma_rcnt    := 0.U
+          |        rDma_wcnt    := 0.U
+          |        rDma_state   := Mux(w_dmaZeroN === 0.U, sDma_done, Mux(w_dmaCopyN === 0.U, sDma_wAddr, sDma_rAddr))
+          |      }
+          |    }
+          |    is(sDma_rAddr) {
+          |      dma_arvalid := true.B
+          |      dma_araddr  := rDma_srcAddr + C_M_TARGET_SLAVE_BASE_ADDR.U
+          |      dma_arlen   := rDma_rbeats - 1.U
+          |      when(io.M_AXI_ARREADY) { rDma_state := sDma_rData }
+          |    }
+          |    is(sDma_rData) {
+          |      when(io.M_AXI_RVALID) {
+          |        rDma_buf(rDma_rcnt) := io.M_AXI_RDATA
+          |        rDma_rcnt := rDma_rcnt + 1.U
+          |        when(io.M_AXI_RLAST) { rDma_state := sDma_wAddr }
+          |      }
+          |    }
+          |    is(sDma_wAddr) {
+          |      dma_awvalid := true.B
+          |      dma_awaddr  := rDma_dstWord + C_M_TARGET_SLAVE_BASE_ADDR.U
+          |      dma_awlen   := rDma_wbeats - 1.U
+          |      when(io.M_AXI_AWREADY) { rDma_state := sDma_wData }
+          |    }
+          |    is(sDma_wData) {
+          |      dma_wvalid := true.B
+          |      dma_wdata  := w_wdataV.asUInt
+          |      dma_wstrb  := w_wstrbV.asUInt
+          |      dma_wlast  := rDma_wcnt === (rDma_wbeats - 1.U)
+          |      when(io.M_AXI_WREADY) {
+          |        rDma_wcnt := rDma_wcnt + 1.U
+          |        when(rDma_wcnt === (rDma_wbeats - 1.U)) { rDma_state := sDma_resp }
+          |      }
+          |    }
+          |    is(sDma_resp) {
+          |      when(io.M_AXI_BVALID) { rDma_state := sDma_done }
+          |    }
+          |    is(sDma_done) {
+          |      rDma_valid := true.B
+          |      rDma_state := sDma_idle
+          |    }
           |  }
           |
           |  // AXI4 Full port connection
           |  io.M_AXI_AWID    := 0.U
-          |  io.M_AXI_AWLEN   := r_m_axi_awlen
+          |  io.M_AXI_AWLEN   := Mux(dma_active, dma_awlen, r_m_axi_awlen)
           |  io.M_AXI_AWSIZE  := log2Up(C_M_AXI_DATA_WIDTH / 8 - 1).U
           |  io.M_AXI_AWBURST := 1.U
           |  io.M_AXI_AWLOCK  := false.B
@@ -2195,19 +2224,19 @@ object ArbInputMap {
           |  io.M_AXI_AWPROT  := 0.U
           |  io.M_AXI_AWQOS   := 0.U
           |  io.M_AXI_AWUSER  := 0.U
-          |  io.M_AXI_AWADDR  := Cat(r_m_axi_awaddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
-          |  io.M_AXI_AWVALID := r_m_axi_awvalid
+          |  io.M_AXI_AWADDR  := Mux(dma_active, dma_awaddr, Cat(r_m_axi_awaddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W)))
+          |  io.M_AXI_AWVALID := Mux(dma_active, dma_awvalid, r_m_axi_awvalid)
           |
-          |  io.M_AXI_WSTRB   := r_m_axi_wstrb
+          |  io.M_AXI_WSTRB   := Mux(dma_active, dma_wstrb, r_m_axi_wstrb)
           |  io.M_AXI_WUSER   := 0.U
-          |  io.M_AXI_WDATA   := r_m_axi_wdata
-          |  io.M_AXI_WLAST   := Mux(r_write_req, r_m_axi_wlast, w_m_axi_wlast)
-          |  io.M_AXI_WVALID  := r_m_axi_wvalid
+          |  io.M_AXI_WDATA   := Mux(dma_active, dma_wdata, r_m_axi_wdata)
+          |  io.M_AXI_WLAST   := Mux(dma_active, dma_wlast, Mux(r_write_req, r_m_axi_wlast, w_m_axi_wlast))
+          |  io.M_AXI_WVALID  := Mux(dma_active, dma_wvalid, r_m_axi_wvalid)
           |
           |  io.M_AXI_BREADY  := true.B
           |
           |  io.M_AXI_ARID    := 0.U
-          |  io.M_AXI_ARLEN   := r_m_axi_arlen
+          |  io.M_AXI_ARLEN   := Mux(dma_active, dma_arlen, r_m_axi_arlen)
           |  io.M_AXI_ARSIZE  := log2Up(C_M_AXI_DATA_WIDTH / 8 - 1).U
           |  io.M_AXI_ARBURST := 1.U
           |  io.M_AXI_ARLOCK  := false.B
@@ -2215,8 +2244,8 @@ object ArbInputMap {
           |  io.M_AXI_ARPROT  := 0.U
           |  io.M_AXI_ARQOS   := 0.U
           |  io.M_AXI_ARUSER  := 0.U
-          |  io.M_AXI_ARADDR  := Cat(r_m_axi_araddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
-          |  io.M_AXI_ARVALID := r_m_axi_arvalid
+          |  io.M_AXI_ARADDR  := Mux(dma_active, dma_araddr, Cat(r_m_axi_araddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W)))
+          |  io.M_AXI_ARVALID := Mux(dma_active, dma_arvalid, r_m_axi_arvalid)
           |
           |  io.M_AXI_RREADY  := true.B
           |}
