@@ -7247,6 +7247,16 @@ import HwSynthesizer2._
                 |  ${jump}
                 |}
               """
+        } else if(ipPortLogic.whenStmtST.nonEmpty) {
+          // No resource handshake, but there are commit-deferred writes (e.g. an
+          // inlined SP/DP increment). The block advances in one cycle, so emit the
+          // deferred writes unconditionally right before the jump — they fire exactly
+          // once, matching the arbiter version's commit-time semantics.
+          jump =
+            st"""
+                |${(ipPortLogic.whenStmtST, "\n")}
+                |${jump}
+              """
         }
         val g = groundST(b, processedGroundST, jump, isRecursive)
         ipPortLogic.whenCondST = ISZ[ST]()
@@ -7744,18 +7754,15 @@ import HwSynthesizer2._
           }
 
           if (intrinsic.isInc) {
-            val ipT: ArbIpType = if (isPlus) ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F) else ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
-            ipArbiterUsage = ipArbiterUsage + ipT
-
-            var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-            val instanceName: String = getIpInstanceName(ipT).get
-            hashSMap = hashSMap +
-              ".a" ~> (st"${leftST.render}", "UInt".string) +
-              ".b" ~> (st"${rightST.render}", "UInt".string) +
-              "_valid" ~> (st"Mux(r_${instanceName}_resp_valid, false.B, true.B)", "Bool".string)
-            insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
-            ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := r_${instanceName}_resp.out"
+            // Phase-2 extension: inline the SP/DP increment. SP/DP += const was routed
+            // through the 64-bit Add/Sub arbiter (~11-cycle round-trip); it is a cheap
+            // address-width add, so commit it directly with no handshake and no shared
+            // adder — this is the Add/Sub arbiter's only stack/pointer client, so the
+            // arbiter drops out unless an operator actually overflows the inline units.
+            // Deferred to whenStmt (fires at block advance) so a block that also stalls
+            // on another resource op still increments SP/DP exactly once.
+            val opStr: String = if (isPlus) "+" else "-"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := ${leftST.render} ${opStr} ${rightST.render}"
             intrinsicST = st""
           } else if (isIntrinsicLoad(intrinsic.value)) {
             ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
