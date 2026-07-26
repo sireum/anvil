@@ -1655,25 +1655,44 @@ object ArbInputMap {
           |  io.readData  := r_readData
           |  io.readValid := Mux(r_readState === sReadEnd, true.B, false.B)
           |
-          |  // === WRITE Operation (byte-enables, constant 3-cycle, no read-modify-write) ===
-          |  val sWriteIdle :: sWriteTrans :: sWriteEnd :: Nil = Enum(3)
+          |  // === WRITE Operation (byte-enables, constant 4-cycle, no read-modify-write) ===
+          |  // B1: a one-stage write-request pipeline keeps the barrel shift a SINGLE
+          |  // shared resource (no per-client replication) while moving it off the
+          |  // req_valid -> wrapper critical path. sWriteIdle only latches the request
+          |  // into registers (req_valid -> wrapper is then a plain register load);
+          |  // sWritePre does the address-add + lane barrel shift reg -> reg inside the
+          |  // wrapper. Costs +1 write cycle; read/DMA keep the Phase 8 direct latency.
+          |  val sWriteIdle :: sWritePre :: sWriteTrans :: sWriteEnd :: Nil = Enum(4)
           |
           |  val r_writeState   = RegInit(sWriteIdle)
           |  val r_writeWord    = Reg(UInt(log2Ceil(depth).W))
           |  val r_writeData128 = Reg(UInt(128.W))
           |  val r_writeBe16    = Reg(UInt(16.W))
+          |  val r_wr_addr      = Reg(UInt(log2Ceil(depth).W))
+          |  val r_wr_off       = Reg(UInt(log2Ceil(depth).W))
+          |  val r_wr_len       = Reg(UInt(4.W))
+          |  val r_wr_data      = Reg(UInt(64.W))
           |
           |  switch(r_writeState) {
           |    is(sWriteIdle) {
           |      when(w_writeEnable) {
-          |        val w_addr = io.writeAddr + io.writeOffset
-          |        val w_lane = w_addr(2, 0)
-          |        val w_be8  = ((1.U(9.W) << io.writeLen) - 1.U)(7, 0)
-          |        r_writeState   := sWriteTrans
-          |        r_writeWord    := w_addr >> 3
-          |        r_writeBe16    := (Cat(0.U(8.W), w_be8) << w_lane)(15, 0)
-          |        r_writeData128 := (Cat(0.U(64.W), io.writeData) << (w_lane << 3))(127, 0)
+          |        // latch the request only (no adder / barrel shift on this edge)
+          |        r_wr_addr    := io.writeAddr
+          |        r_wr_off     := io.writeOffset
+          |        r_wr_len     := io.writeLen
+          |        r_wr_data    := io.writeData
+          |        r_writeState := sWritePre
           |      }
+          |    }
+          |    is(sWritePre) {
+          |      // address-add + lane barrel shift, now reg -> reg inside the wrapper
+          |      val w_addr = r_wr_addr + r_wr_off
+          |      val w_lane = w_addr(2, 0)
+          |      val w_be8  = ((1.U(9.W) << r_wr_len) - 1.U)(7, 0)
+          |      r_writeState   := sWriteTrans
+          |      r_writeWord    := w_addr >> 3
+          |      r_writeBe16    := (Cat(0.U(8.W), w_be8) << w_lane)(15, 0)
+          |      r_writeData128 := (Cat(0.U(64.W), r_wr_data) << (w_lane << 3))(127, 0)
           |    }
           |    is(sWriteTrans) {
           |      // port A writes the first word; on a crossing access port B writes the
@@ -4502,6 +4521,47 @@ import HwSynthesizer2._
         st""
     }
 
+    // Two fully-registered AXI register slices around the control-port SmartConnect
+    // (one on the PS-master side, one on the design side) to pipeline the PS-PL
+    // boundary route and eliminate MAXIGP0 interface timing violations.
+    val ctrlSliceST: ST =
+      st"""
+          |# --- two AXI register slices around the control-port SmartConnect (PS-PL boundary) ---
+          |delete_bd_objs [get_bd_intf_nets -of [get_bd_intf_pins GeneratedIP/io_S_AXI]]
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice:2.1 rs_ctrl
+          |set_property -dict [list CONFIG.REG_AW {1} CONFIG.REG_AR {1} CONFIG.REG_W {1} CONFIG.REG_R {1} CONFIG.REG_B {1}] [get_bd_cells rs_ctrl]
+          |connect_bd_intf_net [get_bd_intf_pins axi_smc/M00_AXI] [get_bd_intf_pins rs_ctrl/S_AXI]
+          |connect_bd_intf_net [get_bd_intf_pins rs_ctrl/M_AXI] [get_bd_intf_pins GeneratedIP/io_S_AXI]
+          |connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins rs_ctrl/aclk]
+          |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins rs_ctrl/aresetn]
+          |delete_bd_objs [get_bd_intf_nets -of [get_bd_intf_pins axi_smc/S00_AXI]]
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice:2.1 rs_ps
+          |set_property -dict [list CONFIG.REG_AW {1} CONFIG.REG_AR {1} CONFIG.REG_W {1} CONFIG.REG_R {1} CONFIG.REG_B {1}] [get_bd_cells rs_ps]
+          |connect_bd_intf_net [get_bd_intf_pins zynq_ultra_ps_e_0/M_AXI_HPM0_FPD] [get_bd_intf_pins rs_ps/S_AXI]
+          |connect_bd_intf_net [get_bd_intf_pins rs_ps/M_AXI] [get_bd_intf_pins axi_smc/S00_AXI]
+          |connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins rs_ps/aclk]
+          |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins rs_ps/aresetn]
+      """
+    // Two fully-registered AXI register slices in series on the HP (DMA) master
+    // port to pipeline the PS-PL boundary route to the DDR HP slave (SAXIGP2).
+    val hpSliceST: ST =
+      st"""
+          |# --- two AXI register slices in series on the HP (DMA) port (PS-PL boundary) ---
+          |set _hp_m [get_bd_intf_pins GeneratedIP/io_M_AXI]
+          |set _hp_net [get_bd_intf_nets -of $$_hp_m]
+          |set _hp_s [get_bd_intf_pins -of $$_hp_net -filter {NAME =~ *S_AXI_HP0*}]
+          |delete_bd_objs $$_hp_net
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice:2.1 rs_hp_d
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice:2.1 rs_hp_p
+          |foreach rs {rs_hp_d rs_hp_p} { set_property -dict [list CONFIG.REG_AW {1} CONFIG.REG_AR {1} CONFIG.REG_W {1} CONFIG.REG_R {1} CONFIG.REG_B {1}] [get_bd_cells $$rs] }
+          |connect_bd_intf_net $$_hp_m [get_bd_intf_pins rs_hp_d/S_AXI]
+          |connect_bd_intf_net [get_bd_intf_pins rs_hp_d/M_AXI] [get_bd_intf_pins rs_hp_p/S_AXI]
+          |connect_bd_intf_net [get_bd_intf_pins rs_hp_p/M_AXI] $$_hp_s
+          |foreach rs {rs_hp_d rs_hp_p} {
+          |  connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins $$rs/aclk]
+          |  connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins $$rs/aresetn]
+          |}
+      """
     val blockDesignST: ST = {
       if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
         st"""
@@ -4513,6 +4573,7 @@ import HwSynthesizer2._
             |
             |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
             |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
+            $ctrlSliceST
             |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
             | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
             |] [get_bd_cells zynq_ultra_ps_e_0]
@@ -4559,6 +4620,7 @@ import HwSynthesizer2._
             |set_property CONFIG.NUM_MI {2} [get_bd_cells axi_smc]
             |connect_bd_intf_net [get_bd_intf_pins axi_smc/M01_AXI] [get_bd_intf_pins axi_bram_ctrl_1/S_AXI]
             |connect_bd_intf_net [get_bd_intf_pins GeneratedIP/io_M_AXI] [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
+            $ctrlSliceST
             |
             |# connect to axi clock
             |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_bram_ctrl_0/s_axi_aclk]
@@ -4591,6 +4653,8 @@ import HwSynthesizer2._
             |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
             |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins zynq_ultra_ps_e_0/saxihp0_fpd_aclk]
             |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
+            $ctrlSliceST
+            $hpSliceST
             |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
             | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
             |] [get_bd_cells zynq_ultra_ps_e_0]
@@ -4686,6 +4750,14 @@ import HwSynthesizer2._
           |IP_NAME=$$3
           |SoC_NAME=$$4
           |FREQ_HZ=$$5
+          |
+          |# inject MAX_FANOUT on function CP state registers before packaging the IP:
+          |# reduces fanout-induced routing on high-fanout CP -> datapath (writeData/index)
+          |# paths; the tool only replicates CPs whose fanout exceeds the threshold, so
+          |# low-fanout (simple function) CPs are left untouched.
+          |for f in $${PROJECT_PATH}/chisel/generated_verilog/FPGA$${IP_NAME}/*.v; do
+          |  sed -i -E '/max_fanout/! s/^(  )(reg \[[0-9]+:0\] [A-Za-z_0-9]+_objectCP;)/\1(* max_fanout = 16 *) \2/' "$$f"
+          |done
           |
           |vivado -mode batch -source $${TCL_PATH}/ip_generation.tcl -tclargs $${PROJECT_PATH} $${IP_NAME} $${FREQ_HZ}
           |
