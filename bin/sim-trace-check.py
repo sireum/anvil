@@ -297,11 +297,23 @@ def split_runs(seq, start_event):
 
 
 def golden_display_text(golden_file):
-    """Program output printed by the IR simulator: text after the final state dump."""
-    with open(golden_file, errors="replace") as f:
+    """Program output printed by the IR simulator: text after the final state dump.
+
+    Read as raw bytes and latin-1 decoded to match rtl_display_text's byte view,
+    so UTF-8 multibyte display characters (e.g. stack-trace markers) compare
+    identically instead of tripping a utf-8-vs-latin-1 rendering mismatch. Drop
+    IRSimulatorTest's human-readable "After post-processing stack trace" appendix,
+    which is a test-harness convenience, not device display-buffer output."""
+    with open(golden_file, "rb") as f:
         content = f.read()
-    i = content.rfind("\n  }")
-    return None if i < 0 else content[i + 4:].strip("\n")
+    i = content.rfind(b"\n  }")
+    if i < 0:
+        return None
+    text = content[i + 4:].decode("latin-1").strip("\n")
+    k = text.find("\n\nAfter post-processing stack trace")
+    if k >= 0:
+        text = text[:k].rstrip("\n")
+    return text
 
 
 def golden_display_window(golden_file, proj_dir):
