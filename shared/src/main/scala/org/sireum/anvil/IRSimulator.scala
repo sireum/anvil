@@ -1284,6 +1284,7 @@ import IRSimulator._
           case AST.Exp.UnaryOp.Plus => return (v, acs)
           case AST.Exp.UnaryOp.Minus => return (v.minus, acs)
         }
+      case exp: AST.IR.Exp.UnaryTemporal => halt(s"Infeasible: $exp")
       case exp: AST.IR.Exp.Type =>
         val (v, acs) = evalExp(state, exp.exp)
         val n: U64 =
