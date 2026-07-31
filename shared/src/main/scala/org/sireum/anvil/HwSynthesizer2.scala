@@ -3403,6 +3403,18 @@ import HwSynthesizer2._
 
     @pure def getIpArbiterTemplate(ip: ArbIpType): ST = {
       val mod = findChiselModule(ip).get
+      // held-start DSP IPs that are de-arbitrated the same way: fed combinationally
+      // from io.req.bits with a HELD start (io.req.valid forwarded held by the
+      // arbiter, not pulsed), dropping the wrapper's r_req/r_req_valid/r_mod_start
+      // registers. Covers the Indexer and the Xilinx Mul/Div/Rem (all drive a DSP
+      // clock-enable / AXIS-valid from start and need it asserted the whole pipeline).
+      val heldDsp: B = ip match {
+        case ArbIntrinsicIP(_) => T
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, _) => T
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, _) => T
+        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, _) => T
+        case _ => F
+      }
       val outputNameStr: String = ip match {
         case ArbBinaryIP(_, _) => "out"
         case ArbIntrinsicIP(_) => "out"
@@ -3607,8 +3619,12 @@ import HwSynthesizer2._
             |  r_inflight := w_anyValid & Mux(r_inflight, w_reqValids(r_owner), true.B)
             |  r_owner    := Mux(r_inflight, r_owner, w_sel)
             |
-            |  // single-cycle request pulse; bits stay stable from the holding client
-            |  io.ip.req.valid := w_anyValid && !r_inflight
+            |  // Held-start DSP IPs (Indexer, Xilinx Mul/Div/Rem) forward the client's
+            |  // HELD valid (their DSP clock-enable / AXIS-valid is driven straight from
+            |  // start and must stay high the whole pipeline); all other IPs get the
+            |  // single-cycle request pulse. Bits stay stable from the holding client
+            |  // either way.
+            |  io.ip.req.valid := ${if (heldDsp) "w_anyValid" else "w_anyValid && !r_inflight"}
             |  io.ip.req.bits  := io.ipReqs(w_sel).bits
             |
             |  // combinational owner-filtered response broadcast
@@ -3636,16 +3652,40 @@ import HwSynthesizer2._
                 |mod.io.arbMem_resp.valid := r_arbMem_resp_valid
             """
         } else if(ip == ArbGlobalVarIP()) {
+          // T1.2 de-arbitration: the arbiter already pulses io.req.valid for one
+          // cycle while the client holds io.req.bits stable for the whole
+          // transaction, and GlobalVar edge-detects start internally
+          // (r_write/r_read = RegNext(io.start & ...)), so the wrapper's r_req and
+          // r_mod_start registers are redundant. Feed inputs combinationally and
+          // drive start from the pulse, dropping ~2 cycles of request latency.
           sts = sts :+
             st"""
-                |mod.io.in := r_req.in
-                |mod.io.op := r_req.op
-                |mod.io.gtype := r_req.gtype
-                |mod.io.index := r_req.index
-                |mod.io.start := r_mod_start
+                |mod.io.in := io.req.bits.in
+                |mod.io.op := io.req.bits.op
+                |mod.io.gtype := io.req.bits.gtype
+                |mod.io.index := io.req.bits.index
+                |mod.io.start := io.req.valid
                 |io.resp.bits.out := r_resp_data
                 |io.resp.valid    := r_resp_valid
               """
+        } else if(heldDsp) {
+          // Held-start DSP de-arbitration (Indexer + Xilinx Mul/Div/Rem): the arbiter
+          // now forwards the client's HELD valid (not a single-cycle pulse), so the
+          // DSP clock-enable / AXIS-valid (driven from start) stays asserted across the
+          // whole multi-cycle pipeline. Feed inputs combinationally from io.req.bits
+          // and drive the held start (control port, "ready" for Indexer / "start" for
+          // Mul/Div/Rem) from io.req.valid, dropping the wrapper's
+          // r_req/r_req_valid/r_mod_start registers (~2 cycles/access). Output stays
+          // registered (r_resp_data), mirroring the GlobalVar path.
+          val h: HashSMap[String, (B, String)] = mod.portList
+          for (entry <- h.entries) {
+            if (entry._2._1) {
+              sts = sts :+ st"mod.io.${entry._1} := io.req.valid"
+            } else {
+              sts = sts :+ st"mod.io.${entry._1} := io.req.bits.${entry._1}"
+            }
+          }
+          sts = sts :+ st"io.resp.bits.${outputNameStr} := r_resp_data"
         } else {
           // Phase 8: BramNative memory direct-connect. The de-arbitration mux
           // (Phase 1) already pulses io.req.valid for a single cycle while the
@@ -3661,6 +3701,10 @@ import HwSynthesizer2._
           val bramDirect: B = ip == ArbBlockMemoryIP() && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative
           val axiDirect: B = ip == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative
           val memDirect: B = bramDirect || axiDirect
+          // NOTE: the held-start DSP IPs (Indexer + Mul/Div/Rem) are de-arbitrated in
+          // the heldDsp branch above (arbiter forwards HELD valid, wrapper input
+          // registers dropped). This else path now covers only BlockMemory (BramNative
+          // direct pulse, or AXI/Ddr with the minimal r_mode register).
           val h: HashSMap[String, (B, String)] = mod.portList
           for (entry <- h.entries) {
             // it is control signal
@@ -3698,9 +3742,21 @@ import HwSynthesizer2._
         val bramDirect: B = ip == ArbBlockMemoryIP() && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative
         val axiDirect: B = ip == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative
         val memDirect: B = bramDirect || axiDirect
+        // T1.2: GlobalVar is a single-requester register-file IP with no internal
+        // multi-cycle DSP, so it tolerates a single-cycle start pulse (its writes
+        // are edge-detected: r_write = RegNext(io.start & io.op)). It is fed
+        // combinationally from io.req.bits + the io.req.valid pulse in
+        // interfaceLogicST and needs no r_req / r_req_valid / r_mod_start registers.
+        val pulseDirect: B = ip == ArbGlobalVarIP()
+        // Held-start DSP IPs (Indexer + Xilinx Mul/Div/Rem): fed combinationally from
+        // io.req.bits, start driven from the HELD io.req.valid (the arbiter forwards
+        // the held valid, not a pulse) — so they drop r_req/r_req_valid/r_mod_start.
+        val intrinsicDirect: B = heldDsp
+        // no request-side input registers when fed combinationally
+        val noReqReg: B = memDirect || pulseDirect || intrinsicDirect
         val reqValidST: ST =
-          if(bramDirect)
-            st"" // Phase 8: mode driven combinationally in interfaceLogicST, no r_mode register
+          if(bramDirect || pulseDirect || intrinsicDirect)
+            st"" // de-arbitrated: control driven combinationally, no request-side register
           else if(axiDirect)
             st"""
                 |val r_mode = RegInit(0.U(2.W))
@@ -3857,8 +3913,8 @@ import HwSynthesizer2._
             |
             |    ${tempSaveRestoreRegSt}
             |
-            |    ${if(memDirect) "" else st"val r_req            = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))".render}
-            |    ${if(memDirect) "" else "val r_req_valid      = RegNext(io.req.valid, init = false.B)"}
+            |    ${if(noReqReg) "" else st"val r_req            = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))".render}
+            |    ${if(noReqReg) "" else "val r_req_valid      = RegNext(io.req.valid, init = false.B)"}
             |    ${if(ip == ArbBlockMemoryIP() && !memDirect) "val r_req_valid_next = RegNext(r_req_valid, init = false.B)" else ""}
             |
             |    ${if(ip == ArbBlockMemoryIP()) "val memory_valid = mod.io.readValid | mod.io.writeValid | mod.io.dmaValid" else ""}
@@ -3867,7 +3923,7 @@ import HwSynthesizer2._
             |
             |    ${reqValidST}
             |
-            |    ${if(memDirect) "" else "r_req := io.req.bits"}
+            |    ${if(noReqReg) "" else "r_req := io.req.bits"}
             |
             |    ${interfaceLogicST}
             |    io.resp.valid    := r_resp_valid
