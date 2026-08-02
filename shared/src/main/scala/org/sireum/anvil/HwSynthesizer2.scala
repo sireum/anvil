@@ -1451,6 +1451,7 @@ object ArbInputMap {
                                val genVerilog: B,
                                val nonXilinxIP: B,
                                val erase: B,
+                               val arrayInitBurst: B,
                                val aligned: B,
                                val arbID: Z) extends ArbIpModule {
   @strictpure override def arbIpId: Z = arbID
@@ -1739,7 +1740,7 @@ object ArbInputMap {
           |
           |  val w_dmaCopyN   = Mux(io.dmaSrcLen < io.dmaDstLen, io.dmaSrcLen, io.dmaDstLen)
           |  val w_dmaDstBase = io.dmaDstAddr + io.dmaDstOffset
-          |  val w_dmaZeroLen = ${if(erase) "io.dmaDstLen" else "w_dmaCopyN"}
+          |  val w_dmaZeroLen = ${if(erase) "io.dmaDstLen" else if(arrayInitBurst) "Mux(w_dmaCopyN === 0.U, io.dmaDstLen, w_dmaCopyN)" else "w_dmaCopyN"}
           |
           |  switch(r_dmaState) {
           |    is(sDmaIdle) {
@@ -2159,7 +2160,7 @@ object ArbInputMap {
           |
           |  val w_dmaCopyN    = Mux(io.dmaSrcLen < io.dmaDstLen, io.dmaSrcLen, io.dmaDstLen)
           |  val w_dmaDstBase  = io.dmaDstAddr + io.dmaDstOffset
-          |  val w_dmaZeroN    = ${if(erase) "io.dmaDstLen" else "w_dmaCopyN"}
+          |  val w_dmaZeroN    = ${if(erase) "io.dmaDstLen" else if(arrayInitBurst) "Mux(w_dmaCopyN === 0.U, io.dmaDstLen, w_dmaCopyN)" else "w_dmaCopyN"}
           |  val w_dmaDstLane  = w_dmaDstBase(2, 0)
           |  val w_dmaWbeats   = (w_dmaDstLane +& w_dmaZeroN + 7.U) >> 3
           |  val w_dmaRbeats   = Mux(w_dmaCopyN === 0.U, 0.U, ((w_dmaDstLane +& w_dmaCopyN + 7.U) >> 3) + 1.U)
@@ -2990,7 +2991,7 @@ import HwSynthesizer2._
     ArbDivision(T, "DivisionSigned64", "arbDivisionSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T), noXilinxIp, 32),
     ArbRemainder(F, "RemainerUnsigned64", "arbRemainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
     ArbRemainder(T, "RemainerSigned64", "arbRemainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
-    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, noXilinxIp, anvil.config.erase, anvil.config.alignAxi4, 35),
+    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, noXilinxIp, anvil.config.erase, anvil.config.arrayInitBurst, anvil.config.alignAxi4, 35),
     ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, anvil.config.memory, ArbTempSaveRestoreIP(), anvil.config.memoryAccess, noXilinxIp, anvil.config.alignAxi4, 36),
     ArbGlobalVar(F, "GlobalVar", "arbGlobalVar", 64, ArbGlobalVarIP(), noXilinxIp, 37)
   )

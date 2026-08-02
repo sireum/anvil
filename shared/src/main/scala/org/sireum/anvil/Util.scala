@@ -103,6 +103,19 @@ object Util {
     }
   }
 
+  // T3.1(b): collects method-call applies within a ground/block (for the
+  // loop-invariant load hoisting may-write analysis).
+  @record class ApplyCollector(var r: ISZ[AST.IR.Exp.Apply], var hasOther: B) extends MAnvilIRTransformer {
+    override def post_langastIRExpApply(o: AST.IR.Exp.Apply): MOption[AST.IR.Exp] = {
+      r = r :+ o
+      return MNone()
+    }
+    override def post_langastIRExpApplyClosure(o: AST.IR.Exp.ApplyClosure): MOption[AST.IR.Exp] = {
+      hasOther = T
+      return MNone()
+    }
+  }
+
   @record class TempExpSubstitutor(val anvil: Anvil,
                                    val substMap: HashMap[(B, Z), AST.IR.Exp],
                                    val haltOnNoMapping: B) extends MAnvilIRTransformer {

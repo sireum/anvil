@@ -57,6 +57,8 @@ object Anvil {
                          val splitTempSizes: B,
                          val tempGlobal: B,
                          val tempLocal: B,
+                         val loopInvariantHoist: B,
+                         val arrayInitBurst: B,
                          val memoryAccess: Config.MemoryAccess.Type,
                          val baseAddress: Z,
                          val ipMax: Z,
@@ -102,6 +104,8 @@ object Anvil {
         splitTempSizes = F,
         tempGlobal = T,
         tempLocal = F,
+        loopInvariantHoist = F,
+        arrayInitBurst = F,
         memoryAccess = Config.MemoryAccess.Default,
         baseAddress = 0,
         ipMax = 0,
@@ -811,6 +815,18 @@ import Anvil._
       program = program(procedures = for (p <- program.procedures) yield Util.foldBasicBlocks(p))
     }
 
+    // T3.1(b): loop-invariant sequence-.size load hoisting (flag-gated; OFF = baseline)
+    if (!config.isFirstGen && config.loopInvariantHoist) {
+      val hoistPair = anvil.transformLoopInvariantHoist(program, globalMap)
+      program = hoistPair._1
+      output.add(F, ISZ("ir", s"$stage-loop-invariant-hoist.sir"),
+        st"""// T3.1(b) loop-invariant .size load hoisting
+            |${(hoistPair._2, "\n")}
+            |
+            |${program.prettyST(anvil.printer)}""")
+      stage = stage + 1
+    }
+
     val maxRegisters = programMaxTemps(anvil, program)
 
     val header: ST = {
@@ -887,6 +903,474 @@ import Anvil._
 
     return Some(IR(anvil, name, program, maxRegisters, globalSize, globalMap, globalTemps, procDescMap,
       RecursiveProcedures(recursiveProcedureSet, recursiveProceduresUnionFind)))
+  }
+
+  // T3.1(b): loop-invariant sequence-.size load hoisting.
+  //
+  // A sequence's .size field is immutable in Slang (only written when the sequence is
+  // first constructed). Hence a loop-invariant `x.size` load can be loaded once in the
+  // loop preheader (into a caller register that is preserved across in-loop calls) and
+  // reused inside the loop, deleting one memory-read handshake per iteration.
+  //
+  // Soundness discipline (conservative, per T3_DESIGN #34): a size load is hoisted only
+  // when the *entire* natural loop (transitively across calls) provably writes no
+  // sequence size field at all -- so no store/copy/erase/callee can invalidate it. This
+  // adds no combinational depth: the deleted in-loop load becomes a same-cycle register
+  // move, and the preheader gains one load + one register (FF).
+  //
+  // Returns the rewritten program and a per-hoist report.
+  def transformLoopInvariantHoist(program: AST.IR.Program,
+                                  globalMap: HashSMap[ISZ[String], VarInfo]): (AST.IR.Program, ISZ[ST]) = {
+    var report = ISZ[ST]()
+    val sizeBytes: Z = typeByteSize(AST.Typed.z)
+
+    // physical-register identity: two temps share a register iff same class + number.
+    def regClassId(tipe: AST.Typed): String = {
+      val t: AST.Typed = if (isScalar(tipe)) tipe else spType
+      if (t == AST.Typed.f32) {
+        return "F32"
+      }
+      if (t == AST.Typed.f64) {
+        return "F64"
+      }
+      if (isSigned(t)) {
+        return st"S${typeBitSize(t)}".render
+      }
+      return st"U${typeBitSize(t)}".render
+    }
+    def regKey(tipe: AST.Typed, n: Z): String = {
+      return st"${regClassId(tipe)}#$n".render
+    }
+    def isSizeLoad(tl: Intrinsic.TempLoad): B = {
+      tl.base match {
+        case _: AST.IR.Exp.Int => return F
+        case _ =>
+      }
+      return tl.offset == typeShaSize && tl.bytes == sizeBytes && tl.isSigned && tl.tipe == AST.Typed.z
+    }
+
+    // byte ranges of global sequences' size fields (for classifying constant-base writes)
+    var gSizeRanges = ISZ[(Z, Z)]()
+    for (info <- globalMap.values if isSeq(info.tipe)) {
+      val lo = info.loc + typeShaSize
+      gSizeRanges = gSizeRanges :+ ((lo, lo + sizeBytes))
+    }
+    def rangesOverlap(a1: Z, a2: Z, b1: Z, b2: Z): B = {
+      return a1 < b2 && b1 < a2
+    }
+
+    // A store provably does NOT write any sequence size field iff:
+    //  - constant (global) base whose byte range misses every global-seq size range, or
+    //  - a temp base that is *only* ever assigned an Indexing with dataOffset past the
+    //    size field (i.e., a genuine element write, which lies above [.., size]).
+    // Anything else (SP-relative writes, unknown pointers, impure temps) is treated as a
+    // possible size write.
+    def notSeqSizeWrite(base: AST.IR.Exp, offset: Z, bytes: Z,
+                        idxMap: HashMap[String, Z], impure: HashSet[String]): B = {
+      base match {
+        case b: AST.IR.Exp.Int =>
+          val lo = b.value + offset
+          val hi = lo + bytes
+          for (r <- gSizeRanges) {
+            if (rangesOverlap(lo, hi, r._1, r._2)) {
+              return F
+            }
+          }
+          return T
+        case b: AST.IR.Exp.Temp =>
+          val k = regKey(b.tipe, b.n)
+          if (impure.contains(k)) {
+            return F
+          }
+          idxMap.get(k) match {
+            case Some(d) => return d >= typeShaSize + sizeBytes
+            case _ => return F
+          }
+        case _ => return F
+      }
+    }
+
+    // Per-procedure: temp -> min Indexing dataOffset, and temps that are not solely
+    // defined by Indexing expressions (hence unusable for element classification).
+    def buildIdxMap(p: AST.IR.Procedure): (HashMap[String, Z], HashSet[String]) = {
+      var m = HashMap.empty[String, Z]
+      var impure = HashSet.empty[String]
+      p.body match {
+        case body: AST.IR.Body.Basic =>
+          for (b <- body.blocks; g <- b.grounds) {
+            g match {
+              case at: AST.IR.Stmt.Assign.Temp =>
+                val k = regKey(at.rhs.tipe, at.lhs)
+                at.rhs match {
+                  case AST.IR.Exp.Intrinsic(idx: Intrinsic.Indexing) =>
+                    m.get(k) match {
+                      case Some(d) => if (idx.dataOffset < d) { m = m + k ~> idx.dataOffset }
+                      case _ => m = m + k ~> idx.dataOffset
+                    }
+                  case _ => impure = impure + k
+                }
+              case AST.IR.Stmt.Intrinsic(tl: Intrinsic.TempLoad) => impure = impure + regKey(tl.tipe, tl.temp)
+              case _ =>
+            }
+          }
+        case _ =>
+      }
+      return (m, impure)
+    }
+
+    // ---- interprocedural summary: which procedures may write a sequence size field ----
+    val ctxSet: HashSet[AST.IR.MethodContext] = HashSet.empty[AST.IR.MethodContext] ++
+      (for (p <- program.procedures) yield p.context)
+    var idxMaps = HashMap.empty[AST.IR.MethodContext, (HashMap[String, Z], HashSet[String])]
+    var localDangerMap = HashMap.empty[AST.IR.MethodContext, B]
+    var calleesMap = HashMap.empty[AST.IR.MethodContext, ISZ[AST.IR.MethodContext]]
+    var unresolvedMap = HashMap.empty[AST.IR.MethodContext, B]
+    for (p <- program.procedures) {
+      val pair = buildIdxMap(p)
+      val m = pair._1
+      val impure = pair._2
+      idxMaps = idxMaps + p.context ~> pair
+      var ld = F
+      var callees = ISZ[AST.IR.MethodContext]()
+      var unres = F
+      p.body match {
+        case body: AST.IR.Body.Basic =>
+          for (b <- body.blocks; g <- b.grounds) {
+            g match {
+              case AST.IR.Stmt.Intrinsic(s: Intrinsic.Store) =>
+                if (!notSeqSizeWrite(s.base, s.offset, s.bytes, m, impure)) {
+                  ld = T
+                }
+              case AST.IR.Stmt.Intrinsic(_: Intrinsic.Copy) => ld = T
+              case AST.IR.Stmt.Intrinsic(_: Intrinsic.Erase) => ld = T
+              case _ =>
+            }
+            val ac = Util.ApplyCollector(ISZ[AST.IR.Exp.Apply](), F)
+            ac.transform_langastIRStmtGround(g)
+            if (ac.hasOther) {
+              ld = T
+            }
+            for (ap <- ac.r) {
+              val c = AST.IR.MethodContext(ap.isInObject, ap.owner, ap.id, ap.methodType)
+              if (ctxSet.contains(c)) {
+                callees = callees :+ c
+              } else {
+                unres = T
+              }
+            }
+          }
+        case _ =>
+      }
+      localDangerMap = localDangerMap + p.context ~> ld
+      calleesMap = calleesMap + p.context ~> callees
+      unresolvedMap = unresolvedMap + p.context ~> unres
+    }
+    var writesSize = HashMap.empty[AST.IR.MethodContext, B]
+    for (p <- program.procedures) {
+      writesSize = writesSize + p.context ~> F
+    }
+    var wsChanged = T
+    while (wsChanged) {
+      wsChanged = F
+      for (p <- program.procedures) {
+        val c = p.context
+        var v = localDangerMap.get(c).getOrElse(T) || unresolvedMap.get(c).getOrElse(T)
+        if (!v) {
+          for (cc <- calleesMap.get(c).getOrElse(ISZ()) if writesSize.get(cc).getOrElse(T)) {
+            v = T
+          }
+        }
+        if (v != writesSize.get(c).getOrElse(F)) {
+          writesSize = writesSize + c ~> v
+          wsChanged = T
+        }
+      }
+    }
+
+    // ---- per-procedure loop-invariant size-load hoisting ----
+    val maxT = programMaxTemps(this, program)
+    var classNext = HashMap.empty[String, Z]
+    def freshTemp(tipe: AST.Typed): Z = {
+      val cls = regClassId(tipe)
+      val n = classNext.get(cls).getOrElse(maxT.typeCount(this, tipe))
+      classNext = classNext + cls ~> (n + 1)
+      return n
+    }
+    // position-insensitive address identity: same base register + offset + width + type
+    // => same memory location. Grouping by this lets one hoist cover every load of the
+    // same invariant address (e.g. all of bubble's a.size reads across source lines).
+    def addrSig(tl: Intrinsic.TempLoad): String = {
+      return st"${tl.rhsOffset.prettyST(printer)}|${tl.bytes}|${tl.isSigned}|${tl.tipe}".render
+    }
+    def substOne(g: AST.IR.Stmt.Ground, repSig: String, r: Z): AST.IR.Stmt.Ground = {
+      g match {
+        case AST.IR.Stmt.Intrinsic(tl: Intrinsic.TempLoad) if addrSig(tl) == repSig =>
+          return AST.IR.Stmt.Assign.Temp(tl.temp, AST.IR.Exp.Temp(r, tl.tipe, tl.pos), tl.pos)
+        case _ => return g
+      }
+    }
+    def retarget(j: AST.IR.Jump, from: Z, to: Z): AST.IR.Jump = {
+      j match {
+        case jj: AST.IR.Jump.Goto => return if (jj.label == from) jj(label = to) else jj
+        case jj: AST.IR.Jump.If =>
+          var r = jj
+          if (jj.thenLabel == from) {
+            r = r(thenLabel = to)
+          }
+          if (jj.elseLabel == from) {
+            r = r(elseLabel = to)
+          }
+          return r
+        case jj: AST.IR.Jump.Switch =>
+          var cs = ISZ[AST.IR.Jump.Switch.Case]()
+          for (c <- jj.cases) {
+            cs = cs :+ (if (c.label == from) c(label = to) else c)
+          }
+          val dOpt: Option[Z] = jj.defaultLabelOpt match {
+            case Some(l) => Some(if (l == from) to else l)
+            case _ => None()
+          }
+          return jj(cases = cs, defaultLabelOpt = dOpt)
+        case _ => return j
+      }
+    }
+
+    var newProcs = ISZ[AST.IR.Procedure]()
+    for (proc <- program.procedures) {
+      proc.body match {
+        case body0: AST.IR.Body.Basic =>
+          val pair = idxMaps.get(proc.context).get
+          val idxM = pair._1
+          val impureM = pair._2
+
+          var blockMap = HashMap.empty[Z, AST.IR.BasicBlock]
+          var order = ISZ[Z]()
+          for (b <- body0.blocks) {
+            blockMap = blockMap + b.label ~> b
+            order = order :+ b.label
+          }
+          // predecessor map (real blocks only)
+          var preds = HashMap.empty[Z, ISZ[Z]]
+          for (l <- order) {
+            preds = preds + l ~> ISZ[Z]()
+          }
+          for (b <- body0.blocks; t <- b.jump.targets) {
+            preds = preds + t ~> (preds.get(t).getOrElse(ISZ()) :+ b.label)
+          }
+          // forward dominators (root = entry block)
+          val entry = body0.blocks(0).label
+          val allSet: HashSet[Z] = HashSet.empty[Z] ++ order
+          var dom = HashMap.empty[Z, HashSet[Z]]
+          for (l <- order) {
+            dom = dom + l ~> (if (l == entry) HashSet.empty[Z] + entry else allSet)
+          }
+          var domChanged = T
+          while (domChanged) {
+            domChanged = F
+            for (n <- order if n != entry) {
+              val ps = preds.get(n).getOrElse(ISZ())
+              val nd: HashSet[Z] =
+                if (ps.isEmpty) {
+                  HashSet.empty[Z] + n
+                } else {
+                  var inter = dom.get(ps(0)).getOrElse(allSet)
+                  var i: Z = 1
+                  while (i < ps.size) {
+                    val pd = dom.get(ps(i)).getOrElse(allSet)
+                    var f = HashSet.empty[Z]
+                    for (e <- inter.elements if pd.contains(e)) {
+                      f = f + e
+                    }
+                    inter = f
+                    i = i + 1
+                  }
+                  inter + n
+                }
+              if (nd != dom.get(n).getOrElse(allSet)) {
+                dom = dom + n ~> nd
+                domChanged = T
+              }
+            }
+          }
+          // back-edges grouped by header (v dominates u for edge u -> v)
+          var headers = ISZ[Z]()
+          var latchMap = HashMap.empty[Z, ISZ[Z]]
+          for (b <- body0.blocks; t <- b.jump.targets) {
+            if (dom.get(b.label).getOrElse(HashSet.empty).contains(t)) {
+              if (!latchMap.contains(t)) {
+                headers = headers :+ t
+              }
+              latchMap = latchMap + t ~> (latchMap.get(t).getOrElse(ISZ()) :+ b.label)
+            }
+          }
+          // natural loops with a unique preheader
+          var loops = ISZ[(Z, HashSet[Z], Z)]()
+          for (h <- headers) {
+            var lbody = HashSet.empty[Z] + h
+            for (l <- latchMap.get(h).get) {
+              lbody = lbody + l
+            }
+            var lchanged = T
+            while (lchanged) {
+              lchanged = F
+              for (n <- lbody.elements if n != h; p <- preds.get(n).getOrElse(ISZ())) {
+                if (!lbody.contains(p)) {
+                  lbody = lbody + p
+                  lchanged = T
+                }
+              }
+            }
+            var ext = ISZ[Z]()
+            for (p <- preds.get(h).getOrElse(ISZ()) if !lbody.contains(p)) {
+              ext = ext :+ p
+            }
+            if (ext.size == 1) {
+              loops = loops :+ ((h, lbody, ext(0)))
+            }
+          }
+          // outer-first (largest body first) so shared invariant loads hoist maximally
+          var sortedLoops = ISZ[(Z, HashSet[Z], Z)]()
+          var remaining = loops
+          while (remaining.nonEmpty) {
+            var bestIdx: Z = 0
+            var i: Z = 1
+            while (i < remaining.size) {
+              if (remaining(i)._2.size > remaining(bestIdx)._2.size) {
+                bestIdx = i
+              }
+              i = i + 1
+            }
+            sortedLoops = sortedLoops :+ remaining(bestIdx)
+            var nr = ISZ[(Z, HashSet[Z], Z)]()
+            for (j <- remaining.indices if j != bestIdx) {
+              nr = nr :+ remaining(j)
+            }
+            remaining = nr
+          }
+
+          var maxLabel: Z = -1
+          for (l <- order) {
+            if (l > maxLabel) {
+              maxLabel = l
+            }
+          }
+
+          for (lp <- sortedLoops) {
+            val h = lp._1
+            val lbody = lp._2
+            val ph = lp._3
+            // is the whole loop free of any sequence-size write (across calls)?
+            var clean = T
+            for (bl <- lbody.elements if clean) {
+              val b = blockMap.get(bl).get
+              for (g <- b.grounds if clean) {
+                g match {
+                  case AST.IR.Stmt.Intrinsic(s: Intrinsic.Store) =>
+                    if (!notSeqSizeWrite(s.base, s.offset, s.bytes, idxM, impureM)) {
+                      clean = F
+                    }
+                  case AST.IR.Stmt.Intrinsic(_: Intrinsic.Copy) => clean = F
+                  case AST.IR.Stmt.Intrinsic(_: Intrinsic.Erase) => clean = F
+                  case _ =>
+                }
+                if (clean) {
+                  val ac = Util.ApplyCollector(ISZ[AST.IR.Exp.Apply](), F)
+                  ac.transform_langastIRStmtGround(g)
+                  if (ac.hasOther) {
+                    clean = F
+                  }
+                  for (ap <- ac.r if clean) {
+                    val c = AST.IR.MethodContext(ap.isInObject, ap.owner, ap.id, ap.methodType)
+                    if (writesSize.get(c).getOrElse(T)) {
+                      clean = F
+                    }
+                  }
+                }
+              }
+            }
+            if (clean) {
+              // temps defined inside the loop (for invariance)
+              var defKeys = HashSet.empty[String]
+              var defsSP = F
+              for (bl <- lbody.elements) {
+                val b = blockMap.get(bl).get
+                for (g <- b.grounds) {
+                  g match {
+                    case at: AST.IR.Stmt.Assign.Temp => defKeys = defKeys + regKey(at.rhs.tipe, at.lhs)
+                    case AST.IR.Stmt.Intrinsic(tl: Intrinsic.TempLoad) => defKeys = defKeys + regKey(tl.tipe, tl.temp)
+                    case AST.IR.Stmt.Intrinsic(ra: Intrinsic.RegisterAssign) => if (ra.isSP) { defsSP = T }
+                    case _ =>
+                  }
+                }
+              }
+              // distinct invariant size-load addresses in the loop body
+              var reps = ISZ[Intrinsic.TempLoad]()
+              var seen = HashSet.empty[String]
+              for (bl <- lbody.elements) {
+                val b = blockMap.get(bl).get
+                for (g <- b.grounds) {
+                  g match {
+                    case AST.IR.Stmt.Intrinsic(tl: Intrinsic.TempLoad) if isSizeLoad(tl) =>
+                      val tc = Util.TempCollector(F, HashSMap.empty[Z, HashSSet[AST.Typed]])
+                      tc.transform_langastIRExp(tl.base)
+                      var inv = T
+                      for (entry <- tc.r.entries; t <- entry._2.elements) {
+                        if (defKeys.contains(regKey(t, entry._1))) {
+                          inv = F
+                        }
+                      }
+                      if (inv) {
+                        val tac = Util.TempAccessCollector(HashSet.empty[Z], F, F)
+                        tac.transform_langastIRExp(tl.base)
+                        if (tac.usesSP && defsSP) {
+                          inv = F
+                        }
+                      }
+                      if (inv) {
+                        val sig = addrSig(tl)
+                        if (!seen.contains(sig)) {
+                          seen = seen + sig
+                          reps = reps :+ tl
+                        }
+                      }
+                    case _ =>
+                  }
+                }
+              }
+              var chainSucc = h
+              for (rep <- reps) {
+                val r = freshTemp(rep.tipe)
+                val repSig = addrSig(rep)
+                for (bl <- lbody.elements) {
+                  val b = blockMap.get(bl).get
+                  val ng: ISZ[AST.IR.Stmt.Ground] = for (g <- b.grounds) yield substOne(g, repSig, r)
+                  blockMap = blockMap + bl ~> b(grounds = ng)
+                }
+                maxLabel = maxLabel + 1
+                val nl = maxLabel
+                val hoisted = Intrinsic.TempLoad(temp = r, base = rep.base, offset = rep.offset,
+                  isSigned = rep.isSigned, bytes = rep.bytes, comment = st"hoisted: ${rep.comment}",
+                  tipe = rep.tipe, pos = rep.pos)
+                val nb = AST.IR.BasicBlock(nl, ISZ[AST.IR.Stmt.Ground](AST.IR.Stmt.Intrinsic(hoisted)),
+                  AST.IR.Jump.Goto(chainSucc, rep.pos))
+                blockMap = blockMap + nl ~> nb
+                order = order :+ nl
+                chainSucc = nl
+                report = report :+ st"${proc.id}: hoisted [${rep.comment.render}] out of loop (header .$h) into preheader block .$nl as ${regClassId(rep.tipe)}#$r"
+              }
+              if (chainSucc != h) {
+                val pb = blockMap.get(ph).get
+                blockMap = blockMap + ph ~> pb(jump = retarget(pb.jump, h, chainSucc))
+              }
+            }
+          }
+
+          val newBlocks: ISZ[AST.IR.BasicBlock] = for (l <- order) yield blockMap.get(l).get
+          newProcs = newProcs :+ proc(body = body0(blocks = newBlocks))
+        case _ => newProcs = newProcs :+ proc
+      }
+    }
+    return (program(procedures = newProcs), report)
   }
 
   def transformAssignTempLoad(fresh: lang.IRTranslator.Fresh, p: AST.IR.Procedure): AST.IR.Procedure = {
@@ -1776,7 +2260,16 @@ import Anvil._
         case _ => F
       }
     }
+    // T3.2: a compile-time-zero default (integer 0 or boolean false) lets the
+    // per-element init loop be replaced with a single Erase/DMA zero-fill burst.
+    @strictpure def isZeroDefault(e: AST.IR.Exp): B = e match {
+      case e: AST.IR.Exp.Int => e.value == 0
+      case e: AST.IR.Exp.Bool => !e.value
+      case _ => F
+    }
     var createLabels = HashSMap.empty[AST.Typed.Name, Z]
+    // T3.2: types whose create(size, 0) is lowered to a zero-fill burst (flag-gated).
+    var eraseLabels = HashSMap.empty[AST.Typed.Name, Z]
     val cpt: AST.Typed = if (config.splitTempSizes) cpType else AST.Typed.u64
     fresh.setTemp(maxTemps.typeCount(this, cpt))
     val retParam = fresh.temp()
@@ -1815,8 +2308,21 @@ import Anvil._
               fresh.label()
           }
           val t = rhs.tipe.asInstanceOf[AST.Typed.Name]
-          val createLabel: Z = createLabels.get(t).getOrElse(fresh.label())
-          createLabels = createLabels + t ~> createLabel
+          // T3.2: route a scalar-element create(size, 0) to a zero-fill burst block;
+          // all other creates keep the per-element init loop. Restricted to non-Default
+          // memory access, where the Erase intrinsic lowers to the BlockMemory DMA
+          // zero-fill (Default has no DMA engine, so its Erase emits no hardware).
+          val useErase: B = config.arrayInitBurst && config.memoryAccess != Config.MemoryAccess.Default &&
+            isScalar(t.args(1)) && isZeroDefault(rhs.args(1))
+          val createLabel: Z = if (useErase) {
+            val l = eraseLabels.get(t).getOrElse(fresh.label())
+            eraseLabels = eraseLabels + t ~> l
+            l
+          } else {
+            val l = createLabels.get(t).getOrElse(fresh.label())
+            createLabels = createLabels + t ~> l
+            l
+          }
           var grounds = ISZ[AST.IR.Stmt.Ground]()
           grounds = grounds :+ AST.IR.Stmt.Assign.Temp(retParam, AST.IR.Exp.Int(cpType, retLabel, pos), pos)
           grounds = grounds :+ AST.IR.Stmt.Assign.Temp(lhsOffsetParam, AST.IR.Exp.Temp(stmt.lhs, spType, pos), pos)
@@ -1885,6 +2391,40 @@ import Anvil._
         AST.IR.Stmt.Assign.Temp(index, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(index, spType, pos),
           AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, 1, pos), pos), pos)
       ), AST.IR.Jump.Goto(loop, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(end, ISZ(),
+        AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(T, retParam, None(), s"screate:$t", pos)))
+    }
+    // T3.2: emit zero-fill burst blocks for create(size, 0) sites. The per-element
+    // init loop is replaced by a single Intrinsic.Erase over the array's data region
+    // (whole capacity = maxSize * elementSize, a compile-time constant that stays within
+    // the array's own stack allocation; bytes past `size` are never read, so zeroing the
+    // full capacity is observationally identical). The `size <= maxSize` bounds check is
+    // preserved so an out-of-bounds create still errors. The Erase lowers to the existing
+    // DMA zero-fill (per-cycle address auto-increment + byte enables), deleting the
+    // N per-element store handshakes.
+    for (entry <- eraseLabels.entries) {
+      val (t, eraseLabel) = entry
+      val maxSize = getMaxArraySize(t)
+      val pos = p.pos
+      val checkMax = fresh.label()
+      val eraseDo = fresh.label()
+      val end = fresh.label()
+      val elementType = t.args(1)
+      val elementSize = typeByteSize(elementType)
+      val dataOffset = typeShaSize + typeByteSize(AST.Typed.z)
+      val totalBytes = maxSize * elementSize
+      blocks = blocks :+ AST.IR.BasicBlock(eraseLabel, ISZ(
+        AST.IR.Stmt.Assign.Temp(lhsOffsetParam, AST.IR.Exp.Binary(spType, AST.IR.Exp.Temp(lhsOffsetParam, spType, pos),
+          AST.IR.Exp.Binary.Op.Add, AST.IR.Exp.Int(spType, dataOffset, pos), pos), pos),
+        AST.IR.Stmt.Assign.Temp(cond1, AST.IR.Exp.Binary(AST.Typed.b, AST.IR.Exp.Temp(sizeParam, spType, pos),
+          AST.IR.Exp.Binary.Op.Le, AST.IR.Exp.Int(spType, maxSize, pos), pos), pos)
+      ), AST.IR.Jump.Goto(checkMax, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(checkMax, ISZ(), AST.IR.Jump.If(
+        AST.IR.Exp.Temp(cond1, AST.Typed.b, pos), eraseDo, errorLabel, pos))
+      blocks = blocks :+ AST.IR.BasicBlock(eraseDo, ISZ(
+        AST.IR.Stmt.Intrinsic(Intrinsic.Erase(AST.IR.Exp.Temp(lhsOffsetParam, spType, pos), 0, totalBytes,
+          st"array-init burst zero-fill $t", AST.Typed.u8, pos))
+      ), AST.IR.Jump.Goto(end, pos))
       blocks = blocks :+ AST.IR.BasicBlock(end, ISZ(),
         AST.IR.Jump.Intrinsic(Intrinsic.GotoLocal(T, retParam, None(), s"screate:$t", pos)))
     }
