@@ -3683,7 +3683,7 @@ import Anvil._
             val res = gname :+ resultLocalId
             val resType = globalMap.get(res).get.tipe
             var rhs: AST.IR.Exp = AST.IR.Exp.GlobalVarRef(gname :+ resultLocalId, e.tipe, epos)
-            if (resType != res) {
+            if (resType != e.tipe) {
               rhs = AST.IR.Exp.Type(F, rhs, t, epos)
             }
             grounds = grounds :+ g(rhs = rhs)

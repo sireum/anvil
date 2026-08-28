@@ -3842,7 +3842,7 @@ import HwSynthesizer._
               |val r_readData      = Reg(UInt(C_S_AXI_DATA_WIDTH.W))
               |val r_readLen       = Reg(UInt((C_S_AXI_DATA_WIDTH / 8).W))
               |
-              |${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) bramDefaultPortValueST.render else st""}
+              |${if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) bramDefaultPortValueST else st""}
               |
               |// write state machine
               |val sWriteIdle :: sAWActive :: sWActive :: sBActive:: Nil = Enum(4)

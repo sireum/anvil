@@ -3942,7 +3942,7 @@ import HwSynthesizer2._
     val targetModule: ArbIpModule = findChiselModule(ip).get
     val moduleInstances: ST = if(targetModule.expression == ArbBlockMemoryIP()) {
       if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
-        st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${targetModule.asInstanceOf[BlockMemory].depth}, ${targetModule.width}))"""
+        st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(${targetModule.asInstanceOf[ArbBlockMemory].depth}, ${targetModule.width}))"""
       else if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramAxi4 || anvil.config.memoryAccess == Anvil.Config.MemoryAccess.Ddr)
         st"""val ${targetModule.instanceName} = Module(new ${targetModule.moduleName}(C_M_AXI_DATA_WIDTH = C_M_AXI_DATA_WIDTH, C_M_AXI_ADDR_WIDTH = C_M_AXI_ADDR_WIDTH, C_M_TARGET_SLAVE_BASE_ADDR = C_M_TARGET_SLAVE_BASE_ADDR, MEMORY_DEPTH = MEMORY_DEPTH))"""
       else
