@@ -1276,6 +1276,7 @@ import IRSimulator._
           case AST.IR.Exp.Binary.Op.AppendAll => halt(s"Infeasible: $exp")
           case AST.IR.Exp.Binary.Op.Prepend => halt(s"Infeasible: $exp")
         }
+      case exp: AST.IR.Exp.BinaryTemporal => halt(s"Infeasible: $exp")
       case exp: AST.IR.Exp.Unary =>
         val (v, acs) = evalExp(state, exp.exp)
         exp.op match {
@@ -1284,6 +1285,7 @@ import IRSimulator._
           case AST.Exp.UnaryOp.Plus => return (v, acs)
           case AST.Exp.UnaryOp.Minus => return (v.minus, acs)
         }
+      case exp: AST.IR.Exp.UnaryTemporal => halt(s"Infeasible: $exp")
       case exp: AST.IR.Exp.Type =>
         val (v, acs) = evalExp(state, exp.exp)
         val n: U64 =
