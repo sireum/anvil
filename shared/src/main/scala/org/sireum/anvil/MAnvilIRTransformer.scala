@@ -48,11 +48,11 @@ object MAnvilIRTransformer {
   def transformISZ[T](s: IS[Z, T], f: T => MOption[T]): MOption[IS[Z, T]] = {
     val s2: MS[Z, T] = s.toMS
     var changed: B = F
-    for (i <- s2.indices) {
-      val e: T = s(i)
+    for (i <- 0 until s.size) {
+      val e: T = s.atZ(i)
       val r: MOption[T] = f(e)
       changed = changed || r.nonEmpty
-      s2(i) = r.getOrElse(e)
+      s2.updateZ(i, r.getOrElse(e))
     }
     if (changed) {
       return MSome(s2.toIS)
@@ -534,22 +534,31 @@ import MAnvilIRTransformer._
     o match {
       case o: Intrinsic.Load =>
         val r: PreResult[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = preIntrinsicLoad(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Exp.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Exp.Intrinsic.Type => PreResult(continu, MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Exp.Intrinsic.Type]())
         }
         return r
       case o: Intrinsic.Indexing =>
         val r: PreResult[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = preIntrinsicIndexing(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Exp.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Exp.Intrinsic.Type => PreResult(continu, MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Exp.Intrinsic.Type]())
         }
         return r
       case o: Intrinsic.Register =>
         val r: PreResult[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = preIntrinsicRegister(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Exp.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Exp.Intrinsic.Type => PreResult(continu, MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Exp.Intrinsic.Type]())
         }
         return r
@@ -560,57 +569,81 @@ import MAnvilIRTransformer._
     o match {
       case o: org.sireum.lang.ast.IR.Stmt.Expr =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt] = pre_langastIRStmtExpr(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt]())
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Local =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt] = pre_langastIRStmtAssignLocal(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt]())
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Global =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt] = pre_langastIRStmtAssignGlobal(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt]())
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Temp =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt] = pre_langastIRStmtAssignTemp(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt]())
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Field =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt] = pre_langastIRStmtAssignField(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt]())
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Index =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt] = pre_langastIRStmtAssignIndex(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt]())
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Decl =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt] = pre_langastIRStmtDecl(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt]())
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Intrinsic =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt] = pre_langastIRStmtIntrinsic(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt]())
         }
         return r
@@ -632,36 +665,51 @@ import MAnvilIRTransformer._
       case o: org.sireum.lang.ast.IR.Stmt.Expr => return pre_langastIRStmtExpr(o)
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Local =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Ground] = pre_langastIRStmtAssignLocal(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Ground)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Ground](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt.Ground => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Ground](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Ground]())
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Global =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Ground] = pre_langastIRStmtAssignGlobal(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Ground)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Ground](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt.Ground => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Ground](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Ground]())
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Temp =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Ground] = pre_langastIRStmtAssignTemp(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Ground)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Ground](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt.Ground => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Ground](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Ground]())
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Field =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Ground] = pre_langastIRStmtAssignField(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Ground)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Ground](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt.Ground => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Ground](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Ground]())
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Index =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Ground] = pre_langastIRStmtAssignIndex(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Ground)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Ground](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt.Ground => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Ground](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Ground]())
         }
         return r
@@ -720,43 +768,61 @@ import MAnvilIRTransformer._
     o match {
       case o: Intrinsic.TempLoad =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = preIntrinsicTempLoad(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
         }
         return r
       case o: Intrinsic.Store =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = preIntrinsicStore(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
         }
         return r
       case o: Intrinsic.Copy =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = preIntrinsicCopy(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
         }
         return r
       case o: Intrinsic.Erase =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = preIntrinsicErase(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
         }
         return r
       case o: Intrinsic.Decl =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = preIntrinsicDecl(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
         }
         return r
       case o: Intrinsic.RegisterAssign =>
         val r: PreResult[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = preIntrinsicRegisterAssign(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]())
         }
         return r
@@ -865,15 +931,21 @@ import MAnvilIRTransformer._
     o match {
       case o: Intrinsic.GotoLocal =>
         val r: PreResult[org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = preIntrinsicGotoLocal(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Jump.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Jump.Intrinsic.Type => PreResult(continu, MSome[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]())
         }
         return r
       case o: Intrinsic.GotoGlobal =>
         val r: PreResult[org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = preIntrinsicGotoGlobal(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Jump.Intrinsic.Type)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Jump.Intrinsic.Type => PreResult(continu, MSome[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]())
         }
         return r
@@ -927,8 +999,11 @@ import MAnvilIRTransformer._
     o match {
       case o: org.sireum.lang.ast.IR.Printer.Empty =>
         val r: PreResult[org.sireum.lang.ast.IR.Printer] = pre_langastIRPrinterEmpty(o) match {
-         case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Printer)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Printer](r))
-         case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Printer")
+         case PreResult(continu, MSome(r)) =>
+           r match {
+             case r: org.sireum.lang.ast.IR.Printer => PreResult(continu, MSome[org.sireum.lang.ast.IR.Printer](r))
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Printer")
+           }
          case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Printer]())
         }
         return r
@@ -1110,22 +1185,31 @@ import MAnvilIRTransformer._
     o match {
       case o: Intrinsic.Load =>
         val r: MOption[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = postIntrinsicLoad(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Exp.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Exp.Intrinsic.Type => MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Exp.Intrinsic.Type]()
         }
         return r
       case o: Intrinsic.Indexing =>
         val r: MOption[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = postIntrinsicIndexing(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Exp.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Exp.Intrinsic.Type => MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Exp.Intrinsic.Type]()
         }
         return r
       case o: Intrinsic.Register =>
         val r: MOption[org.sireum.lang.ast.IR.Exp.Intrinsic.Type] = postIntrinsicRegister(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Exp.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Exp.Intrinsic.Type => MSome[org.sireum.lang.ast.IR.Exp.Intrinsic.Type](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Intrinsic.Type")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Exp.Intrinsic.Type]()
         }
         return r
@@ -1136,57 +1220,81 @@ import MAnvilIRTransformer._
     o match {
       case o: org.sireum.lang.ast.IR.Stmt.Expr =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt] = post_langastIRStmtExpr(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt) => MSome[org.sireum.lang.ast.IR.Stmt](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt => MSome[org.sireum.lang.ast.IR.Stmt](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt]()
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Local =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt] = post_langastIRStmtAssignLocal(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt) => MSome[org.sireum.lang.ast.IR.Stmt](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt => MSome[org.sireum.lang.ast.IR.Stmt](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt]()
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Global =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt] = post_langastIRStmtAssignGlobal(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt) => MSome[org.sireum.lang.ast.IR.Stmt](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt => MSome[org.sireum.lang.ast.IR.Stmt](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt]()
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Temp =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt] = post_langastIRStmtAssignTemp(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt) => MSome[org.sireum.lang.ast.IR.Stmt](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt => MSome[org.sireum.lang.ast.IR.Stmt](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt]()
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Field =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt] = post_langastIRStmtAssignField(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt) => MSome[org.sireum.lang.ast.IR.Stmt](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt => MSome[org.sireum.lang.ast.IR.Stmt](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt]()
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Index =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt] = post_langastIRStmtAssignIndex(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt) => MSome[org.sireum.lang.ast.IR.Stmt](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt => MSome[org.sireum.lang.ast.IR.Stmt](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt]()
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Decl =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt] = post_langastIRStmtDecl(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt) => MSome[org.sireum.lang.ast.IR.Stmt](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt => MSome[org.sireum.lang.ast.IR.Stmt](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt]()
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Intrinsic =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt] = post_langastIRStmtIntrinsic(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt) => MSome[org.sireum.lang.ast.IR.Stmt](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt => MSome[org.sireum.lang.ast.IR.Stmt](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt]()
         }
         return r
@@ -1208,36 +1316,51 @@ import MAnvilIRTransformer._
       case o: org.sireum.lang.ast.IR.Stmt.Expr => return post_langastIRStmtExpr(o)
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Local =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Ground] = post_langastIRStmtAssignLocal(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Ground) => MSome[org.sireum.lang.ast.IR.Stmt.Ground](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt.Ground => MSome[org.sireum.lang.ast.IR.Stmt.Ground](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Ground]()
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Global =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Ground] = post_langastIRStmtAssignGlobal(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Ground) => MSome[org.sireum.lang.ast.IR.Stmt.Ground](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt.Ground => MSome[org.sireum.lang.ast.IR.Stmt.Ground](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Ground]()
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Temp =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Ground] = post_langastIRStmtAssignTemp(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Ground) => MSome[org.sireum.lang.ast.IR.Stmt.Ground](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt.Ground => MSome[org.sireum.lang.ast.IR.Stmt.Ground](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Ground]()
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Field =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Ground] = post_langastIRStmtAssignField(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Ground) => MSome[org.sireum.lang.ast.IR.Stmt.Ground](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt.Ground => MSome[org.sireum.lang.ast.IR.Stmt.Ground](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Ground]()
         }
         return r
       case o: org.sireum.lang.ast.IR.Stmt.Assign.Index =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Ground] = post_langastIRStmtAssignIndex(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Ground) => MSome[org.sireum.lang.ast.IR.Stmt.Ground](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt.Ground => MSome[org.sireum.lang.ast.IR.Stmt.Ground](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Ground")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Ground]()
         }
         return r
@@ -1296,43 +1419,61 @@ import MAnvilIRTransformer._
     o match {
       case o: Intrinsic.TempLoad =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = postIntrinsicTempLoad(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]()
         }
         return r
       case o: Intrinsic.Store =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = postIntrinsicStore(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]()
         }
         return r
       case o: Intrinsic.Copy =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = postIntrinsicCopy(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]()
         }
         return r
       case o: Intrinsic.Erase =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = postIntrinsicErase(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]()
         }
         return r
       case o: Intrinsic.Decl =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = postIntrinsicDecl(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]()
         }
         return r
       case o: Intrinsic.RegisterAssign =>
         val r: MOption[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type] = postIntrinsicRegisterAssign(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Stmt.Intrinsic.Type => MSome[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Intrinsic.Type")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Stmt.Intrinsic.Type]()
         }
         return r
@@ -1441,15 +1582,21 @@ import MAnvilIRTransformer._
     o match {
       case o: Intrinsic.GotoLocal =>
         val r: MOption[org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = postIntrinsicGotoLocal(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Jump.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Jump.Intrinsic.Type => MSome[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]()
         }
         return r
       case o: Intrinsic.GotoGlobal =>
         val r: MOption[org.sireum.lang.ast.IR.Jump.Intrinsic.Type] = postIntrinsicGotoGlobal(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Jump.Intrinsic.Type) => MSome[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Jump.Intrinsic.Type => MSome[org.sireum.lang.ast.IR.Jump.Intrinsic.Type](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Jump.Intrinsic.Type")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Jump.Intrinsic.Type]()
         }
         return r
@@ -1503,8 +1650,11 @@ import MAnvilIRTransformer._
     o match {
       case o: org.sireum.lang.ast.IR.Printer.Empty =>
         val r: MOption[org.sireum.lang.ast.IR.Printer] = post_langastIRPrinterEmpty(o) match {
-         case MSome(result: org.sireum.lang.ast.IR.Printer) => MSome[org.sireum.lang.ast.IR.Printer](result)
-         case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Printer")
+         case MSome(result) =>
+           result match {
+             case result: org.sireum.lang.ast.IR.Printer => MSome[org.sireum.lang.ast.IR.Printer](result)
+             case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Printer")
+           }
          case _ => MNone[org.sireum.lang.ast.IR.Printer]()
         }
         return r
@@ -2911,8 +3061,11 @@ import MAnvilIRTransformer._
 
   def transform_langastIRExpApply(o: org.sireum.lang.ast.IR.Exp.Apply): MOption[org.sireum.lang.ast.IR.Exp.Apply] = {
     val preR: PreResult[org.sireum.lang.ast.IR.Exp.Apply] = pre_langastIRExpApply(o) match {
-     case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Exp.Apply)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Exp.Apply](r))
-     case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Apply")
+     case PreResult(continu, MSome(r)) =>
+       r match {
+         case r: org.sireum.lang.ast.IR.Exp.Apply => PreResult(continu, MSome[org.sireum.lang.ast.IR.Exp.Apply](r))
+         case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Apply")
+       }
      case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Exp.Apply]())
     }
     val r: MOption[org.sireum.lang.ast.IR.Exp.Apply] = if (preR.continu) {
@@ -2931,8 +3084,11 @@ import MAnvilIRTransformer._
     val hasChanged: B = r.nonEmpty
     val o2: org.sireum.lang.ast.IR.Exp.Apply = r.getOrElse(o)
     val postR: MOption[org.sireum.lang.ast.IR.Exp.Apply] = post_langastIRExpApply(o2) match {
-     case MSome(result: org.sireum.lang.ast.IR.Exp.Apply) => MSome[org.sireum.lang.ast.IR.Exp.Apply](result)
-     case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Apply")
+     case MSome(result) =>
+       result match {
+         case result: org.sireum.lang.ast.IR.Exp.Apply => MSome[org.sireum.lang.ast.IR.Exp.Apply](result)
+         case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Exp.Apply")
+       }
      case _ => MNone[org.sireum.lang.ast.IR.Exp.Apply]()
     }
     if (postR.nonEmpty) {
@@ -2946,8 +3102,11 @@ import MAnvilIRTransformer._
 
   def transform_langastIRStmtBlock(o: org.sireum.lang.ast.IR.Stmt.Block): MOption[org.sireum.lang.ast.IR.Stmt.Block] = {
     val preR: PreResult[org.sireum.lang.ast.IR.Stmt.Block] = pre_langastIRStmtBlock(o) match {
-     case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Block)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Block](r))
-     case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Block")
+     case PreResult(continu, MSome(r)) =>
+       r match {
+         case r: org.sireum.lang.ast.IR.Stmt.Block => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Block](r))
+         case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Block")
+       }
      case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Block]())
     }
     val r: MOption[org.sireum.lang.ast.IR.Stmt.Block] = if (preR.continu) {
@@ -2966,8 +3125,11 @@ import MAnvilIRTransformer._
     val hasChanged: B = r.nonEmpty
     val o2: org.sireum.lang.ast.IR.Stmt.Block = r.getOrElse(o)
     val postR: MOption[org.sireum.lang.ast.IR.Stmt.Block] = post_langastIRStmtBlock(o2) match {
-     case MSome(result: org.sireum.lang.ast.IR.Stmt.Block) => MSome[org.sireum.lang.ast.IR.Stmt.Block](result)
-     case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Block")
+     case MSome(result) =>
+       result match {
+         case result: org.sireum.lang.ast.IR.Stmt.Block => MSome[org.sireum.lang.ast.IR.Stmt.Block](result)
+         case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Block")
+       }
      case _ => MNone[org.sireum.lang.ast.IR.Stmt.Block]()
     }
     if (postR.nonEmpty) {
@@ -2981,8 +3143,11 @@ import MAnvilIRTransformer._
 
   def transform_langastIRStmtDecl(o: org.sireum.lang.ast.IR.Stmt.Decl): MOption[org.sireum.lang.ast.IR.Stmt.Decl] = {
     val preR: PreResult[org.sireum.lang.ast.IR.Stmt.Decl] = pre_langastIRStmtDecl(o) match {
-     case PreResult(continu, MSome(r: org.sireum.lang.ast.IR.Stmt.Decl)) => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Decl](r))
-     case PreResult(_, MSome(_)) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Decl")
+     case PreResult(continu, MSome(r)) =>
+       r match {
+         case r: org.sireum.lang.ast.IR.Stmt.Decl => PreResult(continu, MSome[org.sireum.lang.ast.IR.Stmt.Decl](r))
+         case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Decl")
+       }
      case PreResult(continu, _) => PreResult(continu, MNone[org.sireum.lang.ast.IR.Stmt.Decl]())
     }
     val r: MOption[org.sireum.lang.ast.IR.Stmt.Decl] = if (preR.continu) {
@@ -3002,8 +3167,11 @@ import MAnvilIRTransformer._
     val hasChanged: B = r.nonEmpty
     val o2: org.sireum.lang.ast.IR.Stmt.Decl = r.getOrElse(o)
     val postR: MOption[org.sireum.lang.ast.IR.Stmt.Decl] = post_langastIRStmtDecl(o2) match {
-     case MSome(result: org.sireum.lang.ast.IR.Stmt.Decl) => MSome[org.sireum.lang.ast.IR.Stmt.Decl](result)
-     case MSome(_) => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Decl")
+     case MSome(result) =>
+       result match {
+         case result: org.sireum.lang.ast.IR.Stmt.Decl => MSome[org.sireum.lang.ast.IR.Stmt.Decl](result)
+         case _ => halt("Can only produce object of type org.sireum.lang.ast.IR.Stmt.Decl")
+       }
      case _ => MNone[org.sireum.lang.ast.IR.Stmt.Decl]()
     }
     if (postR.nonEmpty) {
