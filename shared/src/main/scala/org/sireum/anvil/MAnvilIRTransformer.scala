@@ -273,6 +273,14 @@ object MAnvilIRTransformer {
 
   val PostResult_langastIRStmtMatchCase: MOption[org.sireum.lang.ast.IR.Stmt.Match.Case] = MNone()
 
+  val PreResult_langastIRStmtSwitch: PreResult[org.sireum.lang.ast.IR.Stmt] = PreResult(T, MNone())
+
+  val PostResult_langastIRStmtSwitch: MOption[org.sireum.lang.ast.IR.Stmt] = MNone()
+
+  val PreResult_langastIRStmtSwitchCase: PreResult[org.sireum.lang.ast.IR.Stmt.Switch.Case] = PreResult(T, MNone())
+
+  val PostResult_langastIRStmtSwitchCase: MOption[org.sireum.lang.ast.IR.Stmt.Switch.Case] = MNone()
+
   val PreResult_langastIRStmtWhile: PreResult[org.sireum.lang.ast.IR.Stmt] = PreResult(T, MNone())
 
   val PostResult_langastIRStmtWhile: MOption[org.sireum.lang.ast.IR.Stmt] = MNone()
@@ -654,6 +662,7 @@ import MAnvilIRTransformer._
       case o: org.sireum.lang.ast.IR.Stmt.Block => return pre_langastIRStmtBlock(o)
       case o: org.sireum.lang.ast.IR.Stmt.If => return pre_langastIRStmtIf(o)
       case o: org.sireum.lang.ast.IR.Stmt.Match => return pre_langastIRStmtMatch(o)
+      case o: org.sireum.lang.ast.IR.Stmt.Switch => return pre_langastIRStmtSwitch(o)
       case o: org.sireum.lang.ast.IR.Stmt.While => return pre_langastIRStmtWhile(o)
       case o: org.sireum.lang.ast.IR.Stmt.For => return pre_langastIRStmtFor(o)
       case o: org.sireum.lang.ast.IR.Stmt.Return => return pre_langastIRStmtReturn(o)
@@ -859,6 +868,14 @@ import MAnvilIRTransformer._
 
   def pre_langastIRStmtMatchCase(o: org.sireum.lang.ast.IR.Stmt.Match.Case): PreResult[org.sireum.lang.ast.IR.Stmt.Match.Case] = {
     return PreResult_langastIRStmtMatchCase
+  }
+
+  def pre_langastIRStmtSwitch(o: org.sireum.lang.ast.IR.Stmt.Switch): PreResult[org.sireum.lang.ast.IR.Stmt] = {
+    return PreResult_langastIRStmtSwitch
+  }
+
+  def pre_langastIRStmtSwitchCase(o: org.sireum.lang.ast.IR.Stmt.Switch.Case): PreResult[org.sireum.lang.ast.IR.Stmt.Switch.Case] = {
+    return PreResult_langastIRStmtSwitchCase
   }
 
   def pre_langastIRStmtWhile(o: org.sireum.lang.ast.IR.Stmt.While): PreResult[org.sireum.lang.ast.IR.Stmt] = {
@@ -1305,6 +1322,7 @@ import MAnvilIRTransformer._
       case o: org.sireum.lang.ast.IR.Stmt.Block => return post_langastIRStmtBlock(o)
       case o: org.sireum.lang.ast.IR.Stmt.If => return post_langastIRStmtIf(o)
       case o: org.sireum.lang.ast.IR.Stmt.Match => return post_langastIRStmtMatch(o)
+      case o: org.sireum.lang.ast.IR.Stmt.Switch => return post_langastIRStmtSwitch(o)
       case o: org.sireum.lang.ast.IR.Stmt.While => return post_langastIRStmtWhile(o)
       case o: org.sireum.lang.ast.IR.Stmt.For => return post_langastIRStmtFor(o)
       case o: org.sireum.lang.ast.IR.Stmt.Return => return post_langastIRStmtReturn(o)
@@ -1510,6 +1528,14 @@ import MAnvilIRTransformer._
 
   def post_langastIRStmtMatchCase(o: org.sireum.lang.ast.IR.Stmt.Match.Case): MOption[org.sireum.lang.ast.IR.Stmt.Match.Case] = {
     return PostResult_langastIRStmtMatchCase
+  }
+
+  def post_langastIRStmtSwitch(o: org.sireum.lang.ast.IR.Stmt.Switch): MOption[org.sireum.lang.ast.IR.Stmt] = {
+    return PostResult_langastIRStmtSwitch
+  }
+
+  def post_langastIRStmtSwitchCase(o: org.sireum.lang.ast.IR.Stmt.Switch.Case): MOption[org.sireum.lang.ast.IR.Stmt.Switch.Case] = {
+    return PostResult_langastIRStmtSwitchCase
   }
 
   def post_langastIRStmtWhile(o: org.sireum.lang.ast.IR.Stmt.While): MOption[org.sireum.lang.ast.IR.Stmt] = {
@@ -2318,6 +2344,13 @@ import MAnvilIRTransformer._
             MSome(o2(exp = r0.getOrElse(o2.exp), cases = r1.getOrElse(o2.cases)))
           else
             MNone()
+        case o2: org.sireum.lang.ast.IR.Stmt.Switch =>
+          val r0: MOption[org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(o2.exp)
+          val r1: MOption[IS[Z, org.sireum.lang.ast.IR.Stmt.Switch.Case]] = transformISZ(o2.cases, transform_langastIRStmtSwitchCase _)
+          if (hasChanged || r0.nonEmpty || r1.nonEmpty)
+            MSome(o2(exp = r0.getOrElse(o2.exp), cases = r1.getOrElse(o2.cases)))
+          else
+            MNone()
         case o2: org.sireum.lang.ast.IR.Stmt.While =>
           val r0: MOption[org.sireum.lang.ast.IR.ExpBlock] = transform_langastIRExpBlock(o2.cond)
           val r1: MOption[org.sireum.lang.ast.IR.Stmt.Block] = transform_langastIRStmtBlock(o2.block)
@@ -2606,6 +2639,34 @@ import MAnvilIRTransformer._
     val hasChanged: B = r.nonEmpty
     val o2: org.sireum.lang.ast.IR.Stmt.Match.Case = r.getOrElse(o)
     val postR: MOption[org.sireum.lang.ast.IR.Stmt.Match.Case] = post_langastIRStmtMatchCase(o2)
+    if (postR.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return MSome(o2)
+    } else {
+      return MNone()
+    }
+  }
+
+  def transform_langastIRStmtSwitchCase(o: org.sireum.lang.ast.IR.Stmt.Switch.Case): MOption[org.sireum.lang.ast.IR.Stmt.Switch.Case] = {
+    val preR: PreResult[org.sireum.lang.ast.IR.Stmt.Switch.Case] = pre_langastIRStmtSwitchCase(o)
+    val r: MOption[org.sireum.lang.ast.IR.Stmt.Switch.Case] = if (preR.continu) {
+      val o2: org.sireum.lang.ast.IR.Stmt.Switch.Case = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      val r0: MOption[Option[org.sireum.lang.ast.IR.Exp]] = transformOption(o2.valueOpt, transform_langastIRExp _)
+      val r1: MOption[org.sireum.lang.ast.IR.Stmt.Block] = transform_langastIRStmtBlock(o2.body)
+      if (hasChanged || r0.nonEmpty || r1.nonEmpty)
+        MSome(o2(valueOpt = r0.getOrElse(o2.valueOpt), body = r1.getOrElse(o2.body)))
+      else
+        MNone()
+    } else if (preR.resultOpt.nonEmpty) {
+      MSome(preR.resultOpt.getOrElse(o))
+    } else {
+      MNone()
+    }
+    val hasChanged: B = r.nonEmpty
+    val o2: org.sireum.lang.ast.IR.Stmt.Switch.Case = r.getOrElse(o)
+    val postR: MOption[org.sireum.lang.ast.IR.Stmt.Switch.Case] = post_langastIRStmtSwitchCase(o2)
     if (postR.nonEmpty) {
       return postR
     } else if (hasChanged) {

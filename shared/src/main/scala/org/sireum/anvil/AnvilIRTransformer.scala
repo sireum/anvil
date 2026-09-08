@@ -303,6 +303,7 @@ object AnvilIRTransformer {
         case o: org.sireum.lang.ast.IR.Stmt.Block => return pre_langastIRStmtBlock(ctx, o)
         case o: org.sireum.lang.ast.IR.Stmt.If => return pre_langastIRStmtIf(ctx, o)
         case o: org.sireum.lang.ast.IR.Stmt.Match => return pre_langastIRStmtMatch(ctx, o)
+        case o: org.sireum.lang.ast.IR.Stmt.Switch => return pre_langastIRStmtSwitch(ctx, o)
         case o: org.sireum.lang.ast.IR.Stmt.While => return pre_langastIRStmtWhile(ctx, o)
         case o: org.sireum.lang.ast.IR.Stmt.For => return pre_langastIRStmtFor(ctx, o)
         case o: org.sireum.lang.ast.IR.Stmt.Return => return pre_langastIRStmtReturn(ctx, o)
@@ -474,6 +475,14 @@ object AnvilIRTransformer {
     }
 
     @pure def pre_langastIRStmtMatchCase(ctx: Context, o: org.sireum.lang.ast.IR.Stmt.Match.Case): PreResult[Context, org.sireum.lang.ast.IR.Stmt.Match.Case] = {
+      return PreResult(ctx, T, None())
+    }
+
+    @pure def pre_langastIRStmtSwitch(ctx: Context, o: org.sireum.lang.ast.IR.Stmt.Switch): PreResult[Context, org.sireum.lang.ast.IR.Stmt] = {
+      return PreResult(ctx, T, None())
+    }
+
+    @pure def pre_langastIRStmtSwitchCase(ctx: Context, o: org.sireum.lang.ast.IR.Stmt.Switch.Case): PreResult[Context, org.sireum.lang.ast.IR.Stmt.Switch.Case] = {
       return PreResult(ctx, T, None())
     }
 
@@ -879,6 +888,7 @@ object AnvilIRTransformer {
         case o: org.sireum.lang.ast.IR.Stmt.Block => return post_langastIRStmtBlock(ctx, o)
         case o: org.sireum.lang.ast.IR.Stmt.If => return post_langastIRStmtIf(ctx, o)
         case o: org.sireum.lang.ast.IR.Stmt.Match => return post_langastIRStmtMatch(ctx, o)
+        case o: org.sireum.lang.ast.IR.Stmt.Switch => return post_langastIRStmtSwitch(ctx, o)
         case o: org.sireum.lang.ast.IR.Stmt.While => return post_langastIRStmtWhile(ctx, o)
         case o: org.sireum.lang.ast.IR.Stmt.For => return post_langastIRStmtFor(ctx, o)
         case o: org.sireum.lang.ast.IR.Stmt.Return => return post_langastIRStmtReturn(ctx, o)
@@ -1050,6 +1060,14 @@ object AnvilIRTransformer {
     }
 
     @pure def post_langastIRStmtMatchCase(ctx: Context, o: org.sireum.lang.ast.IR.Stmt.Match.Case): TPostResult[Context, org.sireum.lang.ast.IR.Stmt.Match.Case] = {
+      return TPostResult(ctx, None())
+    }
+
+    @pure def post_langastIRStmtSwitch(ctx: Context, o: org.sireum.lang.ast.IR.Stmt.Switch): TPostResult[Context, org.sireum.lang.ast.IR.Stmt] = {
+      return TPostResult(ctx, None())
+    }
+
+    @pure def post_langastIRStmtSwitchCase(ctx: Context, o: org.sireum.lang.ast.IR.Stmt.Switch.Case): TPostResult[Context, org.sireum.lang.ast.IR.Stmt.Switch.Case] = {
       return TPostResult(ctx, None())
     }
 
@@ -1888,6 +1906,13 @@ import AnvilIRTransformer._
             TPostResult(r1.ctx, Some(o2(exp = r0.resultOpt.getOrElse(o2.exp), cases = r1.resultOpt.getOrElse(o2.cases))))
           else
             TPostResult(r1.ctx, None())
+        case o2: org.sireum.lang.ast.IR.Stmt.Switch =>
+          val r0: TPostResult[Context, org.sireum.lang.ast.IR.Exp] = transform_langastIRExp(preR.ctx, o2.exp)
+          val r1: TPostResult[Context, IS[Z, org.sireum.lang.ast.IR.Stmt.Switch.Case]] = transformISZ(r0.ctx, o2.cases, transform_langastIRStmtSwitchCase _)
+          if (hasChanged || r0.resultOpt.nonEmpty || r1.resultOpt.nonEmpty)
+            TPostResult(r1.ctx, Some(o2(exp = r0.resultOpt.getOrElse(o2.exp), cases = r1.resultOpt.getOrElse(o2.cases))))
+          else
+            TPostResult(r1.ctx, None())
         case o2: org.sireum.lang.ast.IR.Stmt.While =>
           val r0: TPostResult[Context, org.sireum.lang.ast.IR.ExpBlock] = transform_langastIRExpBlock(preR.ctx, o2.cond)
           val r1: TPostResult[Context, org.sireum.lang.ast.IR.Stmt.Block] = transform_langastIRStmtBlock(r0.ctx, o2.block)
@@ -2176,6 +2201,34 @@ import AnvilIRTransformer._
     val hasChanged: B = r.resultOpt.nonEmpty
     val o2: org.sireum.lang.ast.IR.Stmt.Match.Case = r.resultOpt.getOrElse(o)
     val postR: TPostResult[Context, org.sireum.lang.ast.IR.Stmt.Match.Case] = pp.post_langastIRStmtMatchCase(r.ctx, o2)
+    if (postR.resultOpt.nonEmpty) {
+      return postR
+    } else if (hasChanged) {
+      return TPostResult(postR.ctx, Some(o2))
+    } else {
+      return TPostResult(postR.ctx, None())
+    }
+  }
+
+  @pure def transform_langastIRStmtSwitchCase(ctx: Context, o: org.sireum.lang.ast.IR.Stmt.Switch.Case): TPostResult[Context, org.sireum.lang.ast.IR.Stmt.Switch.Case] = {
+    val preR: PreResult[Context, org.sireum.lang.ast.IR.Stmt.Switch.Case] = pp.pre_langastIRStmtSwitchCase(ctx, o)
+    val r: TPostResult[Context, org.sireum.lang.ast.IR.Stmt.Switch.Case] = if (preR.continu) {
+      val o2: org.sireum.lang.ast.IR.Stmt.Switch.Case = preR.resultOpt.getOrElse(o)
+      val hasChanged: B = preR.resultOpt.nonEmpty
+      val r0: TPostResult[Context, Option[org.sireum.lang.ast.IR.Exp]] = transformOption(preR.ctx, o2.valueOpt, transform_langastIRExp _)
+      val r1: TPostResult[Context, org.sireum.lang.ast.IR.Stmt.Block] = transform_langastIRStmtBlock(r0.ctx, o2.body)
+      if (hasChanged || r0.resultOpt.nonEmpty || r1.resultOpt.nonEmpty)
+        TPostResult(r1.ctx, Some(o2(valueOpt = r0.resultOpt.getOrElse(o2.valueOpt), body = r1.resultOpt.getOrElse(o2.body))))
+      else
+        TPostResult(r1.ctx, None())
+    } else if (preR.resultOpt.nonEmpty) {
+      TPostResult(preR.ctx, Some(preR.resultOpt.getOrElse(o)))
+    } else {
+      TPostResult(preR.ctx, None())
+    }
+    val hasChanged: B = r.resultOpt.nonEmpty
+    val o2: org.sireum.lang.ast.IR.Stmt.Switch.Case = r.resultOpt.getOrElse(o)
+    val postR: TPostResult[Context, org.sireum.lang.ast.IR.Stmt.Switch.Case] = pp.post_langastIRStmtSwitchCase(r.ctx, o2)
     if (postR.resultOpt.nonEmpty) {
       return postR
     } else if (hasChanged) {
