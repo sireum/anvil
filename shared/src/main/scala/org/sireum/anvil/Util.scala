@@ -580,7 +580,7 @@ object Util {
     @strictpure def iota: HashSSet[(Z, AST.Typed)] = HashSSet.empty
     @strictpure def init: HashSSet[(Z, AST.Typed)] = HashSSet.empty
     @strictpure def toScalar(t: AST.Typed): AST.Typed = if (anvil.isScalar(t)) t else anvil.spType
-    @pure def genGround(g: AST.IR.Stmt.Ground): HashSSet[(Z, AST.Typed)] = {
+    @pure def genGround(g: AST.IR.Stmt.Ground, blockLabel: Z, groundIndex: Z): HashSSet[(Z, AST.Typed)] = {
       val tc = TempCollector(F, HashSMap.empty)
       g match {
         case g: AST.IR.Stmt.Assign.Temp => tc.transform_langastIRExp(g.rhs)
@@ -649,7 +649,7 @@ object Util {
     @strictpure def isLUB: B = T
     @strictpure def iota: HashSSet[(String, AST.Typed)] = HashSSet.empty
     @strictpure def init: HashSSet[(String, AST.Typed)] = HashSSet.empty
-    @pure def genGround(g: AST.IR.Stmt.Ground): HashSSet[(String, AST.Typed)] = {
+    @pure def genGround(g: AST.IR.Stmt.Ground, blockLabel: Z, groundIndex: Z): HashSSet[(String, AST.Typed)] = {
       val lc = LocalCollector(HashSSet.empty)
       g match {
         case g: AST.IR.Stmt.Assign.Local =>
