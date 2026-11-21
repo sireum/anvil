@@ -59,6 +59,7 @@ object Anvil {
                          val tempLocal: B,
                          val loopInvariantHoist: B,
                          val arrayInitBurst: B,
+                         val perFunctionIp: B,
                          val memoryAccess: Config.MemoryAccess.Type,
                          val baseAddress: Z,
                          val ipMax: Z,
@@ -106,6 +107,7 @@ object Anvil {
         tempLocal = F,
         loopInvariantHoist = F,
         arrayInitBurst = F,
+        perFunctionIp = F,
         memoryAccess = Config.MemoryAccess.Default,
         baseAddress = 0,
         ipMax = 0,
@@ -202,9 +204,14 @@ import Anvil._
     anvil.Runtime.Ext.u2z(r)
   }
 
+  // The SP byte size is rounded up to a power of two: everything downstream that
+  // handles an SP-typed scalar -- IRSimulator temps, globalVarGtype, and the Chisel
+  // register widths -- only supports 1/2/4/8-byte values, so a 3-, 5-, 6-, or 7-byte
+  // SP (i.e. any design whose memory exceeds 64 KiB) would be rejected there.
   val spTypeByteSize: Z = {
     val n = computeBitwidth(config.memory) + 1
-    if (n % 8 == 0) n / 8 else (n / 8) + 1
+    val bytes: Z = if (n % 8 == 0) n / 8 else (n / 8) + 1
+    if (bytes <= 1) 1 else if (bytes <= 2) 2 else if (bytes <= 4) 4 else 8
   }
   val dpTypeByteSize: Z = 8
 
@@ -233,8 +240,8 @@ import Anvil._
       }
     } else {
       th.typeMap.get(mc.owner) match {
-        case Some(tinfo: TypeInfo.Adt) => tinfo.methods.get(id).get.ast.sig.params
-        case Some(tinfo: TypeInfo.Sig) => tinfo.methods.get(id).get.ast.sig.params
+        case Some(tinfo: TypeInfo.Adt) => tinfo.methods.get(mc.id).get.ast.sig.params
+        case Some(tinfo: TypeInfo.Sig) => tinfo.methods.get(mc.id).get.ast.sig.params
         case _ => halt(s"Infeasible: $mc")
       }
     }

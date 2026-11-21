@@ -1453,7 +1453,8 @@ object ArbInputMap {
                                val erase: B,
                                val arrayInitBurst: B,
                                val aligned: B,
-                               val arbID: Z) extends ArbIpModule {
+                               val arbID: Z,
+                               val dmaMaxWords: Z) extends ArbIpModule {
   @strictpure override def arbIpId: Z = arbID
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
@@ -2127,7 +2128,7 @@ object ArbInputMap {
           |  // dst [copyN, dmaDstLen). One read burst gathers the source span, DRE
           |  // (shift=(srcAddr-dstAddr) mod 8, same as BramNative sliding window)
           |  // realigns, one write burst emits with per-beat WSTRB (byte-exact).
-          |  val DMA_MAX_WORDS = 34
+          |  val DMA_MAX_WORDS = ${dmaMaxWords} // sized to the largest Intrinsic.Copy in the design (read-burst word count); see printProcedure
           |  val sDma_idle :: sDma_rAddr :: sDma_rData :: sDma_wAddr :: sDma_wData :: sDma_resp :: sDma_done :: Nil = Enum(7)
           |  val rDma_state   = RegInit(sDma_idle)
           |  val rDma_srcAddr = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
@@ -2895,9 +2896,23 @@ import HwSynthesizer2._
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
 
-  val hwLog: HwSynthesizer2.HwLog = HwSynthesizer2.HwLog(0, MNone(), F, F, 0, 0, "", ISZ[String](), F)
+  val hwLog: HwSynthesizer2.HwLog = HwSynthesizer2.HwLog(0, MNone(), F, F, 0, 0, "", ISZ[String](), F, HashSSet.empty[Z])
 
   val noXilinxIp: B = anvil.config.noXilinxIp
+  // held-start DSP IPs (Indexer + Xilinx Mul/Div/Rem): fed combinationally from
+  // io.req.bits with a HELD start; these are the only IPs eligible for per-function
+  // (private per-procedure) instantiation.
+  @strictpure def isHeldDsp(ip: ArbIpType): B = ip match {
+    case ArbIntrinsicIP(_) => T
+    case ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, _) => T
+    case ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, _) => T
+    case ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, _) => T
+    case _ => F
+  }
+  // under the perFunctionIp flag, held-start DSP IPs become private per-procedure
+  // instances wired point-to-point to the procedure's r_<inst>_req/r_<inst>_resp
+  // registers, and the Top shared wrapper+arbiter for that IP is dropped.
+  @strictpure def isPerFuncIp(ip: ArbIpType): B = anvil.config.perFunctionIp && isHeldDsp(ip)
   var ipArbiterUsage: HashSSet[ArbIpType] = HashSSet.empty[ArbIpType]
   var globalRouterCount: Z = 1
   var ipRouterUsage: HashSMap[String, (Z, HashSSet[ArbIpType], QName)] = HashSMap.empty
@@ -2991,7 +3006,7 @@ import HwSynthesizer2._
     ArbDivision(T, "DivisionSigned64", "arbDivisionSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T), noXilinxIp, 32),
     ArbRemainder(F, "RemainerUnsigned64", "arbRemainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
     ArbRemainder(T, "RemainerSigned64", "arbRemainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
-    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, noXilinxIp, anvil.config.erase, anvil.config.arrayInitBurst, anvil.config.alignAxi4, 35),
+    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, noXilinxIp, anvil.config.erase, anvil.config.arrayInitBurst, anvil.config.alignAxi4, 35, 34),
     ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, anvil.config.memory, ArbTempSaveRestoreIP(), anvil.config.memoryAccess, noXilinxIp, anvil.config.alignAxi4, 36),
     ArbGlobalVar(F, "GlobalVar", "arbGlobalVar", 64, ArbGlobalVarIP(), noXilinxIp, 37)
   )
@@ -3151,6 +3166,35 @@ import HwSynthesizer2._
     }
   }
 
+
+  // Address-segment size for the simulation block design's AXI BRAM controller.
+  // Vivado derives the controller's memory depth from the assigned address range, so
+  // the range must cover MEMORY_DEPTH; AXI segments are powers of two, minimum 4K.
+  // Widest byte offset an array access can produce, as a 2^k-1 mask. The IR only
+  // carries an explicit index mask when the index is literally `x & <const>`;
+  // otherwise IRSimulator applies no mask at all, so a fixed 16-bit default would
+  // silently truncate every access into an array larger than 64 KiB. Never narrows
+  // below the historical 0xFFFF, so designs whose arrays fit in 64 KiB are unchanged.
+  @pure def defaultIndexMask(elementSize: Z): Z = {
+    val needed: Z = anvil.config.maxArraySize * elementSize
+    if (needed <= 0xFFFF) {
+      return 0xFFFF
+    }
+    var r: Z = 1
+    while (r - 1 < needed) {
+      r = r * 2
+    }
+    return r - 1
+  }
+
+  @pure def bdMemRange(stackBytes: Z): Z = {
+    val total: Z = anvil.config.memory + stackBytes
+    var r: Z = 4096
+    while (r < total) {
+      r = r * 2
+    }
+    return r
+  }
 
   @pure def depthOfStack(maxRegisters: Util.TempVector): Z = {
     var length: Z =0
@@ -3363,6 +3407,54 @@ import HwSynthesizer2._
     }
     ipModules = for (m <- ipModules) yield updateDepth(m)
 
+    // Size the external-memory (axi4Bram/ddr) DMA read-burst buffer (DMA_MAX_WORDS in
+    // bramIpST) to the largest Intrinsic.Copy in the design. The fixed 34-word buffer
+    // silently overflows for a whole-@record copy bigger than ~272 bytes (e.g. a pool
+    // record with inline arrays), corrupting the copy so the destination reads garbage.
+    // BramNative streams (no buffer) and is unaffected. max(34, ...) keeps designs whose
+    // largest copy already fits byte-identical. Nested defs only (no block-level var/val)
+    // to avoid intervening in updateDepth's forward reference below.
+    @pure def maxCopyBytesF(): Z = {
+      var m: Z = 0
+      for (o <- program.procedures) {
+        o.body match {
+          case body: AST.IR.Body.Basic =>
+            for (b <- body.blocks) {
+              for (g <- b.grounds) {
+                g match {
+                  case AST.IR.Stmt.Intrinsic(in: Intrinsic.Copy) =>
+                    if (in.lhsBytes > m) {
+                      m = in.lhsBytes
+                    }
+                  case _ =>
+                }
+              }
+            }
+          case _ =>
+        }
+      }
+      return m
+    }
+    @pure def neededDmaWordsF(): Z = {
+      // read beats to gather copyN bytes with up-to-7-byte head misalignment, +1 lookahead word
+      val w: Z = ((maxCopyBytesF() + 14) / 8) + 2
+      // Cap at the AXI4 burst limit. ARLEN/AWLEN are 8 bits, so one burst carries at most
+      // 256 beats, and rDma_rcnt/rDma_wcnt are 8-bit registers that cannot address past 255;
+      // words beyond that are unreachable by construction. Sizing rDma_buf from the largest
+      // Intrinsic.Copy instead produced Reg(Vec(170406, UInt(64.W))) at queens N=12 -- 10.9 Mbit
+      // of registers plus an equally deep mux chain, a 146 MB Verilog file that synthesis could
+      // not process, even though the write path only ever reads a 2-word DRE window.
+      val capped: Z = if (w > 257) 257 else w
+      return if (capped < 34) 34 else capped
+    }
+    @pure def updateDmaWords(m: ArbIpModule): ArbIpModule = {
+      m match {
+        case ats: ArbBlockMemory => return ats(dmaMaxWords = neededDmaWordsF())
+        case _ => return m
+      }
+    }
+    ipModules = for (m <- ipModules) yield updateDmaWords(m)
+
     for(o <- program.procedures) {
       val procTuple: (QName, String) = replaceFuncName(o.isInObject, o.owner, o.id)
       hwLog.curProcedureQName = procTuple._1
@@ -3409,13 +3501,7 @@ import HwSynthesizer2._
       // arbiter, not pulsed), dropping the wrapper's r_req/r_req_valid/r_mod_start
       // registers. Covers the Indexer and the Xilinx Mul/Div/Rem (all drive a DSP
       // clock-enable / AXIS-valid from start and need it asserted the whole pipeline).
-      val heldDsp: B = ip match {
-        case ArbIntrinsicIP(_) => T
-        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, _) => T
-        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, _) => T
-        case ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, _) => T
-        case _ => F
-      }
+      val heldDsp: B = isHeldDsp(ip)
       val outputNameStr: String = ip match {
         case ArbBinaryIP(_, _) => "out"
         case ArbIntrinsicIP(_) => "out"
@@ -4132,14 +4218,19 @@ import HwSynthesizer2._
 
       val xilinxIndexAdderWrapperST =
         st"""
+            |// A/B/S must match XilinxIndexAdderWrapper.v (and the XilinxIndexAdder IP),
+            |// both of which are 32-bit. Declaring 16 bits here made Chisel truncate the
+            |// Indexer's address arithmetic to 16 bits (add_A = io_a[15:0]), so every array
+            |// address was computed mod 65536; two globals whose aliased ranges overlapped
+            |// then corrupted each other.
             |class XilinxIndexAdderWrapper extends BlackBox with HasBlackBoxResource {
             |  val io = IO(new Bundle {
             |    val clk   = Input(Bool())
             |    val ce    = Input(Bool())
-            |    val A     = Input(UInt(16.W))
-            |    val B     = Input(UInt(16.W))
+            |    val A     = Input(UInt(32.W))
+            |    val B     = Input(UInt(32.W))
             |    val valid = Output(Bool())
-            |    val S     = Output(UInt(16.W))
+            |    val S     = Output(UInt(32.W))
             |  })
             |
             |  addResource("/verilog/XilinxIndexAdderWrapper.v")
@@ -4152,10 +4243,10 @@ import HwSynthesizer2._
             |  val io = IO(new Bundle {
             |    val clk   = Input(Bool())
             |    val ce    = Input(Bool())
-            |    val A     = Input(UInt(16.W))
-            |    val B     = Input(UInt(16.W))
+            |    val A     = Input(UInt(32.W))
+            |    val B     = Input(UInt(32.W))
             |    val valid = Output(Bool())
-            |    val P     = Output(UInt(16.W))
+            |    val P     = Output(UInt(32.W))
             |  })
             |
             |  addResource("/verilog/XilinxIndexMultiplierWrapper.v")
@@ -6004,6 +6095,7 @@ import HwSynthesizer2._
           |create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 blk_mem_gen_0
           |set_property -dict [list ${backslash}
           |  CONFIG.Write_Width_A {64} ${backslash}
+          |  CONFIG.Write_Depth_A ${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) / 8 + 1} ${backslash}
           |  CONFIG.use_bram_block {Stand_Alone} ${backslash}
           |] [get_bd_cells blk_mem_gen_0]
           |
@@ -6018,6 +6110,13 @@ import HwSynthesizer2._
           |connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
           |
           |make_bd_intf_pins_external  [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
+          |
+          |# Size the controller by assigning its slave segment: MEM_DEPTH is read-only and
+          |# is derived from this range. Without it Vivado falls back to a default 8 KB,
+          |# which silently aliases every access above that back into low memory.
+          |assign_bd_address -offset 0x00000000 -range ${bdMemRange(if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)} ${backslash}
+          |  -target_address_space [get_bd_addr_spaces S_AXI_0] ${backslash}
+          |  [get_bd_addr_segs axi_bram_ctrl_0/S_AXI/Mem0] -force
           |make_bd_pins_external  [get_bd_pins axi_bram_ctrl_0/s_axi_aclk]
           |make_bd_pins_external  [get_bd_pins axi_bram_ctrl_0/s_axi_aresetn]
           |
@@ -6229,20 +6328,25 @@ import HwSynthesizer2._
     for(f <- ipRouterUsage.entries) {
       val arbiterUsage: HashSSet[ArbIpType] = f._2._2
       for(arb <- arbiterUsage.elements) {
-        val idx: Z = if(allArbiter.contains(arb)) allArbiter.get(arb).get._1 else 0
+        // perFunctionIp: held-start DSP IPs get a private instance inside each
+        // procedure module (see procedureST), so there is no Top-level arbiter or
+        // arbiter<->proc boundary wiring for them. Skip them here.
+        if(!isPerFuncIp(arb)) {
+          val idx: Z = if(allArbiter.contains(arb)) allArbiter.get(arb).get._1 else 0
 
-        val instanceName: String = getIpInstanceName(arb).get
-        val arbConnectionSt: ST =
-          st"""
-              |mod_${f._1}.io.${instanceName}_req  <> ${instanceName}ArbiterModule.io.ipReqs(${idx})
-              |mod_${f._1}.io.${instanceName}_resp <> ${instanceName}ArbiterModule.io.ipResps(${idx})
-              """
+          val instanceName: String = getIpInstanceName(arb).get
+          val arbConnectionSt: ST =
+            st"""
+                |mod_${f._1}.io.${instanceName}_req  <> ${instanceName}ArbiterModule.io.ipReqs(${idx})
+                |mod_${f._1}.io.${instanceName}_resp <> ${instanceName}ArbiterModule.io.ipResps(${idx})
+                """
 
-        allArbiter.get(arb) match {
-          case Some((_, st, sts)) =>
-            allArbiter = allArbiter + arb ~> (idx + 1, st, sts :+ arbConnectionSt)
-          case None() =>
-            allArbiter = allArbiter + arb ~> (idx + 1, st"", ISZ[ST]() :+ arbConnectionSt)
+          allArbiter.get(arb) match {
+            case Some((_, st, sts)) =>
+              allArbiter = allArbiter + arb ~> (idx + 1, st, sts :+ arbConnectionSt)
+            case None() =>
+              allArbiter = allArbiter + arb ~> (idx + 1, st"", ISZ[ST]() :+ arbConnectionSt)
+          }
         }
       }
     }
@@ -6942,25 +7046,49 @@ import HwSynthesizer2._
       for(e <- ipArbiterUsage.elements) {
         val instName: String = getIpInstanceName(e).get
 
-        allArbIOST = allArbIOST :+
-          st"""
-              |val ${instName}_req    = Valid(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
-              |val ${instName}_resp   = Flipped(Valid(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)})))
-            """
+        if(isPerFuncIp(e)) {
+          // perFunctionIp: instantiate a PRIVATE per-procedure IP wrapper instead of
+          // exposing a Top-arbiter boundary port. The r_<inst>_req register is already
+          // the CP-mutual-exclusion local mux for this procedure, so it is wired
+          // point-to-point to the private wrapper (a direct connect). The wrapper
+          // inherits this procedure module's implicit reset (myRst, propagated from
+          // the withReset(myRst) at the mod_<proc> instantiation in topST), matching
+          // the Top-level withReset(myRst) wrapper reset. No io boundary port is added.
+          allArbInstanceST = allArbInstanceST :+
+            st"""
+                |// ${getIpModuleName(e).get} private per-function IP (perFunctionIp)
+                |val r_${instName}_req          = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
+                |val r_${instName}_req_valid    = RegInit(false.B)
+                |val r_${instName}_resp         = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
+                |val r_${instName}_resp_valid   = RegInit(false.B)
+                |val ${instName}Wrapper = Module(new ${getIpModuleName(e).get}Wrapper(dataWidth = dataWidth))
+                |// point-to-point connection for private ${getIpModuleName(e).get}
+                |${instName}Wrapper.io.req.bits  := r_${instName}_req
+                |${instName}Wrapper.io.req.valid := r_${instName}_req_valid
+                |r_${instName}_resp       := ${instName}Wrapper.io.resp.bits
+                |r_${instName}_resp_valid := ${instName}Wrapper.io.resp.valid
+              """
+        } else {
+          allArbIOST = allArbIOST :+
+            st"""
+                |val ${instName}_req    = Valid(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
+                |val ${instName}_resp   = Flipped(Valid(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)})))
+              """
 
-        allArbInstanceST = allArbInstanceST :+
-          st"""
-              |// ${getIpModuleName(e).get} Arbiter
-              |val r_${instName}_req          = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
-              |val r_${instName}_req_valid    = RegInit(false.B)
-              |val r_${instName}_resp         = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
-              |val r_${instName}_resp_valid   = RegInit(false.B)
-              |// connection for ${getIpModuleName(e).get} Arbiter
-              |r_${instName}_resp       := io.${instName}_resp.bits
-              |r_${instName}_resp_valid := io.${instName}_resp.valid
-              |io.${instName}_req.bits  := r_${instName}_req
-              |io.${instName}_req.valid := r_${instName}_req_valid
-            """
+          allArbInstanceST = allArbInstanceST :+
+            st"""
+                |// ${getIpModuleName(e).get} Arbiter
+                |val r_${instName}_req          = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
+                |val r_${instName}_req_valid    = RegInit(false.B)
+                |val r_${instName}_resp         = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
+                |val r_${instName}_resp_valid   = RegInit(false.B)
+                |// connection for ${getIpModuleName(e).get} Arbiter
+                |r_${instName}_resp       := io.${instName}_resp.bits
+                |r_${instName}_resp_valid := io.${instName}_resp.valid
+                |io.${instName}_req.bits  := r_${instName}_req
+                |io.${instName}_req.valid := r_${instName}_req_valid
+              """
+        }
       }
 
       @pure def stateMachineCallST: ST = {
@@ -7084,6 +7212,7 @@ import HwSynthesizer2._
   }
 
   @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], maxRegisters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): (ST, Z, ST) = {
+    hwLog.recursiveCalleeIds = HashSSet.empty[Z]
 
     @pure def maxBlockLabel(): Z = {
       var maxLabel: Z = 0
@@ -7135,13 +7264,24 @@ import HwSynthesizer2._
 
       @pure def state2St: ST = {
         if(isRecursive) {
+          // A frame is pushed only at self- and mutually-recursive call sites, so only a
+          // return from one of those callees may pop one. A return from an ordinary callee
+          // resumes in place; popping there would restore another activation's temps and
+          // srcID/srcCP over the live ones.
+          val popConds: ISZ[ST] =
+            for (id <- hwLog.recursiveCalleeIds.elements) yield st"r_routeIn.srcID === ${id}.U"
+          val popGuard: ST = if (popConds.isEmpty) st"false.B" else st"${(popConds, " || ")}"
           return st"""
                      |is(2.U) {
                      |  r_routeOut_valid := false.B
                      |
                      |  when(r_routeIn_valid) {
                      |    when(r_routeIn.isReturn) {
-                     |      ${name}CP  := ${maxBlockLabel()}.U
+                     |      when(${popGuard}) {
+                     |        ${name}CP  := ${maxBlockLabel()}.U
+                     |      } .otherwise {
+                     |        ${name}CP  := r_routeIn.dstCP
+                     |      }
                      |    } .otherwise {
                      |      r_srcCP := r_routeIn.srcCP
                      |      r_srcID := r_routeIn.srcID
@@ -7996,11 +8136,11 @@ import HwSynthesizer2._
         val baseOffsetST: ST = processExpr(intrinsic.baseOffset, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val dataOffset: Z = intrinsic.dataOffset
         val indexST: ST = processExpr(intrinsic.index, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+        val elementSize: Z = intrinsic.elementSize
         val mask: Z = intrinsic.maskOpt match {
           case Some(z) => z
-          case None() => 0xFFFF
+          case None() => defaultIndexMask(elementSize)
         }
-        val elementSize: Z = intrinsic.elementSize
 
         var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
         hashSMap = hashSMap +
@@ -8230,6 +8370,7 @@ import HwSynthesizer2._
                 |
                 |r_arbTempSaveRestore_req.op := 0.U //push
               """
+          hwLog.recursiveCalleeIds = hwLog.recursiveCalleeIds + ipRouterUsage.get(procString).get._1
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbTempSaveRestore_resp_valid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ callST
           exprST =
@@ -8306,7 +8447,11 @@ object HwSynthesizer2 {
                                   var maxNumLabel: Z,
                                   var curProcedureId: String,
                                   var curProcedureQName: QName,
-                                  var funcCallInCurrentBlock: B) extends MAnvilIRTransformer{
+                                  var funcCallInCurrentBlock: B,
+                                  // Router IDs of the callees this procedure pushes a context
+                                  // frame for, i.e. its self- and mutually-recursive calls.
+                                  // A return from anything else must not pop a frame.
+                                  var recursiveCalleeIds: HashSSet[Z]) extends MAnvilIRTransformer{
 
     @pure def isMemCpyInCurrentBlock(): B = {
       return memCpyInCurrentBlock

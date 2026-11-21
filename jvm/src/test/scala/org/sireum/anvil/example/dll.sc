@@ -1112,9 +1112,38 @@ import DLLPool._
 //  }
 }
 
+
 @anvil.test def test0(): Unit = {
   val dll = DLLPool[Z](0, 3)
   dll.initPool()
   dll.cons(0)
+  println(dll.sizeOf)
+}
+
+@anvil.test def test1(): Unit = {
+  val dll = DLLPool[Z](0, 3)
+  dll.initPool()
+  dll.cons(1)
+  println(dll.sizeOf)
+}
+
+@anvil.test def test2(): Unit = {
+  val dll = DLLPool[Z](0, 3)
+  dll.initPool()
+  dll.cons(2)
+  println(dll.sizeOf)
+}
+
+@anvil.test def test3(): Unit = {
+  val dll = DLLPool[Z](0, 3)
+  dll.initPool()
+  dll.cons(3)
+  println(dll.sizeOf)
+}
+
+@anvil.test def test4(): Unit = {
+  val dll = DLLPool[Z](0, 3)
+  dll.initPool()
+  dll.cons(4)
   println(dll.sizeOf)
 }
