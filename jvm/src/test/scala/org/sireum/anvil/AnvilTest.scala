@@ -82,10 +82,10 @@ object AnvilTest {
         return HashMap.empty[String, Z] +
           "add.sc" ~> 104 +
           "assert.sc" ~> 240 +
-          "bubble.sc" ~> 200 +
+          "bubble.sc" ~> 336 +
           "construct.sc" ~> 200 +
           "divrem.sc" ~> 128 +
-          "dll.sc" ~> 664 +
+          "dll.sc" ~> 2568 +
           "dll2.sc" ~> 1672 +
           "factorial.sc" ~> 120 +
           "global.sc" ~> 104 +
@@ -113,10 +113,10 @@ object AnvilTest {
         return HashMap.empty[String, Z] +
           "add.sc" ~> 160 +
           "assert.sc" ~> 416 +
-          "bubble.sc" ~> 344 +
+          "bubble.sc" ~> 480 +
           "construct.sc" ~> 352 +
           "divrem.sc" ~> 248 +
-          "dll.sc" ~> 768 +
+          "dll.sc" ~> 2672 +
           "dll2.sc" ~> 1792 +
           "factorial.sc" ~> 176 +
           "global.sc" ~> 152 +
