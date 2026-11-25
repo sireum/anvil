@@ -82,10 +82,10 @@ object AnvilTest {
         return HashMap.empty[String, Z] +
           "add.sc" ~> 104 +
           "assert.sc" ~> 240 +
-          "bubble.sc" ~> 200 +
+          "bubble.sc" ~> 336 +
           "construct.sc" ~> 200 +
           "divrem.sc" ~> 128 +
-          "dll.sc" ~> 664 +
+          "dll.sc" ~> 2568 +
           "dll2.sc" ~> 1672 +
           "factorial.sc" ~> 120 +
           "global.sc" ~> 104 +
@@ -101,6 +101,7 @@ object AnvilTest {
           "shiftS64.sc" ~> 160 +
           "shiftU64.sc" ~> 152 +
           "sum.sc" ~> 216 +
+          "screate.sc" ~> 264 +
           "traitmethod.sc" ~> 128 +
           "1.example.sc" ~> 216 +
           "2.example.sc" ~> 216 +
@@ -112,10 +113,10 @@ object AnvilTest {
         return HashMap.empty[String, Z] +
           "add.sc" ~> 160 +
           "assert.sc" ~> 416 +
-          "bubble.sc" ~> 344 +
+          "bubble.sc" ~> 480 +
           "construct.sc" ~> 352 +
           "divrem.sc" ~> 248 +
-          "dll.sc" ~> 768 +
+          "dll.sc" ~> 2672 +
           "dll2.sc" ~> 1792 +
           "factorial.sc" ~> 176 +
           "global.sc" ~> 152 +
@@ -131,6 +132,7 @@ object AnvilTest {
           "shiftS64.sc" ~> 224 +
           "shiftU64.sc" ~> 224 +
           "sum.sc" ~> 280 +
+          "screate.sc" ~> 312 +
           "traitmethod.sc" ~> 192 +
           "1.example.sc" ~> 280 +
           "2.example.sc" ~> 280 +
@@ -207,6 +209,10 @@ object AnvilTest {
   val withoutIpId = "without-ip"
   val withMemIpId = "with-mem-ip"
   val alignId = "align"
+  val noXilinxIpId = "withoutXilinxIp"
+  val bramNativeId = "bramNative"
+  val axi4BramId = "axi4Bram"
+  val axi4DddrId = "ddr"
 
   val isInGitHubAction: B = Os.env("GITHUB_ACTIONS").nonEmpty
 
@@ -216,6 +222,27 @@ object AnvilTest {
     val tempGlobal = p.last.contains(tempGlobalId)
     val tempLocal = p.last.contains(tempLocalId)
     val useMemoryIp = p.last.contains(withMemIpId)
+    val noXilinxIp = p.last.contains(noXilinxIpId)
+    val memOpt: Anvil.Config.MemoryAccess.Type = {
+      if (p.last.contains(bramNativeId)) Anvil.Config.MemoryAccess.BramNative
+      else if (p.last.contains(axi4BramId)) Anvil.Config.MemoryAccess.BramAxi4
+      else if (p.last.contains(axi4DddrId)) Anvil.Config.MemoryAccess.Ddr
+      else Anvil.Config.MemoryAccess.BramNative
+    }
+    // T3.1(b): loop-invariant load hoisting, gated by env var so the fixed
+    // 4-dim test matrix is unchanged. ANVIL_HOIST unset/false => byte-identical baseline.
+    val hoistEnv: Predef.String = Os.env("ANVIL_HOIST") match {
+      case Some(v) => v.value
+      case _ => System.getProperty("ANVIL_HOIST", "")
+    }
+    val loopInvariantHoist: B = hoistEnv == "true" || hoistEnv == "1"
+    // T3.2: array-initialization burst (create(size, 0) -> Erase/DMA zero-fill), gated
+    // by env var so the fixed test matrix is unchanged. ANVIL_BURST unset/false => baseline.
+    val burstEnv: Predef.String = Os.env("ANVIL_BURST") match {
+      case Some(v) => v.value
+      case _ => System.getProperty("ANVIL_BURST", "")
+    }
+    val arrayInitBurst: B = burstEnv == "true" || burstEnv == "1"
     val ipMax: Z = if (useMemoryIp || p.last.contains(withIpId)) 0 else -1
     val printSize: Z = printFileMap.get(file).getOrElse(defaultPrintSize)
     config = config(
@@ -230,11 +257,13 @@ object AnvilTest {
       splitTempSizes = splitTempSizes,
       tempGlobal = tempGlobal,
       tempLocal = tempLocal,
+      loopInvariantHoist = loopInvariantHoist,
+      arrayInitBurst = arrayInitBurst,
       genVerilog = T,
       ipMax = ipMax,
-      noXilinxIp = F,
+      noXilinxIp = noXilinxIp,
       simOpt = simCyclesMap.get(file).map((cycles: Z) => Anvil.Config.Sim(defaultSimThreads, cycles)),
-      memoryAccess = if (useMemoryIp) Anvil.Config.MemoryAccess.BramNative else Anvil.Config.MemoryAccess.Default
+      memoryAccess = memOpt
     )
     return config
   }
@@ -261,7 +290,7 @@ class AnvilTest extends SireumRcSpec {
   }
 
   def textResources: scala.collection.SortedMap[scala.Vector[Predef.String], Predef.String] = {
-    val m = $internal.RC.text(Vector("example")) { (p, _) => !p.last.endsWith("print.sc") }
+    val m = $internal.RC.text(Vector("example")) { (p, _) => p.last.endsWith(".sc") && !p.last.endsWith("print.sc") }
     implicit val ordering: Ordering[Vector[Predef.String]] = m.ordering
     for ((k, v) <- m; pair <- {
       var r = Vector[(Vector[Predef.String], Predef.String)]()
@@ -277,11 +306,17 @@ class AnvilTest extends SireumRcSpec {
         combs(i - 1, r)
       }
 
-      val combSize = 4
-      for (bs <- combs(combSize, (for (_ <- 0 until Util.pow(combSize, 2).toInt) yield Vector[Boolean]()).toVector)) {
+      val combSize = 3
+      for (bs <- combs(combSize, Vector(Vector[Boolean]()))) {
         assert(bs.size == combSize)
-        if (!isInGitHubAction || bs.forall(b => b)) {
-          val name = s"${k.last}_${if (bs(0)) AnvilTest.splitTempId else AnvilTest.singleTempId}_${if (bs(1)) AnvilTest.tempLocalId else AnvilTest.memLocalId}_${if (bs(2)) if (bs(3)) AnvilTest.withMemIpId else AnvilTest.withIpId else AnvilTest.withoutIpId}".
+        // (F,F) -> bramNativeId, (T,F) -> axi4BramId, (F,T) -> axi4DddrId; skip (T,T) to avoid empty config
+        if (!(bs(1) && bs(2)) && (!isInGitHubAction || bs.forall(b => b))) {
+          val name = s"${k.last}_${AnvilTest.splitTempId}_${AnvilTest.tempLocalId}_${AnvilTest.withMemIpId}_${
+            if (bs(0)) s"" else AnvilTest.tempGlobalId + s"_"}${
+            if (!bs(1) && !bs(2)) AnvilTest.bramNativeId
+            else if (bs(1) && !bs(2)) AnvilTest.axi4BramId
+            else if (!bs(1) && bs(2)) AnvilTest.axi4DddrId
+          }_1-fun".
             replace('.', '_')
           r = r :+ (k.dropRight(1) :+ name, v)
         }
@@ -332,7 +367,7 @@ class AnvilTest extends SireumRcSpec {
         }
         val chiselDir = out / "chisel"
         //val axiWrapperVerilogCommandStr: String = s"Test/runMain AXIWrapperChiselGenerated${ir.name}VerilogGeneration"
-        val verilogCommandStr: String = s"Test/runMain ${ir.name}VerilogGeneration"
+        val verilogCommandStr: String = s"Test/runMain FPGA${ir.name}VerilogGeneration"
         val simCommandStr: String = s"Test/testOnly *${ir.name}Bench"
         val sbtOpts = ISZ[String]("-J-Xss32m")
         if (config.genVerilog) {

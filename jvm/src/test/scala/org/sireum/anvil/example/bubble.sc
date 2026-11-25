@@ -48,3 +48,21 @@ def printMSZ16(a: MSZ[S16]): Unit = {
   bubble(a)
   printMSZ16(a)
 }
+
+@anvil.test def test2(): Unit = {
+  val a = MSZ(s16"5", s16"-1", s16"0", s16"2")
+  bubble(a)
+  printMSZ16(a)
+}
+
+@anvil.test def test3(): Unit = {
+  val a = MSZ(s16"3", s16"-7", s16"1", s16"-2", s16"8")
+  bubble(a)
+  printMSZ16(a)
+}
+
+@anvil.test def test4(): Unit = {
+  val a = MSZ(s16"9", s16"0", s16"-3", s16"4", s16"-6")
+  bubble(a)
+  printMSZ16(a)
+}

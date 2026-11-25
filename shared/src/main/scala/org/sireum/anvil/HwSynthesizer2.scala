@@ -131,135 +131,47 @@ object ArbInputMap {
     if(nonXilinxIP)
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
-          |  val io = IO(new Bundle{
-          |    val a     = Input(${portType}(width.W))
-          |    val b     = Input(${portType}(width.W))
-          |    val start = Input(Bool())
-          |    val out   = Output(${portType}(width.W))
-          |    val valid = Output(Bool())
-          |  })
+          |    val io = IO(new Bundle{
+          |        val a = Input(${portType}(width.W))
+          |        val b = Input(${portType}(width.W))
+          |        val start = Input(Bool())
+          |        val out = Output(${portType}(width.W))
+          |        val valid = Output(Bool())
+          |    })
           |
-          |  // =================================================================
-          |  //  Carry-Select Adder (CSLA), 64-bit, 5-stage pipeline.
-          |  //
-          |  //  Idea: split a+b into EIGHT 8-bit blocks. For each block
-          |  //    compute sum assuming carry_in=0 AND carry_in=1 in parallel.
-          |  //    The 7-level mux chain is split across two pipeline stages
-          |  //    (Stage 2a for lower 4 blocks, Stage 2b for upper 4),
-          |  //    so no single cycle has more than ~4 mux levels.
-          |  //
-          |  //  Critical path per pipeline stage (90nm SAED, typ corner):
-          |  //    Stage 1 : one 8-bit addition               (~3-4 ns)
-          |  //    Stage 2a: 3-level mux on 8-bit wires       (~1-2 ns)
-          |  //    Stage 2b: 3-level mux on 8-bit wires       (~1-2 ns)
-          |  //
-          |  //  Portable: no platform primitives, no `*` or `/`.
-          |  //  Signed/unsigned: bit-identical for addition under two's
-          |  //  complement, so everything runs as UInt internally.
-          |  //
-          |  //  Latency: 5 cycles from start rising edge to valid pulse.
-          |  // =================================================================
-          |  val LATENCY = 5
-          |  val BW      = 8    // block width — smaller blocks shorten Stage 1 RCA
-          |  val NBLK    = 8    // 8 blocks * 8 bits = 64 bits
-          |  val HALF    = NBLK / 2
+          |    val state = RegInit(0.U(2.W))
+          |    val regA = Reg(${portType}(width.W))
+          |    val regB = Reg(${portType}(width.W))
+          |    val result = Reg(${portType}(width.W))
           |
-          |  // --------------- handshake (single-cycle valid pulse) -------------
-          |  val start_d    = RegNext(io.start, false.B)
-          |  val start_rise = io.start && !start_d
-          |  val busy       = RegInit(false.B)
-          |  val accept     = start_rise && !busy
+          |    val r_start      = RegInit(false.B)
+          |    val r_start_next = RegInit(false.B)
+          |    val r_busy       = RegInit(true.B)
           |
-          |  val valid_sr = RegInit(0.U(LATENCY.W))
-          |  valid_sr := Cat(valid_sr(LATENCY - 2, 0), accept)
-          |  io.valid := valid_sr(LATENCY - 1)
-          |  when (accept)        { busy := true.B }
-          |  .elsewhen (io.valid) { busy := false.B }
-          |
-          |  // --------------- Stage 0 : capture operands ----------------------
-          |  val a_s0 = RegEnable(io.a.asUInt, accept)
-          |  val b_s0 = RegEnable(io.b.asUInt, accept)
-          |  val en_s1  = RegNext(accept, false.B)
-          |  val en_s2a = RegNext(en_s1,  false.B)
-          |  val en_s2b = RegNext(en_s2a, false.B)
-          |
-          |  // --------------- Stage 1 : parallel 8-bit additions --------------
-          |  //   For each of 8 blocks, compute {cin=0, cin=1} sums in parallel.
-          |  //   Critical path per block is ONE 8-bit RCA (~8 FA gates).
-          |  // -----------------------------------------------------------------
-          |  val sum0  = Reg(Vec(NBLK, UInt(BW.W)))
-          |  val cout0 = Reg(Vec(NBLK, Bool()))
-          |  val sum1  = Reg(Vec(NBLK, UInt(BW.W)))
-          |  val cout1 = Reg(Vec(NBLK, Bool()))
-          |
-          |  for (k <- 0 until NBLK) {
-          |    val aBlk = a_s0(BW*k + BW - 1, BW*k)
-          |    val bBlk = b_s0(BW*k + BW - 1, BW*k)
-          |    // zero-extend to 9b to capture carry out in MSB
-          |    val extA = Cat(0.U(1.W), aBlk)
-          |    val extB = Cat(0.U(1.W), bBlk)
-          |    val r0 = extA + extB            // 9b, cin = 0
-          |    val r1 = extA + extB + 1.U      // 9b, cin = 1
-          |    sum0(k)  := r0(BW - 1, 0)
-          |    cout0(k) := r0(BW)
-          |    sum1(k)  := r1(BW - 1, 0)
-          |    cout1(k) := r1(BW)
-          |  }
-          |
-          |  // --------------- Stage 2a : lower-half carry-select mux chain ---
-          |  //   Block 0 uses cin=0; blocks 1..HALF-1 are muxed by preceding
-          |  //   block's carry-out. Only 3 mux levels on 8-bit wires.
-          |  //   Upper-half partials (sum0/sum1/cout0/cout1 for blocks 4..7)
-          |  //   are forwarded one stage via dedicated registers.
-          |  // -----------------------------------------------------------------
-          |  val resA     = Reg(Vec(HALF, UInt(BW.W)))
-          |  val carryA   = Reg(Bool())
-          |  val sum0_hi  = Reg(Vec(HALF, UInt(BW.W)))
-          |  val sum1_hi  = Reg(Vec(HALF, UInt(BW.W)))
-          |  val cout0_hi = Reg(Vec(HALF, Bool()))
-          |  val cout1_hi = Reg(Vec(HALF, Bool()))
-          |
-          |  {
-          |    val resW   = Wire(Vec(HALF, UInt(BW.W)))
-          |    val carryW = Wire(Vec(HALF, Bool()))
-          |    resW(0)   := sum0(0)
-          |    carryW(0) := cout0(0)
-          |    for (k <- 1 until HALF) {
-          |      resW(k)   := Mux(carryW(k - 1), sum1(k),  sum0(k))
-          |      carryW(k) := Mux(carryW(k - 1), cout1(k), cout0(k))
+          |    r_start      := io.start
+          |    r_start_next := r_start
+          |    when(r_start & ~r_start_next) {
+          |        r_busy := false.B
+          |    } .elsewhen(io.valid) {
+          |        r_busy := true.B
           |    }
-          |    for (k <- 0 until HALF) {
-          |      resA(k)      := resW(k)
-          |      sum0_hi(k)   := sum0(HALF + k)
-          |      sum1_hi(k)   := sum1(HALF + k)
-          |      cout0_hi(k)  := cout0(HALF + k)
-          |      cout1_hi(k)  := cout1(HALF + k)
+          |
+          |    io.valid := Mux(state === 2.U, true.B, false.B)
+          |    io.out := Mux(state === 2.U, result, 0.${if(signedPort) "S" else "U"})
+          |    switch(state) {
+          |        is(0.U) {
+          |            state := Mux(r_start & ~r_busy, 1.U, 0.U)
+          |            regA := Mux(r_start, io.a, regA)
+          |            regB := Mux(r_start, io.b, regB)
+          |        }
+          |        is(1.U) {
+          |            result := regA + regB
+          |            state := 2.U
+          |        }
+          |        is(2.U) {
+          |            state := 0.U
+          |        }
           |    }
-          |    carryA := carryW(HALF - 1)
-          |  }
-          |
-          |  // --------------- Stage 2b : upper-half carry-select mux chain ---
-          |  //   Seeded by carryA. 3 more mux levels, then concat all 8 blocks
-          |  //   into a 64-bit result register.
-          |  // -----------------------------------------------------------------
-          |  val resB = Wire(Vec(HALF, UInt(BW.W)))
-          |
-          |  {
-          |    val carryW = Wire(Vec(HALF, Bool()))
-          |    resB(0)   := Mux(carryA, sum1_hi(0),  sum0_hi(0))
-          |    carryW(0) := Mux(carryA, cout1_hi(0), cout0_hi(0))
-          |    for (k <- 1 until HALF) {
-          |      resB(k)   := Mux(carryW(k - 1), sum1_hi(k),  sum0_hi(k))
-          |      carryW(k) := Mux(carryW(k - 1), cout1_hi(k), cout0_hi(k))
-          |    }
-          |  }
-          |
-          |  val result_s2 = RegEnable(Cat(resB.asUInt, resA.asUInt), en_s2b)
-          |
-          |  // --------------- Stage 3 : output register -----------------------
-          |  val result_s3 = RegNext(result_s2)
-          |
-          |  io.out := result_s3.${if(signedPort) "asSInt" else "asUInt"}
           |}
         """
     else
@@ -308,133 +220,46 @@ object ArbInputMap {
     if(nonXilinxIP)
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
-          |  val io = IO(new Bundle{
-          |    val a     = Input(${portType}(width.W))
-          |    val b     = Input(${portType}(width.W))
-          |    val start = Input(Bool())
-          |    val out   = Output(${portType}(width.W))
-          |    val valid = Output(Bool())
-          |  })
+          |    val io = IO(new Bundle{
+          |        val a = Input(${portType}(width.W))
+          |        val b = Input(${portType}(width.W))
+          |        val start = Input(Bool())
+          |        val out = Output(${portType}(width.W))
+          |        val valid = Output(Bool())
+          |    })
+          |    val state = RegInit(0.U(2.W))
+          |    val regA = Reg(${portType}(width.W))
+          |    val regB = Reg(${portType}(width.W))
+          |    val result = Reg(${portType}(width.W))
           |
-          |  // =================================================================
-          |  //  Carry-Select Subtractor (CSLA), 64-bit, 5-stage pipeline.
-          |  //
-          |  //  Core identity:  a - b  =  a + ~b + 1
-          |  //
-          |  //  Same structure as the CSLA adder, with two differences:
-          |  //    1. Operand b is bitwise-inverted before entering the CSA blocks.
-          |  //    2. Block 0 selects the cin=1 result (instead of cin=0 in the
-          |  //       adder) to account for the +1 of two's complement negation.
-          |  //
-          |  //  Pipeline: 8 x 8-bit blocks; 7-level mux chain split across
-          |  //  Stage 2a (lower half) and Stage 2b (upper half).
-          |  //  Critical path per stage (90nm SAED typ):
-          |  //    Stage 1 : 8-bit addition           (~3-4 ns)
-          |  //    Stage 2a/2b: 3-level mux           (~1-2 ns)
-          |  //  Latency: 5 cycles from start rising edge to valid pulse.
-          |  // =================================================================
-          |  val LATENCY = 5
-          |  val BW      = 8
-          |  val NBLK    = 8
-          |  val HALF    = NBLK / 2
+          |    val r_start      = RegInit(false.B)
+          |    val r_start_next = RegInit(false.B)
+          |    val r_busy       = RegInit(true.B)
           |
-          |  // --------------- handshake (single-cycle valid pulse) -------------
-          |  val start_d    = RegNext(io.start, false.B)
-          |  val start_rise = io.start && !start_d
-          |  val busy       = RegInit(false.B)
-          |  val accept     = start_rise && !busy
-          |
-          |  val valid_sr = RegInit(0.U(LATENCY.W))
-          |  valid_sr := Cat(valid_sr(LATENCY - 2, 0), accept)
-          |  io.valid := valid_sr(LATENCY - 1)
-          |  when (accept)        { busy := true.B }
-          |  .elsewhen (io.valid) { busy := false.B }
-          |
-          |  // --------------- Stage 0 : capture operands, invert b ------------
-          |  //   a - b = a + ~b + 1
-          |  //   Invert b here; the +1 is handled by block 0 using cin=1.
-          |  val a_s0 = RegEnable(io.a.asUInt,        accept)
-          |  val b_s0 = RegEnable((~io.b.asUInt),     accept)   // ~b
-          |  val en_s1  = RegNext(accept, false.B)
-          |  val en_s2a = RegNext(en_s1,  false.B)
-          |  val en_s2b = RegNext(en_s2a, false.B)
-          |
-          |  // --------------- Stage 1 : parallel 8-bit additions --------------
-          |  //   For each block, compute a_blk + ~b_blk with cin=0 and cin=1.
-          |  //   Critical path = one 8-bit RCA.
-          |  // -----------------------------------------------------------------
-          |  val sum0  = Reg(Vec(NBLK, UInt(BW.W)))
-          |  val cout0 = Reg(Vec(NBLK, Bool()))
-          |  val sum1  = Reg(Vec(NBLK, UInt(BW.W)))
-          |  val cout1 = Reg(Vec(NBLK, Bool()))
-          |
-          |  for (k <- 0 until NBLK) {
-          |    val aBlk = a_s0(BW*k + BW - 1, BW*k)
-          |    val bBlk = b_s0(BW*k + BW - 1, BW*k)   // already inverted
-          |    val extA = Cat(0.U(1.W), aBlk)           // 9b
-          |    val extB = Cat(0.U(1.W), bBlk)           // 9b
-          |    val r0 = extA + extB                     // cin = 0
-          |    val r1 = extA + extB + 1.U               // cin = 1
-          |    sum0(k)  := r0(BW - 1, 0)
-          |    cout0(k) := r0(BW)
-          |    sum1(k)  := r1(BW - 1, 0)
-          |    cout1(k) := r1(BW)
-          |  }
-          |
-          |  // --------------- Stage 2a : lower-half carry-select mux chain ---
-          |  //   Block 0 uses cin=1 (the +1 of two's complement negation).
-          |  //   Blocks 1..HALF-1 muxed by the previous block's carry-out.
-          |  //   Upper-half partials are forwarded one stage.
-          |  // -----------------------------------------------------------------
-          |  val resA     = Reg(Vec(HALF, UInt(BW.W)))
-          |  val carryA   = Reg(Bool())
-          |  val sum0_hi  = Reg(Vec(HALF, UInt(BW.W)))
-          |  val sum1_hi  = Reg(Vec(HALF, UInt(BW.W)))
-          |  val cout0_hi = Reg(Vec(HALF, Bool()))
-          |  val cout1_hi = Reg(Vec(HALF, Bool()))
-          |
-          |  {
-          |    val resW   = Wire(Vec(HALF, UInt(BW.W)))
-          |    val carryW = Wire(Vec(HALF, Bool()))
-          |    // block 0: cin = 1 (the +1 of two's complement)
-          |    resW(0)   := sum1(0)
-          |    carryW(0) := cout1(0)
-          |    for (k <- 1 until HALF) {
-          |      resW(k)   := Mux(carryW(k - 1), sum1(k),  sum0(k))
-          |      carryW(k) := Mux(carryW(k - 1), cout1(k), cout0(k))
+          |    r_start      := io.start
+          |    r_start_next := r_start
+          |    when(r_start & ~r_start_next) {
+          |        r_busy := false.B
+          |    } .elsewhen(io.valid) {
+          |        r_busy := true.B
           |    }
-          |    for (k <- 0 until HALF) {
-          |      resA(k)      := resW(k)
-          |      sum0_hi(k)   := sum0(HALF + k)
-          |      sum1_hi(k)   := sum1(HALF + k)
-          |      cout0_hi(k)  := cout0(HALF + k)
-          |      cout1_hi(k)  := cout1(HALF + k)
+          |
+          |    io.valid := Mux(state === 2.U, true.B, false.B)
+          |    io.out := Mux(state === 2.U, result, 0.${if (signedPort) "S" else "U"})
+          |    switch(state) {
+          |        is(0.U) {
+          |            state := Mux(r_start & ~r_busy, 1.U, 0.U)
+          |            regA := Mux(r_start, io.a, regA)
+          |            regB := Mux(r_start, io.b, regB)
+          |        }
+          |        is(1.U) {
+          |            result := regA - regB
+          |            state := 2.U
+          |        }
+          |        is(2.U) {
+          |            state := 0.U
+          |        }
           |    }
-          |    carryA := carryW(HALF - 1)
-          |  }
-          |
-          |  // --------------- Stage 2b : upper-half carry-select mux chain ---
-          |  //   Seeded by carryA (the outgoing carry from block HALF-1).
-          |  //   3 more mux levels, then register the final 64-bit result.
-          |  // -----------------------------------------------------------------
-          |  val resB = Wire(Vec(HALF, UInt(BW.W)))
-          |
-          |  {
-          |    val carryW = Wire(Vec(HALF, Bool()))
-          |    resB(0)   := Mux(carryA, sum1_hi(0),  sum0_hi(0))
-          |    carryW(0) := Mux(carryA, cout1_hi(0), cout0_hi(0))
-          |    for (k <- 1 until HALF) {
-          |      resB(k)   := Mux(carryW(k - 1), sum1_hi(k),  sum0_hi(k))
-          |      carryW(k) := Mux(carryW(k - 1), cout1_hi(k), cout0_hi(k))
-          |    }
-          |  }
-          |
-          |  val result_s2 = RegEnable(Cat(resB.asUInt, resA.asUInt), en_s2b)
-          |
-          |  // --------------- Stage 3 : output register -----------------------
-          |  val result_s3 = RegNext(result_s2)
-          |
-          |  io.out := result_s3.${if(signedPort) "asSInt" else "asUInt"}
           |}
         """
     else
@@ -527,130 +352,53 @@ object ArbInputMap {
     if(nonXilinxIP)
       st"""
           |class Indexer(val width: Int = 16) extends Module {
-          |  val io = IO(new Bundle{
-          |    val baseOffset  = Input(UInt(width.W))
-          |    val dataOffset  = Input(UInt(width.W))
-          |    val index       = Input(UInt(width.W))
-          |    val elementSize = Input(UInt(width.W))
-          |    val mask        = Input(UInt(width.W))
-          |    val ready       = Input(Bool())
-          |    val valid       = Output(Bool())
-          |    val out         = Output(UInt(width.W))
-          |  })
+          |    val io = IO(new Bundle{
+          |        val baseOffset = Input(UInt(width.W))
+          |        val dataOffset = Input(UInt(width.W))
+          |        val index = Input(UInt(width.W))
+          |        val elementSize = Input(UInt(width.W))
+          |        val mask = Input(UInt(width.W))
+          |        val ready = Input(Bool())
+          |        val valid = Output(Bool())
+          |        val out = Output(UInt(width.W))
+          |    })
           |
-          |  // =================================================================
-          |  //  Pipelined index address calculator.  No `*` operator.
-          |  //
-          |  //  Computes: out = (baseOffset + dataOffset)
-          |  //                + ((index × elementSize) & mask)
-          |  //
-          |  //  The 16×16 multiply is implemented as a Wallace CSA tree over
-          |  //  16 AND-gated partial products — no `*` anywhere.
-          |  //
-          |  //  Pipeline:
-          |  //    Stage 0 : capture inputs
-          |  //    Stage 1 : baseAddr = baseOffset + dataOffset
-          |  //              generate 16 partial products (AND + wiring)
-          |  //    Stage 2 : Wallace reduction first half  (16 → 6)
-          |  //    Stage 3 : Wallace reduction second half (6 → 2) + CPA + mask;
-          |  //              also pre-add LOW 8 bits of (baseAddr + masked_product)
-          |  //              into mult_lo_s3 (with carry-out captured), and pass
-          |  //              HIGH 8 bits of baseAddr / masked_product unmodified.
-          |  //    Stage 4 : final 9-bit add (high8 + high8 + carry-in), then
-          |  //              concat with low8. The 16-bit ripple add that used to
-          |  //              live entirely in stage 4 is split 8+9 across stages
-          |  //              3 and 4, halving the worst-case CPA chain.
-          |  //
-          |  //  Latency: 5 cycles from ready rising edge to valid pulse (unchanged).
-          |  //  Critical path per stage: ~3 CSA layers (~0.5 ns FPGA / ~0.4 ns
-          |  //  ASIC), comfortably supporting 600+ MHz on both platforms.
-          |  //  P0-B fix: at SAED90 / WLM=2M the original `RegNext(baseAddr_s3 +
-          |  //  mult_s3)` synthesized to a 30-level NAND chain (the absolute WNS
-          |  //  path -14.08 ns from arbIndexerWrapper_mod/baseAddr_s3_reg_0_ to
-          |  //  result_s4_reg_16_). Splitting into 8+9 bit halves cuts the CPA
-          |  //  ripple in half without changing latency or functional behavior.
-          |  // =================================================================
-          |  val LATENCY = 5
+          |    val r_start      = RegInit(false.B)
+          |    val r_start_next = RegInit(false.B)
+          |    val r_busy       = RegInit(true.B)
           |
-          |  // --------------- handshake (single-cycle valid pulse) -------------
-          |  val start_d    = RegNext(io.ready, false.B)
-          |  val start_rise = io.ready && !start_d
-          |  val busy       = RegInit(false.B)
-          |  val accept     = start_rise && !busy
-          |
-          |  val valid_sr = RegInit(0.U(LATENCY.W))
-          |  valid_sr := Cat(valid_sr(LATENCY - 2, 0), accept)
-          |  io.valid := valid_sr(LATENCY - 1)
-          |  when (accept)        { busy := true.B }
-          |  .elsewhen (io.valid) { busy := false.B }
-          |
-          |  // --------------- CSA helpers (elaboration-time) ------------------
-          |  def csa(a: UInt, b: UInt, c: UInt): (UInt, UInt) = {
-          |    val s    = a ^ b ^ c
-          |    val cOut = ((a & b) | (b & c) | (a & c)) << 1
-          |    (s(width - 1, 0), cOut(width - 1, 0))
-          |  }
-          |  def reduceOnce(ops: Seq[UInt]): Seq[UInt] = {
-          |    val buf = scala.collection.mutable.ArrayBuffer[UInt]()
-          |    var i = 0
-          |    while (i + 2 < ops.length) {
-          |      val (s, c) = csa(ops(i), ops(i + 1), ops(i + 2))
-          |      buf += s; buf += c; i += 3
+          |    r_start      := io.ready
+          |    r_start_next := r_start
+          |    when(r_start & ~r_start_next) {
+          |        r_busy := false.B
+          |    } .elsewhen(io.valid) {
+          |        r_busy := true.B
           |    }
-          |    while (i < ops.length) { buf += ops(i); i += 1 }
-          |    buf.toSeq
-          |  }
           |
-          |  // --------------- Stage 0 : capture inputs ------------------------
-          |  val baseOff_s0 = RegEnable(io.baseOffset,  accept)
-          |  val dataOff_s0 = RegEnable(io.dataOffset,  accept)
-          |  val index_s0   = RegEnable(io.index,       accept)
-          |  val elemSz_s0  = RegEnable(io.elementSize, accept)
-          |  val mask_s0    = RegEnable(io.mask,        accept)
+          |    val stateReg = RegInit(0.U(2.W))
+          |    switch(stateReg) {
+          |        is(0.U) {
+          |            stateReg := Mux(io.ready, 1.U, 0.U)
+          |        }
+          |        is(1.U) {
+          |            stateReg := 2.U
+          |        }
+          |        is(2.U) {
+          |            stateReg := 3.U
+          |        }
+          |        is(3.U) {
+          |            stateReg := Mux(!io.ready, 0.U, 3.U)
+          |        }
+          |    }
           |
-          |  // --------------- Stage 1 : base-addr add + PP generation ---------
-          |  //   PP[i] = index[i] ? (elementSize << i) : 0   (just AND + wiring)
-          |  val baseAddr_s1 = RegNext(baseOff_s0 + dataOff_s0)
-          |  val mask_s1     = RegNext(mask_s0)
+          |    io.valid := Mux(stateReg === 3.U & ~r_busy, true.B, false.B)
           |
-          |  val pp_s1 = (0 until width).map { i =>
-          |    val shifted = if (i == 0) elemSz_s0
-          |                  else (elemSz_s0 << i)(width - 1, 0)
-          |    RegNext(Mux(index_s0(i), shifted, 0.U(width.W)))
-          |  }
+          |    val regBaseAddr = RegNext(io.baseOffset + io.dataOffset)
           |
-          |  // --------------- Stage 2 : Wallace first half (16 → 6) ----------
-          |  //   Three rounds of 3:2 CSA compression.
-          |  //   16 → 11 → 8 → 6
-          |  var ops: Seq[UInt] = pp_s1
-          |  for (_ <- 0 until 3) ops = reduceOnce(ops)
+          |    val regIndex = RegNext(io.index)
+          |    val regMult = RegNext(regIndex * io.elementSize)
           |
-          |  val s2_regs     = ops.map(op => RegNext(op))
-          |  val baseAddr_s2 = RegNext(baseAddr_s1)
-          |  val mask_s2     = RegNext(mask_s1)
-          |
-          |  // --------------- Stage 3 : Wallace second half (6 → 2) + CPA ----
-          |  //   Three more rounds: 6 → 4 → 3 → 2, then final add + mask.
-          |  ops = s2_regs
-          |  while (ops.length > 2) ops = reduceOnce(ops)
-          |
-          |  val mult_s3_full = ((ops(0) + ops(1))(width - 1, 0)) & mask_s2
-          |  val LO_W = width / 2
-          |  val HI_W = width - LO_W
-          |  // Pre-add low halves here so stage 4 only does a HI_W-bit add.
-          |  // `+&` widens by 1 bit so we capture the carry into stage 4.
-          |  val sumLo_s3_w = baseAddr_s2(LO_W - 1, 0) +& mult_s3_full(LO_W - 1, 0)
-          |  val sumLo_s3   = RegNext(sumLo_s3_w(LO_W - 1, 0))
-          |  val carryLo_s3 = RegNext(sumLo_s3_w(LO_W))
-          |  // Pass through the high halves of baseAddr / mult to stage 4.
-          |  val baseAddrHi_s3 = RegNext(baseAddr_s2(width - 1, LO_W))
-          |  val multHi_s3     = RegNext(mult_s3_full(width - 1, LO_W))
-          |
-          |  // --------------- Stage 4 : final HI add + concat + output reg ----
-          |  val sumHi_s4 = baseAddrHi_s3 + multHi_s3 + carryLo_s3
-          |  val result_s4 = RegNext(Cat(sumHi_s4(HI_W - 1, 0), sumLo_s3))
-          |
-          |  io.out := Mux(io.valid, result_s4, 0.U)
+          |    io.out := RegNext(regBaseAddr + (regMult & io.mask))
           |}
         """
     else
@@ -929,34 +677,20 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    // 2-stage pipelined ${widthOfPort}-bit equality compare:
-        |    //   stage 1: compare high / low halves in parallel
-        |    //   stage 2: AND the two half-results -> io.out
-        |    // Latency = 2 cycles from io.start rising edge; single-cycle
-        |    // 64-bit compare was the SAED90 Fmax bottleneck (37-level OAI chain).
-        |    val r_start  = RegInit(false.B)
-        |    val r_start1 = RegInit(false.B)
-        |    val r_start2 = RegInit(false.B)
-        |    val r_busy   = RegInit(true.B)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
         |
-        |    r_start  := io.start
-        |    r_start1 := r_start
-        |    r_start2 := r_start1
-        |    when(r_start1 & ~r_start2) {
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    val a_hi = io.a(width - 1, width / 2)
-        |    val a_lo = io.a(width / 2 - 1, 0)
-        |    val b_hi = io.b(width - 1, width / 2)
-        |    val b_lo = io.b(width / 2 - 1, 0)
-        |    val hi_eq_r = RegNext(a_hi === b_hi)
-        |    val lo_eq_r = RegNext(a_lo === b_lo)
-        |
-        |    io.out   := RegNext(hi_eq_r & lo_eq_r)
-        |    io.valid := r_start2 & ~r_busy
+        |    io.valid := r_start & ~r_busy
+        |    io.out := RegNext(io.a === io.b)
         |}
       """
   }
@@ -992,32 +726,20 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    // 2-stage pipelined ${widthOfPort}-bit inequality compare:
-        |    //   stage 1: compare high / low halves in parallel
-        |    //   stage 2: OR the two half-mismatches -> io.out
-        |    val r_start  = RegInit(false.B)
-        |    val r_start1 = RegInit(false.B)
-        |    val r_start2 = RegInit(false.B)
-        |    val r_busy   = RegInit(true.B)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
         |
-        |    r_start  := io.start
-        |    r_start1 := r_start
-        |    r_start2 := r_start1
-        |    when(r_start1 & ~r_start2) {
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    val a_hi = io.a(width - 1, width / 2)
-        |    val a_lo = io.a(width / 2 - 1, 0)
-        |    val b_hi = io.b(width - 1, width / 2)
-        |    val b_lo = io.b(width / 2 - 1, 0)
-        |    val hi_ne_r = RegNext(a_hi =/= b_hi)
-        |    val lo_ne_r = RegNext(a_lo =/= b_lo)
-        |
-        |    io.out   := RegNext(hi_ne_r | lo_ne_r)
-        |    io.valid := r_start2 & ~r_busy
+        |    io.valid := r_start & ~r_busy
+        |    io.out := RegNext(io.a =/= io.b)
         |}
       """
   }
@@ -1053,33 +775,20 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    // 2-stage pipelined ${widthOfPort}-bit >= :
-        |    //   out = (hi > ) | ((hi == ) & (lo >= ))
-        |    // High half uses ${portType} compare; low half is always unsigned.
-        |    val r_start  = RegInit(false.B)
-        |    val r_start1 = RegInit(false.B)
-        |    val r_start2 = RegInit(false.B)
-        |    val r_busy   = RegInit(true.B)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
         |
-        |    r_start  := io.start
-        |    r_start1 := r_start
-        |    r_start2 := r_start1
-        |    when(r_start1 & ~r_start2) {
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    val a_hi = io.a(width - 1, width / 2)
-        |    val a_lo = io.a(width / 2 - 1, 0)
-        |    val b_hi = io.b(width - 1, width / 2)
-        |    val b_lo = io.b(width / 2 - 1, 0)
-        |    val hi_gt_r = RegNext(${if(signedPort) "a_hi.asSInt > b_hi.asSInt" else "a_hi > b_hi"})
-        |    val hi_eq_r = RegNext(a_hi === b_hi)
-        |    val lo_ge_r = RegNext(a_lo >= b_lo)
-        |
-        |    io.out   := RegNext(hi_gt_r | (hi_eq_r & lo_ge_r))
-        |    io.valid := r_start2 & ~r_busy
+        |    io.valid := r_start & ~r_busy
+        |    io.out := RegNext(io.a >= io.b)
         |}
       """
   }
@@ -1115,32 +824,20 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    // 2-stage pipelined ${widthOfPort}-bit > :
-        |    //   out = (hi > ) | ((hi == ) & (lo > ))
-        |    val r_start  = RegInit(false.B)
-        |    val r_start1 = RegInit(false.B)
-        |    val r_start2 = RegInit(false.B)
-        |    val r_busy   = RegInit(true.B)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
         |
-        |    r_start  := io.start
-        |    r_start1 := r_start
-        |    r_start2 := r_start1
-        |    when(r_start1 & ~r_start2) {
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    val a_hi = io.a(width - 1, width / 2)
-        |    val a_lo = io.a(width / 2 - 1, 0)
-        |    val b_hi = io.b(width - 1, width / 2)
-        |    val b_lo = io.b(width / 2 - 1, 0)
-        |    val hi_gt_r = RegNext(${if(signedPort) "a_hi.asSInt > b_hi.asSInt" else "a_hi > b_hi"})
-        |    val hi_eq_r = RegNext(a_hi === b_hi)
-        |    val lo_gt_r = RegNext(a_lo > b_lo)
-        |
-        |    io.out   := RegNext(hi_gt_r | (hi_eq_r & lo_gt_r))
-        |    io.valid := r_start2 & ~r_busy
+        |    io.valid := r_start & ~r_busy
+        |    io.out := RegNext(io.a > io.b)
         |}
       """
   }
@@ -1176,32 +873,20 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    // 2-stage pipelined ${widthOfPort}-bit <= :
-        |    //   out = (hi < ) | ((hi == ) & (lo <= ))
-        |    val r_start  = RegInit(false.B)
-        |    val r_start1 = RegInit(false.B)
-        |    val r_start2 = RegInit(false.B)
-        |    val r_busy   = RegInit(true.B)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
         |
-        |    r_start  := io.start
-        |    r_start1 := r_start
-        |    r_start2 := r_start1
-        |    when(r_start1 & ~r_start2) {
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    val a_hi = io.a(width - 1, width / 2)
-        |    val a_lo = io.a(width / 2 - 1, 0)
-        |    val b_hi = io.b(width - 1, width / 2)
-        |    val b_lo = io.b(width / 2 - 1, 0)
-        |    val hi_lt_r = RegNext(${if(signedPort) "a_hi.asSInt < b_hi.asSInt" else "a_hi < b_hi"})
-        |    val hi_eq_r = RegNext(a_hi === b_hi)
-        |    val lo_le_r = RegNext(a_lo <= b_lo)
-        |
-        |    io.out   := RegNext(hi_lt_r | (hi_eq_r & lo_le_r))
-        |    io.valid := r_start2 & ~r_busy
+        |    io.valid := r_start & ~r_busy
+        |    io.out := RegNext(io.a <= io.b)
         |}
       """
   }
@@ -1237,32 +922,20 @@ object ArbInputMap {
         |        val out = Output(Bool())
         |    })
         |
-        |    // 2-stage pipelined ${widthOfPort}-bit < :
-        |    //   out = (hi < ) | ((hi == ) & (lo < ))
-        |    val r_start  = RegInit(false.B)
-        |    val r_start1 = RegInit(false.B)
-        |    val r_start2 = RegInit(false.B)
-        |    val r_busy   = RegInit(true.B)
+        |    val r_start      = RegInit(false.B)
+        |    val r_start_next = RegInit(false.B)
+        |    val r_busy       = RegInit(true.B)
         |
-        |    r_start  := io.start
-        |    r_start1 := r_start
-        |    r_start2 := r_start1
-        |    when(r_start1 & ~r_start2) {
+        |    r_start      := io.start
+        |    r_start_next := r_start
+        |    when(r_start & ~r_start_next) {
         |        r_busy := false.B
         |    } .elsewhen(io.valid) {
         |        r_busy := true.B
         |    }
         |
-        |    val a_hi = io.a(width - 1, width / 2)
-        |    val a_lo = io.a(width / 2 - 1, 0)
-        |    val b_hi = io.b(width - 1, width / 2)
-        |    val b_lo = io.b(width / 2 - 1, 0)
-        |    val hi_lt_r = RegNext(${if(signedPort) "a_hi.asSInt < b_hi.asSInt" else "a_hi < b_hi"})
-        |    val hi_eq_r = RegNext(a_hi === b_hi)
-        |    val lo_lt_r = RegNext(a_lo < b_lo)
-        |
-        |    io.out   := RegNext(hi_lt_r | (hi_eq_r & lo_lt_r))
-        |    io.valid := r_start2 & ~r_busy
+        |    io.valid := r_start & ~r_busy
+        |    io.out := RegNext(io.a < io.b)
         |}
       """
   }
@@ -1493,200 +1166,29 @@ object ArbInputMap {
   @strictpure override def moduleST: ST = {
     if(nonXilinxIP)
       st"""
-          |// ======================================================================
-          |//  Portable high-Fmax 64x64 -> 64 multiplier (truncated).
-          |//
-          |//  Architecture:
-          |//    Stage 0  : operand capture
-          |//    Stage 1  : Radix-4 Booth recoding -> 33 partial products
-          |//    Stage 2  : Wallace tree, reduction layer A (33 -> ~10 operands)
-          |//    Stage 3  : Wallace tree, reduction layer B (~10 -> 2 operands)
-          |//    Stage 4  : CPA low half  (low 32b)
-          |//    Stage 5  : CPA high half (high 32b with carry in)
-          |//
-          |//  Latency : 6 cycles start_rise -> valid pulse.
-          |//  No use of `*` or `/` operators anywhere in the datapath.
-          |//  No primitives - pure RTL. Portable across FPGA & ASIC.
-          |//
-          |//  Signed/unsigned: low 64 bits of a*b are identical for signed and
-          |//  unsigned operands under two's complement, so the core runs
-          |//  unsigned and the result is reinterpreted at the output.
-          |// ======================================================================
           |class ${moduleName}(val width: Int = 64) extends Module {
-          |  require(width == 64, "This multiplier is hand-tuned for 64-bit operands")
+          |    val io = IO(new Bundle{
+          |        val a = Input(${portType}(width.W))
+          |        val b = Input(${portType}(width.W))
+          |        val start = Input(Bool())
+          |        val out = Output(${portType}(width.W))
+          |        val valid = Output(Bool())
+          |    })
           |
-          |  val io = IO(new Bundle{
-          |    val a     = Input(${portType}(width.W))
-          |    val b     = Input(${portType}(width.W))
-          |    val start = Input(Bool())
-          |    val out   = Output(${portType}(width.W))
-          |    val valid = Output(Bool())
-          |  })
+          |    val r_start      = RegInit(false.B)
+          |    val r_start_next = RegInit(false.B)
+          |    val r_busy       = RegInit(true.B)
           |
-          |  val LATENCY = 6
-          |
-          |  // ---------------- handshake (same external semantics as before) ----
-          |  val start_d    = RegNext(io.start, false.B)
-          |  val start_rise = io.start && !start_d
-          |  val busy       = RegInit(false.B)
-          |  val accept     = start_rise && !busy
-          |
-          |  val valid_sr = RegInit(0.U(LATENCY.W))
-          |  valid_sr := Cat(valid_sr(LATENCY - 2, 0), accept)
-          |  io.valid := valid_sr(LATENCY - 1)
-          |  when (accept)        { busy := true.B }
-          |  .elsewhen (io.valid) { busy := false.B }
-          |
-          |  // ================================================================
-          |  //  Stage 0 : capture operands
-          |  //    RegEnable without reset so Vivado can pack them into DSP/
-          |  //    IOB regs if it chooses, and ASIC synthesis sees clean FFs.
-          |  // ================================================================
-          |  val aU = io.a.asUInt
-          |  val bU = io.b.asUInt
-          |  val a_s0 = RegEnable(aU, accept)               // 64b
-          |  // 67b: LSB=0 for Booth grouping, top 2 zeros so the k=32 group b_s0(66,64) is in range.
-          |  // Core runs unsigned (see header) so zero-extension is correct for both signed and unsigned.
-          |  val b_s0 = RegEnable(Cat(0.U(2.W), bU, 0.U(1.W)), accept)
-          |
-          |  val en_s1 = RegNext(accept, false.B)
-          |  val en_s2 = RegNext(en_s1,  false.B)
-          |  val en_s3 = RegNext(en_s2,  false.B)
-          |  val en_s4 = RegNext(en_s3,  false.B)
-          |
-          |  // ================================================================
-          |  //  Stage 1 : Radix-4 Booth PP generation
-          |  //    For k = 0..32, inspect b[2k+1 : 2k-1] (with b[-1] = 0).
-          |  //    Encoding produces {neg, two, one}:
-          |  //        000 / 111 ->  0        (one=0, two=0, neg=0)
-          |  //        001 / 010 -> +A        (one=1, two=0, neg=0)
-          |  //        011       -> +2A       (one=0, two=1, neg=0)
-          |  //        100       -> -2A       (one=0, two=1, neg=1)
-          |  //        101 / 110 -> -A        (one=1, two=0, neg=1)
-          |  //    PP bits = (mux of {0, A, 2A}) XOR neg, plus neg added at LSB.
-          |  //    We keep each PP as 66b (A can be shifted by 1, plus sign ext).
-          |  // ================================================================
-          |  val numPP = 33
-          |  val ppWidth = 66
-          |  val pp_s1      = Reg(Vec(numPP, UInt(ppWidth.W)))
-          |  val ppShift_s1 = Reg(Vec(numPP, UInt(7.W))) // shift amount for each PP (2*k)
-          |  val ppNeg_s1   = Reg(Vec(numPP, Bool()))    // carry-in for -A / -2A
-          |
-          |  // build each PP combinationally, latch at stage 1
-          |  val a65 = Cat(0.U(1.W), a_s0)   // 65b zero-extended copy for 2A shift
-          |  for (k <- 0 until numPP) {
-          |    val bits = b_s0(2*k + 2, 2*k) // 3-bit group
-          |    val one  = bits(0) ^ bits(1)
-          |    val two  = (bits(2) && !bits(1) && !bits(0)) ||
-          |               (!bits(2) &&  bits(1) &&  bits(0))
-          |    val neg  = bits(2)
-          |    // select 0 / A / 2A
-          |    val aSel = Mux(two, Cat(a_s0, 0.U(1.W)),     // 2A (65b)
-          |                Mux(one, a65,                    // A  (65b zero-extended)
-          |                         0.U(65.W)))
-          |    // conditional invert (two's complement: invert + add neg at LSB)
-          |    val ppBase = Mux(neg, ~aSel, aSel)           // 65b
-          |    // extend to 66b with proper sign for negative PPs
-          |    val ppExt  = Cat(Mux(neg, 1.U(1.W), 0.U(1.W)), ppBase)   // 66b
-          |    pp_s1(k)      := ppExt
-          |    ppShift_s1(k) := (2*k).U(7.W)
-          |    ppNeg_s1(k)   := neg
-          |  }
-          |
-          |  // Pre-shift each PP into the 128b product grid.
-          |  // Only low 64 bits matter for the truncated product, but we keep
-          |  // 65b working width to preserve carry into bit 64 during reduction.
-          |  val WORK_W = 65
-          |  val pp_shifted = Wire(Vec(numPP, UInt(WORK_W.W)))
-          |  for (k <- 0 until numPP) {
-          |    val shamt = 2*k
-          |    if (shamt >= WORK_W) {
-          |      pp_shifted(k) := 0.U
-          |    } else {
-          |      val take = pp_s1(k)(WORK_W - shamt - 1, 0)  // bits that land within [0, WORK_W)
-          |      // shamt==0 would make Cat() build a zero-width 0.U literal, which Chisel rejects.
-          |      pp_shifted(k) := (if (shamt == 0) take else Cat(take, 0.U(shamt.W)))
+          |    r_start      := io.start
+          |    r_start_next := r_start
+          |    when(r_start & ~r_start_next) {
+          |        r_busy := false.B
+          |    } .elsewhen(io.valid) {
+          |        r_busy := true.B
           |    }
-          |  }
-          |  // Booth-negative correction: add 'neg' at position 2*k of the sum
-          |  // (collected into a single 65b vector for free insertion into tree)
-          |  val negCorr = Wire(Vec(numPP, UInt(WORK_W.W)))
-          |  for (k <- 0 until numPP) {
-          |    val shamt = 2*k
-          |    if (shamt >= WORK_W) negCorr(k) := 0.U
-          |    else                 negCorr(k) := (ppNeg_s1(k).asUInt) << shamt
-          |  }
           |
-          |  // ================================================================
-          |  //  Wallace reduction: generic 3:2 CSA helper
-          |  //    sum_i   = a_i XOR b_i XOR c_i
-          |  //    carry_i = majority(a_i, b_i, c_i) shifted left by 1
-          |  //    Each FA is ~2 LUTs on Xilinx, ~4 gates on ASIC.
-          |  // ================================================================
-          |  def csa(a: UInt, b: UInt, c: UInt): (UInt, UInt) = {
-          |    val s = a ^ b ^ c
-          |    val cOut = ((a & b) | (b & c) | (a & c)) << 1
-          |    (s, cOut(WORK_W - 1, 0))
-          |  }
-          |
-          |  // Gather all operands into a mutable list for reduction.
-          |  // Seq length starts at numPP + numPP (PPs + neg corrections that
-          |  // are nonzero). In practice we can merge neg corrections into the
-          |  // first reduction layer.
-          |  var operands: Seq[UInt] = (0 until numPP).map(pp_shifted(_)) ++
-          |                            (0 until numPP).map(negCorr(_))
-          |
-          |  // ----------------------------------------------------------------
-          |  //  Stage 2 : reduction layer A  -> target ~10 operands
-          |  //  Stage 3 : reduction layer B  -> target 2 operands
-          |  //  Split point chosen so each stage has ~4 CSA levels of depth.
-          |  // ----------------------------------------------------------------
-          |  def reduceOne(ops: Seq[UInt]): Seq[UInt] = {
-          |    val buf = scala.collection.mutable.ArrayBuffer[UInt]()
-          |    var i = 0
-          |    val n = ops.length
-          |    while (i + 2 < n) {
-          |      val (s, c) = csa(ops(i), ops(i+1), ops(i+2))
-          |      buf += s; buf += c
-          |      i += 3
-          |    }
-          |    while (i < n) { buf += ops(i); i += 1 }
-          |    buf.toSeq
-          |  }
-          |
-          |  // Keep reducing until operand count <= targetA, then pipeline.
-          |  val targetA = 10
-          |  while (operands.length > targetA) operands = reduceOne(operands)
-          |
-          |  // Pipeline barrier: register stage-2 outputs
-          |  val s2_regs = operands.map(op => RegEnable(op, en_s2))
-          |  operands = s2_regs
-          |
-          |  // Continue reducing to exactly 2 operands
-          |  while (operands.length > 2) operands = reduceOne(operands)
-          |
-          |  // Pipeline barrier: register stage-3 outputs (the sum/carry pair)
-          |  val sumVec_s3   = RegEnable(operands(0), en_s3)
-          |  val carryVec_s3 = RegEnable(operands(1), en_s3)
-          |
-          |  // ================================================================
-          |  //  Stage 4-5 : final CPA, split into low/high halves for timing
-          |  // ================================================================
-          |  // Low half (32b) + carry-out
-          |  val lo_sum   = sumVec_s3(31, 0)   +& carryVec_s3(31, 0)  // 33b (32b + carry)
-          |  val lo_s4    = RegEnable(lo_sum, en_s4)                  // 33b
-          |  // High half needs to wait one more cycle; forward it through a reg
-          |  val hi_sa_s4 = RegEnable(sumVec_s3(63, 32),   en_s4)     // 32b
-          |  val hi_cb_s4 = RegEnable(carryVec_s3(63, 32), en_s4)     // 32b
-          |
-          |  // Final high add, with carry-in from stage 4
-          |  val hi_full  = hi_sa_s4 +& hi_cb_s4 +& lo_s4(32).asUInt  // 33b
-          |  val hi_s5    = RegNext(hi_full(31, 0))                   // 32b
-          |  val lo_s5    = RegNext(lo_s4(31, 0))                     // 32b
-          |
-          |  val product  = Cat(hi_s5, lo_s5)                         // 64b
-          |
-          |  io.out := product.${if (signedPort) "asSInt" else "asUInt"}
+          |    io.out := io.a * io.b
+          |    io.valid := r_start & ~r_busy
           |}
         """
     else
@@ -1732,35 +1234,6 @@ object ArbInputMap {
   }
   @strictpure override def expression: ArbIpType = exp
   @strictpure override def moduleST: ST = {
-    val negRegs: ST = if(signedPort)
-      st"""val neg_q = Reg(Bool())
-          |  val neg_r = Reg(Bool())"""
-    else st""""""
-
-    val captureBody: ST = if(signedPort)
-      st"""val a_neg = io.a(width - 1)
-          |        val b_neg = io.b(width - 1)
-          |        val a_abs = Mux(a_neg, (-io.a).asUInt, io.a.asUInt)
-          |        val b_abs = Mux(b_neg, (-io.b).asUInt, io.b.asUInt)
-          |        dividend := a_abs
-          |        divisor  := b_abs
-          |        divInv   := ~b_abs
-          |        neg_q    := a_neg ^ b_neg
-          |        neg_r    := a_neg"""
-    else
-      st"""dividend := io.a.asUInt
-          |        divisor  := io.b.asUInt
-          |        divInv   := ~io.b.asUInt"""
-
-    val outputBody: ST = if(signedPort)
-      st"""io.quotient  := Mux(state === sDone & ~r_busy,
-          |                    Mux(neg_q, (-quot.asSInt), quot.asSInt), 0.S)
-          |  io.remainder := Mux(state === sDone & ~r_busy,
-          |                    Mux(neg_r, (-rem.asSInt),  rem.asSInt),  0.S)"""
-    else
-      st"""io.quotient  := Mux(state === sDone & ~r_busy, quot, 0.U)
-          |  io.remainder := Mux(state === sDone & ~r_busy, rem,  0.U)"""
-
     if(nonXilinxIP)
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
@@ -1773,62 +1246,44 @@ object ArbInputMap {
           |    val remainder = Output(${portType}(width.W))
           |  })
           |
-          |  // ==================================================================
-          |  //  Non-restoring division, 3 cycles per bit.
-          |  //
-          |  //  The single-cycle iteration forced a full 64-bit CSLA subtract
-          |  //  AND the rem/quot/dividend update into one clock period; we
-          |  //  split each iteration into three phases so that no single
-          |  //  cycle has more than ~3-4 mux levels:
-          |  //
-          |  //    Phase A  (sRunningA): parallel 8-bit block adds
-          |  //                          (8 x 9-bit RCA); latch sum0/cout0,
-          |  //                          sum1/cout1, and the shifted remainder.
-          |  //    Phase B1 (sRunningB1): carry-select mux chain over the LOWER
-          |  //                           4 blocks only (3 mux levels); latch
-          |  //                           the selected lower-half sum, the
-          |  //                           boundary carry, and forward the
-          |  //                           upper-half partials + shifted value.
-          |  //    Phase B2 (sRunningB2): carry-select mux chain over the UPPER
-          |  //                           4 blocks seeded by the registered
-          |  //                           boundary carry (1 seed mux + 3 chain
-          |  //                           muxes = 4 mux levels); commit rem,
-          |  //                           quot, dividend, decrement count.
-          |  //
-          |  //  Critical path per phase ~ 3-4 ns at 90nm SAED typ (was 4-5 ns
-          |  //  for the original unsplit 7-mux Phase B).
-          |  //  Latency: 3 * width cycles between start acceptance and valid
-          |  //  (was 2 * width; +50% runtime to buy the extra Fmax headroom).
-          |  // ==================================================================
-          |  val BW   = 8
-          |  val NBLK = width / BW
-          |  val HALF = NBLK / 2
+          |  val a_neg = io.a(width-1)
+          |  val b_neg = io.b(width-1)
+          |  val a_abs = Mux(a_neg, -io.a, io.a).asUInt
+          |  val b_abs = Mux(b_neg, -io.b, io.b).asUInt
           |
-          |  val sIdle :: sRunningA :: sRunningB1 :: sRunningB2 :: sDone :: Nil = Enum(5)
-          |  val state    = RegInit(sIdle)
-          |  val count    = RegInit(0.U((log2Ceil(width) + 1).W))
-          |  val dividend = Reg(UInt(width.W))
-          |  val divisor  = Reg(UInt(width.W))
-          |  val divInv   = Reg(UInt(width.W))
-          |  val rem      = Reg(UInt(width.W))
-          |  val quot     = Reg(UInt(width.W))
-          |  ${negRegs}
+          |  val dividend = RegInit(0.U(width.W))
+          |  val divisor = RegInit(0.U(width.W))
+          |  val quotient = RegInit(0.U(width.W))
+          |  val remainder = RegInit(0.U(width.W))
+          |  val count = RegInit((width - 1).U((1+log2Ceil(width)).W))
+          |  val busy = RegInit(false.B)
           |
-          |  // Phase A -> Phase B1 pipeline registers
-          |  val r_sum0    = Reg(Vec(NBLK, UInt(BW.W)))
-          |  val r_cout0   = Reg(Vec(NBLK, Bool()))
-          |  val r_sum1    = Reg(Vec(NBLK, UInt(BW.W)))
-          |  val r_cout1   = Reg(Vec(NBLK, Bool()))
-          |  val r_shifted = Reg(UInt(width.W))
+          |  when(io.start && !busy) {
+          |    dividend := a_abs
+          |    divisor := b_abs
+          |    quotient := 0.U
+          |    remainder := 0.U
+          |    count := width.U
+          |    busy := true.B
+          |  } .elsewhen(busy) {
+          |    when(count === 0.U) {
+          |      count := width.U
+          |      busy := false.B
+          |    } .otherwise {
+          |      val shifted = remainder << 1 | (dividend >> (width - 1))
+          |      remainder := shifted
           |
-          |  // Phase B1 -> Phase B2 pipeline registers
-          |  val r_resLo       = Reg(Vec(HALF, UInt(BW.W)))  // selected lower-half sums
-          |  val r_carryMid    = Reg(Bool())                 // carry at block-HALF boundary
-          |  val r_sum0_hi     = Reg(Vec(HALF, UInt(BW.W)))  // forwarded upper partials
-          |  val r_cout0_hi    = Reg(Vec(HALF, Bool()))
-          |  val r_sum1_hi     = Reg(Vec(HALF, UInt(BW.W)))
-          |  val r_cout1_hi    = Reg(Vec(HALF, Bool()))
-          |  val r_shifted_b1  = Reg(UInt(width.W))          // shifted remainder forwarded
+          |      when (shifted >= divisor) {
+          |        remainder := shifted - divisor
+          |        quotient := (quotient << 1) | 1.U
+          |      } .otherwise {
+          |        quotient := quotient << 1
+          |      }
+          |
+          |      dividend := dividend << 1
+          |      count := count - 1.U
+          |    }
+          |  }
           |
           |  val r_start      = RegInit(false.B)
           |  val r_start_next = RegInit(false.B)
@@ -1837,112 +1292,16 @@ object ArbInputMap {
           |  r_start      := io.start
           |  r_start_next := r_start
           |  when(r_start & ~r_start_next) {
-          |    r_busy := false.B
+          |      r_busy := false.B
           |  } .elsewhen(io.valid) {
-          |    r_busy := true.B
+          |      r_busy := true.B
           |  }
           |
-          |  val shifted = Cat(rem(width - 2, 0), dividend(width - 1))
-          |
-          |  // ----- Phase A combinational : parallel 8-bit block adds -----
-          |  val cs_sum0  = Wire(Vec(NBLK, UInt(BW.W)))
-          |  val cs_cout0 = Wire(Vec(NBLK, Bool()))
-          |  val cs_sum1  = Wire(Vec(NBLK, UInt(BW.W)))
-          |  val cs_cout1 = Wire(Vec(NBLK, Bool()))
-          |
-          |  for (k <- 0 until NBLK) {
-          |    val aBlk = shifted(BW * k + BW - 1, BW * k)
-          |    val bBlk = divInv(BW * k + BW - 1, BW * k)
-          |    val extA = Cat(0.U(1.W), aBlk)
-          |    val extB = Cat(0.U(1.W), bBlk)
-          |    val r0   = extA + extB
-          |    val r1   = extA + extB + 1.U
-          |    cs_sum0(k)  := r0(BW - 1, 0)
-          |    cs_cout0(k) := r0(BW)
-          |    cs_sum1(k)  := r1(BW - 1, 0)
-          |    cs_cout1(k) := r1(BW)
-          |  }
-          |
-          |  // ----- Phase B1 combinational : lower-half (blocks 0..HALF-1) -----
-          |  //   HALF-1 mux levels over BW-bit wires (3 levels when HALF=4).
-          |  val b1_res   = Wire(Vec(HALF, UInt(BW.W)))
-          |  val b1_carry = Wire(Vec(HALF, Bool()))
-          |  b1_res(0)   := r_sum1(0)
-          |  b1_carry(0) := r_cout1(0)
-          |  for (k <- 1 until HALF) {
-          |    b1_res(k)   := Mux(b1_carry(k - 1), r_sum1(k),  r_sum0(k))
-          |    b1_carry(k) := Mux(b1_carry(k - 1), r_cout1(k), r_cout0(k))
-          |  }
-          |
-          |  // ----- Phase B2 combinational : upper-half (blocks HALF..NBLK-1) -----
-          |  //   Seeded by r_carryMid; HALF mux levels = 4 when HALF=4.
-          |  val b2_res   = Wire(Vec(HALF, UInt(BW.W)))
-          |  val b2_carry = Wire(Vec(HALF, Bool()))
-          |  b2_res(0)   := Mux(r_carryMid, r_sum1_hi(0),  r_sum0_hi(0))
-          |  b2_carry(0) := Mux(r_carryMid, r_cout1_hi(0), r_cout0_hi(0))
-          |  for (k <- 1 until HALF) {
-          |    b2_res(k)   := Mux(b2_carry(k - 1), r_sum1_hi(k),  r_sum0_hi(k))
-          |    b2_carry(k) := Mux(b2_carry(k - 1), r_cout1_hi(k), r_cout0_hi(k))
-          |  }
-          |
-          |  val subResult   = Cat(b2_res.asUInt, r_resLo.asUInt)
-          |  val noUnderflow = b2_carry(HALF - 1)
-          |
-          |  switch(state) {
-          |    is(sIdle) {
-          |      when(r_start & ~r_busy) {
-          |        ${captureBody}
-          |        rem      := 0.U
-          |        quot     := 0.U
-          |        count    := width.U
-          |        state    := sRunningA
-          |      }
-          |    }
-          |    is(sRunningA) {
-          |      // latch Phase A partials for Phase B1
-          |      for (k <- 0 until NBLK) {
-          |        r_sum0(k)  := cs_sum0(k)
-          |        r_cout0(k) := cs_cout0(k)
-          |        r_sum1(k)  := cs_sum1(k)
-          |        r_cout1(k) := cs_cout1(k)
-          |      }
-          |      r_shifted := shifted
-          |      state := sRunningB1
-          |    }
-          |    is(sRunningB1) {
-          |      // latch lower-half B1 chain result + boundary carry;
-          |      // forward upper-half partials and r_shifted to B2
-          |      for (k <- 0 until HALF) {
-          |        r_resLo(k)    := b1_res(k)
-          |        r_sum0_hi(k)  := r_sum0(HALF + k)
-          |        r_cout0_hi(k) := r_cout0(HALF + k)
-          |        r_sum1_hi(k)  := r_sum1(HALF + k)
-          |        r_cout1_hi(k) := r_cout1(HALF + k)
-          |      }
-          |      r_carryMid   := b1_carry(HALF - 1)
-          |      r_shifted_b1 := r_shifted
-          |      state := sRunningB2
-          |    }
-          |    is(sRunningB2) {
-          |      rem      := Mux(noUnderflow, subResult, r_shifted_b1)
-          |      quot     := Mux(noUnderflow, (quot << 1) | 1.U, quot << 1)
-          |      dividend := dividend << 1
-          |      count    := count - 1.U
-          |      when(count === 1.U) {
-          |        state := sDone
-          |      } .otherwise {
-          |        state := sRunningA
-          |      }
-          |    }
-          |    is(sDone) {
-          |      state := sIdle
-          |    }
-          |  }
-          |
-          |  ${outputBody}
-          |  io.valid := (state === sDone) & ~r_busy
+          |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient)${if(signedPort) ".asSInt" else ""}
+          |  io.remainder := Mux(a_neg, -remainder, remainder)${if(signedPort) ".asSInt" else ""}
+          |  io.valid := (count === 0.U) & ~r_busy
           |}
-        """
+      """
     else
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
@@ -1989,35 +1348,6 @@ object ArbInputMap {
   }
   @strictpure override def expression: ArbIpType = exp
   @strictpure override def moduleST: ST = {
-    val negRegs: ST = if(signedPort)
-      st"""val neg_q = Reg(Bool())
-          |  val neg_r = Reg(Bool())"""
-    else st""""""
-
-    val captureBody: ST = if(signedPort)
-      st"""val a_neg = io.a(width - 1)
-          |        val b_neg = io.b(width - 1)
-          |        val a_abs = Mux(a_neg, (-io.a).asUInt, io.a.asUInt)
-          |        val b_abs = Mux(b_neg, (-io.b).asUInt, io.b.asUInt)
-          |        dividend := a_abs
-          |        divisor  := b_abs
-          |        divInv   := ~b_abs
-          |        neg_q    := a_neg ^ b_neg
-          |        neg_r    := a_neg"""
-    else
-      st"""dividend := io.a.asUInt
-          |        divisor  := io.b.asUInt
-          |        divInv   := ~io.b.asUInt"""
-
-    val outputBody: ST = if(signedPort)
-      st"""io.quotient  := Mux(state === sDone & ~r_busy,
-          |                    Mux(neg_q, (-quot.asSInt), quot.asSInt), 0.S)
-          |  io.remainder := Mux(state === sDone & ~r_busy,
-          |                    Mux(neg_r, (-rem.asSInt),  rem.asSInt),  0.S)"""
-    else
-      st"""io.quotient  := Mux(state === sDone & ~r_busy, quot, 0.U)
-          |  io.remainder := Mux(state === sDone & ~r_busy, rem,  0.U)"""
-
     if(nonXilinxIP)
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
@@ -2030,62 +1360,44 @@ object ArbInputMap {
           |    val remainder = Output(${portType}(width.W))
           |  })
           |
-          |  // ==================================================================
-          |  //  Non-restoring division, 3 cycles per bit.
-          |  //
-          |  //  The single-cycle iteration forced a full 64-bit CSLA subtract
-          |  //  AND the rem/quot/dividend update into one clock period; we
-          |  //  split each iteration into three phases so that no single
-          |  //  cycle has more than ~3-4 mux levels:
-          |  //
-          |  //    Phase A  (sRunningA): parallel 8-bit block adds
-          |  //                          (8 x 9-bit RCA); latch sum0/cout0,
-          |  //                          sum1/cout1, and the shifted remainder.
-          |  //    Phase B1 (sRunningB1): carry-select mux chain over the LOWER
-          |  //                           4 blocks only (3 mux levels); latch
-          |  //                           the selected lower-half sum, the
-          |  //                           boundary carry, and forward the
-          |  //                           upper-half partials + shifted value.
-          |  //    Phase B2 (sRunningB2): carry-select mux chain over the UPPER
-          |  //                           4 blocks seeded by the registered
-          |  //                           boundary carry (1 seed mux + 3 chain
-          |  //                           muxes = 4 mux levels); commit rem,
-          |  //                           quot, dividend, decrement count.
-          |  //
-          |  //  Critical path per phase ~ 3-4 ns at 90nm SAED typ (was 4-5 ns
-          |  //  for the original unsplit 7-mux Phase B).
-          |  //  Latency: 3 * width cycles between start acceptance and valid
-          |  //  (was 2 * width; +50% runtime to buy the extra Fmax headroom).
-          |  // ==================================================================
-          |  val BW   = 8
-          |  val NBLK = width / BW
-          |  val HALF = NBLK / 2
+          |  val a_neg = io.a(width-1)
+          |  val b_neg = io.b(width-1)
+          |  val a_abs = Mux(a_neg, -io.a, io.a).asUInt
+          |  val b_abs = Mux(b_neg, -io.b, io.b).asUInt
           |
-          |  val sIdle :: sRunningA :: sRunningB1 :: sRunningB2 :: sDone :: Nil = Enum(5)
-          |  val state    = RegInit(sIdle)
-          |  val count    = RegInit(0.U((log2Ceil(width) + 1).W))
-          |  val dividend = Reg(UInt(width.W))
-          |  val divisor  = Reg(UInt(width.W))
-          |  val divInv   = Reg(UInt(width.W))
-          |  val rem      = Reg(UInt(width.W))
-          |  val quot     = Reg(UInt(width.W))
-          |  ${negRegs}
+          |  val dividend = RegInit(0.U(width.W))
+          |  val divisor = RegInit(0.U(width.W))
+          |  val quotient = RegInit(0.U(width.W))
+          |  val remainder = RegInit(0.U(width.W))
+          |  val count = RegInit((width - 1).U((1+log2Ceil(width)).W))
+          |  val busy = RegInit(false.B)
           |
-          |  // Phase A -> Phase B1 pipeline registers
-          |  val r_sum0    = Reg(Vec(NBLK, UInt(BW.W)))
-          |  val r_cout0   = Reg(Vec(NBLK, Bool()))
-          |  val r_sum1    = Reg(Vec(NBLK, UInt(BW.W)))
-          |  val r_cout1   = Reg(Vec(NBLK, Bool()))
-          |  val r_shifted = Reg(UInt(width.W))
+          |  when(io.start && !busy) {
+          |    dividend := a_abs
+          |    divisor := b_abs
+          |    quotient := 0.U
+          |    remainder := 0.U
+          |    count := width.U
+          |    busy := true.B
+          |  } .elsewhen(busy) {
+          |    when(count === 0.U) {
+          |      count := width.U
+          |      busy := false.B
+          |    } .otherwise {
+          |      val shifted = remainder << 1 | (dividend >> (width - 1))
+          |      remainder := shifted
           |
-          |  // Phase B1 -> Phase B2 pipeline registers
-          |  val r_resLo       = Reg(Vec(HALF, UInt(BW.W)))  // selected lower-half sums
-          |  val r_carryMid    = Reg(Bool())                 // carry at block-HALF boundary
-          |  val r_sum0_hi     = Reg(Vec(HALF, UInt(BW.W)))  // forwarded upper partials
-          |  val r_cout0_hi    = Reg(Vec(HALF, Bool()))
-          |  val r_sum1_hi     = Reg(Vec(HALF, UInt(BW.W)))
-          |  val r_cout1_hi    = Reg(Vec(HALF, Bool()))
-          |  val r_shifted_b1  = Reg(UInt(width.W))          // shifted remainder forwarded
+          |      when (shifted >= divisor) {
+          |        remainder := shifted - divisor
+          |        quotient := (quotient << 1) | 1.U
+          |      } .otherwise {
+          |        quotient := quotient << 1
+          |      }
+          |
+          |      dividend := dividend << 1
+          |      count := count - 1.U
+          |    }
+          |  }
           |
           |  val r_start      = RegInit(false.B)
           |  val r_start_next = RegInit(false.B)
@@ -2094,112 +1406,16 @@ object ArbInputMap {
           |  r_start      := io.start
           |  r_start_next := r_start
           |  when(r_start & ~r_start_next) {
-          |    r_busy := false.B
+          |      r_busy := false.B
           |  } .elsewhen(io.valid) {
-          |    r_busy := true.B
+          |      r_busy := true.B
           |  }
           |
-          |  val shifted = Cat(rem(width - 2, 0), dividend(width - 1))
-          |
-          |  // ----- Phase A combinational : parallel 8-bit block adds -----
-          |  val cs_sum0  = Wire(Vec(NBLK, UInt(BW.W)))
-          |  val cs_cout0 = Wire(Vec(NBLK, Bool()))
-          |  val cs_sum1  = Wire(Vec(NBLK, UInt(BW.W)))
-          |  val cs_cout1 = Wire(Vec(NBLK, Bool()))
-          |
-          |  for (k <- 0 until NBLK) {
-          |    val aBlk = shifted(BW * k + BW - 1, BW * k)
-          |    val bBlk = divInv(BW * k + BW - 1, BW * k)
-          |    val extA = Cat(0.U(1.W), aBlk)
-          |    val extB = Cat(0.U(1.W), bBlk)
-          |    val r0   = extA + extB
-          |    val r1   = extA + extB + 1.U
-          |    cs_sum0(k)  := r0(BW - 1, 0)
-          |    cs_cout0(k) := r0(BW)
-          |    cs_sum1(k)  := r1(BW - 1, 0)
-          |    cs_cout1(k) := r1(BW)
-          |  }
-          |
-          |  // ----- Phase B1 combinational : lower-half (blocks 0..HALF-1) -----
-          |  //   HALF-1 mux levels over BW-bit wires (3 levels when HALF=4).
-          |  val b1_res   = Wire(Vec(HALF, UInt(BW.W)))
-          |  val b1_carry = Wire(Vec(HALF, Bool()))
-          |  b1_res(0)   := r_sum1(0)
-          |  b1_carry(0) := r_cout1(0)
-          |  for (k <- 1 until HALF) {
-          |    b1_res(k)   := Mux(b1_carry(k - 1), r_sum1(k),  r_sum0(k))
-          |    b1_carry(k) := Mux(b1_carry(k - 1), r_cout1(k), r_cout0(k))
-          |  }
-          |
-          |  // ----- Phase B2 combinational : upper-half (blocks HALF..NBLK-1) -----
-          |  //   Seeded by r_carryMid; HALF mux levels = 4 when HALF=4.
-          |  val b2_res   = Wire(Vec(HALF, UInt(BW.W)))
-          |  val b2_carry = Wire(Vec(HALF, Bool()))
-          |  b2_res(0)   := Mux(r_carryMid, r_sum1_hi(0),  r_sum0_hi(0))
-          |  b2_carry(0) := Mux(r_carryMid, r_cout1_hi(0), r_cout0_hi(0))
-          |  for (k <- 1 until HALF) {
-          |    b2_res(k)   := Mux(b2_carry(k - 1), r_sum1_hi(k),  r_sum0_hi(k))
-          |    b2_carry(k) := Mux(b2_carry(k - 1), r_cout1_hi(k), r_cout0_hi(k))
-          |  }
-          |
-          |  val subResult   = Cat(b2_res.asUInt, r_resLo.asUInt)
-          |  val noUnderflow = b2_carry(HALF - 1)
-          |
-          |  switch(state) {
-          |    is(sIdle) {
-          |      when(r_start & ~r_busy) {
-          |        ${captureBody}
-          |        rem      := 0.U
-          |        quot     := 0.U
-          |        count    := width.U
-          |        state    := sRunningA
-          |      }
-          |    }
-          |    is(sRunningA) {
-          |      // latch Phase A partials for Phase B1
-          |      for (k <- 0 until NBLK) {
-          |        r_sum0(k)  := cs_sum0(k)
-          |        r_cout0(k) := cs_cout0(k)
-          |        r_sum1(k)  := cs_sum1(k)
-          |        r_cout1(k) := cs_cout1(k)
-          |      }
-          |      r_shifted := shifted
-          |      state := sRunningB1
-          |    }
-          |    is(sRunningB1) {
-          |      // latch lower-half B1 chain result + boundary carry;
-          |      // forward upper-half partials and r_shifted to B2
-          |      for (k <- 0 until HALF) {
-          |        r_resLo(k)    := b1_res(k)
-          |        r_sum0_hi(k)  := r_sum0(HALF + k)
-          |        r_cout0_hi(k) := r_cout0(HALF + k)
-          |        r_sum1_hi(k)  := r_sum1(HALF + k)
-          |        r_cout1_hi(k) := r_cout1(HALF + k)
-          |      }
-          |      r_carryMid   := b1_carry(HALF - 1)
-          |      r_shifted_b1 := r_shifted
-          |      state := sRunningB2
-          |    }
-          |    is(sRunningB2) {
-          |      rem      := Mux(noUnderflow, subResult, r_shifted_b1)
-          |      quot     := Mux(noUnderflow, (quot << 1) | 1.U, quot << 1)
-          |      dividend := dividend << 1
-          |      count    := count - 1.U
-          |      when(count === 1.U) {
-          |        state := sDone
-          |      } .otherwise {
-          |        state := sRunningA
-          |      }
-          |    }
-          |    is(sDone) {
-          |      state := sIdle
-          |    }
-          |  }
-          |
-          |  ${outputBody}
-          |  io.valid := (state === sDone) & ~r_busy
+          |  io.quotient := Mux(a_neg ^ b_neg, -quotient, quotient)${if(signedPort) ".asSInt" else ""}
+          |  io.remainder := Mux(a_neg, -remainder, remainder)${if(signedPort) ".asSInt" else ""}
+          |  io.valid := (count === 0.U) & ~r_busy
           |}
-        """
+      """
     else
       st"""
           |class ${moduleName}(val width: Int = 64) extends Module {
@@ -2235,8 +1451,10 @@ object ArbInputMap {
                                val genVerilog: B,
                                val nonXilinxIP: B,
                                val erase: B,
+                               val arrayInitBurst: B,
                                val aligned: B,
-                               val arbID: Z) extends ArbIpModule {
+                               val arbID: Z,
+                               val dmaMaxWords: Z) extends ArbIpModule {
   @strictpure override def arbIpId: Z = arbID
   @strictpure override def signed: B = signedPort
   @strictpure override def moduleName: String = moduleDeclarationName
@@ -2293,39 +1511,44 @@ object ArbInputMap {
   @strictpure override def expression: ArbIpType = exp
   @strictpure def bramIpST: ST = {
     st"""
-        |class BRAMIP (val depth: Int = 1024, val width: Int = 8) extends Module {
+        |// 64-bit word-organized dual-port RAM with per-byte write enables (wea/web).
+        |// words = number of 64-bit words; byte lane i is enabled by bit i of wea/web.
+        |class BRAMIP (val words: Int = 128) extends Module {
         |    val io = IO(new Bundle{
         |        val ena = Input(Bool())
-        |        val wea = Input(Bool())
-        |        val addra = Input(UInt(log2Ceil(depth).W))
-        |        val dina = Input(UInt(width.W))
-        |        val douta = Output(UInt(width.W))
+        |        val wea = Input(UInt(8.W))
+        |        val addra = Input(UInt(log2Ceil(words).W))
+        |        val dina = Input(UInt(64.W))
+        |        val douta = Output(UInt(64.W))
         |
         |        val enb = Input(Bool())
-        |        val web = Input(Bool())
-        |        val addrb = Input(UInt(log2Ceil(depth).W))
-        |        val dinb = Input(UInt(width.W))
-        |        val doutb = Output(UInt(width.W))
+        |        val web = Input(UInt(8.W))
+        |        val addrb = Input(UInt(log2Ceil(words).W))
+        |        val dinb = Input(UInt(64.W))
+        |        val doutb = Output(UInt(64.W))
         |    })
         |
-        |    val mem = SyncReadMem(depth, UInt(width.W))
+        |    val mem = SyncReadMem(words, Vec(8, UInt(8.W)))
         |
         |    io.douta := 0.U
         |    io.doutb := 0.U
         |
+        |    val w_dinaVec = VecInit(Seq.tabulate(8)(i => io.dina(8 * i + 7, 8 * i)))
+        |    val w_dinbVec = VecInit(Seq.tabulate(8)(i => io.dinb(8 * i + 7, 8 * i)))
+        |
         |    when(io.ena) {
-        |      when(io.wea) {
-        |        mem.write(io.addra, io.dina)
+        |      when(io.wea.orR) {
+        |        mem.write(io.addra, w_dinaVec, io.wea.asBools)
         |      } .otherwise {
-        |        io.douta := mem.read(io.addra)
+        |        io.douta := mem.read(io.addra).asUInt
         |      }
         |    }
         |
         |    when(io.enb) {
-        |      when(io.web) {
-        |        mem.write(io.addrb, io.dinb)
+        |      when(io.web.orR) {
+        |        mem.write(io.addrb, w_dinbVec, io.web.asBools)
         |      } .otherwise {
-        |        io.doutb := mem.read(io.addrb)
+        |        io.doutb := mem.read(io.addrb).asUInt
         |      }
         |    }
         |}
@@ -2334,9 +1557,9 @@ object ArbInputMap {
   @pure override def moduleST: ST = {
     val bramInsST: ST = {
       if(nonXilinxIP) {
-        st"val bram = Module(new BRAMIP(depth, width))"
+        st"val bram = Module(new BRAMIP((depth + 7) / 8))"
       } else {
-        if (!genVerilog) st"val bram = Module(new BRAMIP(depth, width))"
+        if (!genVerilog) st"val bram = Module(new BRAMIP((depth + 7) / 8))"
         else
           st"""
               |val bram = Module(new XilinxBRAMWrapper)
@@ -2344,20 +1567,6 @@ object ArbInputMap {
           """
       }
     }
-    val dmaZeroOutST: ST =
-      if(erase)
-        st"""
-            |when((r_dmaDstCount >= io.dmaDstLen) & (r_dmaSrcCount >= io.dmaSrcLen)) {
-            |  r_dmaState := sDmaDone
-            |}
-          """
-      else
-        st"""
-            |when(r_dmaSrcCount >= io.dmaSrcLen) {
-            |  r_dmaState := sDmaDone
-            |}
-          """
-
     val bramModuleST: ST =
       st"""
           |${if(!genVerilog) bramIpST else if(nonXilinxIP && genVerilog) bramIpST else st""}
@@ -2391,12 +1600,12 @@ object ArbInputMap {
           |
           |  // BRAM default
           |  bram.io.ena := false.B
-          |  bram.io.wea := false.B
+          |  bram.io.wea := 0.U
           |  bram.io.addra := 0.U
           |  bram.io.dina := 0.U
           |
           |  bram.io.enb := false.B
-          |  bram.io.web := false.B
+          |  bram.io.web := 0.U
           |  bram.io.addrb := 0.U
           |  bram.io.dinb := 0.U
           |
@@ -2404,106 +1613,103 @@ object ArbInputMap {
           |  val w_writeEnable = io.mode === 2.U
           |  val w_dmaEnable   = io.mode === 3.U
           |
-          |  // === READ Operation ===
-          |  val sReadIdle :: sReadFirst :: sReadTrans :: sReadEnd :: Nil = Enum(4)
+          |  // === READ Operation (64-bit datapath, constant 4-cycle for any alignment/len) ===
+          |  val sReadIdle :: sReadIssue :: sReadMerge :: sReadEnd :: Nil = Enum(4)
           |
-          |  val r_readCnt      = Reg(UInt(4.W))
-          |  val r_lastReadCnt  = Reg(UInt(4.W))
-          |  val r_readAddr     = Reg(UInt(log2Ceil(depth).W))
           |  val r_readState    = RegInit(sReadIdle)
-          |  val r_readBytes    = Reg(Vec(8, UInt(8.W)))
+          |  val r_readByteAddr = Reg(UInt(log2Ceil(depth).W))
+          |  val r_readLen      = Reg(UInt(4.W))
+          |  val r_readData     = Reg(UInt(64.W))
+          |
+          |  val w_readWord = r_readByteAddr >> 3
+          |  val w_readLane = r_readByteAddr(2, 0)
           |
           |  switch(r_readState) {
           |    is(sReadIdle) {
           |      when(w_readEnable) {
-          |        r_readState   := sReadFirst
-          |        r_readCnt     := 0.U
-          |        r_lastReadCnt := 0.U
-          |        r_readAddr    := io.readAddr + io.readOffset
+          |        r_readState    := sReadIssue
+          |        r_readByteAddr := io.readAddr + io.readOffset
+          |        r_readLen      := io.readLen
           |      }
-          |      r_readBytes(0) := 0.U
-          |      r_readBytes(1) := 0.U
-          |      r_readBytes(2) := 0.U
-          |      r_readBytes(3) := 0.U
-          |      r_readBytes(4) := 0.U
-          |      r_readBytes(5) := 0.U
-          |      r_readBytes(6) := 0.U
-          |      r_readBytes(7) := 0.U
           |    }
-          |    is(sReadFirst) {
-          |      bram.io.addra := r_readAddr
+          |    is(sReadIssue) {
+          |      // fetch the word holding the first byte on port A and its successor on
+          |      // port B in the same cycle; a crossing access needs no extra state
           |      bram.io.ena   := true.B
-          |      bram.io.wea   := false.B
-          |
-          |      r_lastReadCnt := r_readCnt
-          |      r_readCnt     := r_readCnt + 1.U
-          |      r_readAddr    := r_readAddr + 1.U
-          |      r_readState   := sReadTrans
+          |      bram.io.wea   := 0.U
+          |      bram.io.addra := w_readWord
+          |      bram.io.enb   := true.B
+          |      bram.io.web   := 0.U
+          |      bram.io.addrb := w_readWord + 1.U
+          |      r_readState   := sReadMerge
           |    }
-          |    is(sReadTrans) {
-          |      r_readBytes(r_lastReadCnt) := bram.io.douta
-          |
-          |      bram.io.addra          := r_readAddr
-          |      bram.io.ena            := true.B
-          |      bram.io.wea            := false.B
-          |
-          |      r_lastReadCnt          := r_readCnt
-          |      r_readCnt              := r_readCnt + 1.U
-          |      r_readAddr             := r_readAddr + 1.U
-          |
-          |      r_readState            := Mux(io.readLen === 1.U, sReadEnd, Mux(r_readCnt < io.readLen, sReadTrans, sReadEnd))
+          |    is(sReadMerge) {
+          |      val w_raw128   = Cat(bram.io.doutb, bram.io.douta) >> (w_readLane << 3)
+          |      val w_dataMask = ((1.U(65.W) << (r_readLen << 3)) - 1.U)(63, 0)
+          |      r_readData  := w_raw128(63, 0) & w_dataMask
+          |      r_readState := sReadEnd
           |    }
           |    is(sReadEnd) {
           |      r_readState   := sReadIdle
           |    }
           |  }
           |
-          |  io.readData  := Cat(r_readBytes(7.U),
-          |                      r_readBytes(6.U),
-          |                      r_readBytes(5.U),
-          |                      r_readBytes(4.U),
-          |                      r_readBytes(3.U),
-          |                      r_readBytes(2.U),
-          |                      r_readBytes(1.U),
-          |                      r_readBytes(0.U))
+          |  io.readData  := r_readData
           |  io.readValid := Mux(r_readState === sReadEnd, true.B, false.B)
           |
-          |  // === WRITE Operation ===
-          |  val sWriteIdle :: sWriteTrans :: sWriteEnd :: Nil = Enum(3)
+          |  // === WRITE Operation (byte-enables, constant 4-cycle, no read-modify-write) ===
+          |  // B1: a one-stage write-request pipeline keeps the barrel shift a SINGLE
+          |  // shared resource (no per-client replication) while moving it off the
+          |  // req_valid -> wrapper critical path. sWriteIdle only latches the request
+          |  // into registers (req_valid -> wrapper is then a plain register load);
+          |  // sWritePre does the address-add + lane barrel shift reg -> reg inside the
+          |  // wrapper. Costs +1 write cycle; read/DMA keep the Phase 8 direct latency.
+          |  val sWriteIdle :: sWritePre :: sWriteTrans :: sWriteEnd :: Nil = Enum(4)
           |
-          |  val r_writeCnt      = Reg(UInt(4.W))
-          |  val r_writeAddr     = Reg(UInt(log2Ceil(depth).W))
-          |  val r_writeState    = RegInit(sWriteIdle)
-          |  val r_writeBytes    = Reg(Vec(8, UInt(8.W)))
-          |  val r_writeLen      = Reg(UInt(4.W))
+          |  val r_writeState   = RegInit(sWriteIdle)
+          |  val r_writeWord    = Reg(UInt(log2Ceil(depth).W))
+          |  val r_writeData128 = Reg(UInt(128.W))
+          |  val r_writeBe16    = Reg(UInt(16.W))
+          |  val r_wr_addr      = Reg(UInt(log2Ceil(depth).W))
+          |  val r_wr_off       = Reg(UInt(log2Ceil(depth).W))
+          |  val r_wr_len       = Reg(UInt(4.W))
+          |  val r_wr_data      = Reg(UInt(64.W))
           |
           |  switch(r_writeState) {
           |    is(sWriteIdle) {
           |      when(w_writeEnable) {
-          |        r_writeState      := sWriteTrans
-          |        r_writeCnt        := 0.U
-          |        r_writeAddr       := io.writeAddr + io.writeOffset
-          |        r_writeLen        := io.writeLen - 1.U
-          |
-          |        r_writeBytes(0.U) := io.writeData(7, 0)
-          |        r_writeBytes(1.U) := io.writeData(15, 8)
-          |        r_writeBytes(2.U) := io.writeData(23, 16)
-          |        r_writeBytes(3.U) := io.writeData(31, 24)
-          |        r_writeBytes(4.U) := io.writeData(39, 32)
-          |        r_writeBytes(5.U) := io.writeData(47, 40)
-          |        r_writeBytes(6.U) := io.writeData(55, 48)
-          |        r_writeBytes(7.U) := io.writeData(63, 56)
+          |        // latch the request only (no adder / barrel shift on this edge)
+          |        r_wr_addr    := io.writeAddr
+          |        r_wr_off     := io.writeOffset
+          |        r_wr_len     := io.writeLen
+          |        r_wr_data    := io.writeData
+          |        r_writeState := sWritePre
           |      }
           |    }
+          |    is(sWritePre) {
+          |      // address-add + lane barrel shift, now reg -> reg inside the wrapper
+          |      val w_addr = r_wr_addr + r_wr_off
+          |      val w_lane = w_addr(2, 0)
+          |      val w_be8  = ((1.U(9.W) << r_wr_len) - 1.U)(7, 0)
+          |      r_writeState   := sWriteTrans
+          |      r_writeWord    := w_addr >> 3
+          |      r_writeBe16    := (Cat(0.U(8.W), w_be8) << w_lane)(15, 0)
+          |      r_writeData128 := (Cat(0.U(64.W), r_wr_data) << (w_lane << 3))(127, 0)
+          |    }
           |    is(sWriteTrans) {
-          |      bram.io.addrb := r_writeAddr
-          |      bram.io.enb   := true.B
-          |      bram.io.web   := true.B
-          |      bram.io.dinb  := r_writeBytes(r_writeCnt)
-          |
-          |      r_writeCnt    := r_writeCnt + 1.U
-          |      r_writeAddr   := r_writeAddr + 1.U
-          |      r_writeState  := Mux(r_writeCnt < r_writeLen, sWriteTrans, sWriteEnd)
+          |      // port A writes the first word; on a crossing access port B writes the
+          |      // spill-over bytes into the next word in the same cycle
+          |      bram.io.ena   := true.B
+          |      bram.io.wea   := r_writeBe16(7, 0)
+          |      bram.io.addra := r_writeWord
+          |      bram.io.dina  := r_writeData128(63, 0)
+          |      when(r_writeBe16(15, 8) =/= 0.U) {
+          |        bram.io.enb   := true.B
+          |        bram.io.web   := r_writeBe16(15, 8)
+          |        bram.io.addrb := r_writeWord + 1.U
+          |        bram.io.dinb  := r_writeData128(127, 64)
+          |      }
+          |      r_writeState  := sWriteEnd
           |    }
           |    is(sWriteEnd) {
           |      r_writeState  := sWriteIdle
@@ -2512,60 +1718,91 @@ object ArbInputMap {
           |
           |  io.writeValid := Mux(r_writeState === sWriteEnd, true.B, false.B)
           |
-          |  // DMA logic
-          |  val sDmaIdle :: sDmaFirstRead :: sDmaTrans :: sDmaDone :: Nil = Enum(4)
+          |  // === DMA (8 bytes/cycle sliding window with constant realignment shift) ===
+          |  // Semantics (matches the old byte-serial FSM / IRSimulator):
+          |  //   copyN = min(dmaSrcLen, dmaDstLen) bytes copied src -> dst;
+          |  //   the erase configuration additionally zeroes dst bytes [copyN, dmaDstLen);
+          |  //   dst bytes outside the written range stay untouched (byte enables).
+          |  // Head/tail partial words use byte-enable masks; over-reads before the
+          |  // source start / past its end only feed masked-off lanes (a wrapped word
+          |  // index reads junk that the enables discard).
+          |  val sDmaIdle :: sDmaPre1 :: sDmaPre2 :: sDmaRun :: sDmaDone :: Nil = Enum(5)
           |
-          |  val r_dmaSrcCount = Reg(UInt(log2Ceil(depth).W))
-          |  val r_dmaDstCount = Reg(UInt(log2Ceil(depth).W))
-          |  val r_dmaSrcAddr  = Reg(UInt(log2Ceil(depth).W))
-          |  val r_dmaDstAddr  = Reg(UInt(log2Ceil(depth).W))
           |  val r_dmaState    = RegInit(sDmaIdle)
+          |  val r_dmaDstBase  = Reg(UInt(log2Ceil(depth).W))
+          |  val r_dmaCopyEnd  = Reg(UInt((log2Ceil(depth) + 1).W))
+          |  val r_dmaZeroEnd  = Reg(UInt((log2Ceil(depth) + 1).W))
+          |  val r_dmaOff      = Reg(UInt(3.W))
+          |  val r_dmaSrcW     = Reg(UInt(log2Ceil(depth).W))
+          |  val r_dmaDstW     = Reg(UInt(log2Ceil(depth).W))
+          |  val r_dmaDstWLast = Reg(UInt(log2Ceil(depth).W))
+          |  val r_dmaPrev     = Reg(UInt(64.W))
+          |  val r_dmaIsErase  = Reg(Bool())
+          |
+          |  val w_dmaCopyN   = Mux(io.dmaSrcLen < io.dmaDstLen, io.dmaSrcLen, io.dmaDstLen)
+          |  val w_dmaDstBase = io.dmaDstAddr + io.dmaDstOffset
+          |  val w_dmaZeroLen = ${if(erase) "io.dmaDstLen" else if(arrayInitBurst) "Mux(w_dmaCopyN === 0.U, io.dmaDstLen, w_dmaCopyN)" else "w_dmaCopyN"}
           |
           |  switch(r_dmaState) {
           |    is(sDmaIdle) {
           |      when(w_dmaEnable) {
-          |        r_dmaState    := Mux(io.dmaSrcLen === 0.U, sDmaTrans, sDmaFirstRead)
-          |
-          |        r_dmaSrcCount := 0.U
-          |        r_dmaDstCount := 0.U
-          |        r_dmaSrcAddr  := io.dmaSrcAddr
-          |        r_dmaDstAddr  := io.dmaDstAddr + io.dmaDstOffset
+          |        r_dmaDstBase  := w_dmaDstBase
+          |        r_dmaCopyEnd  := w_dmaDstBase +& w_dmaCopyN
+          |        r_dmaZeroEnd  := w_dmaDstBase +& w_dmaZeroLen
+          |        r_dmaOff      := (io.dmaSrcAddr - w_dmaDstBase)(2, 0)
+          |        r_dmaSrcW     := (io.dmaSrcAddr - w_dmaDstBase(2, 0)) >> 3
+          |        r_dmaDstW     := w_dmaDstBase >> 3
+          |        r_dmaDstWLast := (w_dmaDstBase +& w_dmaZeroLen - 1.U) >> 3
+          |        r_dmaIsErase  := w_dmaCopyN === 0.U
+          |        r_dmaState    := Mux(w_dmaZeroLen === 0.U, sDmaDone,
+          |                             Mux(w_dmaCopyN === 0.U, sDmaRun, sDmaPre1))
           |      }
           |    }
-          |    is(sDmaFirstRead) {
-          |      r_dmaState    := sDmaTrans
-          |
-          |      // first read
-          |      bram.io.addra := r_dmaSrcAddr
+          |    is(sDmaPre1) {
           |      bram.io.ena   := true.B
-          |      bram.io.wea   := false.B
-          |
-          |      r_dmaSrcAddr  := r_dmaSrcAddr + 1.U
-          |      r_dmaSrcCount := r_dmaSrcCount + 1.U
+          |      bram.io.wea   := 0.U
+          |      bram.io.addra := r_dmaSrcW
+          |      r_dmaSrcW     := r_dmaSrcW + 1.U
+          |      r_dmaState    := sDmaPre2
           |    }
-          |    is(sDmaTrans) {
-          |      // write the data from the read port
-          |      when(r_dmaDstCount < io.dmaDstLen) {
-          |        bram.io.addrb := r_dmaDstAddr
-          |        bram.io.enb   := true.B
-          |        bram.io.web   := true.B
-          |        bram.io.dinb  := Mux(r_dmaDstCount >= r_dmaSrcCount, 0.U, bram.io.douta)
-          |
-          |        r_dmaDstAddr  := r_dmaDstAddr + 1.U
-          |        r_dmaDstCount := r_dmaDstCount + 1.U
-          |      }
-          |
-          |      // keep all the data from read port valid
+          |    is(sDmaPre2) {
           |      bram.io.ena   := true.B
-          |      when(r_dmaSrcCount < io.dmaSrcLen) {
-          |        bram.io.addra := r_dmaSrcAddr
-          |        bram.io.wea   := false.B
+          |      bram.io.wea   := 0.U
+          |      bram.io.addra := r_dmaSrcW
+          |      r_dmaSrcW     := r_dmaSrcW + 1.U
+          |      r_dmaPrev     := bram.io.douta
+          |      r_dmaState    := sDmaRun
+          |    }
+          |    is(sDmaRun) {
+          |      // byte lane l of this dst word = src byte (S + dstWord*8 + l - D);
+          |      // the shift amount (S - D) mod 8 is constant for the whole transfer
+          |      val w_comb = (Cat(bram.io.douta, r_dmaPrev) >> (r_dmaOff << 3))(63, 0)
+          |      val w_en   = VecInit(Seq.tabulate(8)(l => {
+          |        val a = Cat(r_dmaDstW, l.U(3.W))
+          |        a >= r_dmaDstBase && a < r_dmaZeroEnd
+          |      }))
+          |      val w_zero = VecInit(Seq.tabulate(8)(l => {
+          |        val a = Cat(r_dmaDstW, l.U(3.W))
+          |        a >= r_dmaCopyEnd
+          |      }))
+          |      bram.io.enb   := true.B
+          |      bram.io.web   := w_en.asUInt
+          |      bram.io.addrb := r_dmaDstW
+          |      bram.io.dinb  := Cat((0 until 8).reverse.map(l => Mux(w_zero(l), 0.U(8.W), w_comb(8 * l + 7, 8 * l))))
           |
-          |        r_dmaSrcAddr  := r_dmaSrcAddr + 1.U
-          |        r_dmaSrcCount := r_dmaSrcCount + 1.U
+          |      when(!r_dmaIsErase) {
+          |        bram.io.ena   := true.B
+          |        bram.io.wea   := 0.U
+          |        bram.io.addra := r_dmaSrcW
+          |        r_dmaSrcW     := r_dmaSrcW + 1.U
           |      }
+          |      r_dmaPrev := bram.io.douta
           |
-          |      ${dmaZeroOutST.render}
+          |      when(r_dmaDstW === r_dmaDstWLast) {
+          |        r_dmaState := sDmaDone
+          |      } .otherwise {
+          |        r_dmaDstW := r_dmaDstW + 1.U
+          |      }
           |    }
           |    is(sDmaDone) {
           |      r_dmaState := sDmaIdle
@@ -2692,16 +1929,6 @@ object ArbInputMap {
           |  val r_dmaSrc_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
           |  val r_dmaSrc_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
           |  val r_dmaDst_addr      = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
-          |  // P0'-3: shadow `_plus8` precomputes `r_dmaDst_addr + 8` one cycle
-          |  // ahead so the AXI4 write-burst increment becomes a 32-bit mux
-          |  // (no ripple-add on the critical path). Worst-WNS path in 3_exp
-          |  // was r_dma_req_write_reg -> r_dmaDst_addr_reg_29_ at -10.66 ns;
-          |  // splitting the 32-bit CPA off the gating cone retires it.
-          |  // Latency: r_dmaDst_addr_plus8 lags r_dmaDst_addr by 1 cycle. Safe
-          |  // because every increment is gated by r_b_valid (AXI BVALID/BREADY
-          |  // handshake), which guarantees >=3 dead cycles between consecutive
-          |  // writes — plenty of slack for the shadow to catch up.
-          |  val r_dmaDst_addr_plus8 = RegNext(r_dmaDst_addr + 8.U, 0.U)
           |  val r_dmaDst_len       = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
           |  val r_dma_read_data    = RegInit(0.U(C_M_AXI_DATA_WIDTH.W))
           |  // the write length used in unaligned write
@@ -2896,93 +2123,121 @@ object ArbInputMap {
           |    r_b_valid       := false.B
           |  }
           |
-          |  // dma logic
-          |  val r_dma_req_next     = RegNext(r_dma_req)
-          |  val r_dmaSrc_finish    = RegInit(false.B)
-          |  val r_dmaDst_finish    = RegInit(false.B)
-          |  val r_temp_dmaSrc_len  = RegNext(Mux(io.dmaSrcLen < io.dmaDstLen, io.dmaSrcLen, io.dmaDstLen))
-          |  val r_temp_dmaDst_len  = RegNext(Mux(io.dmaSrcLen < io.dmaDstLen, io.dmaDstLen, io.dmaSrcLen))
-          |  val r_dma_src_lt_dst   = RegNext(r_temp_dmaSrc_len < r_temp_dmaDst_len)
+          |  // ===== Burst DMA (mode==3): single bounded burst, combinational AXI outputs =====
+          |  // Copy min(dmaSrcLen,dmaDstLen) bytes src->dst; erase config zero-fills
+          |  // dst [copyN, dmaDstLen). One read burst gathers the source span, DRE
+          |  // (shift=(srcAddr-dstAddr) mod 8, same as BramNative sliding window)
+          |  // realigns, one write burst emits with per-beat WSTRB (byte-exact).
+          |  val DMA_MAX_WORDS = ${dmaMaxWords} // sized to the largest Intrinsic.Copy in the design (read-burst word count); see printProcedure
+          |  val sDma_idle :: sDma_rAddr :: sDma_rData :: sDma_wAddr :: sDma_wData :: sDma_resp :: sDma_done :: Nil = Enum(7)
+          |  val rDma_state   = RegInit(sDma_idle)
+          |  val rDma_srcAddr = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val rDma_dstWord = RegInit(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val rDma_dstLane = RegInit(0.U(3.W))
+          |  val rDma_copyN   = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val rDma_zeroN   = RegInit(0.U(log2Up(MEMORY_DEPTH).W))
+          |  val rDma_off     = RegInit(0.U(3.W))
+          |  val rDma_erase   = RegInit(false.B)
+          |  val rDma_buf     = Reg(Vec(DMA_MAX_WORDS + 1, UInt(C_M_AXI_DATA_WIDTH.W)))
+          |  val rDma_rcnt    = RegInit(0.U(8.W))
+          |  val rDma_rbeats  = RegInit(0.U(8.W))
+          |  val rDma_wcnt    = RegInit(0.U(8.W))
+          |  val rDma_wbeats  = RegInit(0.U(8.W))
+          |  val rDma_valid   = RegInit(false.B)
+          |  val rDma_modePrev = RegNext(io.mode === 3.U, false.B)
+          |  val dma_active   = rDma_state =/= sDma_idle
+          |  val dma_arvalid  = WireDefault(false.B)
+          |  val dma_araddr   = WireDefault(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val dma_arlen    = WireDefault(0.U(8.W))
+          |  val dma_awvalid  = WireDefault(false.B)
+          |  val dma_awaddr   = WireDefault(0.U(C_M_AXI_ADDR_WIDTH.W))
+          |  val dma_awlen    = WireDefault(0.U(8.W))
+          |  val dma_wvalid   = WireDefault(false.B)
+          |  val dma_wdata    = WireDefault(0.U(C_M_AXI_DATA_WIDTH.W))
+          |  val dma_wstrb    = WireDefault(0.U((C_M_AXI_DATA_WIDTH / 8).W))
+          |  val dma_wlast    = WireDefault(false.B)
+          |  io.dmaValid := rDma_valid
+          |  rDma_valid := false.B
           |
-          |  // data from read port
-          |  io.dmaValid := RegNext(r_dmaDst_finish & RegNext(r_b_valid), init = false.B)
+          |  val w_dmaCopyN    = Mux(io.dmaSrcLen < io.dmaDstLen, io.dmaSrcLen, io.dmaDstLen)
+          |  val w_dmaDstBase  = io.dmaDstAddr + io.dmaDstOffset
+          |  val w_dmaZeroN    = ${if(erase) "io.dmaDstLen" else if(arrayInitBurst) "Mux(w_dmaCopyN === 0.U, io.dmaDstLen, w_dmaCopyN)" else "w_dmaCopyN"}
+          |  val w_dmaDstLane  = w_dmaDstBase(2, 0)
+          |  val w_dmaWbeats   = (w_dmaDstLane +& w_dmaZeroN + 7.U) >> 3
+          |  val w_dmaRbeats   = Mux(w_dmaCopyN === 0.U, 0.U, ((w_dmaDstLane +& w_dmaCopyN + 7.U) >> 3) + 1.U)
+          |  val w_dmaSrcStart = Cat((io.dmaSrcAddr - w_dmaDstLane)(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
           |
-          |  // initialize all registers
-          |  when(r_dma_req & ~r_dma_req_next) {
-          |    r_dmaSrc_addr      := io.dmaSrcAddr
-          |    r_dmaDst_addr      := io.dmaDstAddr + io.dmaDstOffset
-          |    r_dmaSrc_len       := r_temp_dmaSrc_len
-          |    r_dmaDst_len       := r_temp_dmaDst_len
-          |
-          |    r_dmaErase_enable  := r_temp_dmaSrc_len === 0.U
-          |
-          |    r_dma_req_read     := true.B
-          |    r_dmaSrc_finish    := r_temp_dmaSrc_len <= 8.U
-          |    r_dmaDst_finish    := r_temp_dmaDst_len <= 8.U
-          |    r_dma_dst_len      := Mux(r_temp_dmaDst_len > 8.U, 8.U, r_temp_dmaDst_len)
+          |  val w_wlo   = rDma_buf(rDma_wcnt)
+          |  val w_whi   = rDma_buf(rDma_wcnt + 1.U)
+          |  val w_wcomb = (Cat(w_whi, w_wlo) >> (rDma_off << 3))(C_M_AXI_DATA_WIDTH - 1, 0)
+          |  val w_wstrbV = Wire(Vec(C_M_AXI_DATA_WIDTH / 8, Bool()))
+          |  val w_wdataV = Wire(Vec(C_M_AXI_DATA_WIDTH / 8, UInt(8.W)))
+          |  for (l <- 0 until C_M_AXI_DATA_WIDTH / 8) {
+          |    val absByte = Cat(rDma_wcnt, l.U(3.W))
+          |    val inDst   = absByte >= rDma_dstLane && absByte < (rDma_dstLane +& rDma_zeroN)
+          |    val p       = absByte - rDma_dstLane
+          |    w_wstrbV(l) := inDst
+          |    w_wdataV(l) := Mux(inDst && (p < rDma_copyN) && ~rDma_erase, w_wcomb(8 * l + 7, 8 * l), 0.U)
           |  }
           |
-          |  val unalignRead_finish = ~r_dmaErase_enable & RegNext(RegNext(r_r_valid))
-          |
-          |  // read transaction
-          |  when((r_dmaSrc_finish & unalignRead_finish) || r_dmaErase_enable) {
-          |    r_dma_req_read     := false.B
-          |
-          |    r_dmaSrc_len       := 0.U
-          |    r_dma_req_write    := true.B
-          |  } .elsewhen(r_dma_req_read & unalignRead_finish) {
-          |    r_dma_req_read     := false.B
-          |    r_dmaSrc_len       := Mux(r_dmaSrc_len > 8.U, r_dmaSrc_len - 8.U, r_dmaSrc_len)
-          |    r_dmaSrc_addr      := r_dmaSrc_addr + 8.U
-          |    r_dmaSrc_finish    := r_dmaSrc_len <= 8.U
-          |
-          |    r_dma_req_write    := true.B
-          |  }
-          |
-          |  when((r_dma_req_read & unalignRead_finish) || r_dmaErase_enable) {
-          |    r_dma_dst_len      := Mux(r_dmaDst_len > 8.U, 8.U, r_dmaDst_len)
-          |  }
-          |
-          |  // save read data
-          |  when(r_dma_req & unalignRead_finish) {
-          |    r_dma_read_data  := MuxLookup(r_dmaSrc_len, r_final_buffer,
-          |                                    Seq(
-          |                                        0.U -> 0.U,
-          |                                        1.U -> r_final_buffer(7,0),
-          |                                        2.U -> r_final_buffer(15,0),
-          |                                        3.U -> r_final_buffer(23,0),
-          |                                        4.U -> r_final_buffer(31,0),
-          |                                        5.U -> r_final_buffer(39,0),
-          |                                        6.U -> r_final_buffer(47,0),
-          |                                        7.U -> r_final_buffer(55,0)
-          |                                    ))
-          |  }
-          |
-          |  // write transaction
-          |  val r_write_finish_precond1 = RegInit(false.B)
-          |  val r_write_finish_precond2 = RegInit(false.B)
-          |  r_write_finish_precond1 := (~r_dmaErase_enable) & r_dma_src_lt_dst & r_dmaSrc_finish
-          |  r_write_finish_precond2 := r_dmaDst_len <= 8.U
-          |  when(r_dmaDst_finish & RegNext(r_b_valid)) {
-          |    r_dma_req_write    := false.B
-          |
-          |    r_dmaErase_enable  := false.B
-          |
-          |    r_dmaSrc_finish    := false.B
-          |    r_dmaDst_finish    := false.B
-          |  } .elsewhen(r_dma_req_write & r_b_valid) {
-          |    r_dma_req_write    := false.B
-          |    r_dmaDst_len       := Mux(r_dmaDst_len > 8.U, r_dmaDst_len - 8.U, r_dmaDst_len)
-          |    // P0'-3: was `r_dmaDst_addr + 8.U` here — moved to shadow Reg.
-          |    r_dmaDst_addr      := r_dmaDst_addr_plus8
-          |    r_dmaDst_finish    := r_write_finish_precond1 | r_write_finish_precond2
-          |
-          |    r_dma_req_read     := ~r_dmaSrc_finish
+          |  switch(rDma_state) {
+          |    is(sDma_idle) {
+          |      when((io.mode === 3.U) & ~rDma_modePrev) {
+          |        rDma_srcAddr := w_dmaSrcStart
+          |        rDma_dstWord := Cat(w_dmaDstBase(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
+          |        rDma_dstLane := w_dmaDstLane
+          |        rDma_copyN   := w_dmaCopyN
+          |        rDma_zeroN   := w_dmaZeroN
+          |        rDma_off     := (io.dmaSrcAddr - w_dmaDstBase)(2, 0)
+          |        rDma_erase   := w_dmaCopyN === 0.U
+          |        rDma_rbeats  := w_dmaRbeats
+          |        rDma_wbeats  := w_dmaWbeats
+          |        rDma_rcnt    := 0.U
+          |        rDma_wcnt    := 0.U
+          |        rDma_state   := Mux(w_dmaZeroN === 0.U, sDma_done, Mux(w_dmaCopyN === 0.U, sDma_wAddr, sDma_rAddr))
+          |      }
+          |    }
+          |    is(sDma_rAddr) {
+          |      dma_arvalid := true.B
+          |      dma_araddr  := rDma_srcAddr + C_M_TARGET_SLAVE_BASE_ADDR.U
+          |      dma_arlen   := rDma_rbeats - 1.U
+          |      when(io.M_AXI_ARREADY) { rDma_state := sDma_rData }
+          |    }
+          |    is(sDma_rData) {
+          |      when(io.M_AXI_RVALID) {
+          |        rDma_buf(rDma_rcnt) := io.M_AXI_RDATA
+          |        rDma_rcnt := rDma_rcnt + 1.U
+          |        when(io.M_AXI_RLAST) { rDma_state := sDma_wAddr }
+          |      }
+          |    }
+          |    is(sDma_wAddr) {
+          |      dma_awvalid := true.B
+          |      dma_awaddr  := rDma_dstWord + C_M_TARGET_SLAVE_BASE_ADDR.U
+          |      dma_awlen   := rDma_wbeats - 1.U
+          |      when(io.M_AXI_AWREADY) { rDma_state := sDma_wData }
+          |    }
+          |    is(sDma_wData) {
+          |      dma_wvalid := true.B
+          |      dma_wdata  := w_wdataV.asUInt
+          |      dma_wstrb  := w_wstrbV.asUInt
+          |      dma_wlast  := rDma_wcnt === (rDma_wbeats - 1.U)
+          |      when(io.M_AXI_WREADY) {
+          |        rDma_wcnt := rDma_wcnt + 1.U
+          |        when(rDma_wcnt === (rDma_wbeats - 1.U)) { rDma_state := sDma_resp }
+          |      }
+          |    }
+          |    is(sDma_resp) {
+          |      when(io.M_AXI_BVALID) { rDma_state := sDma_done }
+          |    }
+          |    is(sDma_done) {
+          |      rDma_valid := true.B
+          |      rDma_state := sDma_idle
+          |    }
           |  }
           |
           |  // AXI4 Full port connection
           |  io.M_AXI_AWID    := 0.U
-          |  io.M_AXI_AWLEN   := r_m_axi_awlen
+          |  io.M_AXI_AWLEN   := Mux(dma_active, dma_awlen, r_m_axi_awlen)
           |  io.M_AXI_AWSIZE  := log2Up(C_M_AXI_DATA_WIDTH / 8 - 1).U
           |  io.M_AXI_AWBURST := 1.U
           |  io.M_AXI_AWLOCK  := false.B
@@ -2990,19 +2245,19 @@ object ArbInputMap {
           |  io.M_AXI_AWPROT  := 0.U
           |  io.M_AXI_AWQOS   := 0.U
           |  io.M_AXI_AWUSER  := 0.U
-          |  io.M_AXI_AWADDR  := Cat(r_m_axi_awaddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
-          |  io.M_AXI_AWVALID := r_m_axi_awvalid
+          |  io.M_AXI_AWADDR  := Mux(dma_active, dma_awaddr, Cat(r_m_axi_awaddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W)))
+          |  io.M_AXI_AWVALID := Mux(dma_active, dma_awvalid, r_m_axi_awvalid)
           |
-          |  io.M_AXI_WSTRB   := r_m_axi_wstrb
+          |  io.M_AXI_WSTRB   := Mux(dma_active, dma_wstrb, r_m_axi_wstrb)
           |  io.M_AXI_WUSER   := 0.U
-          |  io.M_AXI_WDATA   := r_m_axi_wdata
-          |  io.M_AXI_WLAST   := Mux(r_write_req, r_m_axi_wlast, w_m_axi_wlast)
-          |  io.M_AXI_WVALID  := r_m_axi_wvalid
+          |  io.M_AXI_WDATA   := Mux(dma_active, dma_wdata, r_m_axi_wdata)
+          |  io.M_AXI_WLAST   := Mux(dma_active, dma_wlast, Mux(r_write_req, r_m_axi_wlast, w_m_axi_wlast))
+          |  io.M_AXI_WVALID  := Mux(dma_active, dma_wvalid, r_m_axi_wvalid)
           |
           |  io.M_AXI_BREADY  := true.B
           |
           |  io.M_AXI_ARID    := 0.U
-          |  io.M_AXI_ARLEN   := r_m_axi_arlen
+          |  io.M_AXI_ARLEN   := Mux(dma_active, dma_arlen, r_m_axi_arlen)
           |  io.M_AXI_ARSIZE  := log2Up(C_M_AXI_DATA_WIDTH / 8 - 1).U
           |  io.M_AXI_ARBURST := 1.U
           |  io.M_AXI_ARLOCK  := false.B
@@ -3010,8 +2265,8 @@ object ArbInputMap {
           |  io.M_AXI_ARPROT  := 0.U
           |  io.M_AXI_ARQOS   := 0.U
           |  io.M_AXI_ARUSER  := 0.U
-          |  io.M_AXI_ARADDR  := Cat(r_m_axi_araddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W))
-          |  io.M_AXI_ARVALID := r_m_axi_arvalid
+          |  io.M_AXI_ARADDR  := Mux(dma_active, dma_araddr, Cat(r_m_axi_araddr(C_M_AXI_ADDR_WIDTH - 1, 3), 0.U(3.W)))
+          |  io.M_AXI_ARVALID := Mux(dma_active, dma_arvalid, r_m_axi_arvalid)
           |
           |  io.M_AXI_RREADY  := true.B
           |}
@@ -3641,9 +2896,23 @@ import HwSynthesizer2._
   val sharedMemName: String = "arrayRegFiles"
   val generalRegName: String = "generalRegFiles"
 
-  val hwLog: HwSynthesizer2.HwLog = HwSynthesizer2.HwLog(0, MNone(), F, F, 0, 0, "", ISZ[String](), F)
+  val hwLog: HwSynthesizer2.HwLog = HwSynthesizer2.HwLog(0, MNone(), F, F, 0, 0, "", ISZ[String](), F, HashSSet.empty[Z])
 
   val noXilinxIp: B = anvil.config.noXilinxIp
+  // held-start DSP IPs (Indexer + Xilinx Mul/Div/Rem): fed combinationally from
+  // io.req.bits with a HELD start; these are the only IPs eligible for per-function
+  // (private per-procedure) instantiation.
+  @strictpure def isHeldDsp(ip: ArbIpType): B = ip match {
+    case ArbIntrinsicIP(_) => T
+    case ArbBinaryIP(AST.IR.Exp.Binary.Op.Mul, _) => T
+    case ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, _) => T
+    case ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, _) => T
+    case _ => F
+  }
+  // under the perFunctionIp flag, held-start DSP IPs become private per-procedure
+  // instances wired point-to-point to the procedure's r_<inst>_req/r_<inst>_resp
+  // registers, and the Top shared wrapper+arbiter for that IP is dropped.
+  @strictpure def isPerFuncIp(ip: ArbIpType): B = anvil.config.perFunctionIp && isHeldDsp(ip)
   var ipArbiterUsage: HashSSet[ArbIpType] = HashSSet.empty[ArbIpType]
   var globalRouterCount: Z = 1
   var ipRouterUsage: HashSMap[String, (Z, HashSSet[ArbIpType], QName)] = HashSMap.empty
@@ -3651,15 +2920,56 @@ import HwSynthesizer2._
   var globalVarMap: HashSMap[String, (Z, B, Z)] = HashSMap.empty
   // record whether using alignAxi4 mini state machine and corresponding string template
   var alignAxi4MiniStateMachineMap: HashSMap[String, ST] = HashSMap.empty
-  // Tier-1 ROM: per-state writes to `r_<inst>_req_pre.<field>` captured during
-  // processStmt*/processJumpIntrinsic and emitted as VecInit-based gated writes
-  // in procedureST. Replaces the wide `switch(CP)` mux tree feeding req_pre
-  // registers with a `log2(N)` Vec lookup, breaking the dominant CP-decode ->
-  // req_pre register critical path. Cleared at the start of each procedure.
-  //   key: (procedureName, instanceName, fieldName) -> stateLabel -> rendered RHS
-  var reqPreROM: HashSMap[(String, String, String), HashSMap[Z, ST]] = HashSMap.empty
-  // Per-procedure max state label captured into reqPreROM, used to size each Vec.
-  var perFsmMaxLabel: HashSMap[String, Z] = HashSMap.empty
+  // per-procedure set of inlined two-cycle operator kinds (drives module-level
+  // r_inl*/w_inl* declarations); reset per procedure
+  var inlineOpUsage: HashSSet[(AST.IR.Exp.Binary.Op.Type, B)] = HashSSet.empty
+  // two-cycle inline kinds used in the current basic block (a second use of the
+  // same kind in one block must fall back to the arbitrated IP); reset per block
+  var inlineKindsInBlock: HashSSet[String] = HashSSet.empty
+  // at most one two-cycle inline op per ground statement (nested operands must
+  // stay on the arbitrated path); reset per ground
+  var inlineTwoCycleInGround: B = F
+
+  // module-level declarations for the two-cycle inlined operators used by the
+  // current procedure: operand registers, a set-latch phase bit, and the
+  // combinational result wire (expressions mirror the Arb* self-implemented
+  // modules' io.out semantics, minus their output RegNext)
+  @pure def inlineOpDeclST(): ST = {
+    var sts = ISZ[ST]()
+    for (p <- inlineOpUsage.elements) {
+      val kind: String = HwSynthesizer2.inlineOpKind(p._1, p._2)
+      val signed: B = p._2
+      val isShift: B = p._1 == AST.IR.Exp.Binary.Op.Shl || p._1 == AST.IR.Exp.Binary.Op.Shr ||
+        p._1 == AST.IR.Exp.Binary.Op.Ushr
+      val aZero: String = if (signed) "0.S" else "0.U"
+      val bZero: String = if (isShift) "0.U" else aZero
+      val outST: ST = p._1 match {
+        case AST.IR.Exp.Binary.Op.Add => st"r_inl${kind}_a + r_inl${kind}_b"
+        case AST.IR.Exp.Binary.Op.Sub => st"r_inl${kind}_a - r_inl${kind}_b"
+        case AST.IR.Exp.Binary.Op.Lt => st"r_inl${kind}_a < r_inl${kind}_b"
+        case AST.IR.Exp.Binary.Op.Le => st"r_inl${kind}_a <= r_inl${kind}_b"
+        case AST.IR.Exp.Binary.Op.Gt => st"r_inl${kind}_a > r_inl${kind}_b"
+        case AST.IR.Exp.Binary.Op.Ge => st"r_inl${kind}_a >= r_inl${kind}_b"
+        case AST.IR.Exp.Binary.Op.Shl =>
+          if (signed) st"Mux(r_inl${kind}_b >= 64.U, 0.S(64.W), ((r_inl${kind}_a.asUInt << r_inl${kind}_b(5, 0))(63, 0)).asSInt)"
+          else st"Mux(r_inl${kind}_b >= 64.U, 0.U(64.W), (r_inl${kind}_a << r_inl${kind}_b(5, 0))(63, 0))"
+        case AST.IR.Exp.Binary.Op.Shr =>
+          if (signed) st"Mux(r_inl${kind}_b >= 64.U, Mux(r_inl${kind}_a(63), (-1).S(64.W), 0.S(64.W)), r_inl${kind}_a >> r_inl${kind}_b(5, 0))"
+          else st"Mux(r_inl${kind}_b >= 64.U, 0.U(64.W), r_inl${kind}_a >> r_inl${kind}_b(5, 0))"
+        case AST.IR.Exp.Binary.Op.Ushr =>
+          if (signed) st"Mux(r_inl${kind}_b >= 64.U, 0.S(64.W), (r_inl${kind}_a.asUInt >> r_inl${kind}_b(5, 0)).asSInt)"
+          else st"Mux(r_inl${kind}_b >= 64.U, 0.U(64.W), r_inl${kind}_a >> r_inl${kind}_b(5, 0))"
+        case _ => st""
+      }
+      sts = sts :+
+        st"""
+            |val r_inl${kind}_a = RegInit(${aZero}(64.W))
+            |val r_inl${kind}_b = RegInit(${bZero}(64.W))
+            |val r_inl${kind}_phase = RegInit(false.B)
+            |val w_inl${kind}_out = ${outST.render}"""
+    }
+    return st"${(sts, "\n")}"
+  }
   var ipModules: ISZ[ArbIpModule] = ISZ[ArbIpModule](
     ArbAdder(F, "AdderUnsigned64", "arbAdderUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F), noXilinxIp, 0),
     ArbAdder(T, "AdderSigned64", "arbAdderSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, T), noXilinxIp, 1),
@@ -3696,7 +3006,7 @@ import HwSynthesizer2._
     ArbDivision(T, "DivisionSigned64", "arbDivisionSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Div, T), noXilinxIp, 32),
     ArbRemainder(F, "RemainerUnsigned64", "arbRemainerUnsigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, F), noXilinxIp, 33),
     ArbRemainder(T, "RemainerSigned64", "arbRemainerSigned64", 64, ArbBinaryIP(AST.IR.Exp.Binary.Op.Rem, T), noXilinxIp, 34),
-    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, noXilinxIp, anvil.config.erase, anvil.config.alignAxi4, 35),
+    ArbBlockMemory(T, "BlockMemory", s"arbBlockMemory", 8, anvil.config.memory, ArbBlockMemoryIP(), anvil.config.memoryAccess, anvil.config.genVerilog, noXilinxIp, anvil.config.erase, anvil.config.arrayInitBurst, anvil.config.alignAxi4, 35, 34),
     ArbTempSaveRestore(F, "TempSaveRestore", "arbTempSaveRestore", 64, anvil.config.memory, ArbTempSaveRestoreIP(), anvil.config.memoryAccess, noXilinxIp, anvil.config.alignAxi4, 36),
     ArbGlobalVar(F, "GlobalVar", "arbGlobalVar", 64, ArbGlobalVarIP(), noXilinxIp, 37)
   )
@@ -3708,52 +3018,6 @@ import HwSynthesizer2._
       }
     }
     return None()
-  }
-
-  // Tier-1 ROM helpers: see `reqPreROM` field comment.
-  // Push `r_<instanceName>_req_pre.<fieldName> := <valueST>` for state `label`
-  // into the per-(fsm, instance, field) capture table.
-  def captureReqPre(fsmName: String, instanceName: String, fieldName: String, label: Z, valueST: ST): Unit = {
-    val key: (String, String, String) = (fsmName, instanceName, fieldName)
-    val byLabel: HashSMap[Z, ST] = reqPreROM.get(key) match {
-      case Some(m) => m
-      case _ => HashSMap.empty
-    }
-    reqPreROM = reqPreROM + key ~> (byLabel + label ~> valueST)
-    val cur: Z = perFsmMaxLabel.get(fsmName) match {
-      case Some(m) => m
-      case _ => 0
-    }
-    if (label > cur) {
-      perFsmMaxLabel = perFsmMaxLabel + fsmName ~> label
-    }
-    return
-  }
-
-  // Either capture the per-state RHS (Tier-1 ROM mode, default cpMax==0) and
-  // return an empty ST (skip emitting the original `:=` in the switch body),
-  // or return the original `r_<inst>_req_pre.<field> := <RHS>` line unchanged
-  // (when split-CP is in effect and ROM-ification is disabled).
-  def captureOrEmit(fsmName: String, instanceName: String, fieldName: String, valueST: ST, hwLog: HwSynthesizer2.HwLog): ST = {
-    if (anvil.config.cpMax <= 0) {
-      captureReqPre(fsmName, instanceName, fieldName, hwLog.currentLabel, valueST)
-      return st""
-    } else {
-      return st"r_${instanceName}_req_pre.${fieldName} := ${valueST.render}"
-    }
-  }
-
-  // A captured field is treated as Bool-typed iff some captured value is a
-  // Bool literal. Used to pick the default fill (`false.B` vs `0.U`) for
-  // unmapped state slots in the value-ROM Seq.
-  @pure def reqPreFieldIsBool(byLabel: HashSMap[Z, ST]): B = {
-    for (e <- byLabel.entries) {
-      val s: String = e._2.render
-      if (s == "false.B" || s == "true.B") {
-        return T
-      }
-    }
-    return F
   }
 
   @strictpure def addrWidthSt(isParaDecl: B): String = {
@@ -3902,6 +3166,35 @@ import HwSynthesizer2._
     }
   }
 
+
+  // Address-segment size for the simulation block design's AXI BRAM controller.
+  // Vivado derives the controller's memory depth from the assigned address range, so
+  // the range must cover MEMORY_DEPTH; AXI segments are powers of two, minimum 4K.
+  // Widest byte offset an array access can produce, as a 2^k-1 mask. The IR only
+  // carries an explicit index mask when the index is literally `x & <const>`;
+  // otherwise IRSimulator applies no mask at all, so a fixed 16-bit default would
+  // silently truncate every access into an array larger than 64 KiB. Never narrows
+  // below the historical 0xFFFF, so designs whose arrays fit in 64 KiB are unchanged.
+  @pure def defaultIndexMask(elementSize: Z): Z = {
+    val needed: Z = anvil.config.maxArraySize * elementSize
+    if (needed <= 0xFFFF) {
+      return 0xFFFF
+    }
+    var r: Z = 1
+    while (r - 1 < needed) {
+      r = r * 2
+    }
+    return r - 1
+  }
+
+  @pure def bdMemRange(stackBytes: Z): Z = {
+    val total: Z = anvil.config.memory + stackBytes
+    var r: Z = 4096
+    while (r < total) {
+      r = r * 2
+    }
+    return r
+  }
 
   @pure def depthOfStack(maxRegisters: Util.TempVector): Z = {
     var length: Z =0
@@ -4114,12 +3407,62 @@ import HwSynthesizer2._
     }
     ipModules = for (m <- ipModules) yield updateDepth(m)
 
+    // Size the external-memory (axi4Bram/ddr) DMA read-burst buffer (DMA_MAX_WORDS in
+    // bramIpST) to the largest Intrinsic.Copy in the design. The fixed 34-word buffer
+    // silently overflows for a whole-@record copy bigger than ~272 bytes (e.g. a pool
+    // record with inline arrays), corrupting the copy so the destination reads garbage.
+    // BramNative streams (no buffer) and is unaffected. max(34, ...) keeps designs whose
+    // largest copy already fits byte-identical. Nested defs only (no block-level var/val)
+    // to avoid intervening in updateDepth's forward reference below.
+    @pure def maxCopyBytesF(): Z = {
+      var m: Z = 0
+      for (o <- program.procedures) {
+        o.body match {
+          case body: AST.IR.Body.Basic =>
+            for (b <- body.blocks) {
+              for (g <- b.grounds) {
+                g match {
+                  case AST.IR.Stmt.Intrinsic(in: Intrinsic.Copy) =>
+                    if (in.lhsBytes > m) {
+                      m = in.lhsBytes
+                    }
+                  case _ =>
+                }
+              }
+            }
+          case _ =>
+        }
+      }
+      return m
+    }
+    @pure def neededDmaWordsF(): Z = {
+      // read beats to gather copyN bytes with up-to-7-byte head misalignment, +1 lookahead word
+      val w: Z = ((maxCopyBytesF() + 14) / 8) + 2
+      // Cap at the AXI4 burst limit. ARLEN/AWLEN are 8 bits, so one burst carries at most
+      // 256 beats, and rDma_rcnt/rDma_wcnt are 8-bit registers that cannot address past 255;
+      // words beyond that are unreachable by construction. Sizing rDma_buf from the largest
+      // Intrinsic.Copy instead produced Reg(Vec(170406, UInt(64.W))) at queens N=12 -- 10.9 Mbit
+      // of registers plus an equally deep mux chain, a 146 MB Verilog file that synthesis could
+      // not process, even though the write path only ever reads a 2-word DRE window.
+      val capped: Z = if (w > 257) 257 else w
+      return if (capped < 34) 34 else capped
+    }
+    @pure def updateDmaWords(m: ArbIpModule): ArbIpModule = {
+      m match {
+        case ats: ArbBlockMemory => return ats(dmaMaxWords = neededDmaWordsF())
+        case _ => return m
+      }
+    }
+    ipModules = for (m <- ipModules) yield updateDmaWords(m)
+
     for(o <- program.procedures) {
       val procTuple: (QName, String) = replaceFuncName(o.isInObject, o.owner, o.id)
       hwLog.curProcedureQName = procTuple._1
       hwLog.curProcedureId = procTuple._2
       ipArbiterUsage = HashSSet.empty[ArbIpType]
       alignAxi4MiniStateMachineMap = HashSMap.empty
+      inlineOpUsage = HashSSet.empty
+      inlineKindsInBlock = HashSSet.empty
 
       if(!ipRouterUsage.contains(hwLog.curProcedureId)) {
         ipRouterUsage = ipRouterUsage + hwLog.curProcedureId ~> (globalRouterCount, HashSSet.empty[ArbIpType], hwLog.curProcedureQName)
@@ -4153,6 +3496,12 @@ import HwSynthesizer2._
 
     @pure def getIpArbiterTemplate(ip: ArbIpType): ST = {
       val mod = findChiselModule(ip).get
+      // held-start DSP IPs that are de-arbitrated the same way: fed combinationally
+      // from io.req.bits with a HELD start (io.req.valid forwarded held by the
+      // arbiter, not pulsed), dropping the wrapper's r_req/r_req_valid/r_mod_start
+      // registers. Covers the Indexer and the Xilinx Mul/Div/Rem (all drive a DSP
+      // clock-enable / AXIS-valid from start and need it asserted the whole pipeline).
+      val heldDsp: B = isHeldDsp(ip)
       val outputNameStr: String = ip match {
         case ArbBinaryIP(_, _) => "out"
         case ArbIntrinsicIP(_) => "out"
@@ -4332,123 +3681,43 @@ import HwSynthesizer2._
       }
 
       @strictpure def arbiterModST: ST = {
-        val tempSaveRestoreStr: ST =
-          st"""
-              |r_ipResp_bits(i).u1.foreach(_ := 0.U)
-              |r_ipResp_bits(i).u8.foreach(_ := 0.U)
-              |r_ipResp_bits(i).u16.foreach(_ := 0.U)
-              |r_ipResp_bits(i).u32.foreach(_ := 0.U)
-              |r_ipResp_bits(i).u64.foreach(_ := 0.U)
-              |r_ipResp_bits(i).s8.foreach(_ := 0.S)
-              |r_ipResp_bits(i).s16.foreach(_ := 0.S)
-              |r_ipResp_bits(i).s32.foreach(_ := 0.S)
-              |r_ipResp_bits(i).s64.foreach(_ := 0.S)
-              |r_ipResp_bits(i).srcId := 0.U
-              |r_ipResp_bits(i).srcCp := 0.U
-          """
-
         st"""
+            |// Single-outstanding pass-through: clients are structurally mutually
+            |// exclusive (one active procedure; Top/TempSaveRestore act only at
+            |// idle/call boundaries), so arbitration reduces to a combinational
+            |// one-hot select framed by the existing client/wrapper registers.
             |class ${mod.moduleName}ArbiterModule(numIPs: Int, ${requestBundleParaTypeStr(ip)}) extends Module {
             |  val io = IO(new ${mod.moduleName}ArbiterIO(numIPs, ${requestParaStr(ip, maxRegisters, globalInfoMap)}))
             |
-            |  // ------------------ Stage 0: Input Cache ------------------
-            |  val r_ipReq_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-            |  val r_ipReq_valid_next = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-            |  val r_ipReq_enable = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-            |  // Payload holds no semantic "reset" value — it is only read when
-            |  // r_ipReq_enable fires, and only written on the valid rising edge.
-            |  // Using Reg(...) instead of RegInit(...) removes the request-bundle
-            |  // width x numIPs worth of FF reset inputs from the reset-tree fanout
-            |  // that drove the -24.76 ns WNS on myRst_reg paths at 90nm.
-            |  val r_ipReq_bits = Reg(Vec(numIPs, new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))
+            |  val w_reqValids = VecInit(io.ipReqs.map(_.valid))
+            |  val w_anyValid  = w_reqValids.asUInt.orR
+            |  val w_sel       = PriorityEncoder(w_reqValids)
+            |  assert(PopCount(w_reqValids.asUInt) <= 1.U, "${mod.moduleName} clients must be mutually exclusive")
             |
+            |  // one request in flight until the owner deasserts valid (the client
+            |  // holds valid until it consumes the response); this replaces the old
+            |  // Stage-0 edge detection and prevents re-issue of the held request.
+            |  // Written dataflow-style (no feedback inside a when condition) so a
+            |  // transient X on client valids during start-up washes out in
+            |  // simulation instead of latching forever.
+            |  val r_owner    = RegInit(0.U(log2Up(numIPs).W))
+            |  val r_inflight = RegInit(false.B)
+            |
+            |  r_inflight := w_anyValid & Mux(r_inflight, w_reqValids(r_owner), true.B)
+            |  r_owner    := Mux(r_inflight, r_owner, w_sel)
+            |
+            |  // Held-start DSP IPs (Indexer, Xilinx Mul/Div/Rem) forward the client's
+            |  // HELD valid (their DSP clock-enable / AXIS-valid is driven straight from
+            |  // start and must stay high the whole pipeline); all other IPs get the
+            |  // single-cycle request pulse. Bits stay stable from the holding client
+            |  // either way.
+            |  io.ip.req.valid := ${if (heldDsp) "w_anyValid" else "w_anyValid && !r_inflight"}
+            |  io.ip.req.bits  := io.ipReqs(w_sel).bits
+            |
+            |  // combinational owner-filtered response broadcast
             |  for (i <- 0 until numIPs) {
-            |    r_ipReq_valid(i) := io.ipReqs(i).valid
-            |    r_ipReq_valid_next(i) := r_ipReq_valid(i)
-            |    when(r_ipReq_valid(i) & ~r_ipReq_valid_next(i)) {
-            |      r_ipReq_enable(i) := true.B
-            |      r_ipReq_bits(i) := io.ipReqs(i).bits
-            |    } .otherwise {
-            |      r_ipReq_enable(i) := false.B
-            |    }
-            |  }
-            |
-            |  // ------------------ Stage 1a: Arbitration Decision (decide-only) -----------
-            |  // P0-C fix: previously the priority encoder + Mux1H + 64-bit-bundle
-            |  // assignment all collapsed into one cycle. At numIPs=12..14 with
-            |  // 64-bit BlockMemory request bundles, this still synthesized to
-            |  // ~30 logic levels (PriorityEncoder + Reverse + subtract +
-            |  // UIntToOH + 4-deep 64-bit Mux1H), driving the second-worst path
-            |  // arbBlockMemoryArbiterModule/r_ipReq_enable_*_reg ->
-            |  // r_reqBits_writeAddr_reg_* at -14.07 ns on SAED90/WLM=2M.
-            |  //
-            |  // Splitting into two cycles: stage 1a flops the one-hot select +
-            |  // chosen index + anyEnabled flag; stage 1b uses the flopped
-            |  // one-hot to drive the wide Mux1H into r_reqBits. Per-stage logic
-            |  // levels drop to ~15 each. Arbiter latency grows by 1 cycle
-            |  // (request-side); ipReqs->ip.req throughput is unchanged.
-            |  val r_selOH_s1     = RegInit(0.U(numIPs.W))
-            |  val r_chosen_s1    = RegInit(0.U(log2Up(numIPs).W))
-            |  val r_anyEnabled_s1 = RegInit(false.B)
-            |
-            |  // Parallel priority select. Using PriorityEncoder(Reverse(...))
-            |  // gives an MSB-first priority encoder (equivalent "highest-index
-            |  // wins" semantic), and Mux1H on the one-hot select collapses to
-            |  // a log2(numIPs) balanced mux tree (~4 levels for numIPs = 12).
-            |  val r_ipReq_enableU = r_ipReq_enable.asUInt
-            |  val anyEnabled      = r_ipReq_enableU.orR
-            |  val chosenFromMsb   = PriorityEncoder(Reverse(r_ipReq_enableU))
-            |  val chosen          = (numIPs - 1).U(log2Up(numIPs).W) - chosenFromMsb
-            |  val selOH           = UIntToOH(chosen, numIPs)
-            |
-            |  r_anyEnabled_s1 := anyEnabled
-            |  when(anyEnabled) {
-            |    r_selOH_s1  := selOH
-            |    r_chosen_s1 := chosen
-            |  }
-            |
-            |  // ------------------ Stage 1b: Apply selection to bits ------------------
-            |  val r_foundReq = RegInit(false.B)
-            |  // Payload only observed when r_foundReq is T (driven by the same
-            |  // arbitration cycle that writes r_reqBits); no reset needed.
-            |  val r_reqBits  = Reg(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)}))
-            |  val r_chosen   = RegInit(0.U(log2Up(numIPs).W))
-            |
-            |  r_foundReq := r_anyEnabled_s1
-            |  when(r_anyEnabled_s1) {
-            |    r_chosen  := r_chosen_s1
-            |    r_reqBits := Mux1H(r_selOH_s1.asBools, r_ipReq_bits)
-            |  }
-            |
-            |  io.ip.req.valid := r_foundReq
-            |  io.ip.req.bits  := r_reqBits
-            |
-            |  // ------------------ Stage 2: memory.resp handling ------------------
-            |  val r_mem_resp_valid = RegNext(io.ip.resp.valid, init = false.B)
-            |  val r_mem_resp_bits  = RegNext(io.ip.resp.bits)
-            |  val r_mem_resp_id    = RegNext(r_chosen, init = 0.U)
-            |
-            |  val r_ipResp_valid = RegInit(VecInit(Seq.fill(numIPs)(false.B)))
-            |  // Payload is default-written to 0 every cycle in the `for` loop
-            |  // below (and overridden by the mem_resp branch), so RegInit reset
-            |  // value is redundant — drop it to remove another wide reset load.
-            |  val r_ipResp_bits  = Reg(Vec(numIPs, new ${mod.moduleName}ResponseBundle(${responseParaStr(ip, maxRegisters)})))
-            |
-            |  for (i <- 0 until numIPs) {
-            |    r_ipResp_valid(i)    := false.B
-            |    ${if(ip != ArbTempSaveRestoreIP()) s"r_ipResp_bits(i).${outputNameStr} := ${outputDefaultStr}" else tempSaveRestoreStr.render}
-            |  }
-            |
-            |  when(r_mem_resp_valid) {
-            |    r_ipResp_valid(r_mem_resp_id) := true.B
-            |    r_ipResp_bits(r_mem_resp_id)  := r_mem_resp_bits
-            |  } .otherwise {
-            |    r_ipResp_valid(r_mem_resp_id) := false.B
-            |  }
-            |
-            |  for (i <- 0 until numIPs) {
-            |    io.ipResps(i).valid := r_ipResp_valid(i)
-            |    io.ipResps(i).bits  := r_ipResp_bits(i)
+            |    io.ipResps(i).valid := io.ip.resp.valid && r_inflight && (r_owner === i.U)
+            |    io.ipResps(i).bits  := io.ip.resp.bits
             |  }
             |}
         """
@@ -4470,28 +3739,76 @@ import HwSynthesizer2._
                 |mod.io.arbMem_resp.valid := r_arbMem_resp_valid
             """
         } else if(ip == ArbGlobalVarIP()) {
+          // T1.2 de-arbitration: the arbiter already pulses io.req.valid for one
+          // cycle while the client holds io.req.bits stable for the whole
+          // transaction, and GlobalVar edge-detects start internally
+          // (r_write/r_read = RegNext(io.start & ...)), so the wrapper's r_req and
+          // r_mod_start registers are redundant. Feed inputs combinationally and
+          // drive start from the pulse, dropping ~2 cycles of request latency.
           sts = sts :+
             st"""
-                |mod.io.in := r_req.in
-                |mod.io.op := r_req.op
-                |mod.io.gtype := r_req.gtype
-                |mod.io.index := r_req.index
-                |mod.io.start := r_mod_start
+                |mod.io.in := io.req.bits.in
+                |mod.io.op := io.req.bits.op
+                |mod.io.gtype := io.req.bits.gtype
+                |mod.io.index := io.req.bits.index
+                |mod.io.start := io.req.valid
                 |io.resp.bits.out := r_resp_data
                 |io.resp.valid    := r_resp_valid
               """
+        } else if(heldDsp) {
+          // Held-start DSP de-arbitration (Indexer + Xilinx Mul/Div/Rem): the arbiter
+          // now forwards the client's HELD valid (not a single-cycle pulse), so the
+          // DSP clock-enable / AXIS-valid (driven from start) stays asserted across the
+          // whole multi-cycle pipeline. Feed inputs combinationally from io.req.bits
+          // and drive the held start (control port, "ready" for Indexer / "start" for
+          // Mul/Div/Rem) from io.req.valid, dropping the wrapper's
+          // r_req/r_req_valid/r_mod_start registers (~2 cycles/access). Output stays
+          // registered (r_resp_data), mirroring the GlobalVar path.
+          val h: HashSMap[String, (B, String)] = mod.portList
+          for (entry <- h.entries) {
+            if (entry._2._1) {
+              sts = sts :+ st"mod.io.${entry._1} := io.req.valid"
+            } else {
+              sts = sts :+ st"mod.io.${entry._1} := io.req.bits.${entry._1}"
+            }
+          }
+          sts = sts :+ st"io.resp.bits.${outputNameStr} := r_resp_data"
         } else {
+          // Phase 8: BramNative memory direct-connect. The de-arbitration mux
+          // (Phase 1) already pulses io.req.valid for a single cycle while the
+          // client holds io.req.bits stable for the whole transaction, so the
+          // wrapper's r_req/r_mode input registers are redundant — feed the FSM
+          // combinationally and drop 2 cycles of request latency per access.
+          // BramNative: single-cycle pulse mode (FSM latches on the launch
+          // edge). AXI/Ddr: the FSM keeps consulting the mode across the
+          // multi-cycle bus transaction, so mode must stay held — but it can
+          // be set directly from the pulse (1 stage, was r_req_valid->r_mode).
+          // Both feed request bits combinationally (bits are held stable by
+          // the client for the whole transaction), dropping the r_req register.
+          val bramDirect: B = ip == ArbBlockMemoryIP() && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative
+          val axiDirect: B = ip == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative
+          val memDirect: B = bramDirect || axiDirect
+          // NOTE: the held-start DSP IPs (Indexer + Mul/Div/Rem) are de-arbitrated in
+          // the heldDsp branch above (arbiter forwards HELD valid, wrapper input
+          // registers dropped). This else path now covers only BlockMemory (BramNative
+          // direct pulse, or AXI/Ddr with the minimal r_mode register).
           val h: HashSMap[String, (B, String)] = mod.portList
           for (entry <- h.entries) {
             // it is control signal
             if (entry._2._1) {
-              if (ip == ArbBlockMemoryIP()) {
+              if (bramDirect) {
+                sts = sts :+ st"mod.io.${entry._1} := Mux(io.req.valid, io.req.bits.${entry._1}, 0.U)"
+              } else if (axiDirect) {
                 sts = sts :+ st"mod.io.${entry._1} := r_mode"
               } else {
                 sts = sts :+ st"mod.io.${entry._1} := r_mod_start"
               }
             } else {
-              sts = sts :+ st"mod.io.${entry._1} := r_req.${entry._1}"
+              if (memDirect) {
+                sts = sts :+ st"mod.io.${entry._1} := io.req.bits.${entry._1}"
+              } else {
+                sts = sts :+ st"mod.io.${entry._1} := r_req.${entry._1}"
+              }
             }
           }
           sts = sts :+ st"io.resp.bits.${outputNameStr} := r_resp_data"
@@ -4509,14 +3826,31 @@ import HwSynthesizer2._
           case _ => "out"
         }
 
+        val bramDirect: B = ip == ArbBlockMemoryIP() && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative
+        val axiDirect: B = ip == ArbBlockMemoryIP() && anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative
+        val memDirect: B = bramDirect || axiDirect
+        // T1.2: GlobalVar is a single-requester register-file IP with no internal
+        // multi-cycle DSP, so it tolerates a single-cycle start pulse (its writes
+        // are edge-detected: r_write = RegNext(io.start & io.op)). It is fed
+        // combinationally from io.req.bits + the io.req.valid pulse in
+        // interfaceLogicST and needs no r_req / r_req_valid / r_mod_start registers.
+        val pulseDirect: B = ip == ArbGlobalVarIP()
+        // Held-start DSP IPs (Indexer + Xilinx Mul/Div/Rem): fed combinationally from
+        // io.req.bits, start driven from the HELD io.req.valid (the arbiter forwards
+        // the held valid, not a pulse) — so they drop r_req/r_req_valid/r_mod_start.
+        val intrinsicDirect: B = heldDsp
+        // no request-side input registers when fed combinationally
+        val noReqReg: B = memDirect || pulseDirect || intrinsicDirect
         val reqValidST: ST =
-          if(ip == ArbBlockMemoryIP())
+          if(bramDirect || pulseDirect || intrinsicDirect)
+            st"" // de-arbitrated: control driven combinationally, no request-side register
+          else if(axiDirect)
             st"""
                 |val r_mode = RegInit(0.U(2.W))
                 |when(memory_valid) {
                 |  r_mode := 0.U
-                |} .elsewhen(r_req_valid) {
-                |  r_mode := r_req.mode
+                |} .elsewhen(io.req.valid) {
+                |  r_mode := io.req.bits.mode
                 |}
             """
           else
@@ -4645,8 +3979,7 @@ import HwSynthesizer2._
 
         val tempSaveRestoreRegSt: ST = if(ip != ArbTempSaveRestoreIP()) st"" else
           st"""
-              |// Payload tracks mod.io.arbMem_req.bits every cycle; no reset needed.
-              |val r_arbMem_req = Reg(new BlockMemoryRequestBundle(dataWidth, ${addrWidthSt(F)} depth))
+              |val r_arbMem_req = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(dataWidth, ${addrWidthSt(F)} depth)))
               |val r_arbMem_req_valid = RegInit(false.B)
               |val r_arbMem_resp_data  = RegNext(io.arbMem_resp.bits)
               |val r_arbMem_resp_valid = RegNext(io.arbMem_resp.valid, init = false.B)
@@ -4667,26 +4000,9 @@ import HwSynthesizer2._
             |
             |    ${tempSaveRestoreRegSt}
             |
-            |    // Two-stage skid on the IP request bus.
-            |    //
-            |    // Previously there was a single Reg stage (r_req) between
-            |    // io.req and mod. But io.req.bits is driven from the top-level
-            |    // instantiation where a wide mux tree gathers `r_arb*_req_*`
-            |    // outputs from every per-procedure FSM module. That mux tree
-            |    // plus the wrapper's internal combinational kept tons of
-            |    // <top>->arbBlockMemoryWrapper paths (~1,278 violations in run 3).
-            |    //
-            |    // r_req_pre catches the top-level bus at the wrapper boundary
-            |    // (terminates the long mux-tree path); r_req feeds mod one
-            |    // cycle later (isolates the wide internal decode on mod from
-            |    // the top bus). Latency to the IP grows by 1 cycle;
-            |    // throughput is unchanged (the IP's own start->valid handshake
-            |    // dominates).
-            |    val r_req_pre        = Reg(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)}))
-            |    val r_req_pre_valid  = RegNext(io.req.valid, init = false.B)
-            |    val r_req            = RegNext(r_req_pre)
-            |    val r_req_valid      = RegNext(r_req_pre_valid, init = false.B)
-            |    ${if(ip == ArbBlockMemoryIP()) "val r_req_valid_next = RegNext(r_req_valid, init = false.B)" else ""}
+            |    ${if(noReqReg) "" else st"val r_req            = RegInit(0.U.asTypeOf(new ${mod.moduleName}RequestBundle(${requestParaStr(ip, maxRegisters, globalInfoMap)})))".render}
+            |    ${if(noReqReg) "" else "val r_req_valid      = RegNext(io.req.valid, init = false.B)"}
+            |    ${if(ip == ArbBlockMemoryIP() && !memDirect) "val r_req_valid_next = RegNext(r_req_valid, init = false.B)" else ""}
             |
             |    ${if(ip == ArbBlockMemoryIP()) "val memory_valid = mod.io.readValid | mod.io.writeValid | mod.io.dmaValid" else ""}
             |    val r_resp_data  = RegNext(mod.io.${respDataStr})
@@ -4694,7 +4010,7 @@ import HwSynthesizer2._
             |
             |    ${reqValidST}
             |
-            |    r_req_pre := io.req.bits
+            |    ${if(noReqReg) "" else "r_req := io.req.bits"}
             |
             |    ${interfaceLogicST}
             |    io.resp.valid    := r_resp_valid
@@ -4885,15 +4201,15 @@ import HwSynthesizer2._
             |  val io = IO(new Bundle {
             |    val clk = Input(Bool())
             |    val ena = Input(Bool())
-            |    val wea = Input(Bool())
-            |    val addra = Input(UInt(${log2Up(anvil.config.memory) + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}.W))
-            |    val dina = Input(UInt(8.W))
-            |    val douta = Output(UInt(8.W))
+            |    val wea = Input(UInt(8.W))
+            |    val addra = Input(UInt(${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8)}.W))
+            |    val dina = Input(UInt(64.W))
+            |    val douta = Output(UInt(64.W))
             |    val enb = Input(Bool())
-            |    val web = Input(Bool())
-            |    val addrb = Input(UInt(${log2Up(anvil.config.memory) + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}.W))
-            |    val dinb = Input(UInt(8.W))
-            |    val doutb = Output(UInt(8.W))
+            |    val web = Input(UInt(8.W))
+            |    val addrb = Input(UInt(${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8)}.W))
+            |    val dinb = Input(UInt(64.W))
+            |    val doutb = Output(UInt(64.W))
             |  })
             |
             |  addResource("/verilog/XilinxBRAMWrapper.v")
@@ -4902,14 +4218,19 @@ import HwSynthesizer2._
 
       val xilinxIndexAdderWrapperST =
         st"""
+            |// A/B/S must match XilinxIndexAdderWrapper.v (and the XilinxIndexAdder IP),
+            |// both of which are 32-bit. Declaring 16 bits here made Chisel truncate the
+            |// Indexer's address arithmetic to 16 bits (add_A = io_a[15:0]), so every array
+            |// address was computed mod 65536; two globals whose aliased ranges overlapped
+            |// then corrupted each other.
             |class XilinxIndexAdderWrapper extends BlackBox with HasBlackBoxResource {
             |  val io = IO(new Bundle {
             |    val clk   = Input(Bool())
             |    val ce    = Input(Bool())
-            |    val A     = Input(UInt(16.W))
-            |    val B     = Input(UInt(16.W))
+            |    val A     = Input(UInt(32.W))
+            |    val B     = Input(UInt(32.W))
             |    val valid = Output(Bool())
-            |    val S     = Output(UInt(16.W))
+            |    val S     = Output(UInt(32.W))
             |  })
             |
             |  addResource("/verilog/XilinxIndexAdderWrapper.v")
@@ -4922,10 +4243,10 @@ import HwSynthesizer2._
             |  val io = IO(new Bundle {
             |    val clk   = Input(Bool())
             |    val ce    = Input(Bool())
-            |    val A     = Input(UInt(16.W))
-            |    val B     = Input(UInt(16.W))
+            |    val A     = Input(UInt(32.W))
+            |    val B     = Input(UInt(32.W))
             |    val valid = Output(Bool())
-            |    val P     = Output(UInt(16.W))
+            |    val P     = Output(UInt(32.W))
             |  })
             |
             |  addResource("/verilog/XilinxIndexMultiplierWrapper.v")
@@ -4972,32 +4293,19 @@ import HwSynthesizer2._
         return sts
       }
 
+      // dead-IP pruning: only emit module files for IPs actually used by some
+      // procedure (inlined cheap operators register no usage); BlockMemory is
+      // always kept because Top drives it directly (memory clear/control ops)
+      var usedIps: HashSSet[ArbIpType] = HashSSet.empty[ArbIpType] + ArbBlockMemoryIP()
+      for (f <- ipRouterUsage.entries) {
+        for (e <- f._2._2.elements) {
+          usedIps = usedIps + e
+        }
+      }
       for(i <- 0 until ipModules.size) {
-        ipModules(i) match {
-          case ArbAdder(signed, _, _, _, _, _, _) =>
-            arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case ArbSubtractor(signed, _, _, _, _, _, _) =>
-            arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case ArbMultiplier(signed, _, _, _, _, _, _) =>
-            arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case ArbDivision(signed, _, _, _, _, _, _) =>
-            arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case ArbRemainder(signed, _, _, _, _, _, _) =>
-            arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case ArbIndexer(_, _, _, _, _, _, _) =>
-            arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case ArbBlockMemory(_, modName, _, _, _, _, _, _, _, _, _, _) =>
-            arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
-          case _ =>
-            arbiterModuleMap = arbiterModuleMap +
-              ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
+        if (usedIps.contains(ipModules(i).expression)) {
+          arbiterModuleMap = arbiterModuleMap +
+            ipModules(i).moduleName ~> arbIpSt(ipModules(i).moduleST, getIpArbiterTemplate(ipModules(i).expression))
         }
       }
 
@@ -5162,15 +4470,22 @@ import HwSynthesizer2._
     val bramNativeGenerationST: ST =
       st"""
           |# need to be customzied for different benchmarks
+          |# 64-bit word-organized with per-byte write enables (wea/web[7:0]);
+          |# byte-write enable is incompatible with NO_CHANGE, hence READ_FIRST
           |create_ip -name blk_mem_gen -vendor xilinx.com -library ip -version 8.4 -module_name XilinxBRAM
           |set_property -dict [list $backslash
           |  CONFIG.Memory_Type {True_Dual_Port_RAM} $backslash
-          |  CONFIG.Operating_Mode_A {NO_CHANGE} $backslash
-          |  CONFIG.Operating_Mode_B {NO_CHANGE} $backslash
+          |  CONFIG.Use_Byte_Write_Enable {true} $backslash
+          |  CONFIG.Byte_Size {8} $backslash
+          |  CONFIG.Operating_Mode_A {READ_FIRST} $backslash
+          |  CONFIG.Operating_Mode_B {READ_FIRST} $backslash
           |  CONFIG.Register_PortA_Output_of_Memory_Primitives {false} $backslash
           |  CONFIG.Register_PortB_Output_of_Memory_Primitives {false} $backslash
-          |  CONFIG.Write_Depth_A {${anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)}} $backslash
-          |  CONFIG.Write_Width_A {8} $backslash
+          |  CONFIG.Write_Depth_A {${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8}} $backslash
+          |  CONFIG.Write_Width_A {64} $backslash
+          |  CONFIG.Read_Width_A {64} $backslash
+          |  CONFIG.Write_Width_B {64} $backslash
+          |  CONFIG.Read_Width_B {64} $backslash
           |] [get_ips XilinxBRAM]
           """
     val ipGenerationTclST: ST =
@@ -5354,6 +4669,47 @@ import HwSynthesizer2._
         st""
     }
 
+    // Two fully-registered AXI register slices around the control-port SmartConnect
+    // (one on the PS-master side, one on the design side) to pipeline the PS-PL
+    // boundary route and eliminate MAXIGP0 interface timing violations.
+    val ctrlSliceST: ST =
+      st"""
+          |# --- two AXI register slices around the control-port SmartConnect (PS-PL boundary) ---
+          |delete_bd_objs [get_bd_intf_nets -of [get_bd_intf_pins GeneratedIP/io_S_AXI]]
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice:2.1 rs_ctrl
+          |set_property -dict [list CONFIG.REG_AW {1} CONFIG.REG_AR {1} CONFIG.REG_W {1} CONFIG.REG_R {1} CONFIG.REG_B {1}] [get_bd_cells rs_ctrl]
+          |connect_bd_intf_net [get_bd_intf_pins axi_smc/M00_AXI] [get_bd_intf_pins rs_ctrl/S_AXI]
+          |connect_bd_intf_net [get_bd_intf_pins rs_ctrl/M_AXI] [get_bd_intf_pins GeneratedIP/io_S_AXI]
+          |connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins rs_ctrl/aclk]
+          |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins rs_ctrl/aresetn]
+          |delete_bd_objs [get_bd_intf_nets -of [get_bd_intf_pins axi_smc/S00_AXI]]
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice:2.1 rs_ps
+          |set_property -dict [list CONFIG.REG_AW {1} CONFIG.REG_AR {1} CONFIG.REG_W {1} CONFIG.REG_R {1} CONFIG.REG_B {1}] [get_bd_cells rs_ps]
+          |connect_bd_intf_net [get_bd_intf_pins zynq_ultra_ps_e_0/M_AXI_HPM0_FPD] [get_bd_intf_pins rs_ps/S_AXI]
+          |connect_bd_intf_net [get_bd_intf_pins rs_ps/M_AXI] [get_bd_intf_pins axi_smc/S00_AXI]
+          |connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins rs_ps/aclk]
+          |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins rs_ps/aresetn]
+      """
+    // Two fully-registered AXI register slices in series on the HP (DMA) master
+    // port to pipeline the PS-PL boundary route to the DDR HP slave (SAXIGP2).
+    val hpSliceST: ST =
+      st"""
+          |# --- two AXI register slices in series on the HP (DMA) port (PS-PL boundary) ---
+          |set _hp_m [get_bd_intf_pins GeneratedIP/io_M_AXI]
+          |set _hp_net [get_bd_intf_nets -of $$_hp_m]
+          |set _hp_s [get_bd_intf_pins -of $$_hp_net -filter {NAME =~ *S_AXI_HP0*}]
+          |delete_bd_objs $$_hp_net
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice:2.1 rs_hp_d
+          |create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice:2.1 rs_hp_p
+          |foreach rs {rs_hp_d rs_hp_p} { set_property -dict [list CONFIG.REG_AW {1} CONFIG.REG_AR {1} CONFIG.REG_W {1} CONFIG.REG_R {1} CONFIG.REG_B {1}] [get_bd_cells $$rs] }
+          |connect_bd_intf_net $$_hp_m [get_bd_intf_pins rs_hp_d/S_AXI]
+          |connect_bd_intf_net [get_bd_intf_pins rs_hp_d/M_AXI] [get_bd_intf_pins rs_hp_p/S_AXI]
+          |connect_bd_intf_net [get_bd_intf_pins rs_hp_p/M_AXI] $$_hp_s
+          |foreach rs {rs_hp_d rs_hp_p} {
+          |  connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins $$rs/aclk]
+          |  connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins $$rs/aresetn]
+          |}
+      """
     val blockDesignST: ST = {
       if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative)
         st"""
@@ -5365,6 +4721,7 @@ import HwSynthesizer2._
             |
             |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
             |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
+            $ctrlSliceST
             |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
             | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
             |] [get_bd_cells zynq_ultra_ps_e_0]
@@ -5411,6 +4768,7 @@ import HwSynthesizer2._
             |set_property CONFIG.NUM_MI {2} [get_bd_cells axi_smc]
             |connect_bd_intf_net [get_bd_intf_pins axi_smc/M01_AXI] [get_bd_intf_pins axi_bram_ctrl_1/S_AXI]
             |connect_bd_intf_net [get_bd_intf_pins GeneratedIP/io_M_AXI] [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
+            $ctrlSliceST
             |
             |# connect to axi clock
             |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_bram_ctrl_0/s_axi_aclk]
@@ -5443,6 +4801,8 @@ import HwSynthesizer2._
             |apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_ultra_ps_e_0/M_AXI_HPM0_FPD} Slave {/GeneratedIP/io_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins GeneratedIP/io_S_AXI]
             |apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ultra_ps_e_0/pl_clk0} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins zynq_ultra_ps_e_0/saxihp0_fpd_aclk]
             |connect_bd_net [get_bd_pins rst_ps8_0_99M/peripheral_aresetn] [get_bd_pins util_vector_logic_0/Op1]
+            $ctrlSliceST
+            $hpSliceST
             |set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $$FREQ_HZ $backslash
             | CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL {RPLL} $backslash
             |] [get_bd_cells zynq_ultra_ps_e_0]
@@ -5539,6 +4899,14 @@ import HwSynthesizer2._
           |SoC_NAME=$$4
           |FREQ_HZ=$$5
           |
+          |# inject MAX_FANOUT on function CP state registers before packaging the IP:
+          |# reduces fanout-induced routing on high-fanout CP -> datapath (writeData/index)
+          |# paths; the tool only replicates CPs whose fanout exceeds the threshold, so
+          |# low-fanout (simple function) CPs are left untouched.
+          |for f in $${PROJECT_PATH}/chisel/generated_verilog/FPGA$${IP_NAME}/*.v; do
+          |  sed -i -E '/max_fanout/! s/^(  )(reg \[[0-9]+:0\] [A-Za-z_0-9]+_objectCP;)/\1(* max_fanout = 16 *) \2/' "$$f"
+          |done
+          |
           |vivado -mode batch -source $${TCL_PATH}/ip_generation.tcl -tclargs $${PROJECT_PATH} $${IP_NAME} $${FREQ_HZ}
           |
           |vivado -mode batch -source $${TCL_PATH}/synthesize_zcu102_zynq.tcl -tclargs $${PROJECT_PATH} $${SoC_NAME} $${PROJECT_PATH}/$$FREQ_HZ/$${IP_NAME}/IP_dir $${IP_NAME} $${FREQ_HZ}
@@ -5551,7 +4919,7 @@ import HwSynthesizer2._
           |log_file="time_log.txt"
           |
           |start_bound=350
-          |end_bound=450
+          |end_bound=475
           |step=25
           |
           |bound=$$start_bound
@@ -5914,30 +5282,30 @@ import HwSynthesizer2._
           |module XilinxBRAMWrapper(
           |    input wire clk,
           |    input wire ena,
-          |    input wire wea,
-          |    input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1}:0] addra,
-          |    input wire [7:0] dina,
-          |    output wire [7:0] douta,
+          |    input wire [7:0] wea,
+          |    input wire [${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8) - 1}:0] addra,
+          |    input wire [63:0] dina,
+          |    output wire [63:0] douta,
           |    input wire enb,
-          |    input wire web,
-          |    input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1}:0] addrb,
-          |    input wire [7:0] dinb,
-          |    output wire [7:0] doutb
+          |    input wire [7:0] web,
+          |    input wire [${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8) - 1}:0] addrb,
+          |    input wire [63:0] dinb,
+          |    output wire [63:0] doutb
           |);
           |
           |  XilinxBRAM u_XilinxBRAM (
           |    .clka(clk),    // input wire clka
           |    .ena(ena),      // input wire ena
-          |    .wea(wea),      // input wire [0 : 0] wea
-          |    .addra(addra),  // input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1} : 0] addra
-          |    .dina(dina),    // input wire [7: 0] dina
-          |    .douta(douta),  // output wire [7: 0] douta
+          |    .wea(wea),      // input wire [7 : 0] wea
+          |    .addra(addra),  // input wire [${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8) - 1} : 0] addra
+          |    .dina(dina),    // input wire [63: 0] dina
+          |    .douta(douta),  // output wire [63: 0] douta
           |    .clkb(clk),    // input wire clkb
           |    .enb(enb),      // input wire enb
-          |    .web(web),      // input wire [0 : 0] web
-          |    .addrb(addrb),  // input wire [${log2Up(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) - 1} : 0] addrb
-          |    .dinb(dinb),    // input wire [7: 0] dinb
-          |    .doutb(doutb)  // output wire [7: 0] doutb
+          |    .web(web),      // input wire [7 : 0] web
+          |    .addrb(addrb),  // input wire [${log2Up((anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8) - 1} : 0] addrb
+          |    .dinb(dinb),    // input wire [63: 0] dinb
+          |    .doutb(doutb)  // output wire [63: 0] doutb
           |  );
           |
           |endmodule
@@ -6469,7 +5837,7 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
-          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) "#10000" else ""}
+          |    ${if(isFpgaTestBench) s"#${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8 * (if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 400 else 1600) + 10000} // scaled: wait out the startup memory-clear loop" else ""}
           |
           |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchBramNativeConn else st""}
           |
@@ -6518,7 +5886,7 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
-          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#1000000"};
+          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#800000"};
           |
           |    // valid
           |    io_S_AXI_AWADDR  = 0;
@@ -6535,7 +5903,7 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
-          |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) "#10000" else ""}
+          |    ${if(isFpgaTestBench) s"#${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8 * (if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 400 else 1600) + 10000} // scaled: wait out the startup memory-clear loop" else ""}
           |
           |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchBramNativeConn else st""}
           |
@@ -6584,7 +5952,7 @@ import HwSynthesizer2._
           |    io_S_AXI_BREADY  = 0;
           |    #10;
           |
-          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#1000000"};
+          |    ${if(anvil.config.alignAxi4 && anvil.config.tempGlobal) st"#4800000" else st"#800000"};
           |
           |    ${if(isFpgaTestBench && anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) testBenchAccessResult else st""}
           |    $$finish;
@@ -6727,6 +6095,7 @@ import HwSynthesizer2._
           |create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 blk_mem_gen_0
           |set_property -dict [list ${backslash}
           |  CONFIG.Write_Width_A {64} ${backslash}
+          |  CONFIG.Write_Depth_A ${(anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)) / 8 + 1} ${backslash}
           |  CONFIG.use_bram_block {Stand_Alone} ${backslash}
           |] [get_bd_cells blk_mem_gen_0]
           |
@@ -6741,6 +6110,13 @@ import HwSynthesizer2._
           |connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
           |
           |make_bd_intf_pins_external  [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
+          |
+          |# Size the controller by assigning its slave segment: MEM_DEPTH is read-only and
+          |# is derived from this range. Without it Vivado falls back to a default 8 KB,
+          |# which silently aliases every access above that back into low memory.
+          |assign_bd_address -offset 0x00000000 -range ${bdMemRange(if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0)} ${backslash}
+          |  -target_address_space [get_bd_addr_spaces S_AXI_0] ${backslash}
+          |  [get_bd_addr_segs axi_bram_ctrl_0/S_AXI/Mem0] -force
           |make_bd_pins_external  [get_bd_pins axi_bram_ctrl_0/s_axi_aclk]
           |make_bd_pins_external  [get_bd_pins axi_bram_ctrl_0/s_axi_aresetn]
           |
@@ -6767,7 +6143,7 @@ import HwSynthesizer2._
           |set_property board_part xilinx.com:zcu102:part0:3.4 [current_project]
           |set_property compxlib.modelsim_compiled_library_dir /home/kejun/study/xilinx_modelsim_lib_2024_2 [current_project]
           |set_property target_simulator ModelSim [current_project]
-          |set_property -name {modelsim.simulate.runtime} -value {2000000ns} -objects [get_filesets sim_1]
+          |set_property -name {modelsim.simulate.runtime} -value {${800000 + (anvil.config.memory + (if(hasRecursiveInAllfunctions()) depthOfStack(maxRegisters) else 0) + 7) / 8 * (if(anvil.config.memoryAccess == Anvil.Config.MemoryAccess.BramNative) 400 else 1600) * 2}ns} -objects [get_filesets sim_1]
           |
           |set dir ./chisel/generated_verilog/${if(isFpgaTestBench) "FPGA" else ""}${name}
           |set files [glob -nocomplain -types f [file join $$dir *.v]]
@@ -6787,28 +6163,6 @@ import HwSynthesizer2._
           |set xci_top [get_files -all -quiet -filter {NAME =~ "*.xci" && NAME !~ "*/bd/*"}]
           |generate_target simulation $$xci_top
           |export_ip_user_files -of_objects $$xci_top -no_script -sync -force -quiet
-          |
-          |# simulation
-          |launch_simulation -install_path /home/kejun/software/modelsim/modeltech/linux_x86_64
-          |
-          |# ---- patch generated sim scripts so ./simulate.sh opens GUI and stays open ----
-          |# NOTE: must use $${name}.sim (the project name from `create_project $${name} ...`
-          |# at the top of this script), not the hardcoded "Test.sim". Cases with a
-          |# non-`Test` procedure name (e.g. `BubbleTest`) have Vivado emit
-          |# BubbleTest.sim and would fail the `open $$sh_path r` below otherwise.
-          |set sim_dir [file normalize ./vivado_project/${name}.sim/sim_1/behav/modelsim]
-          |
-          |# 1) simulate.sh: 去掉 -c（命令行模式）
-          |set sh_path $$sim_dir/simulate.sh
-          |set f [open $$sh_path r]; set c [read $$f]; close $$f
-          |regsub -all {vsim -64 -c -do} $$c {vsim -64 -do} c
-          |set f [open $$sh_path w]; puts -nonewline $$f $$c; close $$f
-          |
-          |# 2) tb_simulate.do: 去掉末尾 quit -force
-          |set do_path $$sim_dir/tb_simulate.do
-          |set f [open $$do_path r]; set c [read $$f]; close $$f
-          |regsub -line -all {^quit -force\s*$$} $$c {} c
-          |set f [open $$do_path w]; puts -nonewline $$f $$c; close $$f
         """
     }
 
@@ -6834,11 +6188,11 @@ import HwSynthesizer2._
     }
     output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxIndexAdderWrapper.v"), xilinxIndexAdderWrapperST(anvil.typeBitSize(spType)))
     output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxIndexMultiplierWrapper.v"), xilinxIndexMultiplierWrapperST(anvil.typeBitSize(spType)))
-    output.addPerm(T, ISZ("chisel/..", "test_many.sh"), testManyShScriptST, "+x")
-    output.addPerm(T, ISZ("chisel/..", "auto_script.sh"), autoShScriptST, "+x")
-    output.add(T, ISZ("chisel/..", "synthesize_zcu102_zynq.tcl"), synthImplST)
-    output.add(T, ISZ("chisel/..", "ip_generation.tcl"), ipGenerationTclST)
     if(!anvil.config.noXilinxIp) {
+      output.addPerm(T, ISZ("chisel/..", "test_many.sh"), testManyShScriptST, "+x")
+      output.addPerm(T, ISZ("chisel/..", "auto_script.sh"), autoShScriptST, "+x")
+      output.add(T, ISZ("chisel/..", "synthesize_zcu102_zynq.tcl"), synthImplST)
+      output.add(T, ISZ("chisel/..", "ip_generation.tcl"), ipGenerationTclST)
       output.add(T, ISZ("chisel/src/main/resources/C", "zynq_program.c"), zynqCProgramST)
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxAdderSigned64Wrapper.v"), xilinxAddSub64ST(T ,T))
       output.add(T, ISZ("chisel/src/main/resources/verilog", "XilinxAdderUnsigned64Wrapper.v"), xilinxAddSub64ST(T, F))
@@ -6974,20 +6328,25 @@ import HwSynthesizer2._
     for(f <- ipRouterUsage.entries) {
       val arbiterUsage: HashSSet[ArbIpType] = f._2._2
       for(arb <- arbiterUsage.elements) {
-        val idx: Z = if(allArbiter.contains(arb)) allArbiter.get(arb).get._1 else 0
+        // perFunctionIp: held-start DSP IPs get a private instance inside each
+        // procedure module (see procedureST), so there is no Top-level arbiter or
+        // arbiter<->proc boundary wiring for them. Skip them here.
+        if(!isPerFuncIp(arb)) {
+          val idx: Z = if(allArbiter.contains(arb)) allArbiter.get(arb).get._1 else 0
 
-        val instanceName: String = getIpInstanceName(arb).get
-        val arbConnectionSt: ST =
-          st"""
-              |mod_${f._1}.io.${instanceName}_req  <> ${instanceName}ArbiterModule.io.ipReqs(${idx})
-              |mod_${f._1}.io.${instanceName}_resp <> ${instanceName}ArbiterModule.io.ipResps(${idx})
-              """
+          val instanceName: String = getIpInstanceName(arb).get
+          val arbConnectionSt: ST =
+            st"""
+                |mod_${f._1}.io.${instanceName}_req  <> ${instanceName}ArbiterModule.io.ipReqs(${idx})
+                |mod_${f._1}.io.${instanceName}_resp <> ${instanceName}ArbiterModule.io.ipResps(${idx})
+                """
 
-        allArbiter.get(arb) match {
-          case Some((_, st, sts)) =>
-            allArbiter = allArbiter + arb ~> (idx + 1, st, sts :+ arbConnectionSt)
-          case None() =>
-            allArbiter = allArbiter + arb ~> (idx + 1, st"", ISZ[ST]() :+ arbConnectionSt)
+          allArbiter.get(arb) match {
+            case Some((_, st, sts)) =>
+              allArbiter = allArbiter + arb ~> (idx + 1, st, sts :+ arbConnectionSt)
+            case None() =>
+              allArbiter = allArbiter + arb ~> (idx + 1, st"", ISZ[ST]() :+ arbConnectionSt)
+          }
         }
       }
     }
@@ -7064,24 +6423,10 @@ import HwSynthesizer2._
 
       val dataWidthST: ST = if(arb != ArbGlobalVarIP()) st"dataWidth = C_M_AXI_DATA_WIDTH" else st""
 
-      // Route each arbiter into the partitioned reset tree defined in the
-      // Top module. Control-plane arbiters (GlobalVar / TempSaveRestore)
-      // share myRst_ctrl with the per-procedure FSM modules; all other
-      // datapath arbiters use myRst_arith. BlockMemory keeps the default
-      // module reset so its AXI master state machines are not stomped by
-      // soft-reset pulses from r_start.
-      val rstClass: String =
-        if      (arb == ArbBlockMemoryIP())     ""
-        else if (arb == ArbGlobalVarIP())       "myRst_ctrl"
-        else if (arb == ArbTempSaveRestoreIP()) "myRst_ctrl"
-        else                                    "myRst_arith"
-      val withRstOpen : String = if (rstClass != "") s"withReset(${rstClass}) {" else ""
-      val withRstClose: String = if (rstClass != "") "}" else ""
-
       val declST: ST =
         st"""
-            |val ${instanceName}Wrapper = ${withRstOpen} Module(new ${moduleName}Wrapper(${dataWidthST}${paraStr})) ${withRstClose}
-            |val ${instanceName}ArbiterModule = ${withRstOpen} Module(new ${moduleName}ArbiterModule(numIPs = ${numIpsStr}, ${dataWidthST}${paraStr})) ${withRstClose}
+            |val ${instanceName}Wrapper = ${if(arb != ArbBlockMemoryIP()) "withReset(myRst) {" else ""} Module(new ${moduleName}Wrapper(${dataWidthST}${paraStr})) ${if(arb != ArbBlockMemoryIP()) "}" else ""}
+            |val ${instanceName}ArbiterModule = ${if(arb != ArbBlockMemoryIP()) "withReset(myRst) {" else ""} Module(new ${moduleName}ArbiterModule(numIPs = ${numIpsStr}, ${dataWidthST}${paraStr})) ${if(arb != ArbBlockMemoryIP()) "}" else ""}
             |${instanceName}Wrapper.io.req <> ${instanceName}ArbiterModule.io.ip.req
             |${instanceName}Wrapper.io.resp <> ${instanceName}ArbiterModule.io.ip.resp
             |${axi4ConnST}
@@ -7118,11 +6463,9 @@ import HwSynthesizer2._
 
     var allFunctionST: ISZ[ST] = ISZ[ST]()
     for(f <- ipRouterUsage.entries) {
-      // Per-procedure CP-FSM modules belong to the control-plane reset
-      // partition (myRst_ctrl) together with GlobalVar / TempSaveRestore.
       allFunctionST = allFunctionST :+
         st"""
-            |val mod_${f._1} = withReset(myRst_ctrl) {
+            |val mod_${f._1} = withReset(myRst) {
             |  Module(new ${f._1}(
             |    addrWidth = C_M_AXI_ADDR_WIDTH,
             |    dataWidth = C_M_AXI_DATA_WIDTH,
@@ -7273,12 +6616,6 @@ import HwSynthesizer2._
     @strictpure def axi4SlaveBodyST: ST = {
       st"""
           |val r_control = RegInit(VecInit(Seq.fill(${if(isFpgaTop) (if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) 6 else 16) else 2})(0.U(C_S_AXI_DATA_WIDTH.W))))
-          |// Dedicated status register for AXI read-back. Separating this from
-          |// r_control avoids the bi-directional write conflict that arose when
-          |// both the AXI write path (r_control(r_s_axi_awaddr) := r_s_axi_wdata)
-          |// and the internal status writer (r_control(1) := ...) targeted the
-          |// same Vec slot. AXI reads at address 1 are muxed to r_status below.
-          |val r_status  = RegInit(0.U(C_S_AXI_DATA_WIDTH.W))
           |val ADDR_LSB: Int = (C_S_AXI_DATA_WIDTH / 32) + 1
           |
           |// registers for diff channels
@@ -7340,9 +6677,7 @@ import HwSynthesizer2._
           |
           |when(r_ar_valid) {
           |  r_s_axi_rvalid            := true.B
-          |  // Address 1 reads the dedicated status register; all other
-          |  // addresses pass through to r_control (which is written by AXI).
-          |  r_s_axi_rdata             := Mux(r_s_axi_araddr === 1.U, r_status, r_control(r_s_axi_araddr))
+          |  r_s_axi_rdata             := r_control(r_s_axi_araddr)
           |  r_ar_valid                := false.B
           |}
           |
@@ -7589,7 +6924,23 @@ import HwSynthesizer2._
           |    r_mem_total_length := Mux(r_mem_total_length > 8.U, r_mem_total_length - 8.U, 0.U)
           |    r_mem_clear_addr := r_mem_clear_addr + 8.U
           |    r_mem_clear_length := Mux(r_mem_total_length > 8.U, 8.U, r_mem_total_length)
-          |    TopCP := Mux(r_mem_total_length === 0.U, 7.U, 5.U)
+          |    TopCP := Mux(r_mem_total_length === 0.U, 8.U, 5.U)
+          |  }
+          |  is(8.U) {
+          |    // initialize the testNum global to -1 (run-all-tests) after the memory
+          |    // clear;
+          |    // interfaces without a control memory-write channel (AXI4) rely on this
+          |    r_mem_req_valid := true.B
+          |    r_mem_req.mode := 2.U
+          |    r_mem_req.writeAddr := 0.U
+          |    r_mem_req.writeOffset := 0.U
+          |    r_mem_req.writeLen := 8.U
+          |    r_mem_req.writeData := "hFFFFFFFFFFFFFFFF".U
+          |    when(r_mem_resp_valid) {
+          |      r_mem_req.mode := 0.U
+          |      r_mem_req_valid := false.B
+          |      TopCP := 7.U
+          |    }
           |  }
           |  is(7.U) {
           |    r_control(0) := 0.U
@@ -7630,58 +6981,9 @@ import HwSynthesizer2._
                |  val r_valid = RegInit(false.B)
                |  val r_init_done = RegInit(false.B)
                |  r_start := r_control(0)(0)
-               |  // Status bits go to the dedicated r_status register (defined
-               |  // alongside r_control in the AXI-Lite slave body). Writing
-               |  // r_status here avoids the double-write conflict with AXI on
-               |  // the same r_control(1) Vec element.
-               |  r_status := Cat(r_init_done, r_valid).asUInt
+               |  r_control(1) := Cat(r_init_done, r_valid).asUInt
                |
-               |  // Partitioned reset tree. A single myRst driven by r_start
-               |  // previously fanned out synchronously to every RegInit in all
-               |  // 16+ procedure modules and all 20+ arithmetic/control arbiters,
-               |  // producing the -24.76 ns WNS on myRst_reg paths at 90nm.
-               |  //
-               |  // Each partition is now an AsyncReset with a 2-FF synchronizer
-               |  // on the deassertion edge. DC treats AsyncReset fanout as a
-               |  // recovery/removal check (not a setup check on every reg D
-               |  // input), which removes ~5k "reset" setup-violation paths
-               |  // once the SDC adds:
-               |  //     set_false_path -from [get_ports reset]
-               |  //     set_false_path -from [get_cells -hier *myRst_*_s1_reg]
-               |  //
-               |  // Partitions:
-               |  //   - myRst_arith : datapath arbiters (Add/Sub/Mul/Div/Rem/And/
-               |  //                   Or/Xor/Eq/Ne/Lt/Le/Gt/Ge/Shl/Shr/Ushr,
-               |  //                   Indexer)
-               |  //   - myRst_ctrl  : GlobalVar / TempSaveRestore arbiters and
-               |  //                   the per-procedure FSM modules (CP state)
-               |  //   - myRst_mem   : reserved; BlockMemory stays on the module
-               |  //                   default reset so its AXI master state
-               |  //                   survives soft-reset pulses from r_start
-               |  //
-               |  // Assert path: top-level `reset` (typed as AsyncReset) forces
-               |  // s0/s1 to `false.B` immediately — downstream RegInit resets
-               |  // on the same edge (same polarity as the original design:
-               |  // myRst = 1 asserts reset, matching the r_start=1 soft-reset
-               |  // pulse used during boot memory-clear).
-               |  // Deassert path: once top-level reset drops, s0 captures
-               |  // `r_start` on the next clk; s1 captures s0 one clk later
-               |  // — giving 2 clocks of metastability filtering.
-               |  val myRst_arith_s0 = withReset(reset.asAsyncReset)(RegInit(false.B))
-               |  val myRst_arith_s1 = withReset(reset.asAsyncReset)(RegInit(false.B))
-               |  val myRst_ctrl_s0  = withReset(reset.asAsyncReset)(RegInit(false.B))
-               |  val myRst_ctrl_s1  = withReset(reset.asAsyncReset)(RegInit(false.B))
-               |  val myRst_mem_s0   = withReset(reset.asAsyncReset)(RegInit(false.B))
-               |  val myRst_mem_s1   = withReset(reset.asAsyncReset)(RegInit(false.B))
-               |  myRst_arith_s0 := r_start
-               |  myRst_arith_s1 := myRst_arith_s0
-               |  myRst_ctrl_s0  := r_start
-               |  myRst_ctrl_s1  := myRst_ctrl_s0
-               |  myRst_mem_s0   := r_start
-               |  myRst_mem_s1   := myRst_mem_s0
-               |  val myRst_arith: Reset = myRst_arith_s1.asAsyncReset
-               |  val myRst_ctrl:  Reset = myRst_ctrl_s1.asAsyncReset
-               |  val myRst_mem:   Reset = myRst_mem_s1.asAsyncReset
+               |  val myRst: Reset = r_start
                |
                |  val r_mem_req  = RegInit(0.U.asTypeOf(new BlockMemoryRequestBundle(C_M_AXI_DATA_WIDTH, ${if(anvil.config.memoryAccess != Anvil.Config.MemoryAccess.BramNative) "C_M_AXI_ADDR_WIDTH, " else ""} MEMORY_DEPTH)))
                |  val r_mem_req_valid = RegInit(false.B)
@@ -7712,84 +7014,28 @@ import HwSynthesizer2._
 
   @pure def processProcedure(name: String, o: AST.IR.Procedure, maxRegisters: Util.TempVector, globalInfoMap: HashSMap[QName, VarInfo], isRecursive: B): ST = {
 
-    // Tier-1 ROM state is per-procedure (per-FSM); reset before this procedure's
-    // basic blocks are walked so captures from a prior procedure don't leak.
-    reqPreROM = HashSMap.empty
-    perFsmMaxLabel = HashSMap.empty
-
-    // Shared regfile-bank discovery so that declarations, per-cycle defaults
-    // and the deferred-commit block all see the same set of banks.
-    // Each entry: bankName -> (bitWidth, depth, isSigned).
-    @pure def generalRegBanks: HashMap[String, (Z,Z,B)] = {
+    @pure def generalPurposeRegisterST: ST = {
       var generalRegMap: HashMap[String, (Z,Z,B)] = HashMap.empty[String, (Z,Z,B)]
+      var generalRegST: ISZ[ST] = ISZ[ST]()
+
       for(i <- 0 until maxRegisters.unsigneds.size){
         if(maxRegisters.unsigneds(i) > 0) {
           generalRegMap = generalRegMap + (s"${generalRegName}U${i+1}" ~> (i+1, maxRegisters.unsigneds(i), F))
         }
       }
+
       for(entry <- maxRegisters.signeds.entries) {
         if(entry._2 > 0) {
           generalRegMap = generalRegMap + (s"${generalRegName}S${entry._1}" ~> (entry._1, entry._2, T))
         }
       }
-      return generalRegMap
-    }
 
-    @pure def generalPurposeRegisterST: ST = {
-      var generalRegST: ISZ[ST] = ISZ[ST]()
-
-      for(entry <- generalRegBanks.entries) {
-        val bankName: String = entry._1
-        val width: Z = entry._2._1
-        val depth: Z = entry._2._2
-        val signed: B = entry._2._3
-        val zeroLit: String = if (signed) "0.S" else "0.U"
-        val sintOrUint: String = if (signed) "SInt" else "UInt"
-        // Real regfile (commit target). Reset to 0 to keep startup behavior.
-        generalRegST = generalRegST :+ st"val ${bankName} = RegInit(VecInit(Seq.fill(${depth})(${zeroLit}(${width}.W))))"
-        // P0-A: shadow `_next` Reg and `_we` write-enable Vec.
-        // Per-index switch-arm writes to `_next(i)` + `_we(i) := true.B` are
-        // committed one cycle later by a non-switched commit block, splitting
-        // the deep `CP_reg -> switch decode -> Vec-write mux tree` cone in half.
-        // `_next` holds no semantic value when `_we` is false, so it does not
-        // need a reset (saves wide reset-tree fanout, same idea as
-        // `r_ipReq_bits` in the IP arbiter template). `_we` MUST reset to false
-        // so that no spurious commits fire after reset.
-        generalRegST = generalRegST :+ st"val ${bankName}_next = Reg(Vec(${depth}, ${sintOrUint}(${width}.W)))"
-        generalRegST = generalRegST :+ st"val ${bankName}_we   = RegInit(VecInit(Seq.fill(${depth})(false.B)))"
+      for(entry <- generalRegMap.entries) {
+        //generalRegST = generalRegST :+ st"val ${entry._1} = RegInit(VecInit(${entry._2._2}, ${if(entry._2._3) "SInt" else "UInt"}(${entry._2._1}.W)))"
+        generalRegST = generalRegST :+ st"val ${entry._1} = RegInit(VecInit(Seq.fill(${entry._2._2})(${if(entry._2._3) "0.S" else "0.U"}(${entry._2._1}.W))))"
       }
 
       return st"${(generalRegST, "\n")}"
-    }
-
-    // Per-cycle defaults for shadow `_we`/`_next`: emitted BEFORE the switch
-    // body (inside `procedureST`), so that switch arms can override `_we(i)`
-    // to true via Chisel last-connect. `_next(i)` self-holds (Reg semantics)
-    // — we do not need an explicit hold; we only override it inside arms.
-    @pure def generalRegDefaultST: ST = {
-      var defaults: ISZ[ST] = ISZ[ST]()
-      for(entry <- generalRegBanks.entries) {
-        val bankName: String = entry._1
-        defaults = defaults :+ st"for (i <- 0 until ${entry._2._2}) { ${bankName}_we(i) := false.B }"
-      }
-      return st"${(defaults, "\n")}"
-    }
-
-    // Deferred-commit block: emitted AFTER the switch body. When `_we(i)` was
-    // raised by a switch arm in the previous cycle, copy the shadow value to
-    // the real regfile. Adds 1 cycle of write latency vs the legacy direct
-    // write, which is well within the 3-cycle CP-ring stable window between
-    // consecutive switch firings (CP_pre_next -> CP_next -> CP).
-    @pure def generalRegCommitST: ST = {
-      var commits: ISZ[ST] = ISZ[ST]()
-      for(entry <- generalRegBanks.entries) {
-        val bankName: String = entry._1
-        commits = commits :+
-          st"""for (i <- 0 until ${entry._2._2}) {
-              |  when (${bankName}_we(i)) { ${bankName}(i) := ${bankName}_next(i) }
-              |}"""
-      }
-      return st"${(commits, "\n")}"
     }
 
     @pure def procedureST(stateMachineST: ST, stateMachineSTSize:Z, stateFunctionObjectST: ST): ST = {
@@ -7800,55 +7046,49 @@ import HwSynthesizer2._
       for(e <- ipArbiterUsage.elements) {
         val instName: String = getIpInstanceName(e).get
 
-        allArbIOST = allArbIOST :+
-          st"""
-              |val ${instName}_req    = Valid(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
-              |val ${instName}_resp   = Flipped(Valid(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)})))
-            """
+        if(isPerFuncIp(e)) {
+          // perFunctionIp: instantiate a PRIVATE per-procedure IP wrapper instead of
+          // exposing a Top-arbiter boundary port. The r_<inst>_req register is already
+          // the CP-mutual-exclusion local mux for this procedure, so it is wired
+          // point-to-point to the private wrapper (a direct connect). The wrapper
+          // inherits this procedure module's implicit reset (myRst, propagated from
+          // the withReset(myRst) at the mod_<proc> instantiation in topST), matching
+          // the Top-level withReset(myRst) wrapper reset. No io boundary port is added.
+          allArbInstanceST = allArbInstanceST :+
+            st"""
+                |// ${getIpModuleName(e).get} private per-function IP (perFunctionIp)
+                |val r_${instName}_req          = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
+                |val r_${instName}_req_valid    = RegInit(false.B)
+                |val r_${instName}_resp         = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
+                |val r_${instName}_resp_valid   = RegInit(false.B)
+                |val ${instName}Wrapper = Module(new ${getIpModuleName(e).get}Wrapper(dataWidth = dataWidth))
+                |// point-to-point connection for private ${getIpModuleName(e).get}
+                |${instName}Wrapper.io.req.bits  := r_${instName}_req
+                |${instName}Wrapper.io.req.valid := r_${instName}_req_valid
+                |r_${instName}_resp       := ${instName}Wrapper.io.resp.bits
+                |r_${instName}_resp_valid := ${instName}Wrapper.io.resp.valid
+              """
+        } else {
+          allArbIOST = allArbIOST :+
+            st"""
+                |val ${instName}_req    = Valid(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
+                |val ${instName}_resp   = Flipped(Valid(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)})))
+              """
 
-        allArbInstanceST = allArbInstanceST :+
-          st"""
-              |// ${getIpModuleName(e).get} Arbiter
-              |//
-              |// Two-stage skid on the outgoing IP request:
-              |//   _pre  : written by the FSM switch body (target of
-              |//           `r_*_req.field := X` / `r_*_req_valid := Y`).
-              |//           The deep `CP_reg -> switch decoder -> RHS comb`
-              |//           path terminates HERE (at a flop), not at the
-              |//           output register that drives io.req.
-              |//   r_*   : RegNext of _pre, drives io.req (sees the IP
-              |//           one cycle later than the switch body commits).
-              |//
-              |// Without this skid, the critical path `CP_reg -> decode
-              |// -> r_arb*_req_*_D` was the dominant remaining contributor
-              |// to the -14.79 ns WNS (see TIMING_ANALYSIS §3). The switch
-              |// body keeps reading `_pre` (not r_*_req) for polling so
-              |// internal timing of `req_valid -> do something` is
-              |// unchanged; only the IP-facing req is delayed by 1 cycle.
-              |val r_${instName}_req_pre       = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
-              |val r_${instName}_req_valid_pre = RegInit(false.B)
-              |val r_${instName}_req           = RegNext(r_${instName}_req_pre)
-              |val r_${instName}_req_valid     = RegNext(r_${instName}_req_valid_pre, false.B)
-              |// Two-stage latch for the arbiter response: io.resp -> _s1 -> r_*.
-              |// Adding this RegNext in the response path breaks the combinational
-              |// chain `arbiter.resp -> switch-case block -> CP_next` that fed
-              |// directly into the huge per-procedure FSM decode. With the extra
-              |// stage, every state transition waiting on an arbiter response
-              |// takes one extra cycle, but the CP-write path no longer sees
-              |// the arbiter's combinational output in the same cycle, which
-              |// was a primary contributor to the -26 ns WNS on DLLPool FSMs.
-              |val r_${instName}_resp_s1       = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
-              |val r_${instName}_resp_valid_s1 = RegInit(false.B)
-              |val r_${instName}_resp         = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
-              |val r_${instName}_resp_valid   = RegInit(false.B)
-              |// connection for ${getIpModuleName(e).get} Arbiter
-              |r_${instName}_resp_s1       := io.${instName}_resp.bits
-              |r_${instName}_resp_valid_s1 := io.${instName}_resp.valid
-              |r_${instName}_resp       := r_${instName}_resp_s1
-              |r_${instName}_resp_valid := r_${instName}_resp_valid_s1
-              |io.${instName}_req.bits  := r_${instName}_req
-              |io.${instName}_req.valid := r_${instName}_req_valid
-            """
+          allArbInstanceST = allArbInstanceST :+
+            st"""
+                |// ${getIpModuleName(e).get} Arbiter
+                |val r_${instName}_req          = Reg(new ${getIpModuleName(e).get}RequestBundle(${requestParaStr(e, maxRegisters, globalInfoMap)}))
+                |val r_${instName}_req_valid    = RegInit(false.B)
+                |val r_${instName}_resp         = Reg(new ${getIpModuleName(e).get}ResponseBundle(${responseParaStr(e, maxRegisters)}))
+                |val r_${instName}_resp_valid   = RegInit(false.B)
+                |// connection for ${getIpModuleName(e).get} Arbiter
+                |r_${instName}_resp       := io.${instName}_resp.bits
+                |r_${instName}_resp_valid := io.${instName}_resp.valid
+                |io.${instName}_req.bits  := r_${instName}_req
+                |io.${instName}_req.valid := r_${instName}_req_valid
+              """
+        }
       }
 
       @pure def stateMachineCallST: ST = {
@@ -7858,73 +7098,6 @@ import HwSynthesizer2._
           smST = smST :+ st"${name}_StateMachine_${i}.${name}_stateMachine(this)"
         }
         return st"""${(smST, "\n")}"""
-      }
-
-      // Tier-1 ROM emission: for every (instance, field) captured for THIS FSM
-      // (`name`), emit a wrEn ROM + value ROM (`VecInit(Seq(...))`) and a single
-      // gated `when` write to the corresponding `r_<inst>_req_pre.<field>`. The
-      // `when` is gated by the same 3-stage CP equality as the switch body, plus
-      // the per-state wrEn slot, so unmapped states keep their previous value.
-      // The state body's inner `when(r_<inst>_resp_valid) { ... mode := 0.U }`
-      // still wins via Chisel last-connect (state body comes after this block in
-      // the template), preserving original semantics. See `reqPreROM` field doc.
-      @pure def reqPreROMST: ST = {
-        var blocks: ISZ[ST] = ISZ[ST]()
-        val maxLabel: Z = perFsmMaxLabel.get(name) match {
-          case Some(m) => m
-          case _ => 0
-        }
-        for (entry <- reqPreROM.entries) {
-          val key: (String, String, String) = entry._1
-          val byLabel: HashSMap[Z, ST] = entry._2
-          val fsmName: String = key._1
-          if (fsmName == name) {
-            val instanceName: String = key._2
-            val fieldName: String = key._3
-            val isBool: B = reqPreFieldIsBool(byLabel)
-            val defaultVal: ST = if (isBool) st"false.B" else st"0.U"
-            var wrEnSeq: ISZ[ST] = ISZ[ST]()
-            var valSeq: ISZ[ST] = ISZ[ST]()
-            for (i <- 0 until (maxLabel + 1)) {
-              byLabel.get(i) match {
-                case Some(rhs) =>
-                  wrEnSeq = wrEnSeq :+ st"true.B"
-                  valSeq = valSeq :+ rhs
-                case _ =>
-                  wrEnSeq = wrEnSeq :+ st"false.B"
-                  valSeq = valSeq :+ defaultVal
-              }
-            }
-            val romPrefix: String = s"${instanceName}_req_pre_${fieldName}"
-            blocks = blocks :+
-              st"""
-                  |val ${romPrefix}_wrEn_ROM = VecInit(Seq(${(wrEnSeq, ", ")}))
-                  |val ${romPrefix}_val_ROM  = VecInit(Seq(${(valSeq, ", ")}))
-                  |// P0'-2: split the ROM lookup into a 2-stage pipeline. The
-                  |// wide (log2(maxLabel+1) + bundle width) mux tree feeding
-                  |// `r_*_req_pre.field` was a top-of-list violator pattern
-                  |// in 4_exp (e.g., test1_objectCP_reg_4_ ->
-                  |// r_arbAndUnsigned64_req_a_* at -11.07 ns, 11 of worst 20).
-                  |// Indexing with CP_pre_next (one CP-ring stage ahead of
-                  |// the original CP_next index) + RegNext lifts the result
-                  |// to the same timing alignment as a CP_next-indexed read
-                  |// would have produced, because the ring assigns
-                  |// CP_next := CP_pre_next every cycle. The gate
-                  |// CP===CP_next===CP_pre_next ensures the ring is stable
-                  |// for >=2 cycles when the write fires, so
-                  |// CP_pre_next[T-1] == CP_next[T] == X and the flopped
-                  |// `_val_s` carries val_ROM(X). Effective ROM-write latency:
-                  |// +1 cycle (absorbed by the 3-cycle stable window between
-                  |// successive switch firings).
-                  |val ${romPrefix}_wrEn_s = RegNext(${romPrefix}_wrEn_ROM(${name}CP_pre_next), false.B)
-                  |val ${romPrefix}_val_s  = RegNext(${romPrefix}_val_ROM(${name}CP_pre_next))
-                  |when((${name}CP === ${name}CP_next) & (${name}CP_next === ${name}CP_pre_next) & ${romPrefix}_wrEn_s) {
-                  |  r_${instanceName}_req_pre.${fieldName} := ${romPrefix}_val_s
-                  |}
-                """
-          }
-        }
-        return st"${(blocks, "\n")}"
       }
 
       @pure def alignAxi4ST: ST = {
@@ -7993,37 +7166,8 @@ import HwSynthesizer2._
                  |  ${if (anvil.config.useIP) "val indexerValid = RegInit(false.B)" else ""}
                  |  // reg for general purpose
                  |  ${if (!anvil.config.splitTempSizes) s"val ${generalRegName} = RegInit(VecInit(Seq.fill(GENERAL_REG_DEPTH)(0.U(GENERAL_REG_WIDTH.W))))" else s"${generalPurposeRegisterST.render}"}
-                 |  // reg for code pointer — 3-stage CP ring:
-                 |  //
-                 |  //   switch(CP) { is(k.U) { CP_pre_next := <decode expr> ; ... } }
-                 |  //                                       |
-                 |  //                                     (flop)
-                 |  //                                       v
-                 |  //                                   CP_next
-                 |  //                                       |
-                 |  //                                     (flop)
-                 |  //                                       v
-                 |  //                                      CP
-                 |  //
-                 |  // The switch body writes to CP_pre_next; CP_next and CP are
-                 |  // passive single-source follower registers. This isolates
-                 |  // the large switch-decode combinational (CP -> decode +
-                 |  // block-body expressions) from the CP register's own
-                 |  // fanout-reducing buffer tree — DC can now place the
-                 |  // decoder flop farther from CP, and `r_arb*_req_*` writes
-                 |  // inside each `is(k.U)` terminate at flops only one stage
-                 |  // (CP_pre_next family) away from the switch output.
-                 |  //
-                 |  // The switch is gated by (CP === CP_next && CP_next ===
-                 |  // CP_pre_next) so the 2-cycle stale window (between a
-                 |  // state-change write to CP_pre_next and CP finally catching
-                 |  // up) holds all block outputs instead of re-firing.
-                 |  val ${name}CP          = RegInit(2.U(cpWidth.W))
-                 |  val ${name}CP_next     = RegInit(2.U(cpWidth.W))
-                 |  val ${name}CP_pre_next = RegInit(2.U(cpWidth.W))
-                 |  ${name}CP_pre_next := ${name}CP_pre_next
-                 |  ${name}CP_next     := ${name}CP_pre_next
-                 |  ${name}CP          := ${name}CP_next
+                 |  // reg for code pointer
+                 |  val ${name}CP = RegInit(2.U(cpWidth.W))
                  |  // reg for stack pointer
                  |  val SP = RegInit(0.U(spWidth.W))
                  |  // reg for display pointer
@@ -8046,29 +7190,14 @@ import HwSynthesizer2._
                  |  ${if(isRecursive) st"val r_saveDstCP = RegInit(0.U(cpWidth.W))" else st""}
                  |  ${if(isRecursive) st"when(r_routeIn_valid) {r_saveDstCP := r_routeIn.dstCP}" else st""}
                  |
+                 |  // inlined two-cycle operators (operand regs + phase + combinational result)
+                 |  ${inlineOpDeclST()}
+                 |
                  |  ${(allArbInstanceST, "\n")}
                  |
                  |  ${alignAxi4ST}
                  |
-                 |  // Tier-1 req_pre ROMs (per-state writes lifted out of the switch body
-                 |  // to break the wide CP-decode -> req_pre register critical path).
-                 |  // Emitted BEFORE the state machine so the state body's inner
-                 |  // `when(r_<inst>_resp_valid) { ... }` overrides via last-connect.
-                 |  ${reqPreROMST}
-                 |
-                 |  // P0-A: regfile shadow defaults. Each cycle, `_we(i)` resets
-                 |  // to false; switch arms in `stateMachineCallST` may override
-                 |  // it back to true via last-connect for indices they write.
-                 |  ${generalRegDefaultST}
-                 |
                  |  ${stateMachineCallST}
-                 |
-                 |  // P0-A: regfile shadow commit. Reads the (already-flopped)
-                 |  // `_we` from the prior cycle and copies `_next(i)` -> regfile(i).
-                 |  // Placed AFTER the state machine so this `when` is closer to the
-                 |  // regfile flop (terminating the cone with a small AND+mux instead
-                 |  // of a wide CP decoder). One cycle of write latency vs legacy.
-                 |  ${generalRegCommitST}
                  |}
                  |
                  |${(stateMachineST, "")}
@@ -8083,6 +7212,7 @@ import HwSynthesizer2._
   }
 
   @pure def processBasicBlock(name: String, bs: ISZ[AST.IR.BasicBlock], maxRegisters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): (ST, Z, ST) = {
+    hwLog.recursiveCalleeIds = HashSSet.empty[Z]
 
     @pure def maxBlockLabel(): Z = {
       var maxLabel: Z = 0
@@ -8115,16 +7245,16 @@ import HwSynthesizer2._
         val finalSt: ST =
           st"""
               |is(${maxBlockLabel()}.U){
-              |  r_arbTempSaveRestore_req_pre.op := 2.U
-              |  r_arbTempSaveRestore_req_valid_pre := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
+              |  r_arbTempSaveRestore_req.op := 2.U
+              |  r_arbTempSaveRestore_req_valid := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
               |
               |  when(r_arbTempSaveRestore_resp_valid) {
               |    ${(intAssignST, "\n")}
               |    r_srcID := r_arbTempSaveRestore_resp.srcId
               |    r_srcCP := r_arbTempSaveRestore_resp.srcCp
               |
-              |    r_arbTempSaveRestore_req_pre.op := 0.U
-              |    ${name}CP_pre_next := r_saveDstCP
+              |    r_arbTempSaveRestore_req.op := 0.U
+              |    ${name}CP  := r_saveDstCP
               |  }
               |}
             """
@@ -8134,17 +7264,28 @@ import HwSynthesizer2._
 
       @pure def state2St: ST = {
         if(isRecursive) {
+          // A frame is pushed only at self- and mutually-recursive call sites, so only a
+          // return from one of those callees may pop one. A return from an ordinary callee
+          // resumes in place; popping there would restore another activation's temps and
+          // srcID/srcCP over the live ones.
+          val popConds: ISZ[ST] =
+            for (id <- hwLog.recursiveCalleeIds.elements) yield st"r_routeIn.srcID === ${id}.U"
+          val popGuard: ST = if (popConds.isEmpty) st"false.B" else st"${(popConds, " || ")}"
           return st"""
                      |is(2.U) {
                      |  r_routeOut_valid := false.B
                      |
                      |  when(r_routeIn_valid) {
                      |    when(r_routeIn.isReturn) {
-                     |      ${name}CP_pre_next := ${maxBlockLabel()}.U
+                     |      when(${popGuard}) {
+                     |        ${name}CP  := ${maxBlockLabel()}.U
+                     |      } .otherwise {
+                     |        ${name}CP  := r_routeIn.dstCP
+                     |      }
                      |    } .otherwise {
                      |      r_srcCP := r_routeIn.srcCP
                      |      r_srcID := r_routeIn.srcID
-                     |      ${name}CP_pre_next := r_routeIn.dstCP
+                     |      ${name}CP  := r_routeIn.dstCP
                      |    }
                      |  }
                      |}
@@ -8156,7 +7297,7 @@ import HwSynthesizer2._
                      |  when(r_routeIn_valid) {
                      |    r_srcCP := r_routeIn.srcCP
                      |    r_srcID := r_routeIn.srcID
-                     |    ${name}CP_pre_next := r_routeIn.dstCP
+                     |    ${name}CP  := r_routeIn.dstCP
                      |  }
                      |}
                    """
@@ -8168,7 +7309,7 @@ import HwSynthesizer2._
             |is(0.U) {
             |  r_routeOut_valid := false.B
             |  when(r_routeIn_valid) {
-            |    ${name}CP_pre_next := r_routeIn.dstCP
+            |    ${name}CP  := r_routeIn.dstCP
             |  }
             |}
             |
@@ -8179,7 +7320,7 @@ import HwSynthesizer2._
             |  r_routeOut.dstCP := 4.U
             |  r_routeOut.isReturn := true.B
             |  r_routeOut_valid := true.B
-            |  ${name}CP_pre_next := 1.U
+            |  ${name}CP := 1.U
             |}
           """
       stateSTs = stateSTs :+ state2St
@@ -8210,17 +7351,8 @@ import HwSynthesizer2._
               |object ${name}_StateMachine_${j} {
               |  def ${name}_stateMachine(o:${name}): Unit = {
               |    import o._
-              |    // Gate by full 3-stage equality: the switch-body writes to
-              |    // CP_pre_next, which then propagates CP_pre_next -> CP_next
-              |    // -> CP across 2 clocks. During those 2 "stale" clocks the
-              |    // block must not re-fire its outputs (double-issuing
-              |    // r_arb*_req_* etc.). Once all three registers agree, the
-              |    // FSM has stabilized and the switch fires at most once per
-              |    // state arrival.
-              |    when((${name}CP === ${name}CP_next) & (${name}CP_next === ${name}CP_pre_next)) {
-              |      switch(${name}CP) {
-              |        ${(objectStateMachineST(j), "\n")}
-              |      }
+              |    switch(${name}CP) {
+              |      ${(objectStateMachineST(j), "\n")}
               |    }
               |  }
               |}
@@ -8312,6 +7444,16 @@ import HwSynthesizer2._
                 |  ${jump}
                 |}
               """
+        } else if(ipPortLogic.whenStmtST.nonEmpty) {
+          // No resource handshake, but there are commit-deferred writes (e.g. an
+          // inlined SP/DP increment). The block advances in one cycle, so emit the
+          // deferred writes unconditionally right before the jump — they fire exactly
+          // once, matching the arbiter version's commit-time semantics.
+          jump =
+            st"""
+                |${(ipPortLogic.whenStmtST, "\n")}
+                |${jump}
+              """
         }
         val g = groundST(b, processedGroundST, jump, isRecursive)
         ipPortLogic.whenCondST = ISZ[ST]()
@@ -8324,6 +7466,7 @@ import HwSynthesizer2._
       hwLog.indexerInCurrentBlock = F
       hwLog.memCpyInCurrentBlock = F
       hwLog.funcCallInCurrentBlock = F
+      inlineKindsInBlock = HashSSet.empty
 
     }
 
@@ -8334,6 +7477,7 @@ import HwSynthesizer2._
     var groundST = ISZ[ST]()
 
     for(g <- gs) {
+      inlineTwoCycleInGround = F
       g match {
         case g: AST.IR.Stmt.Assign => {
           groundST = groundST :+ processStmtAssign(g, ipPortLogic, maxRegisters, isRecursive, hwLog)
@@ -8364,7 +7508,7 @@ import HwSynthesizer2._
     val j = b.jump
 
     @strictpure def jumpSplitCpST(label: Z): ST = {
-      st"${name}CP_pre_next := ${hwLog.currentLabel}.U"
+      st"${name}CP := ${hwLog.currentLabel}.U"
     }
 
     j match {
@@ -8372,7 +7516,7 @@ import HwSynthesizer2._
         val targetAddrST: ST = processExpr(AST.IR.Exp.Temp(intrinsic.loc, anvil.cpType, intrinsic.pos), F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         if (intrinsic.isTemp) {
           if(anvil.config.cpMax <= 0) {
-            intrinsicST = intrinsicST :+ st"${name}CP_pre_next := ${targetAddrST}"
+            intrinsicST = intrinsicST :+ st"${name}CP := ${targetAddrST}"
           }
         } else {
           var returnAddrST = ISZ[ST]()
@@ -8388,7 +7532,7 @@ import HwSynthesizer2._
 
           intrinsicST = intrinsicST :+
             st"""
-                |${name}CP_pre_next := Cat(
+                |${name}CP := Cat(
                 |  ${(returnAddrST, "\n")}
                 |)
             """
@@ -8401,12 +7545,12 @@ import HwSynthesizer2._
           val gtype: B = globalVarMap.get(funName).get._2
           intrinsicST = intrinsicST :+
             st"""
-                |${captureOrEmit(name, "arbGlobalVar", "op", st"false.B", hwLog)}
-                |${captureOrEmit(name, "arbGlobalVar", "gtype", st"${gtype}", hwLog)}
-                |${captureOrEmit(name, "arbGlobalVar", "index", st"${index}", hwLog)}
-                |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
-                |when(r_arbGlobalVar_req_valid_pre) {
-                |  ${funName}CP_pre_next := r_arbGlobalVar_resp.out
+                |r_arbGlobalVar_req.op := false.B
+                |r_arbGlobalVar_req.gtype := ${gtype}
+                |r_arbGlobalVar_req.index := ${index}
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |when(r_arbGlobalVar_req_valid) {
+                |  ${funName}CP := r_arbGlobalVar_resp.out
                 |}
               """
         }
@@ -8416,16 +7560,16 @@ import HwSynthesizer2._
           if(hwLog.isFunCallInCurrentBlock()) {
             intrinsicST = intrinsicST :+ st"r_routeOut.srcCP := ${j.label}.U"
             intrinsicST = intrinsicST :+ st"r_routeOut.isReturn := false.B"
-            intrinsicST = intrinsicST :+ st"${name}CP_pre_next := ${if(isRecursive) "2.U" else "0.U"}"
+            intrinsicST = intrinsicST :+ st"${name}CP := ${if(isRecursive) "2.U" else "0.U"}"
           } else {
-            intrinsicST = intrinsicST :+ st"${name}CP_pre_next := ${j.label}.U"
+            intrinsicST = intrinsicST :+ st"${name}CP := ${j.label}.U"
           }
         }
       }
       case j: AST.IR.Jump.If => {
         val cond = processExpr(j.cond, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         if(anvil.config.cpMax <= 0) {
-          intrinsicST = intrinsicST :+ st"${name}CP_pre_next := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
+          intrinsicST = intrinsicST :+ st"${name}CP := Mux((${cond.render}.asUInt) === 1.U, ${j.thenLabel}.U, ${j.elseLabel}.U)"
         }
       }
       case j: AST.IR.Jump.Switch => {
@@ -8435,7 +7579,7 @@ import HwSynthesizer2._
         hwLog.tmpWireCount = hwLog.tmpWireCount + 1
 
         val defaultStatementST: ST = j.defaultLabelOpt match {
-          case Some(x) => if(anvil.config.cpMax <= 0) st"${name}CP_pre_next := ${x}.U" else jumpSplitCpST(x)
+          case Some(x) => if(anvil.config.cpMax <= 0) st"${name}CP := ${x}.U" else jumpSplitCpST(x)
           case None() => st""
         }
 
@@ -8444,7 +7588,7 @@ import HwSynthesizer2._
           isStatementST = isStatementST :+
             st"""
                 |is(${processExpr(i.value, F, ipPortLogic, maxRegisters, isRecursive, hwLog).render}) {
-                |  ${if(anvil.config.cpMax <=0) st"${name}CP_pre_next := ${i.label}.U" else jumpSplitCpST(i.label)}
+                |  ${if(anvil.config.cpMax <=0) st"${name}CP := ${i.label}.U" else jumpSplitCpST(i.label)}
                 |}
               """
         }
@@ -8467,7 +7611,7 @@ import HwSynthesizer2._
               |r_routeOut.dstCP := r_srcCP
               |r_routeOut.isReturn := true.B
               |r_routeOut_valid := true.B
-              |${name}CP_pre_next := 2.U
+              |${name}CP := 2.U
           """
       }
       case _ => {
@@ -8561,10 +7705,10 @@ import HwSynthesizer2._
                 |    readMiniCP := Mux(readMiniStart, 1.U, 0.U)
                 |  }
                 |  is(1.U) {
-                |    r_arbGlobalVar_req_pre.op := false.B
-                |    r_arbGlobalVar_req_pre.gtype := readMiniGtype_1
-                |    r_arbGlobalVar_req_pre.index := readMiniIndex_1
-                |    r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    r_arbGlobalVar_req.op := false.B
+                |    r_arbGlobalVar_req.gtype := readMiniGtype_1
+                |    r_arbGlobalVar_req.index := readMiniIndex_1
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |    when(r_arbGlobalVar_resp_valid) {
                 |      readMiniAddr := r_arbGlobalVar_resp.out
                 |      readMiniCP := 2.U
@@ -8581,11 +7725,11 @@ import HwSynthesizer2._
                 |    }
                 |  }
                 |  is(3.U) {
-                |    r_arbGlobalVar_req_pre.in := readMiniRes
-                |    r_arbGlobalVar_req_pre.op := true.B
-                |    r_arbGlobalVar_req_pre.gtype := readMiniGtype_2
-                |    r_arbGlobalVar_req_pre.index := readMiniIndex_2
-                |    r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    r_arbGlobalVar_req.in := readMiniRes
+                |    r_arbGlobalVar_req.op := true.B
+                |    r_arbGlobalVar_req.gtype := readMiniGtype_2
+                |    r_arbGlobalVar_req.index := readMiniIndex_2
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |    when(r_arbGlobalVar_resp_valid) {
                 |      readMiniCP := 4.U
                 |      readMiniValid := true.B
@@ -8617,20 +7761,20 @@ import HwSynthesizer2._
                 |    writeMiniCP := Mux(writeMiniStart, 1.U, 0.U)
                 |  }
                 |  is(1.U) {
-                |    r_arbGlobalVar_req_pre.op := false.B
-                |    r_arbGlobalVar_req_pre.gtype := writeMiniGtype_1
-                |    r_arbGlobalVar_req_pre.index := writeMiniIndex_1
-                |    r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    r_arbGlobalVar_req.op := false.B
+                |    r_arbGlobalVar_req.gtype := writeMiniGtype_1
+                |    r_arbGlobalVar_req.index := writeMiniIndex_1
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |    when(r_arbGlobalVar_resp_valid) {
                 |      writeMiniAddr := r_arbGlobalVar_resp.out
                 |      writeMiniCP := 2.U
                 |    }
                 |  }
                 |  is(2.U) {
-                |    r_arbGlobalVar_req_pre.op := false.B
-                |    r_arbGlobalVar_req_pre.gtype := writeMiniGtype_2
-                |    r_arbGlobalVar_req_pre.index := writeMiniIndex_2
-                |    r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |    r_arbGlobalVar_req.op := false.B
+                |    r_arbGlobalVar_req.gtype := writeMiniGtype_2
+                |    r_arbGlobalVar_req.index := writeMiniIndex_2
+                |    r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
                 |    when(r_arbGlobalVar_resp_valid) {
                 |      writeMiniValue := r_arbGlobalVar_resp.out
                 |      writeMiniCP := 3.U
@@ -8677,15 +7821,15 @@ import HwSynthesizer2._
         val offsetWidth: Z = log2Up(anvil.config.memory * 8)
         val readOffsetST: ST = if(intrinsic.offset < 0) st"(${intrinsic.offset}).S(${offsetWidth}.W).asUInt" else st"${intrinsic.offset}.U"
         ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ regFileShadowWriteST(tempST.render, st"r_${instanceName}_resp.data${byteST.render}${signedST.render}".render)
-        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
+        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${tempST.render} := r_${instanceName}_resp.data${byteST.render}${signedST.render}"
+        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req.mode := 0.U"
         intrinsicST =
           st"""
-              |${captureOrEmit(name, instanceName, "mode", st"1.U", hwLog)}
-              |${captureOrEmit(name, instanceName, "readAddr", readAddrST, hwLog)}
-              |${if(anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "readOffset", readOffsetST, hwLog)}
-              |${if(anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "readLen", st"${intrinsic.bytes}.U", hwLog)}
-              |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+              |r_${instanceName}_req.mode := 1.U
+              |r_${instanceName}_req.readAddr := ${readAddrST.render}
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${intrinsic.bytes}.U"}
+              |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
             """
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Erase) => {
@@ -8698,16 +7842,17 @@ import HwSynthesizer2._
           val eraseBytesST: ST = st"${intrinsic.bytes}.U"
           val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req.mode := 0.U"
+          val ioDmaDstOffsetST: ST = st"r_${instanceName}_req.dmaDstOffset := ${eraseOffsetST.render}"
           intrinsicST =
             st"""
-                |${captureOrEmit(name, instanceName, "mode", st"3.U", hwLog)}
-                |${captureOrEmit(name, instanceName, "dmaSrcAddr", st"0.U", hwLog)}
-                |${captureOrEmit(name, instanceName, "dmaDstAddr", eraseBaseST, hwLog)}
-                |${captureOrEmit(name, instanceName, "dmaSrcLen", st"0.U", hwLog)}
-                |${captureOrEmit(name, instanceName, "dmaDstLen", eraseBytesST, hwLog)}
-                |${if(!anvil.config.alignAxi4) captureOrEmit(name, instanceName, "dmaDstOffset", eraseOffsetST, hwLog) else st""}
-                |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                |r_${instanceName}_req.mode := 3.U
+                |r_${instanceName}_req.dmaSrcAddr := 0.U
+                |r_${instanceName}_req.dmaDstAddr := ${eraseBaseST.render}
+                |r_${instanceName}_req.dmaSrcLen := 0.U
+                |r_${instanceName}_req.dmaDstLen := ${eraseBytesST.render}
+                |${if(!anvil.config.alignAxi4) ioDmaDstOffsetST.render else ""}
+                |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
               """
         }
       }
@@ -8721,16 +7866,17 @@ import HwSynthesizer2._
         val dmaSrcAddrST: ST = processExpr(intrinsic.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
         ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
+        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req.mode := 0.U"
+        val ioDmaDstOffsetST: ST = st"r_${instanceName}_req.dmaDstOffset := ${dmaDstOffsetST.render}"
         intrinsicST =
           st"""
-              |${captureOrEmit(name, instanceName, "mode", st"3.U", hwLog)}
-              |${captureOrEmit(name, instanceName, "dmaSrcAddr", dmaSrcAddrST, hwLog)}
-              |${captureOrEmit(name, instanceName, "dmaDstAddr", dmaDstAddrST, hwLog)}
-              |${captureOrEmit(name, instanceName, "dmaSrcLen", dmaSrcLenST, hwLog)}
-              |${captureOrEmit(name, instanceName, "dmaDstLen", st"${intrinsic.lhsBytes}.U", hwLog)}
-              |${if(!anvil.config.alignAxi4) captureOrEmit(name, instanceName, "dmaDstOffset", dmaDstOffsetST, hwLog) else st""}
-              |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+              |r_${instanceName}_req.mode := 3.U
+              |r_${instanceName}_req.dmaSrcAddr := ${dmaSrcAddrST.render}
+              |r_${instanceName}_req.dmaDstAddr := ${dmaDstAddrST.render}
+              |r_${instanceName}_req.dmaSrcLen := ${dmaSrcLenST.render}
+              |r_${instanceName}_req.dmaDstLen := ${intrinsic.lhsBytes}.U
+              |${if(!anvil.config.alignAxi4) ioDmaDstOffsetST.render else ""}
+              |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
             """
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.Store) => {
@@ -8749,15 +7895,15 @@ import HwSynthesizer2._
         val signedST: ST = if(intrinsic.isSigned) st".asUInt" else st""
         val instanceName: String = getIpInstanceName(ArbBlockMemoryIP()).get
         ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req_pre.mode := 0.U"
+        ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_${instanceName}_req.mode := 0.U"
         intrinsicST =
           st"""
-              |${captureOrEmit(name, instanceName, "mode", st"2.U", hwLog)}
-              |${captureOrEmit(name, instanceName, "writeAddr", writeAddrST, hwLog)}
-              |${if(anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "writeOffset", writeOffsetST, hwLog)}
-              |${if(anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "writeLen", writeLenST, hwLog)}
-              |${captureOrEmit(name, instanceName, "writeData", st"${writeDataST.render}${signedST.render}", hwLog)}
-              |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+              |r_${instanceName}_req.mode := 2.U
+              |r_${instanceName}_req.writeAddr := ${writeAddrST.render}
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.writeOffset := ${writeOffsetST.render}"}
+              |${if(anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.writeLen := ${writeLenST.render}"}
+              |r_${instanceName}_req.writeData := ${writeDataST.render}${signedST.render}
+              |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
             """
       }
       case AST.IR.Stmt.Intrinsic(intrinsic: Intrinsic.RegisterAssign) => {
@@ -8772,10 +7918,10 @@ import HwSynthesizer2._
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           intrinsicST =
             st"""
-                |${captureOrEmit(name, "arbGlobalVar", "op", st"false.B", hwLog)}
-                |${captureOrEmit(name, "arbGlobalVar", "gtype", globalVarGtype(rhsName), hwLog)}
-                |${captureOrEmit(name, "arbGlobalVar", "index", st"${t._1}.U", hwLog)}
-                |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req.op := false.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         } else {
           var leftST: ST = st""
@@ -8805,18 +7951,15 @@ import HwSynthesizer2._
           }
 
           if (intrinsic.isInc) {
-            val ipT: ArbIpType = if (isPlus) ArbBinaryIP(AST.IR.Exp.Binary.Op.Add, F) else ArbBinaryIP(AST.IR.Exp.Binary.Op.Sub, F)
-            ipArbiterUsage = ipArbiterUsage + ipT
-
-            var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
-            val instanceName: String = getIpInstanceName(ipT).get
-            hashSMap = hashSMap +
-              ".a" ~> (st"${leftST.render}", "UInt".string) +
-              ".b" ~> (st"${rightST.render}", "UInt".string) +
-              "_valid" ~> (st"Mux(r_${instanceName}_resp_valid, false.B, true.B)", "Bool".string)
-            insertIPInput(ipT, populateInputs(hwLog.stateBlock.get.label, hashSMap), ipPortLogic.inputMap)
-            ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_${instanceName}_resp_valid"
-            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := r_${instanceName}_resp.out"
+            // Phase-2 extension: inline the SP/DP increment. SP/DP += const was routed
+            // through the 64-bit Add/Sub arbiter (~11-cycle round-trip); it is a cheap
+            // address-width add, so commit it directly with no handshake and no shared
+            // adder — this is the Add/Sub arbiter's only stack/pointer client, so the
+            // arbiter drops out unless an operator actually overflows the inline units.
+            // Deferred to whenStmt (fires at block advance) so a block that also stalls
+            // on another resource op still increments SP/DP exactly once.
+            val opStr: String = if (isPlus) "+" else "-"
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${targetReg} := ${leftST.render} ${opStr} ${rightST.render}"
             intrinsicST = st""
           } else if (isIntrinsicLoad(intrinsic.value)) {
             ipArbiterUsage = ipArbiterUsage + ArbBlockMemoryIP()
@@ -8830,11 +7973,11 @@ import HwSynthesizer2._
 
             intrinsicST =
               st"""
-                  |${captureOrEmit(name, instanceName, "mode", st"1.U", hwLog)}
-                  |${captureOrEmit(name, instanceName, "readAddr", readAddrST, hwLog)}
-                  |${if (anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "readOffset", readOffsetST, hwLog)}
-                  |${if (anvil.config.alignAxi4) st"" else captureOrEmit(name, instanceName, "readLen", st"${anvil.typeByteSize(intrinsic.value.tipe)}.U", hwLog)}
-                  |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                  |r_${instanceName}_req.mode := 1.U
+                  |r_${instanceName}_req.readAddr := ${readAddrST.render}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(intrinsic.value.tipe)}.U"}
+                  |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
               """
           } else {
             intrinsicST =
@@ -8873,14 +8016,13 @@ import HwSynthesizer2._
           val uintConvertST: ST = if(t._2) st".asUInt" else st""
           val rhsST: ST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
-          val curFsm: String = hwLog.curProcedureId
           assignST =
             st"""
-                |${captureOrEmit(curFsm, "arbGlobalVar", "in", st"${rhsST.render}${padST.render}${uintConvertST.render}", hwLog)}
-                |${captureOrEmit(curFsm, "arbGlobalVar", "op", st"true.B", hwLog)}
-                |${captureOrEmit(curFsm, "arbGlobalVar", "gtype", globalVarGtype(lhsName), hwLog)}
-                |${captureOrEmit(curFsm, "arbGlobalVar", "index", st"${t._1}.U", hwLog)}
-                |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req.in := ${rhsST}${padST}${uintConvertST}
+                |r_arbGlobalVar_req.op := true.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(lhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         } else {
           // only rhs is global variable, global variable read operation
@@ -8889,19 +8031,19 @@ import HwSynthesizer2._
           val sintConvertST: ST = if(t._2) st".asSInt" else st""
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsName} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
-          val curFsm: String = hwLog.curProcedureId
           assignST =
             st"""
-                |${captureOrEmit(curFsm, "arbGlobalVar", "op", st"false.B", hwLog)}
-                |${captureOrEmit(curFsm, "arbGlobalVar", "gtype", globalVarGtype(rhsName), hwLog)}
-                |${captureOrEmit(curFsm, "arbGlobalVar", "index", st"${t._1}.U", hwLog)}
-                |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req.op := false.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         }
       }
       case a: AST.IR.Stmt.Assign.Temp => {
         val regNo = a.lhs
         val lhsST: ST = if(!anvil.config.splitTempSizes)  st"${generalRegName}(${regNo}.U)" else st"${getGeneralRegName(a.rhs.tipe)}(${regNo}.U)"
+        val whenCondCountBeforeRhs: Z = ipPortLogic.whenCondST.size
         val rhsST = processExpr(a.rhs, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val temp: AST.IR.Exp = if(isTypeExp(a.rhs)) a.rhs.asInstanceOf[AST.IR.Exp.Type].exp else a.rhs
         if(isGlobalVar(temp)) {
@@ -8909,14 +8051,13 @@ import HwSynthesizer2._
           val t = globalVarMap.get(rhsName).get
           val sintConvertST: ST = if(isSignedExp(a.rhs)) st".asSInt" else st""
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbGlobalVar_resp_valid"
-          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ regFileShadowWriteST(lhsST.render, st"r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}".render)
-          val curFsm: String = hwLog.curProcedureId
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST} := r_arbGlobalVar_resp.out${globalVarWidthST(rhsName)}${sintConvertST}"
           assignST =
             st"""
-                |${captureOrEmit(curFsm, "arbGlobalVar", "op", st"false.B", hwLog)}
-                |${captureOrEmit(curFsm, "arbGlobalVar", "gtype", globalVarGtype(rhsName), hwLog)}
-                |${captureOrEmit(curFsm, "arbGlobalVar", "index", st"${t._1}.U", hwLog)}
-                |r_arbGlobalVar_req_valid_pre := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
+                |r_arbGlobalVar_req.op := false.B
+                |r_arbGlobalVar_req.gtype := ${globalVarGtype(rhsName)}
+                |r_arbGlobalVar_req.index := ${t._1}.U
+                |r_arbGlobalVar_req_valid := Mux(r_arbGlobalVar_resp_valid, false.B, true.B)
               """
         } else {
           if (isIntrinsicLoad(a.rhs)) {
@@ -8927,33 +8068,39 @@ import HwSynthesizer2._
             val offsetWidth: Z = log2Up(anvil.config.memory * 8)
             val intrinsicOffset: Z = getBaseOffsetOfIntrinsicLoad(a.rhs).get._2
             val readOffsetST: ST = if (intrinsicOffset < 0) st"(${intrinsicOffset}).S(${offsetWidth}.W).asUInt" else st"${intrinsicOffset}.U"
-            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ regFileShadowWriteST(lhsST.render, rhsST.render)
-            val curFsm: String = hwLog.curProcedureId
+            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"${lhsST.render} := ${rhsST.render}"
             assignST =
               st"""
-                  |${captureOrEmit(curFsm, instanceName, "mode", st"1.U", hwLog)}
-                  |${captureOrEmit(curFsm, instanceName, "readAddr", readAddrST, hwLog)}
-                  |${if (anvil.config.alignAxi4) st"" else captureOrEmit(curFsm, instanceName, "readOffset", readOffsetST, hwLog)}
-                  |${if (anvil.config.alignAxi4) st"" else captureOrEmit(curFsm, instanceName, "readLen", st"${anvil.typeByteSize(a.rhs.tipe)}.U", hwLog)}
-                  |r_${instanceName}_req_valid_pre := Mux(r_${instanceName}_resp_valid, false.B, true.B)
+                  |r_${instanceName}_req.mode := 1.U
+                  |r_${instanceName}_req.readAddr := ${readAddrST.render}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readOffset := ${readOffsetST.render}"}
+                  |${if (anvil.config.alignAxi4) st"" else st"r_${instanceName}_req.readLen := ${anvil.typeByteSize(a.rhs.tipe)}.U"}
+                  |r_${instanceName}_req_valid := Mux(r_${instanceName}_resp_valid, false.B, true.B)
               """
           } else if (isBinaryExp(a.rhs) || isIntrinsicIndexing(a.rhs)) {
             val lhsContentST: ST = st"${if (isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if (isSignedExp(a.rhs)) ").asUInt" else ""}"
-            val finalRhsRender: String = if (!anvil.config.splitTempSizes) lhsContentST.render else rhsST.render
-            ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ regFileShadowWriteST(lhsST.render, finalRhsRender)
-            assignST = st""
+            val finalST = st"${lhsST} := ${if (!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
+            if (ipPortLogic.whenCondST.size == whenCondCountBeforeRhs) {
+              // fully combinational rhs (single-cycle inlined op): assign directly,
+              // the block completes in this cycle
+              assignST = st"${finalST.render}"
+            } else {
+              ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ finalST
+              assignST = st""
+            }
           } else {
             val lhsContentST: ST = st"${if (isSignedExp(a.rhs)) "(" else ""}${rhsST.render}${if (isSignedExp(a.rhs)) ").asUInt" else ""}"
-            val finalRhsRender: String = if (!anvil.config.splitTempSizes) lhsContentST.render else rhsST.render
+            val finalST = st"${lhsST} := ${if (!anvil.config.splitTempSizes) lhsContentST.render else s"${rhsST.render}"}"
+
             assignST =
               st"""
-                |${regFileShadowWriteST(lhsST.render, finalRhsRender).render}
+                |${finalST.render}
               """
           }
         }
       }
       case _ => {
-        halt(s"processStmtAssign unimplemented: ${a.prettyST(anvil.printer).render}")
+        halt(s"processStmtAssign unimplemented")
       }
     }
 
@@ -8961,25 +8108,6 @@ import HwSynthesizer2._
   }
 
   @strictpure def globalName(name: ISZ[String]): ST = st"global_${(name, "_")}"
-
-  // P0-A: rewrite a regfile per-index assignment into a shadow `_next`/`_we`
-  // pair. If `lhsRender` does not start with `generalRegFiles`, returns a
-  // single original-form `lhs := rhs` ST (i.e. acts as identity). The split
-  // breaks the wide `CP_reg -> switch decode -> Vec write mux` cone by
-  // terminating writes at flops that DC can co-locate with the regfile,
-  // instead of at the regfile flop itself reached via a deep mux tree.
-  @pure def regFileShadowWriteST(lhsRender: String, rhsRender: String): ST = {
-    val lhsOps = ops.StringOps(lhsRender)
-    val parenIdx: Z = lhsOps.indexOf('(')
-    val isRegFile: B = lhsOps.startsWith(generalRegName) && parenIdx > 0
-    if (!isRegFile) {
-      return st"${lhsRender} := ${rhsRender}"
-    }
-    val base: String = lhsOps.substring(0, parenIdx)
-    val idxAndRest: String = lhsOps.substring(parenIdx, lhsRender.size)
-    return st"""${base}_next${idxAndRest} := ${rhsRender}
-               |${base}_we${idxAndRest} := true.B"""
-  }
 
   @pure def processExpr(exp: AST.IR.Exp, isForcedSign: B, ipPortLogic: HwSynthesizer2.IpPortAssign, maxRegisters: Util.TempVector, isRecursive: B, hwLog: HwSynthesizer2.HwLog): ST = {
     var exprST = st""
@@ -9008,11 +8136,11 @@ import HwSynthesizer2._
         val baseOffsetST: ST = processExpr(intrinsic.baseOffset, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
         val dataOffset: Z = intrinsic.dataOffset
         val indexST: ST = processExpr(intrinsic.index, F, ipPortLogic, maxRegisters, isRecursive, hwLog)
+        val elementSize: Z = intrinsic.elementSize
         val mask: Z = intrinsic.maskOpt match {
           case Some(z) => z
-          case None() => 0xFFFF
+          case None() => defaultIndexMask(elementSize)
         }
-        val elementSize: Z = intrinsic.elementSize
 
         var hashSMap: HashSMap[String, (ST, String)] = HashSMap.empty[String, (ST, String)]
         hashSMap = hashSMap +
@@ -9111,66 +8239,91 @@ import HwSynthesizer2._
           return st"r_${instanceName}_resp.out"
         }
 
-        exp.op match {
-          case AST.IR.Exp.Binary.Op.Add => {
-            exprST = genIpArbiterPortLogic(exp.op)
+        // single-cycle inline: pure combinational expression in the block state
+        @pure def genInlineSingleCycleLogic(opType: AST.IR.Exp.Binary.Op.Type): ST = {
+          val opStr: String = opType match {
+            case AST.IR.Exp.Binary.Op.And => "&"
+            case AST.IR.Exp.Binary.Op.Or => "|"
+            case AST.IR.Exp.Binary.Op.Xor => "^"
+            case AST.IR.Exp.Binary.Op.Eq => "==="
+            case AST.IR.Exp.Binary.Op.Ne => "=/="
+            case _ => halt("genInlineSingleCycleLogic: unsupported op")
           }
-          case AST.IR.Exp.Binary.Op.Sub => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Mul => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Div => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Rem => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.And => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Or  => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Xor => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.CondAnd => {
-            halt(s"processExpr, you got an error about Op.CondAnd")
-          }
-          case AST.IR.Exp.Binary.Op.CondOr => {
-            halt(s"processExpr, you got an error about Op.CondOr")
-          }
-          case AST.IR.Exp.Binary.Op.Eq => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Ne => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Ge => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Gt => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Le => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Lt => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Shr => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Ushr => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case AST.IR.Exp.Binary.Op.Shl => {
-            exprST = genIpArbiterPortLogic(exp.op)
-          }
-          case _ => {
-            halt(s"processExpr AST.IR.Exp.Binary unimplemented")
+          return st"(${leftST.render} ${opStr} ${rightST.render})"
+        }
+
+        // two-cycle inline: cycle 1 latches operands into r_inl<kind>_a/_b and
+        // sets r_inl<kind>_phase (set-latch, composes with pulse-style resp
+        // conditions); cycle 2 consumes the combinational w_inl<kind>_out and
+        // clears the phase inside the when body
+        @pure def genInlineTwoCycleLogic(opType: AST.IR.Exp.Binary.Op.Type): ST = {
+          val kind: String = HwSynthesizer2.inlineOpKind(opType, isSIntOperation)
+          inlineOpUsage = inlineOpUsage + ((opType, isSIntOperation))
+          inlineKindsInBlock = inlineKindsInBlock + kind
+          inlineTwoCycleInGround = T
+          val bSuffix: String =
+            if ((opType == AST.IR.Exp.Binary.Op.Shl || opType == AST.IR.Exp.Binary.Op.Shr ||
+                 opType == AST.IR.Exp.Binary.Op.Ushr) && isSIntOperation) ".asUInt" else ""
+          ipPortLogic.sts = ipPortLogic.sts :+ st"r_inl${kind}_a := ${leftST.render}"
+          ipPortLogic.sts = ipPortLogic.sts :+ st"r_inl${kind}_b := ${rightST.render}${bSuffix}"
+          ipPortLogic.sts = ipPortLogic.sts :+ st"r_inl${kind}_phase := true.B"
+          ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_inl${kind}_phase"
+          ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ st"r_inl${kind}_phase := false.B"
+          return st"w_inl${kind}_out"
+        }
+
+        if (HwSynthesizer2.isSingleCycleInlineOp(exp.op)) {
+          exprST = genInlineSingleCycleLogic(exp.op)
+        } else if (HwSynthesizer2.isTwoCycleInlineOp(exp.op) && !inlineTwoCycleInGround &&
+                   !inlineKindsInBlock.contains(HwSynthesizer2.inlineOpKind(exp.op, isSIntOperation))) {
+          exprST = genInlineTwoCycleLogic(exp.op)
+        } else {
+          exp.op match {
+            case AST.IR.Exp.Binary.Op.Add => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case AST.IR.Exp.Binary.Op.Sub => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case AST.IR.Exp.Binary.Op.Mul => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case AST.IR.Exp.Binary.Op.Div => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case AST.IR.Exp.Binary.Op.Rem => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case AST.IR.Exp.Binary.Op.CondAnd => {
+              halt(s"processExpr, you got an error about Op.CondAnd")
+            }
+            case AST.IR.Exp.Binary.Op.CondOr => {
+              halt(s"processExpr, you got an error about Op.CondOr")
+            }
+            case AST.IR.Exp.Binary.Op.Ge => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case AST.IR.Exp.Binary.Op.Gt => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case AST.IR.Exp.Binary.Op.Le => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case AST.IR.Exp.Binary.Op.Lt => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case AST.IR.Exp.Binary.Op.Shr => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case AST.IR.Exp.Binary.Op.Ushr => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case AST.IR.Exp.Binary.Op.Shl => {
+              exprST = genIpArbiterPortLogic(exp.op)
+            }
+            case _ => {
+              halt(s"processExpr AST.IR.Exp.Binary unimplemented")
+            }
           }
         }
       }
@@ -9199,12 +8352,12 @@ import HwSynthesizer2._
           var intAssignST: ISZ[ST] = ISZ[ST]()
           for(i <- 0 until uintWidth.size) {
             if(maxRegisters.unsigneds(uintWidth(i) - 1) > 0) {
-              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req_pre.u${uintWidth(i)} := generalRegFilesU${uintWidth(i)}"
+              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req.u${uintWidth(i)} := generalRegFilesU${uintWidth(i)}"
             }
           }
           for(i <- 0 until sintWidth.size) {
             if(maxRegisters.signeds.get(sintWidth(i)).get > 0) {
-              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req_pre.s${sintWidth(i)} := generalRegFilesS${sintWidth(i)}"
+              intAssignST = intAssignST :+ st"r_arbTempSaveRestore_req.s${sintWidth(i)} := generalRegFilesS${sintWidth(i)}"
             }
           }
 
@@ -9215,17 +8368,18 @@ import HwSynthesizer2._
                 |r_routeOut.dstCP := 3.U
                 |r_routeOut_valid := true.B
                 |
-                |r_arbTempSaveRestore_req_pre.op := 0.U //push
+                |r_arbTempSaveRestore_req.op := 0.U //push
               """
+          hwLog.recursiveCalleeIds = hwLog.recursiveCalleeIds + ipRouterUsage.get(procString).get._1
           ipPortLogic.whenCondST = ipPortLogic.whenCondST :+ st"r_arbTempSaveRestore_resp_valid"
           ipPortLogic.whenStmtST = ipPortLogic.whenStmtST :+ callST
           exprST =
             st"""
                 |${(intAssignST, "\n")}
-                |r_arbTempSaveRestore_req_pre.srcId := r_srcID
-                |r_arbTempSaveRestore_req_pre.srcCp := r_srcCP
-                |r_arbTempSaveRestore_req_pre.op := 1.U //push
-                |r_arbTempSaveRestore_req_valid_pre := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
+                |r_arbTempSaveRestore_req.srcId := r_srcID
+                |r_arbTempSaveRestore_req.srcCp := r_srcCP
+                |r_arbTempSaveRestore_req.op := 1.U //push
+                |r_arbTempSaveRestore_req_valid := Mux(r_arbTempSaveRestore_resp_valid, false.B, true.B)
               """
         } else {
           exprST =
@@ -9255,6 +8409,36 @@ object HwSynthesizer2 {
     tipe = AST.Typed.b,
     pos = Position.none)
 
+  // cheap binary operators inlined into the block FSM instead of going
+  // through the shared arbitrated IPs (see INLINE_CHEAP_OPS_PLAN.md)
+  @strictpure def isSingleCycleInlineOp(op: AST.IR.Exp.Binary.Op.Type): B =
+    op == AST.IR.Exp.Binary.Op.And || op == AST.IR.Exp.Binary.Op.Or ||
+      op == AST.IR.Exp.Binary.Op.Xor || op == AST.IR.Exp.Binary.Op.Eq ||
+      op == AST.IR.Exp.Binary.Op.Ne
+
+  @strictpure def isTwoCycleInlineOp(op: AST.IR.Exp.Binary.Op.Type): B =
+    op == AST.IR.Exp.Binary.Op.Add || op == AST.IR.Exp.Binary.Op.Sub ||
+      op == AST.IR.Exp.Binary.Op.Lt || op == AST.IR.Exp.Binary.Op.Le ||
+      op == AST.IR.Exp.Binary.Op.Gt || op == AST.IR.Exp.Binary.Op.Ge ||
+      op == AST.IR.Exp.Binary.Op.Shl || op == AST.IR.Exp.Binary.Op.Shr ||
+      op == AST.IR.Exp.Binary.Op.Ushr
+
+  @strictpure def inlineOpKind(op: AST.IR.Exp.Binary.Op.Type, signed: B): String = {
+    val opStr: String = op match {
+      case AST.IR.Exp.Binary.Op.Add => "Add"
+      case AST.IR.Exp.Binary.Op.Sub => "Sub"
+      case AST.IR.Exp.Binary.Op.Lt => "Lt"
+      case AST.IR.Exp.Binary.Op.Le => "Le"
+      case AST.IR.Exp.Binary.Op.Gt => "Gt"
+      case AST.IR.Exp.Binary.Op.Ge => "Ge"
+      case AST.IR.Exp.Binary.Op.Shl => "Shl"
+      case AST.IR.Exp.Binary.Op.Shr => "Shr"
+      case AST.IR.Exp.Binary.Op.Ushr => "Ushr"
+      case _ => "Unsupported"
+    }
+    s"${opStr}${if (signed) "S" else "U"}"
+  }
+
   @record @unclonable class HwLog(var tmpWireCount: Z,
                                   var stateBlock: MOption[AST.IR.BasicBlock],
                                   var memCpyInCurrentBlock: B,
@@ -9263,7 +8447,11 @@ object HwSynthesizer2 {
                                   var maxNumLabel: Z,
                                   var curProcedureId: String,
                                   var curProcedureQName: QName,
-                                  var funcCallInCurrentBlock: B) extends MAnvilIRTransformer{
+                                  var funcCallInCurrentBlock: B,
+                                  // Router IDs of the callees this procedure pushes a context
+                                  // frame for, i.e. its self- and mutually-recursive calls.
+                                  // A return from anything else must not pop a frame.
+                                  var recursiveCalleeIds: HashSSet[Z]) extends MAnvilIRTransformer{
 
     @pure def isMemCpyInCurrentBlock(): B = {
       return memCpyInCurrentBlock
